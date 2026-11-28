@@ -7,7 +7,15 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <algorithm>
 #include <stdexcept>
+#include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -76,6 +84,10 @@ SdecMemory FilledMemory() {
 bool IsFilled(const SdecMemory& memory) {
     const SdecMemory filled = FilledMemory();
     return std::memcmp(&memory, &filled, sizeof(memory)) == 0;
+}
+
+bool IsAllByte(const std::byte* data, std::size_t size, std::byte value) {
+    return std::all_of(data, data + size, [value](std::byte b) { return b == value; });
 }
 
 void CheckQuerySizes(std::array<std::byte, 64>& process) {
@@ -202,6 +214,8 @@ void CheckCreate(std::array<std::byte, 64>& process) {
     const SdecConfig2 config = Config(40, 120, 68, -1, 1);
     const SdecRecord qRecord = QueryRecord(1, 0, 0);
     const SdecRecord2 cRecord = CreateRecord(1, 0, 0);
+    SdecRecord2 defaultAffinity = cRecord;
+    defaultAffinity.unknown20 = 0;
     void* handle = nullptr;
 
     for (const std::int32_t sdk : {0x4000000, 0x6500000}) {
@@ -213,7 +227,8 @@ void CheckCreate(std::array<std::byte, 64>& process) {
         memory1.blocks[1].base = 0x200000;
         memory1.blocks[2].base = 0x300000;
 
-        Require(ThrowsRuntimeError([&] { sceSdecCreateSw2(&config, &attributes, &cRecord, &memory1, &handle); }), "create must reach setup throw with exact flag=1 sizes");
+        Require(ThrowsRuntimeError([&] { sceSdecCreateSw2(&config, &attributes, &defaultAffinity, &memory1, &handle); }), "create must reach affinity check with exact flag=1 sizes");
+        Require(sceSdecCreateSw2(&config, &attributes, &cRecord, &memory1, &handle) == Invalid, "unmapped blocks[0] must return Invalid");
 
         for (std::size_t block = 0; block < 3; ++block) {
             SdecMemory shortBlock = memory1;
@@ -232,7 +247,8 @@ void CheckCreate(std::array<std::byte, 64>& process) {
         memory0.blocks[0].base = 0x100000;
         memory0.blocks[1].base = 0x200000;
         memory0.blocks[2].base = 0x300000;
-        Require(ThrowsRuntimeError([&] { sceSdecCreateSw2(&config, &attributes, &cRecord, &memory0, &handle); }), "create must accept larger flag=0 memory");
+        Require(ThrowsRuntimeError([&] { sceSdecCreateSw2(&config, &attributes, &defaultAffinity, &memory0, &handle); }), "create must accept larger flag=0 memory");
+        Require(sceSdecCreateSw2(&config, &attributes, &cRecord, &memory0, &handle) == Invalid, "unmapped blocks[0] with flag=0 must return Invalid");
     }
 
     SetSdkVersion(process, 0x4000000);
@@ -283,11 +299,14 @@ void CheckCreate(std::array<std::byte, 64>& process) {
     for (const std::int32_t good18 : {0x100, 0x2ff, -1}) {
         SdecRecord2 goodMode2 = CreateRecord(2, 16, 0);
         goodMode2.unknown18 = good18;
+        goodMode2.unknown20 = 0;
         SdecMemory mode2Memory{};
         const SdecRecord q2 = QueryRecord(2, 16, 0);
         Require(sceSdecQueryMemorySw2(&config, &q2, 1, &mode2Memory, &dpbFrames, 1, nullptr) == 0, "mode 2 query");
         mode2Memory.blocks[0].base = 0x100000;
         Require(ThrowsRuntimeError([&] { sceSdecCreateSw2(&config, &attributes, &goodMode2, &mode2Memory, &handle); }), "accepted r+0x18 and mode 2");
+        goodMode2.unknown20 = 0x7fu;
+        Require(sceSdecCreateSw2(&config, &attributes, &goodMode2, &mode2Memory, &handle) == Invalid, "unmapped mode 2 blocks[0] must return Invalid");
     }
 
     SdecConfig2 mismatch = config;
@@ -304,6 +323,221 @@ void CheckCreate(std::array<std::byte, 64>& process) {
     Require(errno == 71, "errno changed across unmapped creates");
 }
 
+void CheckCreateAndDestroyLifecycle(std::array<std::byte, 64>& process) {
+    SetSdkVersion(process, 0x4000000);
+    SdecConfig2 config = Config(51, 16, 16, 1, 1);
+    config.unknown28 = 256;
+    config.unknown2C = 256;
+    const SdecRecord qRecord = QueryRecord(1, 0, 0);
+    const SdecRecord2 cRecord = CreateRecord(1, 0, 0);
+    SdecMemory memory{};
+    std::uint32_t dpbFrames = 0;
+    Require(sceSdecQueryMemorySw2(&config, &qRecord, 1, &memory, &dpbFrames, 1, nullptr) == 0, "lifecycle query failed");
+
+    std::vector<std::byte> block0(memory.blocks[0].size, std::byte{0xCC});
+    std::vector<std::byte> block1(memory.blocks[1].size, std::byte{UntouchedByte});
+    std::vector<std::byte> block2(memory.blocks[2].size, std::byte{UntouchedByte});
+    memory.blocks[0].base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(block0.data()));
+    memory.blocks[1].base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(block1.data()));
+    memory.blocks[2].base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(block2.data()));
+
+    const int attributes = 0;
+    void* handle = nullptr;
+    errno = 71;
+    Require(sceSdecCreateSw2(&config, &attributes, &cRecord, &memory, &handle) == 0, "sceSdecCreateSw2 lifecycle failed");
+    Require(errno == 71, "sceSdecCreateSw2 must preserve errno");
+    Require(handle == block0.data(), "handle must equal blocks[0].base");
+
+    const std::uint64_t expectedWs = memory.blocks[0].base + 0x18;
+    const std::uint64_t expectedCodec = ((expectedWs + 0x20) & ~std::uint64_t{0x1f}) + 0x20;
+    std::array<std::uint64_t, 3> handleHeader{};
+    std::memcpy(handleHeader.data(), block0.data(), sizeof(handleHeader));
+    Require(handleHeader[0] == 1, "handle header[0] must be 1");
+    Require(handleHeader[1] == expectedWs, "handle header[1] must point to workspace");
+    Require(handleHeader[2] == expectedCodec, "handle header[2] must point to codec");
+
+    std::array<std::uint64_t, 4> wsHeader{};
+    std::memcpy(wsHeader.data(), block0.data() + 0x18, sizeof(wsHeader));
+    Require(wsHeader[0] == expectedWs + 0x20, "workspace header[0] start mismatch");
+    Require(wsHeader[1] == expectedCodec + 0x180, "workspace header[1] bump mismatch");
+    Require(wsHeader[2] == memory.blocks[0].base + memory.blocks[0].size, "workspace header[2] end mismatch");
+    Require(wsHeader[3] == 0, "workspace header[3] must be 0");
+
+    const std::byte* codecPtr = block0.data() + static_cast<std::size_t>(expectedCodec - memory.blocks[0].base);
+    std::uint64_t codecFlag = 0;
+    std::uint64_t codecWs = 0;
+    std::uint32_t codecFrames = 0;
+    std::uint32_t codecUnknown28 = 0;
+    std::uint32_t codecUnknown2C = 0;
+    SdecMemory codecMemory{};
+    std::uint64_t codecUnknown10 = 0;
+    std::uint32_t codecInstanceMode = 0;
+    std::memcpy(&codecFlag, codecPtr + 0x00, sizeof(codecFlag));
+    std::memcpy(&codecWs, codecPtr + 0x10, sizeof(codecWs));
+    std::memcpy(&codecFrames, codecPtr + 0x30, sizeof(codecFrames));
+    std::memcpy(&codecUnknown28, codecPtr + 0x34, sizeof(codecUnknown28));
+    std::memcpy(&codecUnknown2C, codecPtr + 0x38, sizeof(codecUnknown2C));
+    std::memcpy(&codecMemory, codecPtr + 0x78, sizeof(codecMemory));
+    std::memcpy(&codecUnknown10, codecPtr + 0xc0, sizeof(codecUnknown10));
+    std::memcpy(&codecInstanceMode, codecPtr + 0x118, sizeof(codecInstanceMode));
+    Require(codecFlag == 1, "codec flag must be 1");
+    Require(codecWs == expectedWs, "codec workspace back-pointer mismatch");
+    Require(codecFrames == 1 && codecUnknown28 == 256 && codecUnknown2C == 256, "codec frame dimensions mismatch");
+    Require(std::memcmp(&codecMemory, &memory, sizeof(memory)) == 0, "codec memory copy mismatch");
+    Require(codecUnknown10 == cRecord.unknown10, "codec unknown10 mismatch");
+    Require(codecInstanceMode == 1, "codec instanceMode mismatch");
+
+    Require(std::all_of(block1.begin(), block1.end(), [](std::byte b) { return b == std::byte{0}; }), "blocks[1] must be zeroed");
+
+    errno = 73;
+    Require(sceSdecDestroySw2(handle) == 0, "sceSdecDestroySw2 lifecycle failed");
+    Require(errno == 73, "sceSdecDestroySw2 must preserve errno");
+    std::memcpy(handleHeader.data(), block0.data(), sizeof(handleHeader));
+    Require(handleHeader[0] == 1 && handleHeader[1] == 0 && handleHeader[2] == 0, "destroy must clear workspace and codec fields");
+
+    Require(sceSdecDestroySw2(handle) == 0, "idempotent sceSdecDestroySw2 failed");
+    Require(errno == 73, "idempotent sceSdecDestroySw2 must preserve errno");
+}
+
+void CheckCreateRollback(std::array<std::byte, 64>& process) {
+    SetSdkVersion(process, 0x4000000);
+    SdecConfig2 config = Config(51, 16, 16, 1, 1);
+    config.unknown28 = 256;
+    config.unknown2C = 256;
+    const SdecRecord qRecord = QueryRecord(1, 0, 0);
+    const SdecRecord2 cRecord = CreateRecord(1, 0, 0);
+    SdecMemory memory{};
+    std::uint32_t dpbFrames = 0;
+    Require(sceSdecQueryMemorySw2(&config, &qRecord, 1, &memory, &dpbFrames, 1, nullptr) == 0, "rollback query failed");
+
+    std::vector<std::byte> block0(memory.blocks[0].size, std::byte{0xCC});
+    std::vector<std::byte> block1(memory.blocks[1].size, std::byte{UntouchedByte});
+    std::vector<std::byte> block2(memory.blocks[2].size, std::byte{UntouchedByte});
+
+    const int attributes = 0;
+    void* const sentinel = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x12345));
+
+    SdecMemory badBlock1 = memory;
+    badBlock1.blocks[0].base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(block0.data()));
+    badBlock1.blocks[1].base = 0x200000;
+    badBlock1.blocks[2].base = 0x300000;
+    const std::uint64_t expectedWs = badBlock1.blocks[0].base + 0x18;
+    const std::uint64_t expectedCodec = ((expectedWs + 0x20) & ~std::uint64_t{0x1f}) + 0x20;
+    const std::size_t codecOffset = static_cast<std::size_t>(expectedCodec - badBlock1.blocks[0].base);
+
+    void* handle = sentinel;
+    errno = 71;
+    Require(sceSdecCreateSw2(&config, &attributes, &cRecord, &badBlock1, &handle) == Invalid, "unwritable blocks[1] must return Invalid");
+    Require(errno == 71, "unwritable blocks[1] must preserve errno");
+    Require(handle == sentinel, "unwritable blocks[1] must leave output handle untouched");
+    Require(IsAllByte(block0.data(), 0x18, std::byte{0xCC}), "unwritable blocks[1] must leave handle header untouched");
+    Require(IsAllByte(block0.data() + 0x18, 0x20, std::byte{0xCC}), "unwritable blocks[1] must leave workspace header untouched");
+    Require(IsAllByte(block0.data() + codecOffset, 0x180, std::byte{0xCC}), "unwritable blocks[1] must leave codec object untouched");
+
+    std::fill(block0.begin(), block0.end(), std::byte{0xCC});
+    SdecMemory goodMem = memory;
+    goodMem.blocks[0].base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(block0.data()));
+    goodMem.blocks[1].base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(block1.data()));
+    goodMem.blocks[2].base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(block2.data()));
+    errno = 73;
+    Require(sceSdecCreateSw2(&config, &attributes, &cRecord, &goodMem, reinterpret_cast<void**>(0x10)) == Invalid, "unwritable handle must return Invalid");
+    Require(errno == 73, "unwritable handle must preserve errno");
+    Require(IsAllByte(block0.data(), 0x18, std::byte{0xCC}), "unwritable handle must leave handle header untouched");
+    Require(IsAllByte(block0.data() + 0x18, 0x20, std::byte{0xCC}), "unwritable handle must leave workspace header untouched");
+    Require(IsAllByte(block0.data() + codecOffset, 0x180, std::byte{0xCC}), "unwritable handle must leave codec object untouched");
+    Require(IsAllByte(block1.data(), block1.size(), std::byte{UntouchedByte}), "unwritable handle must leave blocks[1] untouched");
+
+#ifdef _WIN32
+    SYSTEM_INFO sysInfo{};
+    GetSystemInfo(&sysInfo);
+    const std::size_t pageSize = sysInfo.dwPageSize;
+    const std::size_t allocBytes = ((pageSize + static_cast<std::size_t>(memory.blocks[0].size) + pageSize - 1) / pageSize) * pageSize;
+    auto* const pages = static_cast<std::byte*>(VirtualAlloc(nullptr, allocBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(pages != nullptr, "VirtualAlloc failed");
+    const auto protectReadOnly = [](void* addr, std::size_t len) {
+        DWORD oldProtect = 0;
+        Require(VirtualProtect(addr, len, PAGE_READONLY, &oldProtect) != 0, "VirtualProtect PAGE_READONLY failed");
+    };
+    const auto protectReadWrite = [](void* addr, std::size_t len) {
+        DWORD oldProtect = 0;
+        Require(VirtualProtect(addr, len, PAGE_READWRITE, &oldProtect) != 0, "VirtualProtect PAGE_READWRITE failed");
+    };
+#else
+    const long nativePage = sysconf(_SC_PAGESIZE);
+    Require(nativePage > 0, "sysconf _SC_PAGESIZE failed");
+    const std::size_t pageSize = static_cast<std::size_t>(nativePage);
+    const std::size_t allocBytes = ((pageSize + static_cast<std::size_t>(memory.blocks[0].size) + pageSize - 1) / pageSize) * pageSize;
+    auto* const pages = static_cast<std::byte*>(mmap(nullptr, allocBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(pages != MAP_FAILED, "mmap failed");
+    const auto protectReadOnly = [](void* addr, std::size_t len) {
+        Require(mprotect(addr, len, PROT_READ) == 0, "mprotect PROT_READ failed");
+    };
+    const auto protectReadWrite = [](void* addr, std::size_t len) {
+        Require(mprotect(addr, len, PROT_READ | PROT_WRITE) == 0, "mprotect PROT_READ|PROT_WRITE failed");
+    };
+#endif
+
+    std::byte* const splitCodecBase = pages + pageSize - 0x100;
+    std::memset(splitCodecBase, 0xA5, 0x200);
+    protectReadOnly(pages + pageSize, allocBytes - pageSize);
+    SdecMemory splitCodecMem = memory;
+    splitCodecMem.blocks[0].base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(splitCodecBase));
+    splitCodecMem.blocks[1].base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(block1.data()));
+    splitCodecMem.blocks[2].base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(block2.data()));
+    handle = sentinel;
+    errno = 75;
+    Require(sceSdecCreateSw2(&config, &attributes, &cRecord, &splitCodecMem, &handle) == Invalid, "unwritable codec object must return Invalid");
+    Require(errno == 75, "unwritable codec object must preserve errno");
+    Require(handle == sentinel, "unwritable codec object must leave output handle untouched");
+    Require(IsAllByte(splitCodecBase, 0x18, std::byte{0xA5}), "unwritable codec object must leave handle header untouched");
+    Require(IsAllByte(splitCodecBase + 0x18, 0x20, std::byte{0xA5}), "unwritable codec object must leave workspace header untouched");
+    Require(IsAllByte(splitCodecBase + 0x40, 0xc0, std::byte{0xA5}), "unwritable codec object must leave writable codec prefix untouched");
+    Require(IsAllByte(block1.data(), block1.size(), std::byte{UntouchedByte}), "unwritable codec object must leave blocks[1] untouched");
+
+    protectReadWrite(pages + pageSize, allocBytes - pageSize);
+    std::byte* const splitHeaderPrefixBase = pages + pageSize - 0x10;
+    std::memset(splitHeaderPrefixBase, 0xA5, 0x200);
+    protectReadOnly(pages + pageSize, allocBytes - pageSize);
+    SdecMemory splitHeaderPrefixMem = memory;
+    splitHeaderPrefixMem.blocks[0].base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(splitHeaderPrefixBase));
+    splitHeaderPrefixMem.blocks[1].base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(block1.data()));
+    splitHeaderPrefixMem.blocks[2].base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(block2.data()));
+    handle = sentinel;
+    errno = 76;
+    Require(sceSdecCreateSw2(&config, &attributes, &cRecord, &splitHeaderPrefixMem, &handle) == Invalid, "cross-page handle header prefix must return Invalid");
+    Require(errno == 76, "cross-page handle header prefix must preserve errno");
+    Require(handle == sentinel, "cross-page handle header prefix must leave output handle untouched");
+    Require(IsAllByte(splitHeaderPrefixBase, 0x10, std::byte{0xA5}), "cross-page handle header must leave writable prefix untouched");
+    Require(IsAllByte(block1.data(), block1.size(), std::byte{UntouchedByte}), "cross-page handle header prefix must leave blocks[1] untouched");
+
+    protectReadWrite(pages + pageSize, allocBytes - pageSize);
+    std::byte* const splitHeaderBase = pages + pageSize - 0x10;
+    std::memset(splitHeaderBase, 0xA5, 0x200);
+    protectReadOnly(pages, pageSize);
+    SdecMemory splitHeaderMem = memory;
+    splitHeaderMem.blocks[0].base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(splitHeaderBase));
+    splitHeaderMem.blocks[1].base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(block1.data()));
+    splitHeaderMem.blocks[2].base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(block2.data()));
+    const std::uint64_t splitWs = splitHeaderMem.blocks[0].base + 0x18;
+    const std::uint64_t splitCodecAddr = ((splitWs + 0x20) & ~std::uint64_t{0x1f}) + 0x20;
+    const std::size_t splitCodecOff = static_cast<std::size_t>(splitCodecAddr - splitHeaderMem.blocks[0].base);
+    handle = sentinel;
+    errno = 77;
+    Require(sceSdecCreateSw2(&config, &attributes, &cRecord, &splitHeaderMem, &handle) == Invalid, "unwritable handle header must return Invalid");
+    Require(errno == 77, "unwritable handle header must preserve errno");
+    Require(handle == sentinel, "unwritable handle header must leave output handle untouched");
+    Require(IsAllByte(pages + pageSize, 0x08, std::byte{0xA5}), "unwritable handle header must leave writable suffix untouched");
+    Require(IsAllByte(splitHeaderBase + 0x18, 0x20, std::byte{0xA5}), "unwritable handle header must leave workspace header untouched");
+    Require(IsAllByte(splitHeaderBase + splitCodecOff, 0x180, std::byte{0xA5}), "unwritable handle header must leave codec object untouched");
+    Require(IsAllByte(block1.data(), block1.size(), std::byte{UntouchedByte}), "unwritable handle header must leave blocks[1] untouched");
+
+#ifdef _WIN32
+    VirtualFree(pages, 0, MEM_RELEASE);
+#else
+    munmap(pages, allocBytes);
+#endif
+}
+
 } // namespace
 
 int main() {
@@ -312,6 +546,8 @@ int main() {
     CheckQuerySizes(process);
     CheckQueryRefusals();
     CheckCreate(process);
+    CheckCreateAndDestroyLifecycle(process);
+    CheckCreateRollback(process);
     std::puts("Sdec query memory 2 tests passed");
     return 0;
 }

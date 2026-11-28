@@ -6,7 +6,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 
 namespace {
 
@@ -28,6 +27,30 @@ void CheckDestroy(int (*destroy)(void*), const char* name) {
     }
 }
 
+void CheckDestroySw2WithCodec() {
+    for (const int expectedErrno : {0, 7, 42}) {
+        errno = expectedErrno;
+        Decoder decoder{0x1111, 0x2222, 0x3333, 0x4444};
+        Require(sceSdecDestroySw2(decoder.data()) == 0, "sceSdecDestroySw2 must clear non-null codec and workspace");
+        Require(decoder[0] == 0x1111 && decoder[1] == 0 && decoder[2] == 0 && decoder[3] == 0x4444, "sceSdecDestroySw2 must zero offsets 0x08 and 0x10");
+        Require(errno == expectedErrno, "sceSdecDestroySw2 must preserve errno with codec");
+    }
+}
+
+void CheckDestroySw2Unreadable() {
+    for (const int expectedErrno : {0, 7, 42}) {
+        for (void* unreadable : {reinterpret_cast<void*>(std::uintptr_t{0x10}), reinterpret_cast<void*>(~std::uintptr_t{0})}) {
+            errno = expectedErrno;
+            try {
+                Require(sceSdecDestroySw2(unreadable) == 0, "sceSdecDestroySw2 must return 0 on unreadable decoder");
+            } catch (...) {
+                Require(false, "sceSdecDestroySw2 must not throw on unreadable decoder");
+            }
+            Require(errno == expectedErrno, "sceSdecDestroySw2 must preserve errno on unreadable decoder");
+        }
+    }
+}
+
 } // namespace
 
 int main() {
@@ -37,4 +60,7 @@ int main() {
         CheckDestroy([](void* decoder) { return sceSdecDestroySw2(decoder); }, "sceSdecDestroySw2");
         Require(errno == expectedErrno, "Destroy must not change errno");
     }
+    CheckDestroySw2WithCodec();
+    CheckDestroySw2Unreadable();
+    return 0;
 }
