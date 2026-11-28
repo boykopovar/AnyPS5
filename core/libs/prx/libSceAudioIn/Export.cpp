@@ -2,9 +2,11 @@
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libSceAudioIn/AudioInCapture.hpp"
 #include "prx/libSceAudioIn/AudioInDeviceSelection.hpp"
+#include "prx/libSceAudioIn/AudioInOpenWithin.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <cerrno>
+#include <charconv>
 #include <cstdlib>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -12,11 +14,13 @@
 #include "SDL.h"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <mutex>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <stdexcept>
 #include "prx/libScePad/include/HostAudioInControl.hpp"
 #ifdef _WIN32
@@ -60,12 +64,18 @@ struct Port {
     Clock::duration grain{};
     Clock::time_point next{};
     std::int32_t mode = 0;
+    bool opening = false;
 };
 
+bool isOpen(const Port& port) { return port.used && !port.opening; }
+
 std::mutex g_mutex;
+std::mutex g_openMutex;
 std::array<Port, 8> g_ports{};
 bool g_sdlAudio = false;
+std::atomic<bool> g_openStalled{false};
 std::int32_t g_mode = 0;
+constexpr std::chrono::milliseconds OPEN_LIMIT{3000};
 
 audioin::detail::CaptureMuteGenerations g_captureMuteGenerations;
 
@@ -88,7 +98,6 @@ SDL_AudioDeviceID openDevice(std::uint32_t freq, std::uint32_t samples, const Fo
     desired.format = format.format;
     desired.channels = format.channels;
     desired.samples = static_cast<Uint16>(samples);
-    SDL_AudioSpec obtained{};
     auto selection = audioin::detail::selectCaptureDevice(requestedName, 0,
         [](int index) { return SDL_GetAudioDeviceName(index, 1); });
     if (selection.kind != audioin::detail::CaptureDeviceMatchKind::Default) {
@@ -98,23 +107,41 @@ SDL_AudioDeviceID openDevice(std::uint32_t freq, std::uint32_t samples, const Fo
     if (selection.kind == audioin::detail::CaptureDeviceMatchKind::Missing ||
         selection.kind == audioin::detail::CaptureDeviceMatchKind::Ambiguous) return 0;
     std::string selectedName;
-    const char* deviceName = nullptr;
-    if (selection.kind == audioin::detail::CaptureDeviceMatchKind::Found) {
+    const bool named = selection.kind == audioin::detail::CaptureDeviceMatchKind::Found;
+    if (named) {
         const char* name = SDL_GetAudioDeviceName(selection.index, 1);
         if (!name) return 0;
         selectedName = name;
-        deviceName = selectedName.c_str();
     }
-    const SDL_AudioDeviceID device = SDL_OpenAudioDevice(deviceName, 1, &desired, &obtained, 0);
-    if (device != 0) SDL_PauseAudioDevice(device, 0);
-    return device;
+    if (g_openStalled.load(std::memory_order_acquire)) return 0;
+    std::chrono::milliseconds delay{};
+    if (const char* stall = std::getenv("ANYPS5_TEST_AUDIO_IN_OPEN_STALL_MS")) {
+        const char* end = stall + std::strlen(stall);
+        unsigned int milliseconds = 0;
+        const auto parsed = std::from_chars(stall, end, milliseconds);
+        if (parsed.ec == std::errc{} && parsed.ptr == end && milliseconds <= 10000) {
+            delay = std::chrono::milliseconds(milliseconds);
+        }
+    }
+    const auto opened = audioin::detail::openWithin(OPEN_LIMIT,
+        [selectedName, named, desired, delay]() mutable {
+            SDL_AudioSpec obtained{};
+            if (delay.count() != 0) std::this_thread::sleep_for(delay);
+            const SDL_AudioDeviceID device = SDL_OpenAudioDevice(named ? selectedName.c_str() : nullptr, 1, &desired, &obtained, 0);
+            if (device != 0) SDL_PauseAudioDevice(device, 0);
+            return static_cast<std::uint32_t>(device);
+        },
+        [](std::uint32_t device) { SDL_CloseAudioDevice(device); },
+        [] { g_openStalled.store(true, std::memory_order_release); },
+        [] { g_openStalled.store(false, std::memory_order_release); });
+    return opened.device;
 }
 
 int findPort(int handle, Port** port) {
     const std::uint32_t raw = static_cast<std::uint32_t>(handle);
     if ((raw & 0x7f000000u) != HANDLE_BASE || (raw & 0xffu) >= g_ports.size()) return AUDIO_IN_ERROR_INVALID_HANDLE;
     Port& candidate = g_ports[raw & 0xffu];
-    if (!candidate.used) return AUDIO_IN_ERROR_INVALID_STATE;
+    if (!isOpen(candidate)) return AUDIO_IN_ERROR_INVALID_STATE;
     *port = &candidate;
     return 0;
 }
@@ -173,17 +200,33 @@ int openPort(std::uint32_t len, std::uint32_t freq, std::uint32_t param) {
     const std::string_view requestedName = configuredName ? std::string_view(configuredName) : std::string_view{};
 #endif
     const bool explicitDevice = !requestedName.empty() && requestedName != "default";
-    std::lock_guard lock(g_mutex);
+    std::unique_lock lock(g_mutex);
+    std::size_t slot = g_ports.size();
     for (std::size_t i = g_ports.size(); i-- > 0;) {
-        if (g_ports[i].used) continue;
-        const auto frameBytes = static_cast<std::uint32_t>(SDL_AUDIO_BITSIZE(format.format) / 8 * format.channels);
-        const auto grain = std::chrono::duration_cast<Clock::duration>(std::chrono::microseconds(1000000ull * len / freq));
-        const SDL_AudioDeviceID device = openDevice(freq, len, format, requestedName);
-        if (explicitDevice && device == 0) return AUDIO_IN_ERROR_INVALID_DEVICE;
-        g_ports[i] = {true, false, len, frameBytes, device, grain, {}, g_mode};
-        return static_cast<int>(HANDLE_BASE + i);
+        if (!g_ports[i].used) {
+            slot = i;
+            break;
+        }
     }
-    return AUDIO_IN_ERROR_PORT_FULL;
+    if (slot == g_ports.size()) return AUDIO_IN_ERROR_PORT_FULL;
+    g_ports[slot] = {};
+    g_ports[slot].used = true;
+    g_ports[slot].opening = true;
+    lock.unlock();
+    SDL_AudioDeviceID device = 0;
+    {
+        std::lock_guard openLock(g_openMutex);
+        device = openDevice(freq, len, format, requestedName);
+    }
+    lock.lock();
+    if (explicitDevice && device == 0) {
+        g_ports[slot] = {};
+        return AUDIO_IN_ERROR_INVALID_DEVICE;
+    }
+    const auto frameBytes = static_cast<std::uint32_t>(SDL_AUDIO_BITSIZE(format.format) / 8 * format.channels);
+    const auto grain = std::chrono::duration_cast<Clock::duration>(std::chrono::microseconds(1000000ull * len / freq));
+    g_ports[slot] = {true, false, len, frameBytes, device, grain, {}, g_mode};
+    return static_cast<int>(HANDLE_BASE + slot);
 }
 
 std::size_t capture(SDL_AudioDeviceID device, std::uint8_t* dest, std::size_t bytes, Clock::time_point deadline) {
@@ -306,7 +349,7 @@ int32_t APS5_VABI sceAudioInAsyncOpen(int32_t userId, uint32_t type, uint32_t in
 int32_t APS5_VABI sceAudioInIsPadEmbeddedMic(int32_t handle) {
     const std::uint32_t index = static_cast<std::uint32_t>(handle) & 0xffu;
     std::lock_guard lock(g_mutex);
-    if (index >= g_ports.size() || !g_ports[index].used) return AUDIO_IN_ERROR_INVALID_STATE;
+    if (index >= g_ports.size() || !isOpen(g_ports[index])) return AUDIO_IN_ERROR_INVALID_STATE;
     return 0;
 }
 
@@ -350,7 +393,7 @@ int APS5_VABI sceAudioInIsSharedDevice(int handle) {
     const std::uint32_t index = static_cast<std::uint32_t>(handle) & 0xffu;
     {
         std::lock_guard lock(g_mutex);
-        if (index >= g_ports.size() || !g_ports[index].used) return AUDIO_IN_ERROR_INVALID_STATE;
+        if (index >= g_ports.size() || !isOpen(g_ports[index])) return AUDIO_IN_ERROR_INVALID_STATE;
     }
     NotImplemented_nid_no_patch(__func__);
     return 0;

@@ -1,9 +1,11 @@
 #include "prx/libSceAudioIn/include/AudioIn.hpp"
 #include "prx/libSceAudioIn/AudioInCapture.hpp"
 #include "prx/libSceAudioIn/AudioInDeviceSelection.hpp"
+#include "prx/libSceAudioIn/AudioInOpenWithin.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <cstdint>
@@ -11,9 +13,12 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <future>
+#include <memory>
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -314,6 +319,79 @@ void TestQueuedAudioDiscard() {
     Require(calls == 1);
 }
 
+void TestOpenWithin() {
+    using namespace std::chrono_literals;
+    const auto fast = audioin::detail::openWithin(1000ms, [] { return std::uint32_t{7}; }, [](std::uint32_t) { std::abort(); });
+    Require(fast.device == 7 && !fast.timedOut);
+    const auto failed = audioin::detail::openWithin(1000ms, [] { return std::uint32_t{0}; }, [](std::uint32_t) { std::abort(); });
+    Require(failed.device == 0 && !failed.timedOut);
+    auto release = std::make_shared<std::promise<void>>();
+    auto closed = std::make_shared<std::promise<std::uint32_t>>();
+    auto closedDevice = closed->get_future().share();
+    const auto start = std::chrono::steady_clock::now();
+    auto abandons = std::make_shared<std::atomic<int>>(0);
+    auto settled = std::make_shared<std::promise<bool>>();
+    const auto stalled = audioin::detail::openWithin(50ms,
+        [gate = release->get_future().share()] { gate.wait(); return std::uint32_t{9}; },
+        [closed](std::uint32_t device) { closed->set_value(device); },
+        [abandons] { abandons->fetch_add(1); },
+        [abandons, closedDevice, settled] {
+            settled->set_value(abandons->load() == 1 && closedDevice.wait_for(0ms) == std::future_status::ready);
+        });
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    Require(stalled.device == 0 && stalled.timedOut);
+    Require(elapsed >= 50ms && elapsed < 1000ms);
+    Require(abandons->load() == 1);
+    auto settledAfter = settled->get_future();
+    Require(closedDevice.wait_for(0ms) == std::future_status::timeout);
+    Require(settledAfter.wait_for(0ms) == std::future_status::timeout);
+    release->set_value();
+    Require(settledAfter.wait_for(5s) == std::future_status::ready && settledAfter.get());
+    Require(closedDevice.wait_for(5s) == std::future_status::ready && closedDevice.get() == 9);
+    const auto quick = audioin::detail::openWithin(1000ms, [] { return std::uint32_t{5}; }, [](std::uint32_t) { std::abort(); },
+        [] { std::abort(); }, [] { std::abort(); });
+    Require(quick.device == 5 && !quick.timedOut);
+}
+
+void TestOpenStall() {
+    using namespace std::chrono_literals;
+    const auto path = std::filesystem::temp_directory_path() / ("anyps5_audio_in_stall-" + std::to_string(std::random_device{}()) + ".raw");
+    std::ofstream(path, std::ios::binary).write(std::string(4096, 0).data(), 4096);
+    SetEnvironment("SDL_AUDIODRIVER", "disk");
+    SetEnvironment("SDL_DISKAUDIOFILEIN", path.string());
+    for (const char* invalid : {"-1", "5000ms", "10001", "999999999999999999999999"}) {
+        SetEnvironment("ANYPS5_TEST_AUDIO_IN_OPEN_STALL_MS", invalid);
+        const int handle = sceAudioInOpen(user, 0, 0, 256, 48000, 2);
+        Require(handle > 0 && sceAudioInGetSilentState(handle) == 0);
+        Require(sceAudioInClose(handle) == 0);
+    }
+    SetEnvironment("ANYPS5_TEST_AUDIO_IN_OPEN_STALL_MS", "5000");
+    const auto start = std::chrono::steady_clock::now();
+    const int stalled = sceAudioInOpen(user, 0, 0, 256, 48000, 2);
+    const auto waited = std::chrono::steady_clock::now() - start;
+    Require(stalled > 0);
+    Require(waited >= 2900ms && waited < 4500ms);
+    Require(sceAudioInGetSilentState(stalled) == 1);
+    const auto pendingStart = std::chrono::steady_clock::now();
+    const int pending = sceAudioInOpen(user, 0, 0, 256, 48000, 2);
+    Require(std::chrono::steady_clock::now() - pendingStart < 1000ms);
+    Require(pending > 0 && pending != stalled && sceAudioInGetSilentState(pending) == 1);
+    SetEnvironment("ANYPS5_TEST_AUDIO_IN_OPEN_STALL_MS", "");
+    const auto deadline = std::chrono::steady_clock::now() + 8s;
+    for (;;) {
+        Require(std::chrono::steady_clock::now() < deadline);
+        const int retried = sceAudioInOpen(user, 0, 0, 256, 48000, 2);
+        Require(retried > 0);
+        const int silent = sceAudioInGetSilentState(retried);
+        Require(sceAudioInClose(retried) == 0);
+        if (silent == 0) break;
+        Require(silent == 1);
+        std::this_thread::sleep_for(50ms);
+    }
+    Require(sceAudioInClose(pending) == 0 && sceAudioInClose(stalled) == 0);
+    std::filesystem::remove(path);
+}
+
 void TestCapture() {
     TestQueuedAudioDiscard();
     const auto path = std::filesystem::temp_directory_path() / ("anyps5_audio_in_capture-" + std::to_string(std::random_device{}()) + ".raw");
@@ -432,6 +510,8 @@ int main(int argc, char** argv) {
     Require(argc == 2);
     Require(sceAudioInInit() == 0);
     if (std::strcmp(argv[1], "capture") == 0) TestCapture();
+    else if (std::strcmp(argv[1], "open-within") == 0) TestOpenWithin();
+    else if (std::strcmp(argv[1], "open-stall") == 0) TestOpenStall();
     else if (std::strcmp(argv[1], "selection") == 0) {
         TestConfiguredDeviceUnavailable();
         TestCaptureDeviceSelection();
