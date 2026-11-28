@@ -476,6 +476,39 @@ OpFunctionEnd
     try {
         const auto words = assemble(source, SPV_TEXT_TO_BINARY_OPTION_PRESERVE_NUMERIC_IDS);
         const auto specialized = ShaderRecompiler::SpecializeSpirv(words);
+        const auto expected = assemble(R"(OpCapability Shader
+OpMemoryModel Logical GLSL450
+OpEntryPoint GLCompute %1 "main" %2
+OpExecutionMode %1 LocalSize 8 1 1
+OpDecorate %2 BuiltIn LocalInvocationIndex
+%3 = OpTypeVoid
+%4 = OpTypeBool
+%5 = OpTypeInt 32 0
+%6 = OpTypeFloat 32
+%7 = OpTypePointer Input %5
+%8 = OpTypePointer Private %5
+%9 = OpTypeFunction %3
+%10 = OpConstant %5 1
+%11 = OpConstant %5 2
+%12 = OpConstant %5 3
+%2 = OpVariable %7 Input
+%13 = OpVariable %8 Private
+%106 = OpConstant %5 7
+%107 = OpConstant %5 8
+%1 = OpFunction %3 None %9
+%14 = OpLabel
+%15 = OpLoad %5 %2
+%108 = OpIAdd %5 %15 %11
+%109 = OpIAdd %5 %108 %11
+%110 = OpIAdd %5 %109 %11
+%114 = OpIAdd %5 %110 %11
+%115 = OpIAdd %5 %114 %106
+%116 = OpIAdd %5 %115 %107
+OpStore %13 %116
+OpReturn
+OpFunctionEnd
+)", SPV_TEXT_TO_BINARY_OPTION_PRESERVE_NUMERIC_IDS);
+        check(specialized == expected, "constant sharing specialization changed the baseline SPIR-V words");
         static_cast<void>(ShaderRecompiler::ValidateAndOptimizeSpirv(specialized, Vulkan11, Spirv13, false, false));
         std::map<std::pair<std::uint32_t, std::uint32_t>, std::size_t> constants;
         std::size_t names = 0;
