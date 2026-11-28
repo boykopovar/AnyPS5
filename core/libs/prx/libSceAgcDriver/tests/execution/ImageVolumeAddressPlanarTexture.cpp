@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "ExecutionHelpers.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -87,11 +88,6 @@ void FillInput(bool array) {
         const std::array<std::uint32_t, 8> words{Bits((static_cast<float>(lane.x) + 0.5f) / static_cast<float>(Size)), Bits((static_cast<float>(lane.y) + 0.5f) / static_cast<float>(Size)), Bits(lane.r), lane.x, lane.y, lane.z, 0u, 0u};
         std::copy(words.begin(), words.end(), &Buffer[tid * Words]);
     }
-}
-
-std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
-    const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
 std::array<std::uint32_t, 8> TextureDescriptor(bool array) {

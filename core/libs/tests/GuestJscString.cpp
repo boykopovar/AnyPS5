@@ -224,9 +224,34 @@ template<typename Call> static bool Faults(Call call) {
 }
 
 static void NullHandles() {
-    Require(Faults([] { JSStringRetain_nid_postfix(nullptr); }));
+    errno = 71;
+    Require(Faults([] { JSStringRetain_nid_postfix(nullptr); }) && errno == 71);
     Require(Faults([] { JSStringRelease_nid_postfix(nullptr); }));
     Require(Faults([] { JSStringGetMaximumUTF8CStringSize_nid_postfix(nullptr); }));
+    errno = 71;
+    Require(JSStringGetLength_nid_postfix(nullptr) == 0 && errno == 71);
+    errno = 71;
+    Require(JSStringGetCharactersPtr_nid_postfix(nullptr) == nullptr && errno == 71);
+}
+
+static void UnmappedHandles() {
+    auto* const unmapped = reinterpret_cast<GuestJSString*>(std::uintptr_t{0x10});
+    errno = 71;
+    Require(Faults([unmapped] { JSStringRetain_nid_postfix(unmapped); }) && errno == 71);
+    errno = 71;
+    Require(JSStringGetLength_nid_postfix(unmapped) == 0 && errno == 71);
+    errno = 71;
+    Require(JSStringGetCharactersPtr_nid_postfix(unmapped) == nullptr && errno == 71);
+    auto* string = JSStringCreateWithUTF8CString_nid_postfix("ok");
+    errno = 71;
+    Require(JSStringRetain_nid_postfix(string) == string && errno == 71);
+    errno = 71;
+    Require(JSStringGetLength_nid_postfix(string) == 2 && errno == 71);
+    errno = 71;
+    const auto* characters = JSStringGetCharactersPtr_nid_postfix(string);
+    Require(characters != nullptr && characters[0] == 'o' && characters[1] == 'k' && errno == 71);
+    JSStringRelease_nid_postfix(string);
+    JSStringRelease_nid_postfix(string);
 }
 
 static void References() {
@@ -309,6 +334,7 @@ int main() {
     Invalid();
     NullText();
     NullHandles();
+    UnmappedHandles();
     References();
     Limits();
     MaximumSize();

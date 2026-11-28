@@ -2078,7 +2078,7 @@ std::uint64_t retireLeastRecent(const Context& context, HostImports& state, cons
     return freed;
 }
 
-std::uint64_t physicalMemoryBytes() {
+std::uint64_t queryPhysicalMemoryBytes() {
 #ifdef _WIN32
     MEMORYSTATUSEX status{};
     status.dwLength = sizeof(status);
@@ -2088,6 +2088,11 @@ std::uint64_t physicalMemoryBytes() {
     const auto pageSize = sysconf(_SC_PAGESIZE);
     return pages > 0 && pageSize > 0 ? static_cast<std::uint64_t>(pages) * static_cast<std::uint64_t>(pageSize) : 0;
 #endif
+}
+
+std::uint64_t physicalMemoryBytes() {
+    static const std::uint64_t bytes = queryPhysicalMemoryBytes();
+    return bytes;
 }
 
 std::atomic<std::uint64_t> budgetOverride{0};

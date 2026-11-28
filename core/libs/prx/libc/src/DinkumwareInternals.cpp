@@ -12,6 +12,7 @@
 #include <limits>
 #include <optional>
 #include <stdexcept>
+#include <type_traits>
 #include <string>
 
 #include "prx/libc/include/General.hpp"
@@ -41,6 +42,96 @@ short WriteExpValue(TValue* destination, const TValue& value, short kind, const 
 }
 
 using LibcDetail::LogPolynomial;
+
+float ScaleDecimalCoefficient(std::int64_t coefficient, std::int64_t exponent) {
+    constexpr int Parts = 3;
+    float value[Parts]{};
+    _ZNSt8__sce_v29_FXp_setnEPfil_nid_postfix(value, Parts, coefficient);
+    float factor[Parts]{10.0f};
+    auto power = static_cast<std::uint64_t>(exponent);
+    if (exponent < 0) {
+        factor[0] = 0x1.99p-4f;
+        factor[1] = 0x1.332p-13f;
+        factor[2] = 0x1.332p-25f;
+        power = 0 - power;
+    }
+    const auto multiply = _ZNSt8__sce_v29_FXp_mulxEPfiPKfiS0__nid_postfix;
+    float scratch[2 * Parts];
+    while (power != 0) {
+        if ((power & 1) != 0) multiply(value, Parts, factor, Parts, scratch);
+        power >>= 1;
+        if (power != 0) {
+            float previous[Parts];
+            LibcDetail::Move(previous, Parts, factor);
+            multiply(factor, Parts, previous, Parts, scratch);
+        }
+    }
+    return LibcDetail::GetWide(value, Parts);
+}
+
+std::optional<float> DecimalFloat(const char* text, char** end, std::int64_t scale, int* error) {
+    if (text == nullptr) return std::nullopt;
+    const char* cursor = text;
+    while (std::isspace(static_cast<unsigned char>(*cursor))) ++cursor;
+    const bool negative = *cursor == '-';
+    if (negative || *cursor == '+') ++cursor;
+    if (cursor[0] == '0' && (cursor[1] == 'x' || cursor[1] == 'X')) return std::nullopt;
+    const char point = localeconv_nid_postfix()->decimal_point[0];
+    const auto digit = [](char c) { return c >= '0' && c <= '9'; };
+    if (!digit(*cursor) && (*cursor != point || !digit(cursor[1]))) return std::nullopt;
+
+    std::uint64_t power = static_cast<std::uint64_t>(scale);
+    std::int64_t coefficient = 0;
+    unsigned digits = 0;
+    bool fractional = false;
+    bool discardedNonzero = false;
+    while (digit(*cursor) || (!fractional && *cursor == point)) {
+        if (*cursor == point) {
+            fractional = true;
+        } else {
+            const int next = *cursor - '0';
+            if (digits < 9) {
+                coefficient = coefficient * 10 + next;
+                if (coefficient != 0) ++digits;
+                if (fractional) --power;
+            } else {
+                if (!fractional) ++power;
+                discardedNonzero |= next != 0;
+            }
+        }
+        ++cursor;
+    }
+    if (*cursor == 'e' || *cursor == 'E') {
+        const char* exponent = cursor + 1;
+        const bool minus = *exponent == '-';
+        if (minus || *exponent == '+') ++exponent;
+        if (digit(*exponent)) {
+            std::int64_t magnitude = 0;
+            do {
+                if (magnitude <= 99999999) magnitude = magnitude * 10 + (*exponent - '0');
+                ++exponent;
+            } while (digit(*exponent));
+            power += minus ? -magnitude : magnitude;
+            cursor = exponent;
+        }
+    }
+    if (end != nullptr) *end = const_cast<char*>(cursor);
+    if (coefficient == 0) return negative ? -0.0f : 0.0f;
+    if (discardedNonzero) {
+        ++coefficient;
+    } else {
+        while (coefficient % 10 == 0) {
+            coefficient /= 10;
+            ++power;
+        }
+    }
+    const float value = ScaleDecimalCoefficient(coefficient, std::bit_cast<std::int64_t>(power));
+    if (value == 0 || std::isinf(value)) {
+        *__error_nid_postfix() = RangeError;
+        if (error != nullptr) *error = 1;
+    }
+    return std::copysign(value, negative ? -1.0f : 1.0f);
+}
 
 bool Hexadecimal(const char* text) {
     while (std::isspace(static_cast<unsigned char>(*text))) ++text;
@@ -217,6 +308,9 @@ TFloat ScaledFloat(const char* text, char** end, std::int64_t pten, int* error, 
     int& guestErrno = *__error_nid_postfix();
     const int saved = guestErrno;
     if (error != nullptr) *error = 0;
+    if constexpr (std::is_same_v<TFloat, float>) {
+        if (const auto decimal = DecimalFloat(text, end, pten, error)) return *decimal;
+    }
     if (const char* stop = NanSubjectEnd_nid_no_patch(text)) {
         if (end != nullptr) *end = const_cast<char*>(stop);
         return std::numeric_limits<TFloat>::quiet_NaN();
