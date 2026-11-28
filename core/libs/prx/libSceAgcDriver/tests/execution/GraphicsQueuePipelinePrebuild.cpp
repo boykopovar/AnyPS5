@@ -137,7 +137,8 @@ int main(int argc, char** argv) {
         device.reset();
         const bool renderingWait = argc == 2 && std::string_view(argv[1]) == "rendering-wait";
         const bool eopFlip = argc == 2 && std::string_view(argv[1]) == "eop-flip";
-        Require(argc == 1 || renderingWait || eopFlip, "unknown prebuild fixture mode");
+        const bool refused = argc == 2 && std::string_view(argv[1]) == "refused";
+        Require(argc == 1 || renderingWait || eopFlip || refused, "unknown prebuild fixture mode");
         constexpr std::uint32_t Handle = 7;
         std::shared_ptr<ReadyOutput> output;
         if (renderingWait || eopFlip) {
@@ -169,6 +170,7 @@ int main(int argc, char** argv) {
         DispatchSlot(words, Slots[0], ReaderCode.data());
         words.insert(words.end(), {0xc0053c00u, 0x13u, Low(&Gate), High(&Gate), 1u, 0xffffffffu, 0x19u});
         DispatchSlot(words, Slots[1], NewReaderCode.data());
+        if (refused) Slots[1].outputDescriptor[3] = 0xffffffffu;
         const auto before = VulkanDevice::ComputePipelineCounts();
         const auto adopted = AgcDriverDispatchesAdoptedAhead_nid_postfix();
         Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
@@ -193,6 +195,17 @@ int main(int argc, char** argv) {
             Require(Slots[3].done == 1 && Slots[3].output[0] == 0xabcdu, "the dispatch before the submission boundary did not run");
         }
         if (renderingWait) Require(RenderingWaits.load(std::memory_order_relaxed) == 1, "the rendering wait was not executed");
+        if (refused) {
+            Require(Slots[1].done == 0, "the dispatch behind the wait ran before the wait passed");
+            Prepare(Slots[1], 0x5678u);
+            Gate = 1;
+            WaitDone(Slots[1], "the dispatch behind the wait did not finish");
+            Require(Slots[1].output[0] == 0x5678u && Slots[1].output[1] == 0x5678u, "a dispatch whose descriptor was not written when queue 0 walked ahead was refused at its packet: it stored " + std::to_string(Slots[1].output[0]) + " and " + std::to_string(Slots[1].output[1]));
+            std::cout << "graphics queue pipeline prebuild test passed (a dispatch not resolvable ahead)\n";
+            AgcDriverWaitIdle_nid_postfix();
+            AgcDriverShutdown_nid_postfix();
+            return 0;
+        }
         const auto start = std::chrono::steady_clock::now();
         const auto limit = prebuild ? std::chrono::seconds(60) : std::chrono::seconds(2);
         while (VulkanDevice::ComputePipelineCounts().created < before.created + 1 && std::chrono::steady_clock::now() - start < limit) std::this_thread::sleep_for(std::chrono::milliseconds(1));
