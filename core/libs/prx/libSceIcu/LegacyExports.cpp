@@ -2207,10 +2207,6 @@ int APS5_VABI _ZN6icu_685Edits8Iterator10readLengthEi_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ucnv_io_getConverterName_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN6icu_6813UnicodeString7replaceEiii_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -4167,10 +4163,6 @@ int APS5_VABI sceIcuLegacyUnknown_QFMXoOFv2wQ_nid_no_patch() {
 APS5_EXPORT("QFMXoOFv2wQ", sceIcuLegacyUnknown_QFMXoOFv2wQ_nid_no_patch);
 
 int APS5_VABI _ZN6icu_6818UStringEnumeration4nextEPiR10UErrorCode_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ucnv_io_countKnownConverters_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 

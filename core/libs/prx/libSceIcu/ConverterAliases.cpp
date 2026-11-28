@@ -1,5 +1,7 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "prx/libSceIcu/DataName.hpp"
 #include "prx/libc/include/General.hpp"
+#include "ucnv_io.h"
 #include "unicode/ucnv.h"
 #include <cerrno>
 #include <cstddef>
@@ -126,4 +128,32 @@ extern "C" const char* APS5_VABI ucnv_getStandardName_nid_postfix(const char* na
                                               standard ? standardCopy.c_str() : nullptr, &status);
     WriteStatus(error, status, initial, __func__);
     return result;
+}
+
+extern "C" std::uint16_t APS5_VABI ucnv_io_countKnownConverters_nid_postfix(std::int32_t* error) {
+    std::int32_t initial = 0;
+    if (!BeginStatus(error, initial, __func__)) return 0;
+    auto status = static_cast<UErrorCode>(initial);
+    const auto count = ucnv_io_countKnownConverters(&status);
+    WriteStatus(error, status, initial, __func__);
+    return count;
+}
+
+extern "C" const char* APS5_VABI ucnv_io_getConverterName_nid_postfix(const char* alias, std::int8_t* containsOption,
+                                                                   std::int32_t* error) {
+    std::int32_t initial = 0;
+    if (!BeginStatus(error, initial, __func__)) return nullptr;
+    auto status = static_cast<UErrorCode>(initial);
+    ucnv_io_countKnownConverters(&status);
+
+    std::string aliasCopy;
+    const char* hostAlias = Icu::CopyDataName(alias, aliasCopy, status, __func__);
+    UBool option = -1;
+    const char* name = U_SUCCESS(status)
+        ? ucnv_io_getConverterName(hostAlias, containsOption ? &option : nullptr, &status) : nullptr;
+    if (containsOption && option >= 0 && !GuestCopyOut_nid_no_patch(containsOption, &option, sizeof(option))) {
+        NotImplemented_nid_no_patch(__func__);
+    }
+    WriteStatus(error, status, initial, __func__);
+    return name;
 }
