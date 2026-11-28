@@ -1048,8 +1048,9 @@ static void SocketWriteLowWaterBelowOne() {
     int datagrams[2];
     Require(socketpair_nid_postfix(Unix, 2, 0, datagrams) == 0);
     const auto sender = static_cast<std::uintptr_t>(datagrams[1]);
+    const std::string record(1024, 'x');
     int sent = 0;
-    while (send_nid_postfix(datagrams[1], chunk.data(), chunk.size(), 0) > 0)
+    while (send_nid_postfix(datagrams[1], record.data(), record.size(), 0) > 0)
         ++sent;
     Require(sent > 0 && *__error_nid_postfix() == GuestEnobufs);
     Require(Apply(kq, Change(sender, EvfiltWrite, EvAdd, NoteLowat, 1)) == 0);
