@@ -24,6 +24,7 @@ install(FILES ${CMAKE_SOURCE_DIR}/3rdparty/nghttp2/COPYING DESTINATION licenses/
 
 set(http2ZlibDir ${CMAKE_SOURCE_DIR}/3rdparty/libjpeg-turbo/src/spng/zlib)
 add_library(anyps5_http2_transport STATIC EXCLUDE_FROM_ALL Transport.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../libkernel/Time/TimedWait.cpp
     ${http2ZlibDir}/adler32.c ${http2ZlibDir}/crc32.c ${http2ZlibDir}/inffast.c
     ${http2ZlibDir}/inflate.c ${http2ZlibDir}/inftrees.c ${http2ZlibDir}/zutil.c)
 target_include_directories(anyps5_http2_transport PRIVATE ${LIBS_INCLUDE_DIR} ${http2ZlibDir})
@@ -140,6 +141,16 @@ if(BUILD_TESTING)
     set_tests_properties(guest_http2_auth_status PROPERTIES TIMEOUT 30)
     if(WIN32)
         set_tests_properties(guest_http2_auth_status PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttp2>")
+    endif()
+    add_test_executable(guest_http2_dns_wait_tests ${LIBS_INCLUDE_DIR}/tests/GuestHttp2DnsWait.cpp)
+    target_include_directories(guest_http2_dns_wait_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_http2_dns_wait_tests PRIVATE libSceHttp2 libkernel libc)
+    configure_windows_unwind(guest_http2_dns_wait_tests)
+    add_test(NAME guest_http2_dns_wait COMMAND guest_http2_dns_wait_tests)
+    set_tests_properties(guest_http2_dns_wait PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_http2_dns_wait PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttp2>")
     endif()
 endif()
