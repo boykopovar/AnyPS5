@@ -9,6 +9,7 @@
 #include <fstream>
 #include <ios>
 #include <limits>
+#include <mutex>
 #include <stdexcept>
 #include <string_view>
 #include <utility>
@@ -202,11 +203,8 @@ void Writer::EmitPresent(std::uint64_t frame, double fps) {
 
 void Writer::EmitCompletedFlip(std::uint64_t generation, std::uint64_t sequence, std::uint64_t processTimeUs) {
     if (!flipTiming) return;
-    auto selected = flipGeneration.load(std::memory_order_relaxed);
-    if (selected == 0 && flipGeneration.compare_exchange_strong(selected, generation, std::memory_order_relaxed)) {
-        selected = generation;
-    }
-    if (selected != generation || sequence < flipTiming->first || sequence - flipTiming->first >= flipTiming->count) return;
+    std::call_once(flipGenerationOnce, [this, generation]() { flipGeneration = generation; });
+    if (flipGeneration != generation || sequence < flipTiming->first || sequence - flipTiming->first >= flipTiming->count) return;
     char text[128];
     std::snprintf(text, sizeof(text), ",\"n\":%llu,\"generation\":%llu,\"process_us\":%llu}\n",
         static_cast<unsigned long long>(sequence), static_cast<unsigned long long>(generation),
