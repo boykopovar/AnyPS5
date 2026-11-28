@@ -441,8 +441,13 @@ void Refusals() {
     Check(ftruncate_nid_postfix(fd, 0) == -1 && *__error_nid_postfix() == 22);
     Check(ftruncate_nid_postfix(fd, 8) == -1 && *__error_nid_postfix() == 22);
     Check(sceKernelFtruncate(fd, 0) == SCE_KERNEL_ERROR_EINVAL);
-    Check(NotImplemented([fd] { (void)sceKernelFsync(fd); }));
-    Check(NotImplemented([fd] { (void)sceKernelFdatasync(fd); }));
+    Check(sceKernelFsync(fd) == 0 && sceKernelFdatasync(fd) == 0);
+    Check(fsync_nid_postfix(fd) == 0 && fdatasync_nid_postfix(fd) == 0);
+    FileStream* const stream = fopen_nid_postfix("/app0/Data/Small.txt", "r");
+    Check(stream != nullptr);
+    const int streamed = fileno_nid_postfix(stream);
+    Check(sceKernelFsync(streamed) == 0 && sceKernelFdatasync(streamed) == 0);
+    Check(fclose_nid_postfix(stream) == 0);
     char entries[512];
     std::int64_t base = -1;
     Check(sceKernelGetdents(fd, entries, sizeof(entries)) == SCE_KERNEL_ERROR_EINVAL);
