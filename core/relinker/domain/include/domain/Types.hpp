@@ -111,6 +111,7 @@ struct SysVDynamicSection {
     std::vector<std::uint8_t> RelaPltData;
     std::vector<GuestRuntime> GuestModules;
     std::map<VirtualAddress, std::string> ImportModules;
+    std::map<VirtualAddress, std::string> ImportProviders;
     std::set<VirtualAddress> FunctionImports;
     std::set<VirtualAddress> NamedImports;
     std::set<std::string> UnmatchedImportModules;

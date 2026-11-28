@@ -258,9 +258,19 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         return name + "#module" + std::to_string(provider);
     };
     const auto declaresHost = [&](const std::string& library) { return !windows && !library.empty() && findGuest(library) == guestNames.end(); };
+    const auto appDirectory = [&](const GuestImage& image) {
+        const auto directory = image.SourcePath.parent_path().lexically_relative(root).generic_string();
+        return directory == "." ? std::string("app0") : "app0/" + directory;
+    };
+    const auto guestPath = [&](const std::size_t provider) { return "$ORIGIN/" + appDirectory(images[provider]) + "/" + images[provider].OutputName; };
+    const auto relativeGuestPath = [&](const std::size_t importer, const std::size_t provider) {
+        const auto path = images[provider].SourcePath.parent_path() / images[provider].OutputName;
+        return "$ORIGIN/" + path.lexically_relative(images[importer].SourcePath.parent_path()).generic_string();
+    };
     if (dynamic.DynSymData.size() % 24 != 0) throw Domain::RelinkerException("Invalid executable symbol table");
     std::vector<std::string> executableModules(dynamic.DynSymData.size() / 24);
     std::vector<bool> executableReferences(executableModules.size());
+    std::vector<std::vector<Domain::VirtualAddress>> executableRelocations(executableModules.size());
     std::set<std::size_t> executableProviders;
     bool executableLoadsModules = false;
     for (const auto* table : {&dynamic.RelaData, &dynamic.RelaPltData}) {
@@ -271,6 +281,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             if (symbol != 0 && symbol < executableReferences.size() && (info & 0xffffffffu) != 0) executableReferences[symbol] = true;
             const auto module = dynamic.ImportModules.find(Io::ReadU64(*table, offset));
             if (symbol != 0 && symbol < executableModules.size() && module != dynamic.ImportModules.end()) executableModules[symbol] = module->second;
+            if (symbol != 0 && symbol < executableRelocations.size() && (info & 0xffffffffu) != 0) executableRelocations[symbol].push_back(Io::ReadU64(*table, offset));
         }
     }
     for (std::size_t offset = 0; offset < dynamic.DynSymData.size(); offset += 24) {
@@ -315,6 +326,8 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
                 if (declaredProvider != nullptr) executableProviders.insert(declared->second);
                 else if (found->second.size() == 1) executableProviders.insert(found->second.front().Provider);
             }
+            if (!windows && declaredProvider != nullptr)
+                for (const auto address : executableRelocations[offset / 24]) dynamic.ImportProviders.insert_or_assign(address, guestPath(declaredProvider->Provider));
         }
     }
     std::vector<std::set<std::size_t>> dependencies(images.size());
@@ -363,6 +376,8 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
                 if (provider->Provider != index && referencedSymbols.contains(symbolIndex)) dependencies[index].insert(provider->Provider);
                 if (!windows && declared != guestNames.end() && sharedExports.contains(symbol.Name))
                     importBindings[index].emplace(symbolIndex, bindingName(symbol.Name, provider->Provider));
+                if (!windows && declared != guestNames.end() && provider->Provider != index)
+                    images[index].ImportProviders.emplace(symbolIndex, relativeGuestPath(index, provider->Provider));
             } else if (windows && (symbol.Info & 15) == 6) throw Domain::RelinkerException("Windows guest TLS import requires a guest TLS export: " + symbol.Name);
             if (provider == nullptr) systemImports[index].insert(symbolIndex);
         }
@@ -399,10 +414,6 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         for (std::size_t index = 0; index < images.size(); ++index) for (const auto dependency : dependencies[index]) if (dependency != index && deferred(dependency)) dependedOn.insert(dependency);
         for (const auto dependency : dependedOn) deferredSweep.push_back(images[dependency].OutputName);
     }
-    const auto appDirectory = [&](const GuestImage& image) {
-        const auto directory = image.SourcePath.parent_path().lexically_relative(root).generic_string();
-        return directory == "." ? std::string("app0") : "app0/" + directory;
-    };
     if (!windows) {
         const auto executableExports = macos ? std::set<std::string>{} : ExportedNames(dynamic);
         for (std::size_t module = 0; module < images.size(); ++module) {

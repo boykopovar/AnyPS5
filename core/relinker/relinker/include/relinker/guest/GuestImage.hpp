@@ -7,6 +7,7 @@
 #include <relinker/patching/GamePatch.hpp>
 #include <filesystem>
 #include <domain/IProgress.hpp>
+#include <map>
 #include <set>
 #include <string>
 #include <utility>
@@ -53,6 +54,7 @@ struct GuestImage {
     std::vector<GuestSymbol> Symbols;
     std::vector<std::string> Dependencies;
     std::vector<std::pair<std::size_t, std::string>> BindingAliases;
+    std::map<std::size_t, std::string> ImportProviders;
     Domain::SysVDynamicSection Dynamic;
     std::vector<std::uint64_t> InitArray;
     std::vector<std::uint64_t> FiniArray;

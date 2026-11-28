@@ -59,7 +59,8 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteMacOs(const Relinker::GuestIma
             } else if (type == 16 || type == 17) {
                 if (imported) {
                     image.WritePointer(target, 0);
-                    input.TlsImports.push_back({"_" + DynamicName(guest, symbolIndex), rva, type == 16, static_cast<std::int64_t>(addend)});
+                    const auto provider = guest.ImportProviders.find(symbolIndex);
+                    input.TlsImports.push_back({"_" + DynamicName(guest, symbolIndex), rva, type == 16, static_cast<std::int64_t>(addend), provider == guest.ImportProviders.end() ? std::string{} : MachODependency(provider->second, "@loader_path")});
                 } else if (type == 16) {
                     image.WritePointer(target, 0);
                     input.TlsModuleSlots.push_back(rva);
@@ -75,7 +76,8 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteMacOs(const Relinker::GuestIma
                 } else {
                     image.WritePointer(target, 0);
                     const auto name = guest.UsePlatformTlsResolver && symbol.Name == "vNe1w4diLCs" ? std::string("Aps5GuestTlsGetAddr_nid_no_patch") : DynamicName(guest, symbolIndex);
-                    input.Binds.push_back({"_" + name, rva, static_cast<std::int64_t>(addend), (symbol.Info >> 4) == 2});
+                    const auto provider = guest.ImportProviders.find(symbolIndex);
+                    input.Binds.push_back({"_" + name, rva, static_cast<std::int64_t>(addend), (symbol.Info >> 4) == 2, provider == guest.ImportProviders.end() ? std::string{} : MachODependency(provider->second, "@loader_path")});
                 }
             } else throw Domain::RelinkerException("Unsupported macOS guest relocation " + std::to_string(type), target);
         }

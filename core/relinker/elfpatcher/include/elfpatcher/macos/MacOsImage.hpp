@@ -20,6 +20,7 @@ struct MacOsBind {
     std::uint32_t Rva;
     std::int64_t Addend = 0;
     bool Weak = false;
+    std::string Provider;
 };
 
 struct MacOsExport {
@@ -33,6 +34,7 @@ struct MacOsTlsImport {
     std::uint32_t Rva;
     bool Module;
     std::int64_t Addend = 0;
+    std::string Provider;
 };
 
 struct MacOsTlsExport {

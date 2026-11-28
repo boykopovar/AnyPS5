@@ -66,6 +66,8 @@ constexpr std::uint8_t BindTypePointer = 1;
 constexpr std::uint8_t BindSpecialDylibFlatLookup = 0x0e;
 constexpr std::uint8_t BindSymbolFlagsWeakImport = 0x1;
 constexpr std::uint8_t BindOpcodeDone = 0x00;
+constexpr std::uint8_t BindOpcodeSetDylibOrdinalImm = 0x10;
+constexpr std::uint8_t BindOpcodeSetDylibOrdinalUleb = 0x20;
 constexpr std::uint8_t BindOpcodeSetDylibSpecialImm = 0x30;
 constexpr std::uint8_t BindOpcodeSetSymbolTrailingFlagsImm = 0x40;
 constexpr std::uint8_t BindOpcodeSetTypeImm = 0x50;
@@ -679,13 +681,13 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
     const auto startSlot = initPointer + 8;
     const auto traceFunctionSlot = input.TraceImports ? startSlot + 8 : startSlot;
     const auto tlsExports = traceFunctionSlot + 8;
-    std::map<std::string, std::uint64_t> tlsImportSlots;
-    for (const auto& import : input.TlsImports) tlsImportSlots.emplace(import.Symbol, 0);
+    std::map<std::string, std::pair<std::uint64_t, std::string>> tlsImportSlots;
+    for (const auto& import : input.TlsImports) tlsImportSlots.emplace(import.Symbol, std::pair<std::uint64_t, std::string>{0, import.Provider});
     auto metaEnd = tlsExports + input.TlsExports.size() * 16;
-    for (auto& [symbol, slot] : tlsImportSlots) {
-        slot = metaEnd;
+    for (auto& [symbol, entry] : tlsImportSlots) {
+        entry.first = metaEnd;
         metaEnd += 8;
-        input.Binds.push_back({symbol, metaRva + static_cast<std::uint32_t>(slot)});
+        input.Binds.push_back({symbol, metaRva + static_cast<std::uint32_t>(entry.first), 0, false, entry.second});
     }
     const bool hasGsRewrites = std::any_of(tls.GsTraps.begin(), tls.GsTraps.end(), [](const GsTrap& trap) { return trap.Rewrite.has_value(); });
     std::uint64_t gsKeySlot = 0;
@@ -840,7 +842,7 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
             code.Rip({0xff, 0x15}, metaRva + static_cast<std::uint32_t>(MetaRegisterSlot));
         }
         for (const auto& import : input.TlsImports) {
-            code.Rip({0x48, 0x8b, 0x05}, metaRva + static_cast<std::uint32_t>(tlsImportSlots.at(import.Symbol)));
+            code.Rip({0x48, 0x8b, 0x05}, metaRva + static_cast<std::uint32_t>(tlsImportSlots.at(import.Symbol).first));
             if (import.Module) code.Emit({0x48, 0x8b, 0x00});
             else code.Emit({0x48, 0x8b, 0x40, 0x08});
             if (import.Addend != 0) {
@@ -942,10 +944,17 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
     PadTo(rebase, 8);
 
     std::vector<std::uint8_t> bind;
-    bind.push_back(BindOpcodeSetDylibSpecialImm | BindSpecialDylibFlatLookup);
     bind.push_back(BindOpcodeSetTypeImm | BindTypePointer);
     for (const auto& item : input.Binds) {
         const auto [segment, offset] = Locate(segments, item.Rva, 8);
+        const auto dylib = item.Provider.empty() ? input.Dylibs.end() : std::find(input.Dylibs.begin(), input.Dylibs.end(), item.Provider);
+        if (item.Provider.empty()) bind.push_back(BindOpcodeSetDylibSpecialImm | BindSpecialDylibFlatLookup);
+        else if (dylib == input.Dylibs.end()) throw Domain::RelinkerException("Mach-O bind provider is not a loaded dependency: " + item.Provider);
+        else if (const auto ordinal = static_cast<std::uint64_t>(dylib - input.Dylibs.begin()) + 2; ordinal < 16) bind.push_back(static_cast<std::uint8_t>(BindOpcodeSetDylibOrdinalImm | ordinal));
+        else {
+            bind.push_back(BindOpcodeSetDylibOrdinalUleb);
+            AppendUleb(bind, ordinal);
+        }
         bind.push_back(item.Weak ? BindOpcodeSetSymbolTrailingFlagsImm | BindSymbolFlagsWeakImport : BindOpcodeSetSymbolTrailingFlagsImm);
         AppendCString(bind, item.Symbol);
         bind.push_back(BindOpcodeSetAddendSleb);
