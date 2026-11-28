@@ -28,8 +28,8 @@ static void* APS5_VABI Wait(void* opaque) {
 
 static void WaitUntilReleased(Pthread thread) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-    int priority = 0;
-    while (scePthreadGetprio(thread, &priority) != SCE_KERNEL_ERROR_ESRCH) {
+    char name[64];
+    while (pthread_getname_np_nid_postfix(thread, name) != GUEST_ESRCH) {
         Require(std::chrono::steady_clock::now() < deadline);
         std::this_thread::yield();
     }
