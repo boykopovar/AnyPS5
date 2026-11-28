@@ -277,6 +277,7 @@ static void CheckInvalidHandleRejectionOnCancel(const std::string& directory, co
 
     const SceFiosOp completedOp = sceFiosFileGetSize(nullptr, file.c_str());
     REQUIRE(completedOp > 0);
+    REQUIRE(sceFiosOpWait(completedOp) == SCE_FIOS_OK);
     REQUIRE(sceFiosOpIsDone(completedOp));
     REQUIRE(!sceFiosOpIsCancelled(completedOp));
     REQUIRE(sceFiosOpGetError(completedOp) == SCE_FIOS_OK);
