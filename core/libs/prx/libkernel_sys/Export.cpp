@@ -433,6 +433,9 @@ int RenamePath(const std::filesystem::path& source, const std::filesystem::path&
 
     error.clear();
     fs::rename(source, destination, error);
+#ifndef _WIN32
+    if (error == std::errc::file_exists) return GuestEnotempty;
+#endif
     return error ? FilesystemError(error) : 0;
 }
 }
