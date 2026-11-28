@@ -8,6 +8,8 @@
 #include <functional>
 #include <regex>
 #include <mutex>
+#include <limits>
+#include <unordered_map>
 #include <vector>
 #include <utility>
 #include <string>
@@ -176,22 +178,117 @@ void APS5_VABI _ZSt14_Throw_C_errori_nid_postfix(int code) {
     }
 }
 
+namespace {
+
+std::mutex& ExplicitNativeLocksMutex_nid_no_patch() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+std::unordered_map<std::FILE*, std::uint32_t>& ExplicitNativeLocks_nid_no_patch() {
+    static std::unordered_map<std::FILE*, std::uint32_t> locks;
+    return locks;
+}
+
+void LockNative_nid_no_patch(std::FILE* native) {
+#ifdef _WIN32
+    _lock_file(native);
+#else
+    flockfile(native);
+#endif
+}
+
+void UnlockNative_nid_no_patch(std::FILE* native) {
+#ifdef _WIN32
+    _unlock_file(native);
+#else
+    funlockfile(native);
+#endif
+}
+
+}
+
+void NoteExplicitNativeLock_nid_no_patch(std::FILE* native) {
+    std::lock_guard<std::mutex> lock(ExplicitNativeLocksMutex_nid_no_patch());
+    auto& count = ExplicitNativeLocks_nid_no_patch()[native];
+    if (count == std::numeric_limits<std::uint32_t>::max()) throw std::overflow_error("FileStream: explicit lock count overflow");
+    ++count;
+}
+
+bool ForgetExplicitNativeLock_nid_no_patch(std::FILE* native) {
+    std::lock_guard<std::mutex> lock(ExplicitNativeLocksMutex_nid_no_patch());
+    auto& locks = ExplicitNativeLocks_nid_no_patch();
+    const auto found = locks.find(native);
+    if (found == locks.end() || found->second == 0) return false;
+    if (--found->second == 0) locks.erase(found);
+    return true;
+}
+
+void ReleaseExplicitNativeLocks_nid_no_patch(std::FILE* native) {
+    std::uint32_t held = 0;
+    {
+        std::lock_guard<std::mutex> lock(ExplicitNativeLocksMutex_nid_no_patch());
+        auto& locks = ExplicitNativeLocks_nid_no_patch();
+        const auto found = locks.find(native);
+        if (found == locks.end()) return;
+        held = found->second;
+        locks.erase(found);
+    }
+    for (; held > 0; --held) UnlockNative_nid_no_patch(native);
+}
+
+std::uint32_t SuspendExplicitNativeLocks_nid_no_patch(std::FILE* native) {
+    std::lock_guard<std::mutex> lock(ExplicitNativeLocksMutex_nid_no_patch());
+    auto& locks = ExplicitNativeLocks_nid_no_patch();
+    const auto found = locks.find(native);
+    return found == locks.end() ? 0 : std::exchange(found->second, 0);
+}
+
+void ResumeExplicitNativeLocks_nid_no_patch(std::FILE* native, std::uint32_t held) {
+    if (held == 0) return;
+    std::lock_guard<std::mutex> lock(ExplicitNativeLocksMutex_nid_no_patch());
+    auto& count = ExplicitNativeLocks_nid_no_patch()[native];
+    if (count > std::numeric_limits<std::uint32_t>::max() - held) throw std::overflow_error("FileStream: explicit lock count overflow");
+    count += held;
+}
+
+void DropIdleExplicitNativeLocks_nid_no_patch(std::FILE* native) {
+    std::lock_guard<std::mutex> lock(ExplicitNativeLocksMutex_nid_no_patch());
+    auto& locks = ExplicitNativeLocks_nid_no_patch();
+    const auto found = locks.find(native);
+    if (found != locks.end() && found->second == 0) locks.erase(found);
+}
+
+int CloseNativeReleasingExplicitLocks_nid_no_patch(std::FILE* native) {
+    ReleaseExplicitNativeLocks_nid_no_patch(native);
+    return std::fclose(native);
+}
+
 void APS5_VABI _Lockfilelock_nid_postfix(FileStream* stream) {
     if (stream == nullptr) throw std::invalid_argument("_Lockfilelock: null stream");
-#ifdef _WIN32
-    _lock_file(GetStreamHandle(stream));
-#else
-    flockfile(GetStreamHandle(stream));
-#endif
+    auto gate = PinFileStreamIfValid_nid_no_patch(stream);
+    if (!gate) { errno = 9; throw std::runtime_error("_Lockfilelock: closed stream"); }
+    gate->lock();
+    try {
+        std::FILE* const native = stream->RawHandle_nid_no_patch();
+        if (!native) throw std::runtime_error("_Lockfilelock: closed stream");
+        NoteExplicitNativeLock_nid_no_patch(native);
+        LockNative_nid_no_patch(native);
+    } catch (...) {
+        gate->unlock();
+        UnpinFileStream_nid_no_patch(stream);
+        throw;
+    }
 }
 
 void APS5_VABI _Unlockfilelock_nid_postfix(FileStream* stream) {
     if (stream == nullptr) throw std::invalid_argument("_Unlockfilelock: null stream");
-#ifdef _WIN32
-    _unlock_file(GetStreamHandle(stream));
-#else
-    funlockfile(GetStreamHandle(stream));
-#endif
+    auto gate = stream->GatePtr_nid_no_patch();
+    if (!gate) throw std::runtime_error("_Unlockfilelock: stream has no gate");
+    std::FILE* const native = stream->RawHandle_nid_no_patch();
+    if (native && ForgetExplicitNativeLock_nid_no_patch(native)) UnlockNative_nid_no_patch(native);
+    gate->unlock();
+    UnpinFileStream_nid_no_patch(stream);
 }
 
 void APS5_VABI flockfile_nid_postfix(FileStream* stream) {
@@ -206,11 +303,42 @@ void APS5_VABI funlockfile_nid_postfix(FileStream* stream) {
 
 int APS5_VABI ftrylockfile_nid_postfix(FileStream* stream) {
     if (stream == nullptr) throw std::invalid_argument("ftrylockfile: null stream");
+    auto gate = PinFileStreamIfValid_nid_no_patch(stream);
+    if (!gate) { errno = 9; throw std::runtime_error("ftrylockfile: closed stream"); }
+    if (!gate->try_lock()) {
+        UnpinFileStream_nid_no_patch(stream);
+        return -1;
+    }
+    std::FILE* const native = stream->RawHandle_nid_no_patch();
+    bool nativeOk;
+    try {
+        if (!native) throw std::runtime_error("ftrylockfile: closed stream");
+        else {
 #ifdef _WIN32
-    return TryEnterCriticalSection(&reinterpret_cast<UcrtStream*>(GetStreamHandle(stream))->lock) ? 0 : -1;
+            nativeOk = TryEnterCriticalSection(&reinterpret_cast<UcrtStream*>(native)->lock);
 #else
-    return ftrylockfile(GetStreamHandle(stream)) == 0 ? 0 : -1;
+            nativeOk = ftrylockfile(native) == 0;
 #endif
+        }
+    } catch (...) {
+        gate->unlock();
+        UnpinFileStream_nid_no_patch(stream);
+        throw;
+    }
+    if (!nativeOk) {
+        gate->unlock();
+        UnpinFileStream_nid_no_patch(stream);
+        return -1;
+    }
+    try {
+        NoteExplicitNativeLock_nid_no_patch(native);
+    } catch (...) {
+        UnlockNative_nid_no_patch(native);
+        gate->unlock();
+        UnpinFileStream_nid_no_patch(stream);
+        throw;
+    }
+    return 0;
 }
 
 std::uint64_t APS5_VABI _Stoul_nid_postfix(const char* str, char** endptr, int base) {

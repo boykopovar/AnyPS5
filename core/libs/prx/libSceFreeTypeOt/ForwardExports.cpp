@@ -130,6 +130,11 @@ std::uint64_t APS5_VABI FT_Get_First_CharForward_nid_no_patch(FreeType::GuestFac
 }
 APS5_EXPORT("qoysbJFu5sI", FT_Get_First_CharForward_nid_no_patch);
 
+const char* APS5_VABI FT_Get_Font_FormatForward_nid_no_patch(FreeType::GuestFaceRec* face) {
+    return FT_Get_Font_Format_nid_postfix(face);
+}
+APS5_EXPORT("N1S26TrBLLk", FT_Get_Font_FormatForward_nid_no_patch);
+
 int APS5_VABI FT_Get_GaspForward_nid_no_patch(FreeType::GuestFaceRec* face, std::uint32_t ppem) {
     return FT_Get_Gasp_nid_postfix(face, ppem);
 }

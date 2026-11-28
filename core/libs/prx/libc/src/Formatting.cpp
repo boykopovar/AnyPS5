@@ -670,7 +670,8 @@ int ScanGuest(const char* buffer, const char* format, bool secure, NextPointer n
 template <typename NextPointer, typename NextCapacity>
 int ScanGuestStream(FileStream* stream, const char* format, NextPointer nextPointer, NextCapacity nextCapacity, bool secure = true) {
     if (stream == nullptr || format == nullptr) return EOF;
-    if (!stream->IsOpen()) { errno = 9; return EOF; }
+    const FileStreamOperation_nid_no_patch operation(stream);
+    if (!operation.Open()) { errno = 9; return EOF; }
     flockfile_nid_postfix(stream);
     struct Unlock {
         FileStream* stream;
@@ -733,7 +734,8 @@ int APS5_VABI vasprintf_nid_postfix(char** destination, const char* format, VaLi
 }
 
 int APS5_VABI vfprintf_nid_postfix(FileStream* stream, const char* format, VaList* args) {
-    if (stream && !stream->IsOpen()) { errno = 9; return -1; }
+    const FileStreamOperation_nid_no_patch operation(stream);
+    if (stream && !operation.Open()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
     stream->Orientation(-1);
     if (!stream->SwitchToWriting()) return -1;
@@ -788,7 +790,8 @@ int APS5_VABI fscanf_nid_postfix(FileStream* stream, const char* format, ...) {
         return result;
     }
 #endif
-    if (stream && !stream->IsOpen()) { errno = 9; return -1; }
+    const FileStreamOperation_nid_no_patch operation(stream);
+    if (stream && !operation.Open()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
     stream->Orientation(-1);
     if (!stream->SwitchToReading()) return EOF;
@@ -813,7 +816,8 @@ int APS5_VABI fscanf_nid_postfix(FileStream* stream, const char* format, ...) {
 #ifdef _WIN32
 
 int APS5_VABI printf_nid_postfix(const char* format, ...) {
-    if (!_Stdout_nid_postfix.IsOpen()) { errno = 9; return -1; }
+    const FileStreamOperation_nid_no_patch operation(&_Stdout_nid_postfix);
+    if (!operation.Open()) { errno = 9; return -1; }
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
     _Stdout_nid_postfix.Orientation(-1);
@@ -823,7 +827,8 @@ int APS5_VABI printf_nid_postfix(const char* format, ...) {
 }
 
 int APS5_VABI libc_printf_nid_postfix(const char* format, ...) {
-    if (!_Stdout_nid_postfix.IsOpen()) { errno = 9; return -1; }
+    const FileStreamOperation_nid_no_patch operation(&_Stdout_nid_postfix);
+    if (!operation.Open()) { errno = 9; return -1; }
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
     _Stdout_nid_postfix.Orientation(-1);
@@ -851,7 +856,8 @@ int APS5_VABI sprintf_nid_postfix(char* buffer, const char* format, ...) {
 #else
 
 int APS5_VABI printf_nid_postfix(const char* format, ...) {
-    if (!_Stdout_nid_postfix.IsOpen()) { errno = 9; return -1; }
+    const FileStreamOperation_nid_no_patch operation(&_Stdout_nid_postfix);
+    if (!operation.Open()) { errno = 9; return -1; }
     std::va_list args;
     va_start(args, format);
     _Stdout_nid_postfix.Orientation(-1);
@@ -861,7 +867,8 @@ int APS5_VABI printf_nid_postfix(const char* format, ...) {
 }
 
 int APS5_VABI libc_printf_nid_postfix(const char* format, ...) {
-    if (!_Stdout_nid_postfix.IsOpen()) { errno = 9; return -1; }
+    const FileStreamOperation_nid_no_patch operation(&_Stdout_nid_postfix);
+    if (!operation.Open()) { errno = 9; return -1; }
     std::va_list args;
     va_start(args, format);
     _Stdout_nid_postfix.Orientation(-1);
@@ -941,7 +948,8 @@ int APS5_VABI sscanf_s_nid_postfix(const char* buffer, const char* format, ...) 
 #endif
 
 int APS5_VABI vprintf_nid_postfix(const char* str, VaList* c) {
-    if (!_Stdout_nid_postfix.IsOpen()) { errno = 9; return -1; }
+    const FileStreamOperation_nid_no_patch operation(&_Stdout_nid_postfix);
+    if (!operation.Open()) { errno = 9; return -1; }
 #ifdef _WIN32
     _Stdout_nid_postfix.Orientation(-1);
     return LibcDetail::PrintWindows(str, c);
@@ -1028,7 +1036,8 @@ int APS5_VABI vsnprintf_s_nid_postfix(char* buffer, size_t size, const char* for
 
 static int WriteSecure(FileStream* stream, const char* format, const void* args) {
     if (stream == nullptr || format == nullptr || args == nullptr) return -1;
-    if (!stream->IsOpen()) { errno = 9; return -1; }
+    const FileStreamOperation_nid_no_patch operation(stream);
+    if (!operation.Open()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
     stream->Orientation(-1);
     if (!stream->SwitchToWriting()) return -1;
@@ -1142,7 +1151,8 @@ int APS5_VABI printf_s_nid_postfix(const char* format, ...) {
 #endif
 
 int APS5_VABI puts_nid_postfix(const char* s) {
-    if (!_Stdout_nid_postfix.IsOpen()) { errno = 9; return -1; }
+    const FileStreamOperation_nid_no_patch operation(&_Stdout_nid_postfix);
+    if (!operation.Open()) { errno = 9; return -1; }
     auto* native = GetNativeStream(&_Stdout_nid_postfix);
     _Stdout_nid_postfix.Orientation(-1);
     if (!_Stdout_nid_postfix.SwitchToWriting()) return EOF;
@@ -1161,7 +1171,8 @@ int APS5_VABI vfscanf_nid_postfix(FileStream* stream, const char* format, VaList
         return ScanGuestStream(stream, format, [&] { return arguments.Next<void*>(); }, [] { return 0u; }, false);
     }
 #endif
-    if (stream && !stream->IsOpen()) { errno = 9; return -1; }
+    const FileStreamOperation_nid_no_patch operation(stream);
+    if (stream && !operation.Open()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
     stream->Orientation(-1);
     if (!stream->SwitchToReading()) return EOF;

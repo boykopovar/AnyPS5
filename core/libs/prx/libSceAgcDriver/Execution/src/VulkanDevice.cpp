@@ -3196,6 +3196,26 @@ bool OpportunisticReap() {
     return enabled;
 }
 
+constexpr std::uint64_t SettledLabelFlips = 3;
+
+bool LabelMappingSettled(const GuestAllocations::Range& range) {
+    struct FirstLabel {
+        std::uint64_t serial;
+        std::uint64_t flip;
+    };
+    static std::mutex mutex;
+    static std::unordered_map<std::uint64_t, FirstLabel> labelled;
+    const auto flip = Graphics::StorageTexture::FlipSerial();
+    std::lock_guard lock(mutex);
+    if (labelled.size() >= 4096) labelled.clear();
+    const auto [entry, inserted] = labelled.try_emplace(range.allocationAddress, FirstLabel{range.backingSerial, flip});
+    if (inserted || entry->second.serial != range.backingSerial) {
+        entry->second = FirstLabel{range.backingSerial, flip};
+        return false;
+    }
+    return flip - entry->second.flip >= SettledLabelFlips;
+}
+
 }
 
 bool VulkanDevice::StoreIdleResults(bool reapFirst, const std::function<bool()>& stop) {
@@ -3320,11 +3340,12 @@ int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::by
     const auto* import = Graphics::ExistingHostImportFor(context, address, bytes.size());
     std::shared_ptr<Graphics::HostImport> unregistered;
     if (import == nullptr) {
+        std::shared_ptr<const GuestAllocations::Range> guestRange;
         const bool syncGuest = syncUnimported && [&] {
-            const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(static_cast<std::uintptr_t>(address), true);
-            return range != nullptr && range->address < address + bytes.size();
+            guestRange = GuestAllocations::GuestAllocationsLookup_nid_postfix(static_cast<std::uintptr_t>(address), true);
+            return guestRange != nullptr && guestRange->address < address + bytes.size();
         }();
-        if (syncGuest && !Graphics::HostImportCovers(context, address, bytes.size())) {
+        if (syncGuest && !Graphics::HostImportCovers(context, address, bytes.size()) && !LabelMappingSettled(*guestRange)) {
             import = Graphics::HostImportFor(context, address, bytes.size(), Graphics::ImportRequester::Label);
             if (import == nullptr) return unimported();
         }
@@ -4978,7 +4999,7 @@ ShaderRecompiler::SpirvTarget VulkanDevice::buildTarget() const {
     target.robustBufferAccess2 = state->robustBufferAccess2;
     target.exactRobustLoads = state->exactRobustLoads;
     target.waveLdsMemoryBarriers = !state->subgroupControlBarriers;
-    target.largePixelFunctionLdsBuffer = state->driverId == VK_DRIVER_ID_NVIDIA_PROPRIETARY || state->driverId == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS;
+    target.largePixelFunctionLdsBuffer = state->driverId == VK_DRIVER_ID_NVIDIA_PROPRIETARY || state->driverId == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS || state->driverId == VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA;
     target.pixelFunctionStorageDwords = state->pixelFunctionStorageDwords;
     target.deviceScopeLdsMemoryBarriers = !state->workgroupScopeFences;
     target.ldsLockFences = state->ldsLockFences;
@@ -4986,6 +5007,8 @@ ShaderRecompiler::SpirvTarget VulkanDevice::buildTarget() const {
     target.meshWindowBuffer = state->driverId == VK_DRIVER_ID_NVIDIA_PROPRIETARY && std::getenv("APS5_NO_MESH_WINDOW_BUFFER") == nullptr;
     target.meshInlineFunctions = state->driverId == VK_DRIVER_ID_NVIDIA_PROPRIETARY && std::getenv("APS5_NO_MESH_INLINE_FUNCTIONS") == nullptr;
     target.spannedShuffleThroughMemory = state->driverId == VK_DRIVER_ID_NVIDIA_PROPRIETARY && std::getenv("APS5_NO_SPANNED_SHUFFLE_EXCHANGE") == nullptr;
+    target.spannedUnreachableStays = std::getenv("APS5_SPANNED_UNREACHABLE_STAYS") != nullptr;
+    target.spannedUnreachableVerify = std::getenv("APS5_VERIFY_SPANNED_UNREACHABLE_STAYS") != nullptr;
     target.srgbDecodeFormats = state->srgbDecodeFormats & ~state->srgbCopyFormats;
     target.maxImageArrayLayers = limits.maxImageArrayLayers;
     target.vertexSubgroups = (state->subgroup.supportedStages & VK_SHADER_STAGE_VERTEX_BIT) != 0;
@@ -5280,7 +5303,7 @@ std::vector<std::uint32_t> VulkanDevice::DrawContentKey(const Graphics::State& g
     return Graphics::DrawResourceContentKey(state->context, graphics, draw, shaders);
 }
 
-void VulkanDevice::Draw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipe, const DrawTraceContext* trace, std::uint64_t shape, const std::vector<std::uint32_t>* contentKey) {
+Graphics::DrawResult VulkanDevice::Draw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipe, const DrawTraceContext* trace, std::uint64_t shape, const std::vector<std::uint32_t>* contentKey) {
     startJournalReplay();
     for (const auto& shader : shaders) {
         require(shader.program != nullptr, "missing compiled shader");
@@ -5291,8 +5314,9 @@ void VulkanDevice::Draw(const Graphics::State& graphics, const Pm4::DrawParamete
     static const bool traceDraws = std::getenv("APS5_TRACE_DRAWS") != nullptr;
     if (traceDraws) APS5_LOG_OUT("VulkanDevice::Draw indices=%u instances=%u indexSize=%u address=0x%llx shaders=%zu colorTarget=%u", draw.indexCount, draw.instanceCount, draw.indexSize, static_cast<unsigned long long>(draw.indexAddress), shaders.size(), static_cast<unsigned>(graphics.hasColorTarget));
     const auto context = graphicsContext();
-    Graphics::Draw(context, graphics, draw, shaders, snapshots, recipe, trace, shape, contentKey);
+    const auto result = Graphics::Draw(context, graphics, draw, shaders, snapshots, recipe, trace, shape, contentKey);
     if (traceDraws) APS5_LOG_CHARS_OUT("VulkanDevice::Draw complete");
+    return result;
 }
 
 bool VulkanDevice::DrawInputsInPlace() const {
