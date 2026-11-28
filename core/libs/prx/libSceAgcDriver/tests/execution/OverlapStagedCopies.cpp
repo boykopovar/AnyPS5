@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -143,6 +144,50 @@ void ReadRound(std::uint32_t round) {
     }
 }
 
+void SharedReadOnlyInputRun() {
+    using AgcDriver::Graphics::GuestBufferMemory;
+    using AgcDriver::Graphics::Recorder;
+    using AgcDriver::Graphics::RuntimeSwitch;
+    namespace RuntimeSwitches = AgcDriver::Graphics::RuntimeSwitches;
+    struct RestorePassStaging {
+        bool enabled;
+        ~RestorePassStaging() { RuntimeSwitches::Assign(RuntimeSwitch::PassStaging, enabled); }
+    } restore{RuntimeSwitches::Set(RuntimeSwitch::PassStaging)};
+    RuntimeSwitches::Assign(RuntimeSwitch::PassStaging, true);
+
+    auto* input = NewBlock();
+    const std::array outputs{NewBlock(), NewBlock()};
+    for (std::uint32_t lane = 0; lane < Lanes; ++lane) input[lane] = lane + 19u;
+    const auto source = reinterpret_cast<std::uintptr_t>(input);
+    const auto shader = reinterpret_cast<std::uintptr_t>(CopyCode.data());
+    std::vector<std::uint32_t> words{
+        0xc0027600u, 0x20cu, static_cast<std::uint32_t>(shader >> 8u), static_cast<std::uint32_t>(shader >> 40u),
+        0xc0037600u, 0x207u, Lanes, 1u, 1u,
+        0xc0017600u, 0x213u, 8u << 1u,
+    };
+    for (auto* output : outputs) {
+        const auto target = reinterpret_cast<std::uintptr_t>(output);
+        words.insert(words.end(), {0xc0087600u, 0x240u,
+            static_cast<std::uint32_t>(source), static_cast<std::uint32_t>((source >> 32u) & 0xffffu), BufferBytes, 0x31016facu,
+            static_cast<std::uint32_t>(target), static_cast<std::uint32_t>((target >> 32u) & 0xffffu), BufferBytes, 0x31016facu,
+            0xc0031500u, 1u, 1u, 1u, 0x8041u});
+    }
+    const auto before = Recorder::OverlapCounts().overlapped;
+    const auto shared = GuestBufferMemory::PassStagingTotals().shared;
+    Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
+    check(sceAgcDriverSubmitAcb(ComputeQueue, &packet) == 0, "shared read-only input dispatch submission failed");
+    AgcDriverWaitIdle_nid_postfix();
+    check(Recorder::OverlapCounts().overlapped == before + 1, "dispatches reading the same input did not join one run");
+    check(GuestBufferMemory::PassStagingTotals().shared == shared, "unordered compute dispatches acquired a shared pass shadow");
+    for (auto* output : outputs) {
+        AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(output), BufferBytes);
+        for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
+            check(output[lane] == lane + 19u, "overlapped dispatch lost the shared read-only input");
+        }
+    }
+    std::puts("overlap staged copies: distinct compute builds shared an input and retained both results without sharing pass staging");
+}
+
 void StagedRun(std::uint32_t round) {
     std::vector<std::uint32_t> words{0xc0037600u, 0x207u, Lanes, 1u, 1u, 0xc0017600u, 0x213u, 4u << 1u};
     for (std::size_t build = 0; build < StoreCodes.size(); ++build) {
@@ -257,6 +302,7 @@ int main() {
         Target = NewBlock();
         for (std::uint32_t round = 1; round <= 3; ++round) ReadRound(round);
         std::puts("overlap staged reads: a later unordered dispatch read the earlier one's staged output");
+        SharedReadOnlyInputRun();
 
         LibcRunShutdown_nid_postfix();
         std::puts("overlap staged copies tests passed");
