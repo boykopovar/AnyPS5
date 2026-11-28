@@ -113,11 +113,11 @@ bool ParseSignedInt64(const char*& buf, std::int64_t& out) {
     return true;
 }
 
-bool IsLeapYear(int year) {
+bool IsLeapYear(std::int64_t year) {
     return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
 }
 
-int CalculateDayOfYear(int year, int mon, int mday) {
+int CalculateDayOfYear(std::int64_t year, int mon, int mday) {
     constexpr int daysBeforeMonth[2][12] = {
         {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334},
         {0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335},
@@ -126,11 +126,11 @@ int CalculateDayOfYear(int year, int mon, int mday) {
     return daysBeforeMonth[leap ? 1 : 0][mon] + (mday - 1);
 }
 
-int CalculateDayOfWeek(int y, int m, int d) {
+int CalculateDayOfWeek(std::int64_t y, int m, int d) {
     constexpr int t[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
     if (m < 3) y -= 1;
-    const int w = (y + y / 4 - y / 100 + y / 400 + t[m - 1] + d) % 7;
-    return w < 0 ? w + 7 : w;
+    y = (y % 400 + 400) % 400;
+    return static_cast<int>((y + y / 4 - y / 100 + y / 400 + t[m - 1] + d) % 7);
 }
 
 std::int64_t DaysFromJan1(int year) {
@@ -159,7 +159,7 @@ bool ApplyDaysOffset(int baseYear, int daysOffset, int wday, GuestTm& tm) {
     tm.tm_year = static_cast<int>(tmYear);
     tm.tm_mon = month - 1;
     tm.tm_mday = mday;
-    tm.tm_yday = CalculateDayOfYear(static_cast<int>(civilYear), tm.tm_mon, mday);
+    tm.tm_yday = CalculateDayOfYear(civilYear, tm.tm_mon, mday);
     tm.tm_wday = wday;
     return true;
 }
@@ -189,6 +189,7 @@ struct ParseState {
     bool hasMday = false;
     bool hasWday = false;
     bool hasYday = false;
+    bool hasEpoch = false;
 };
 
 const char* ParseInternal(const char* buf, const char* format, GuestTm& tm, ParseState& state, int depth) {
@@ -435,14 +436,15 @@ const char* ParseInternal(const char* buf, const char* format, GuestTm& tm, Pars
             case 's': {
                 std::int64_t epoch = 0;
                 if (!ParseSignedInt64(b, epoch)) return nullptr;
-                if (localtime_r_nid_postfix(&epoch, &tm) == nullptr) return nullptr;
+                GuestTm epochTm{};
+                if (localtime_r_nid_postfix(&epoch, &epochTm) == nullptr) return nullptr;
+                if (epochTm.tm_year > std::numeric_limits<int>::max() - 1900 ||
+                    epochTm.tm_year < std::numeric_limits<int>::min() + 1900) {
+                    return nullptr;
+                }
+                tm = epochTm;
                 state = {};
-                state.yearFull = tm.tm_year + 1900;
-                state.hasYear = true;
-                state.hasMon = true;
-                state.hasMday = true;
-                state.hasWday = true;
-                state.hasYday = true;
+                state.hasEpoch = true;
                 break;
             }
             case 'G': {
@@ -509,15 +511,18 @@ const char* ParseInternal(const char* buf, const char* format, GuestTm& tm, Pars
             state.hasYear = true;
         }
 
-        if (state.hasYear && state.hasMon && state.hasMday) {
-            const int fullYear = tm.tm_year + 1900;
+        const bool hasEffectiveYear = state.hasYear || state.hasEpoch;
+        const bool hasUpdatedCalendar =
+            state.hasEpoch && (state.hasMon || state.hasMday || (state.hasYear && state.weekBase < 0 && state.isoWeek <= 0));
+        if ((state.hasYear && state.hasMon && state.hasMday) || hasUpdatedCalendar) {
+            const std::int64_t fullYear = static_cast<std::int64_t>(tm.tm_year) + 1900;
             if (!state.hasYday) {
                 tm.tm_yday = CalculateDayOfYear(fullYear, tm.tm_mon, tm.tm_mday);
             }
             if (!state.hasWday) {
                 tm.tm_wday = CalculateDayOfWeek(fullYear, tm.tm_mon + 1, tm.tm_mday);
             }
-        } else if (state.hasYear && !state.hasYday && !(state.hasMon && state.hasMday) && state.weekBase >= 0) {
+        } else if (hasEffectiveYear && !state.hasYday && !(state.hasMon && state.hasMday) && state.weekBase >= 0) {
             const int fullYear = tm.tm_year + 1900;
             const int fwo = CalculateDayOfWeek(fullYear, 1, 1);
             if (state.weekNumber == 0 && fwo == state.weekBase) {
@@ -536,7 +541,7 @@ const char* ParseInternal(const char* buf, const char* format, GuestTm& tm, Pars
                 return nullptr;
             }
         } else if (state.isoWeek > 0 && !state.hasYday && !(state.hasMon && state.hasMday) &&
-                   (state.hasIsoYear || state.isoYearTwoDigit >= 0 || state.hasYear)) {
+                   (state.hasIsoYear || state.isoYearTwoDigit >= 0 || hasEffectiveYear)) {
             const int isoYear = state.hasIsoYear
                 ? state.isoYearFull
                 : (state.isoYearTwoDigit >= 0 ? ResolveTwoDigitYear(state.isoYearTwoDigit, state.century) : tm.tm_year + 1900);

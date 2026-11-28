@@ -350,6 +350,24 @@ static void TestWeekNumbers() {
     rem = strptime_nid_postfix("53", "%W", &tmStandalone);
     Require(rem != nullptr && *rem == '\0');
 
+    GuestTm tmYearZero{};
+    rem = strptime_nid_postfix("0000-01-0", "%Y-%U-%w", &tmYearZero);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmYearZero.tm_year == -1900);
+    Require(tmYearZero.tm_mon == 0);
+    Require(tmYearZero.tm_mday == 2);
+    Require(tmYearZero.tm_yday == 1);
+    Require(tmYearZero.tm_wday == 0);
+
+    GuestTm tmYearZeroWeek0{};
+    rem = strptime_nid_postfix("0000-00-6", "%Y-%U-%w", &tmYearZeroWeek0);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmYearZeroWeek0.tm_year == -1900);
+    Require(tmYearZeroWeek0.tm_mon == 0);
+    Require(tmYearZeroWeek0.tm_mday == 1);
+    Require(tmYearZeroWeek0.tm_yday == 0);
+    Require(tmYearZeroWeek0.tm_wday == 6);
+
     Require(strptime_nid_postfix("2023-00-0", "%Y-%U-%w", &tmU) == nullptr);
     Require(strptime_nid_postfix("2026-00-1", "%Y-%U-%w", &tmU) == nullptr);
     Require(strptime_nid_postfix("2024-00-1", "%Y-%W-%u", &tmW) == nullptr);
@@ -405,6 +423,15 @@ static void TestIsoWeekDate() {
     rem = strptime_nid_postfix("2026 99 12", "%G %g %V", &tmStandalone);
     Require(rem != nullptr && *rem == '\0');
 
+    GuestTm tmYearZeroIso{};
+    rem = strptime_nid_postfix("0000-W01-1", "%G-W%V-%u", &tmYearZeroIso);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmYearZeroIso.tm_year == -1900);
+    Require(tmYearZeroIso.tm_mon == 0);
+    Require(tmYearZeroIso.tm_mday == 3);
+    Require(tmYearZeroIso.tm_yday == 2);
+    Require(tmYearZeroIso.tm_wday == 1);
+
     Require(strptime_nid_postfix("2026-W00-1", "%G-W%V-%u", &tmPrevYear) == nullptr);
     Require(strptime_nid_postfix("2026-W54-1", "%G-W%V-%u", &tmPrevYear) == nullptr);
 }
@@ -437,6 +464,38 @@ static void TestEpochSeconds() {
     const char* rem = strptime_nid_postfix("1700000000 04", "%s %H", &tmOverride);
     Require(rem != nullptr && *rem == '\0');
     Require(tmOverride.tm_hour == 4);
+
+    GuestTm tmEpochDate{};
+    rem = strptime_nid_postfix("0 2024-06-15", "%s %F", &tmEpochDate);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmEpochDate.tm_year == 124);
+    Require(tmEpochDate.tm_mon == 5);
+    Require(tmEpochDate.tm_mday == 15);
+    Require(tmEpochDate.tm_wday == 6);
+    Require(tmEpochDate.tm_yday == 166);
+
+    GuestTm tmEpochExplicitWday{};
+    rem = strptime_nid_postfix("0 2024-01-01 3", "%s %F %w", &tmEpochExplicitWday);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmEpochExplicitWday.tm_year == 124);
+    Require(tmEpochExplicitWday.tm_wday == 3);
+    Require(tmEpochExplicitWday.tm_yday == 0);
+
+    GuestTm tmEpochExplicitYday{};
+    rem = strptime_nid_postfix("0 2024-06-15 100", "%s %F %j", &tmEpochExplicitYday);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmEpochExplicitYday.tm_year == 124);
+    Require(tmEpochExplicitYday.tm_wday == 6);
+    Require(tmEpochExplicitYday.tm_yday == 99);
+
+    GuestTm tmEpochIsoWeek{};
+    rem = strptime_nid_postfix("0 2024-W02-1", "%s %G-W%V-%u", &tmEpochIsoWeek);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmEpochIsoWeek.tm_year == 124);
+    Require(tmEpochIsoWeek.tm_mon == 0);
+    Require(tmEpochIsoWeek.tm_mday == 8);
+    Require(tmEpochIsoWeek.tm_wday == 1);
+    Require(tmEpochIsoWeek.tm_yday == 7);
 
     GuestTm tmBad{};
     Require(strptime_nid_postfix("99999999999999999999", "%s", &tmBad) == nullptr);
