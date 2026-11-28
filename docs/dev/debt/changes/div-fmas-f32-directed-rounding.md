@@ -1,0 +1,5 @@
+# shader
+
+## change [v_div_fmas_f32]
+
+- [v_div_fmas_f32](../../../core/shader/recompiler/Translation/src/FloatInstructions.cpp) on a device without the Float64 capability keeps the earlier f32 lowering, which differs from the hardware: a result scaled into the denormal range can be one unit in the last place off, in mode 0 with the hardware f32 flush denormal inputs are flushed and a result can become +0 instead of a zero of its sign, and a directed round mode throws. `agc_driver_division` skips its denormal rows there. The PS5's gfx1013 is not measured. With Float64 the translation follows the rule measured on RDNA2 (gfx1036, round to nearest, IEEE=0) and RDNA1 (gfx1010, every f32 round and denormal mode, IEEE 0 and 1, 3872 rows, no mismatch): inputs are kept; the sum, scaled by 2^64 or 2^-64 when VCC is set, is rounded once in the round mode; when bit 1 of the f32 denormal field is clear, a result that is tiny after rounding (below 2^-126 once rounded to 24 bits with an unbounded exponent) becomes a zero of its sign.
