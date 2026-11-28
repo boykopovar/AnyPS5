@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -68,6 +69,33 @@ void TestGettime() {
 
     p = _Gettime_nid_postfix(s, 1, nullptr);
     Require(std::strncmp(p, "GMT", 3) == 0, "null len pointer failed to return field pointer");
+}
+
+template <typename Call>
+bool ThrowsInvalidArgument(Call call) {
+    try {
+        call();
+    } catch (const std::invalid_argument&) {
+        return true;
+    }
+    return false;
+}
+
+void TestGettimeUnmapped() {
+    const auto* unreadable = reinterpret_cast<const char*>(0x10);
+    Require(ThrowsInvalidArgument([&] { _Gettime_nid_postfix(unreadable, 0, nullptr); }), "gettime unmapped string did not throw");
+    int len = -1;
+    Require(ThrowsInvalidArgument([&] { _Gettime_nid_postfix(unreadable, 1, &len); }), "gettime unmapped string with a length did not throw");
+    Require(len == -1, "gettime unmapped string wrote the length");
+
+    auto* unwritable = reinterpret_cast<int*>(0x10);
+    Require(ThrowsInvalidArgument([&] { _Gettime_nid_postfix(":UTC:GMT", 1, unwritable); }), "gettime unmapped length did not throw");
+    Require(ThrowsInvalidArgument([&] { _Gettime_nid_postfix(nullptr, 0, unwritable); }), "gettime null string with an unmapped length did not throw");
+
+    const char* s = "/Jan/January";
+    len = -1;
+    const char* p = _Gettime_nid_postfix(s, 1, &len);
+    Require(p == s + 5 && len == 7, "gettime after the unmapped calls did not return field 1");
 }
 
 void TestSpinLock() {
@@ -191,6 +219,7 @@ void TestGetdst() {
 int main() {
     TestZoneAndTzoff();
     TestGettime();
+    TestGettimeUnmapped();
     TestGetdst();
     TestSpinLock();
     return 0;
