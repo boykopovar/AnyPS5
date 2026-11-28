@@ -118,6 +118,8 @@ public:
     void Commit(std::uint64_t bytes) {
 #ifdef _WIN32
         GuestArena::GuestArenaCommit_nid_postfix(base + committed, bytes - committed, PAGE_READWRITE, Block);
+#elif defined(__APPLE__)
+        Require(GuestWriteWatch::GuestWriteWatchProtect_nid_postfix(base + committed, bytes - committed, PROT_READ | PROT_WRITE) == 0, "sparse heap import: cannot grow the guest heap");
 #else
         Require(mprotect(base + committed, bytes - committed, PROT_READ | PROT_WRITE) == 0, "sparse heap import: cannot grow the guest heap");
 #endif
