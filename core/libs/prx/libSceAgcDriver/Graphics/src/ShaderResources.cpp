@@ -5752,8 +5752,9 @@ std::size_t ShaderResources::addGuestBuffer(std::span<const std::uint32_t> words
     }
     Require(byteSize <= context.limits.maxStorageBufferRange, "shader buffer exceeds descriptor range limit");
     Require(byteSize <= std::numeric_limits<std::size_t>::max(), "shader buffer size exceeds host address space");
-    const auto size = static_cast<std::size_t>(BytesUpToTarget(address, byteSize, descriptor.Stride(), written || byteSize < declaredBytes ? nullptr : target));
-    Require(target == nullptr || !overlap(address, size, target->MemoryAddress(), target->bytes), "shader buffer aliases the render target");
+    const auto declaredSize = BytesUpToTarget(address, declaredBytes, descriptor.Stride(), written ? nullptr : target);
+    Require(target == nullptr || !overlap(address, declaredSize, target->MemoryAddress(), target->bytes), "shader buffer aliases the render target");
+    const auto size = static_cast<std::size_t>(std::min(byteSize, declaredSize));
     // APS5_ALL_BUFFERS_WRITTEN=1: every element is noted as written, as before bufferWritten existed.
     static const bool allWritten = std::getenv("APS5_ALL_BUFFERS_WRITTEN") != nullptr;
     Require(!written || !overlap(address, size, indexAddress, indexBytes), "writable shader buffer aliases the index buffer");
@@ -7238,8 +7239,7 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedR
                 const ShaderRecompiler::ShaderBufferResource descriptor{{words[0], words[1], words[2], words[3]}};
                 const auto address = descriptor.Base48();
                 const bool written = element >= binding.bufferWritten.size() || binding.bufferWritten[element];
-                const auto bounded = ReadBoundBytes(binding, element, descriptor.GetSize(), written);
-                const auto size = BytesUpToTarget(address, bounded, descriptor.Stride(), written || bounded < descriptor.GetSize() ? nullptr : target);
+                const auto size = ReadBoundBytes(binding, element, BytesUpToTarget(address, descriptor.GetSize(), descriptor.Stride(), written ? nullptr : target), written);
                 const auto index = kept->allocations[element];
                 const auto& item = allocations[index];
                 const bool empty = size == 0 || address == 0;
