@@ -50,13 +50,24 @@ struct FacePair {
         Require(FT_Get_Kerning(guest.host, left, right, FT_KERNING_UNSCALED, &actual) == FT_Get_Kerning(oracle, left, right, FT_KERNING_UNSCALED, &reference));
         Require(actual.x == reference.x && actual.y == reference.y && reference.x == expected);
     }
+
+    void FaceMetricsMatch() const {
+        Require(guest.rec.face_flags == oracle->face_flags);
+        Require(guest.rec.bbox.xMin == oracle->bbox.xMin && guest.rec.bbox.yMin == oracle->bbox.yMin);
+        Require(guest.rec.bbox.xMax == oracle->bbox.xMax && guest.rec.bbox.yMax == oracle->bbox.yMax);
+        Require(guest.rec.ascender == oracle->ascender && guest.rec.descender == oracle->descender);
+    }
 };
 
 int main() {
     const auto root = std::filesystem::temp_directory_path() / ("anyps5-freetype-attach-" + std::to_string(std::random_device{}()));
     Require(std::filesystem::create_directory(root));
     std::filesystem::create_directory(root / "app0");
-    const std::string afm = Type1Fixture::Afm();
+    std::string afm = Type1Fixture::Afm();
+    const std::string originalMetrics = "FontBBox 0 0 600 700\nUnderlinePosition -100\nUnderlineThickness 50\nAscender 700\nDescender 0\n";
+    const auto metricsOffset = afm.find(originalMetrics);
+    Require(metricsOffset != std::string::npos);
+    afm.replace(metricsOffset, originalMetrics.size(), "FontBBox -30 -90 620 810\nAscender 790\nDescender -85\n");
     {
         std::ofstream file(root / "app0" / "fixture.afm", std::ios::binary);
         file.write(afm.data(), static_cast<std::streamsize>(afm.size()));
@@ -70,13 +81,18 @@ int main() {
         const std::uint32_t glyph = FT_Get_Char_Index(pair.oracle, 'A');
         Require(glyph != 0 && glyph == FT_Get_Char_Index(pair.guest.host, 'A'));
         pair.KerningMatches(glyph, glyph, 0);
+        pair.FaceMetricsMatch();
         Require(FT_Attach_File_nid_postfix(&pair.guest.rec, "/app0/fixture.afm") == FT_Attach_File(pair.oracle, nativePath.c_str()));
         pair.KerningMatches(glyph, glyph, -50);
+        Require(FT_HAS_KERNING(pair.oracle) && pair.oracle->bbox.yMin == -90);
+        Require(pair.oracle->ascender == 790 && pair.oracle->descender == -85);
+        pair.FaceMetricsMatch();
         Require(FT_Attach_File_nid_postfix(&pair.guest.rec, "/app0/fixture.afm") == FT_Attach_File(pair.oracle, nativePath.c_str()));
         pair.KerningMatches(glyph, glyph, -50);
         Require(FT_Attach_File_nid_postfix(&pair.guest.rec, "/app0/missing.afm") == FT_Err_Cannot_Open_Resource);
         Require(FT_Attach_File(pair.oracle, (root / "app0" / "missing.afm").string().c_str()) == FT_Err_Cannot_Open_Resource);
         Require(FT_Attach_File_nid_postfix(&pair.guest.rec, nullptr) == FT_Attach_File(pair.oracle, nullptr));
+        pair.FaceMetricsMatch();
     }
     {
         FacePair pair(FontFixture::BuildFont(3, {}));

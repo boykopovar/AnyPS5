@@ -13,13 +13,13 @@ layout(push_constant) uniform Parameters {
     uint maxGroups;
     uint maxInstances;
     uint maxTotal;
-    uint unused;
+    uint firstIgnored;
 } parameters;
 
 void main() {
     uint count = parameters.record.words[0];
     uint instances = parameters.record.words[1];
-    uint first = parameters.record.words[2];
+    uint first = parameters.firstIgnored != 0u ? 0u : parameters.record.words[2];
     uint effective = first < parameters.indexCount ? min(count, parameters.indexCount - first) : 0u;
     uint groups = 0u;
     if (effective >= parameters.inputSize && instances != 0u) {

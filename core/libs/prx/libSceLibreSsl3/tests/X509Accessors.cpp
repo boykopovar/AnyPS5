@@ -221,8 +221,10 @@ void CheckSignatureNidInputs() {
     LibreSsl3Certificate certificate {};
     RequireThrows([&] { X509_get_signature_nid_nid_postfix(&certificate); });
     Require(SignatureNid(static_cast<const LibreSslAsn1Object*>(nullptr)) == 0);
-    const LibreSslAsn1Object empty {nullptr, nullptr, 668, 0, nullptr, 0};
+    const LibreSslAsn1Object empty {nullptr, nullptr, 0, 0, nullptr, 0};
     Require(SignatureNid(&empty) == 0);
+    const LibreSslAsn1Object nidOnly {nullptr, nullptr, 668, 0, nullptr, 0};
+    Require(SignatureNid(&nidOnly) == 668);
     const unsigned char garbage[] {0xff, 0xff, 0xff};
     const LibreSslAsn1Object named {nullptr, nullptr, 668, 3, garbage, 0};
     Require(SignatureNid(&named) == 668);

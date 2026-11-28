@@ -106,33 +106,19 @@ void InvertKey(AesKey& key) {
     for (int i = 4; i < 4 * key.rounds; ++i) w[i] = InverseMixWord(w[i]);
 }
 
-bool CopyKeyIn(void* destination, const void* source, std::size_t bytes) {
-    const int saved = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = saved;
-    return copied;
-}
-
-bool CopyKeyOut(void* destination, const void* source, std::size_t bytes) {
-    const int saved = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
-    errno = saved;
-    return copied;
-}
-
 int SetKey(const unsigned char* userKey, int bits, AesKey* key, bool decrypt, const char* function) {
     if (!userKey || !key) return -1;
     const int rounds = RoundsForBits(bits);
     if (!rounds) return -2;
     std::array<unsigned char, 32> keyBytes {};
-    if (!CopyKeyIn(keyBytes.data(), userKey, static_cast<std::size_t>(bits / 8)))
+    if (!GuestCopyIn_nid_no_patch(keyBytes.data(), userKey, static_cast<std::size_t>(bits / 8)))
         throw std::invalid_argument(std::string(function) + ": unreadable user key");
     AesKey expanded;
-    if (!CopyKeyIn(&expanded, key, sizeof(expanded))) throw std::invalid_argument(std::string(function) + ": unreadable key");
+    if (!GuestCopyIn_nid_no_patch(&expanded, key, sizeof(expanded))) throw std::invalid_argument(std::string(function) + ": unreadable key");
     expanded.rounds = rounds;
     ExpandKey(keyBytes.data(), bits, expanded);
     if (decrypt) InvertKey(expanded);
-    if (!CopyKeyOut(key, &expanded, sizeof(expanded))) throw std::invalid_argument(std::string(function) + ": unwritable key");
+    if (!GuestCopyOut_nid_no_patch(key, &expanded, sizeof(expanded))) throw std::invalid_argument(std::string(function) + ": unwritable key");
     return 0;
 }
 
@@ -146,7 +132,7 @@ const AesKey& RequireKey(const AesKey* key, const char* function) {
 AesKey ReadKey(const AesKey* key, const char* function) {
     if (!key) throw std::invalid_argument(std::string(function) + ": null key");
     AesKey copy;
-    if (!CopyKeyIn(&copy, key, sizeof(copy))) throw std::invalid_argument(std::string(function) + ": unreadable key");
+    if (!GuestCopyIn_nid_no_patch(&copy, key, sizeof(copy))) throw std::invalid_argument(std::string(function) + ": unreadable key");
     RequireKey(&copy, function);
     return copy;
 }
@@ -158,11 +144,11 @@ void RequireBlocks(const void* in, const void* out, std::size_t length, const ch
 constexpr std::size_t Chunk = 4096;
 
 void ReadGuest(void* destination, const void* source, std::size_t bytes, const char* function, const char* name) {
-    if (!CopyKeyIn(destination, source, bytes)) throw std::invalid_argument(std::string(function) + ": unreadable " + name);
+    if (!GuestCopyIn_nid_no_patch(destination, source, bytes)) throw std::invalid_argument(std::string(function) + ": unreadable " + name);
 }
 
 void WriteGuest(void* destination, const void* source, std::size_t bytes, const char* function, const char* name) {
-    if (!CopyKeyOut(destination, source, bytes)) throw std::invalid_argument(std::string(function) + ": unwritable " + name);
+    if (!GuestCopyOut_nid_no_patch(destination, source, bytes)) throw std::invalid_argument(std::string(function) + ": unwritable " + name);
 }
 
 void WriteChanged(void* destination, const void* before, const void* after, std::size_t bytes, const char* function, const char* name) {

@@ -41,43 +41,70 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
+#include <cerrno>
 #include <stdexcept>
+
+namespace {
+
+struct ErrnoGuard {
+    int savedErrno = errno;
+    ~ErrnoGuard() { errno = savedErrno; }
+};
+
+}
 
 extern "C" {
 
 void APS5_VABI _ZN3rtc10SentPacketC1Ell_nid_postfix(WebRtcSentPacket* packet, std::int64_t packetId, std::int64_t sendTimeMs) {
     if (!packet)
         throw std::invalid_argument("SentPacket::SentPacket requires a packet");
-    packet->packetId = packetId;
-    packet->sendTimeMs = sendTimeMs;
-    packet->info.includedInFeedback = false;
-    packet->info.includedInAllocation = false;
-    packet->info.isMedia = false;
-    packet->info.packetType = 0;
-    packet->info.protocol = 0;
-    packet->info.hasNetworkId = false;
-    packet->info.packetSizeBytes = 0;
-    packet->info.turnOverheadBytes = 0;
-    packet->info.ipOverheadBytes = 0;
+    WebRtcSentPacket host{};
+    ErrnoGuard guard;
+    if (!GuestWritable_nid_no_patch(packet, sizeof(*packet)) ||
+        !GuestPtr<const WebRtcSentPacket>(packet).CopyIn(host))
+        throw std::invalid_argument("SentPacket::SentPacket requires a packet");
+    host.packetId = packetId;
+    host.sendTimeMs = sendTimeMs;
+    host.info.includedInFeedback = false;
+    host.info.includedInAllocation = false;
+    host.info.isMedia = false;
+    host.info.packetType = 0;
+    host.info.protocol = 0;
+    host.info.hasNetworkId = false;
+    host.info.packetSizeBytes = 0;
+    host.info.turnOverheadBytes = 0;
+    host.info.ipOverheadBytes = 0;
+    if (!GuestPtr<WebRtcSentPacket>(packet).CopyOut(host))
+        throw std::invalid_argument("SentPacket::SentPacket requires a packet");
 }
 
 void APS5_VABI _ZN3rtc10SentPacketC1EllRKNS_10PacketInfoE_nid_postfix(WebRtcSentPacket* packet, std::int64_t packetId, std::int64_t sendTimeMs, const WebRtcPacketInfo* info) {
     if (!packet || !info)
         throw std::invalid_argument("SentPacket::SentPacket requires a packet and info");
-    packet->packetId = packetId;
-    packet->sendTimeMs = sendTimeMs;
-    packet->info.includedInFeedback = info->includedInFeedback;
-    packet->info.includedInAllocation = info->includedInAllocation;
-    packet->info.isMedia = info->isMedia;
-    packet->info.packetType = info->packetType;
-    packet->info.protocol = info->protocol;
-    packet->info.hasNetworkId = info->hasNetworkId;
-    if (info->hasNetworkId)
-        packet->info.networkId = info->networkId;
-    packet->info.packetSizeBytes = info->packetSizeBytes;
-    packet->info.turnOverheadBytes = info->turnOverheadBytes;
-    packet->info.ipOverheadBytes = info->ipOverheadBytes;
+    WebRtcPacketInfo hostInfo{};
+    WebRtcSentPacket host{};
+    ErrnoGuard guard;
+    if (!GuestWritable_nid_no_patch(packet, sizeof(*packet)) ||
+        !GuestPtr<const WebRtcPacketInfo>(info).CopyIn(hostInfo) ||
+        !GuestPtr<const WebRtcSentPacket>(packet).CopyIn(host))
+        throw std::invalid_argument("SentPacket::SentPacket requires a packet and info");
+    host.packetId = packetId;
+    host.sendTimeMs = sendTimeMs;
+    host.info.includedInFeedback = hostInfo.includedInFeedback;
+    host.info.includedInAllocation = hostInfo.includedInAllocation;
+    host.info.isMedia = hostInfo.isMedia;
+    host.info.packetType = hostInfo.packetType;
+    host.info.protocol = hostInfo.protocol;
+    host.info.hasNetworkId = hostInfo.hasNetworkId;
+    if (hostInfo.hasNetworkId)
+        host.info.networkId = hostInfo.networkId;
+    host.info.packetSizeBytes = hostInfo.packetSizeBytes;
+    host.info.turnOverheadBytes = hostInfo.turnOverheadBytes;
+    host.info.ipOverheadBytes = hostInfo.ipOverheadBytes;
+    if (!GuestPtr<WebRtcSentPacket>(packet).CopyOut(host))
+        throw std::invalid_argument("SentPacket::SentPacket requires a packet and info");
 }
 
 }

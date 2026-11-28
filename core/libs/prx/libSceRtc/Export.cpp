@@ -123,10 +123,7 @@ bool ps4Title() {
 bool rangeChecked() {
     static const bool ps4 = ps4Title();
     if (!ps4) return true;
-    const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::uint32_t version;
-    std::memcpy(&version, process + 16, sizeof(version));
-    return version >= RANGE_CHECKED_SDK_VERSION;
+    return ApplicationCompiledSdkVersion() >= RANGE_CHECKED_SDK_VERSION;
 }
 
 std::uint64_t currentTick(std::size_t clock = 0) {

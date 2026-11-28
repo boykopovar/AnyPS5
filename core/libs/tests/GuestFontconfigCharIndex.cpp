@@ -68,6 +68,10 @@ std::vector<unsigned char> SymbolOnlyFont(std::uint32_t codepoint, int width) {
 
 int main() {
     Require(FcFreeTypeCharIndex(nullptr, 'A') == 0);
+    Require(FcFreeTypeCharIndex(reinterpret_cast<FreeType::GuestFaceRec*>(std::uintptr_t{0x10}), 'A') == 0);
+    FreeType::GuestFaceRec unreadableCharmapFace{};
+    unreadableCharmapFace.charmap = reinterpret_cast<FreeType::GuestCharMapRec*>(std::uintptr_t{0x10});
+    Require(FcFreeTypeCharIndex(&unreadableCharmapFace, 'A') == 0);
     const auto font = SquareGlyphFont('A', 700, true);
     FreeType::GuestLibrary* library = nullptr;
     Require(FT_Init_FreeType_nid_postfix(&library) == 0);

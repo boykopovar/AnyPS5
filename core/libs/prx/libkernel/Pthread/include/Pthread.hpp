@@ -86,6 +86,8 @@ struct PthreadCondattrPrivate {
 struct PthreadCondPrivate {
     std::shared_ptr<TimedWait::Condition> _cv = std::make_shared<TimedWait::Condition>();
     int _clockid = 0;
+    std::string _name;
+    bool _named = false;
 };
 
 struct PthreadSemPrivate {
@@ -125,7 +127,7 @@ struct PthreadAttrPrivate {
     bool _createSuspended = false;
     KernelCpumask _affinity = ~KernelCpumask{0};
     bool _affinityExplicit = false;
-    std::size_t _guardsize = 0x1000;
+    std::size_t _guardsize = 0x4000;
     int _solosched = 0;
     int _scope = GUEST_SCOPE_SYSTEM;
 };
@@ -188,6 +190,8 @@ struct PthreadPrivate {
 
     explicit PthreadPrivate(const PthreadAttrPrivate* attr = nullptr);
     ~PthreadPrivate();
+    static void* operator new(std::size_t bytes);
+    static void operator delete(void* pointer) noexcept;
     PthreadPrivate(const PthreadPrivate&) = delete;
     PthreadPrivate& operator=(const PthreadPrivate&) = delete;
 };
@@ -204,9 +208,12 @@ bool SetLiveGuestThreadsAffinity(KernelCpumask mask);
 KernelCpumask LiveGuestThreadsAffinity();
 KernelCpumask GuestProcessCpusetAffinity();
 bool SetLiveGuestProcessCpuset(KernelCpumask mask);
+enum class GuestCpusetTarget { Missing, Root, Process, Other };
+GuestCpusetTarget FindGuestCpuset(std::int64_t id);
 bool GuestThreadIsLive(const PthreadPrivate* thread);
 std::unique_lock<std::mutex> LockMainGuestThread_nid_no_patch(PthreadPrivate*& thread);
 std::unique_lock<std::mutex> LockLiveGuestThread(const PthreadPrivate* thread);
+std::unique_lock<std::mutex> LockRegisteredGuestThread(const PthreadPrivate* thread);
 extern "C" int ResumeGuestThread_nid_no_patch(PthreadPrivate* thread);
 #ifdef _WIN32
 extern "C" void DeliverPendingException_nid_no_patch(PthreadPrivate* thread);

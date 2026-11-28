@@ -57,7 +57,7 @@ private:
 
     explicit PadInput(Pad::InputConfiguration configuration);
     void publish(std::uint64_t frame);
-    void applyMappingSnapshot();
+    bool applyMappingSnapshot();
     void reloadInputMapping();
     void dispatchPadChords(DisplayWindow& window);
     void applyRequests(const Pad::InputRequests& requests, bool windowFocused, DisplayWindow& window);
@@ -65,6 +65,8 @@ private:
     void watchInputMapping(std::string titleId, Pad::InputMappingWatch watch);
     void publish(std::uint64_t frame, int slot);
     void setMouseMode(bool enabled);
+    void pauseMouseMode();
+    void showMouseModeStatus() const;
     void openAvailableControllers();
     void openController(int deviceIndex);
     void closeController(int slot);
@@ -94,6 +96,7 @@ private:
     Port0Presence::Mode port0Mode;
     Port0Presence::Presence port0;
     bool padCaptured = false;
+    bool mouseModePaused = false;
     bool hostFocusSynced = false;
     SDL_hid_device* haptics = nullptr;
     std::atomic<bool> hapticsRunning{false};

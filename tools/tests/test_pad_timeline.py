@@ -1,6 +1,7 @@
 import contextlib
 import ctypes
 import copy
+import errno
 import io
 import json
 import os
@@ -250,7 +251,18 @@ class TimelineTests(unittest.TestCase):
             timeline.write_text(original, encoding="utf-8")
             self.assertEqual(self.run_cli(timeline, timeline).returncode, 2)
             linked = root / "hardlink"
-            os.link(timeline, linked)
+            try:
+                os.link(timeline, linked)
+            except NotImplementedError:
+                self.skipTest("hard links are unavailable")
+            except OSError as error:
+                unsupported = {
+                    getattr(errno, name, None)
+                    for name in ("EPERM", "EACCES", "ENOTSUP", "EOPNOTSUPP", "EXDEV", "EMLINK")
+                } - {None}
+                if error.errno not in unsupported and getattr(error, "winerror", None) not in (1, 5):
+                    raise
+                self.skipTest("hard links are unavailable")
             self.assertEqual(self.run_cli(timeline, linked).returncode, 2)
             self.assertEqual(timeline.read_text(encoding="utf-8"), original)
 
@@ -388,7 +400,10 @@ class TimelineTests(unittest.TestCase):
             except (OSError, UnicodeError):
                 self.skipTest("the file system cannot name a file with a lone surrogate")
             env = dict(os.environ, PYTHONIOENCODING="utf-8:backslashreplace")
-            result = subprocess.run([sys.executable, str(Path(pad_timeline.__file__)), str(timeline), str(output)],
+            executable = sys.executable
+            if os.name == "nt":
+                executable = getattr(sys, "_base_executable", None) or executable
+            result = subprocess.run([executable, str(Path(pad_timeline.__file__)), str(timeline), str(output)],
                                     capture_output=True, text=True, timeout=5, env=env)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue(output.read_text(encoding="utf-8").startswith("APS5_PAD_TIMELINE 1 "))

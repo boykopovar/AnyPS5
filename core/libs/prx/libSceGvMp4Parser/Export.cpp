@@ -2,17 +2,23 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceGvMp4Parser/include/InventoryExports.hpp"
 #include "prx/libSceGvMp4Parser/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libkernel/KernelErrors.hpp"
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include <cerrno>
 #include <mutex>
+#include <string>
+#include <string_view>
 #include <stdexcept>
 
 namespace {
 
 constexpr int kNotInitialized = static_cast<int>(0x809D420Bu);
+constexpr int kMissingPath = static_cast<int>(0x809D4203u);
+constexpr int kUnsupportedFormat = static_cast<int>(0x809D4201u);
 constexpr std::size_t kParserBytes = 0x7b8;
 constexpr std::size_t kHelperBytes = 0x28;
 using Allocate = void* (APS5_VABI*)(std::size_t);
@@ -54,8 +60,7 @@ void CopyIn(void* destination, const void* source, std::size_t size, const char*
     if (!copied) throw std::invalid_argument(what);
 }
 
-int Gate(const void* pathObject, const char* name) {
-    GuestString path{};
+int CheckContext(const void* pathObject, GuestString& path) {
     CopyIn(&path, pathObject, sizeof(path), "GvMp4 parser: unreadable path string");
     if (path.size > path.capacity) throw std::invalid_argument("GvMp4 parser: invalid path string size");
     bool initialized;
@@ -67,6 +72,55 @@ int Gate(const void* pathObject, const char* name) {
         if (path.size > 15) throw std::logic_error("GvMp4 parser: the path copy calls the allocator before Initialize");
         return kNotInitialized;
     }
+    return 0;
+}
+
+void ReadPath(const GuestString& path, std::string& text) {
+    if (path.capacity < 16) {
+        text.assign(path.bytes, path.size);
+        return;
+    }
+    if (path.size >= 4096) throw std::invalid_argument("GvMp4 parser: path is too long");
+    const int saved = errno;
+    const int error = CopyGuestString_nid_no_patch(path.pointer, path.size + 1, text);
+    errno = saved;
+    if (error != 0) throw std::invalid_argument("GvMp4 parser: unreadable path text");
+}
+
+enum class ExtensionGate { Supported, Unsupported, Unmeasured };
+
+ExtensionGate ClassifyExtension(std::string_view path) {
+    const auto dot = path.rfind('.');
+    if (dot == std::string_view::npos) throw std::out_of_range("GvMp4 parser: path has no extension");
+    std::string extension(path.substr(dot + 1));
+    for (char& byte : extension) {
+        if (byte >= 'a' && byte <= 'z') byte = static_cast<char>(byte - 'a' + 'A');
+    }
+    if (extension == "MP4" || extension == "M4V" || extension == "MGV" || extension == "MNV") return ExtensionGate::Supported;
+    if (extension == "MOV") return ExtensionGate::Unsupported;
+    return ExtensionGate::Unmeasured;
+}
+
+int Gate(const void* pathObject, const char* name) {
+    GuestString path{};
+    if (const int result = CheckContext(pathObject, path); result != 0) return result;
+    NotImplemented_nid_no_patch(name);
+    return 0;
+}
+
+int ReadGate(const void* pathObject, const char* name) {
+    GuestString path{};
+    if (const int result = CheckContext(pathObject, path); result != 0) return result;
+    std::string text;
+    ReadPath(path, text);
+    FileStat stat{};
+    const int saved = errno;
+    const int statResult = sceKernelStat(text.c_str(), &stat);
+    errno = saved;
+    if (statResult == SCE_KERNEL_ERROR_ENOENT) return kMissingPath;
+    if (statResult != 0) NotImplemented_nid_no_patch(name);
+    const auto extension = ClassifyExtension(text);
+    if (extension == ExtensionGate::Unsupported) return kUnsupportedFormat;
     NotImplemented_nid_no_patch(name);
     return 0;
 }
@@ -136,7 +190,7 @@ int APS5_VABI _ZN23sceMetadataReaderWriter11gvMp4Parser19gvMp4ParserFinalizeEv()
 }
 
 int APS5_VABI libSceGvMp4ParserUnknown_PJigiYrhUwQ_nid_no_patch(const void* path, void*, void*) {
-    return Gate(path, __func__);
+    return ReadGate(path, __func__);
 }
 APS5_EXPORT("PJigiYrhUwQ", libSceGvMp4ParserUnknown_PJigiYrhUwQ_nid_no_patch);
 

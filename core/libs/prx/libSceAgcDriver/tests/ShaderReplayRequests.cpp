@@ -10,6 +10,7 @@
 #include <span>
 #include <stdexcept>
 #include <string_view>
+#include <tuple>
 #include <vector>
 
 int main(int argc, char** argv) try {
@@ -73,6 +74,38 @@ int main(int argc, char** argv) try {
     {
         std::ofstream file(directory / "lds.req", std::ios::binary);
         file << RequestSerializer{}.Serialize(lds);
+        if (!file) throw std::runtime_error("cannot write synthetic replay request");
+    }
+    const std::array<std::uint32_t, 1> endProgram{0xbf810000u};
+    RecompileRequest pixel{};
+    pixel.shader = {ShaderStage::Fragment, 0x24000u, endProgram, 0, {}};
+    pixel.context.waveSize = 64u;
+    pixel.context.pixel = ShaderPixelStageInfo{};
+    pixel.context.pixel->interpolatorCount = 3u;
+    pixel.context.pixel->interpolatorSettings[0] = 0x0u;
+    pixel.context.pixel->interpolatorSettings[1] = 0x401u;
+    pixel.context.pixel->interpolatorSettings[2] = 0x423u;
+    pixel.context.pixel->inputAddr = 0x1002u;
+    pixel.target = lds.target;
+    for (const auto& [name, frontFace, allBits] : {std::tuple{"pixel_unused.req", false, false}, std::tuple{"pixel_float.req", true, false}, std::tuple{"pixel_all_bits.req", true, true}}) {
+        pixel.context.pixel->frontFace = frontFace;
+        pixel.context.pixel->frontFaceAllBits = allBits;
+        std::ofstream file(directory / name, std::ios::binary);
+        file << RequestSerializer{}.Serialize(pixel);
+        if (!file) throw std::runtime_error("cannot write synthetic replay request");
+    }
+    RecompileRequest vertex{};
+    vertex.shader = {ShaderStage::Vertex, 0x26000u, endProgram, 0, {}};
+    vertex.context.waveSize = 64u;
+    vertex.context.vertex = ShaderVertexStageInfo{};
+    vertex.context.vertex->resourcesNum = 1u;
+    vertex.context.vertex->resources[0].fields = {0x22f7e3f8u, 0x00280010u, 0x6b7u, 0x32facu};
+    vertex.context.vertex->resourcesDst[0] = {12, 3, 5, 1u};
+    vertex.context.vertex->fetchEmbedded = true;
+    vertex.target = lds.target;
+    {
+        std::ofstream file(directory / "vertex.req", std::ios::binary);
+        file << RequestSerializer{}.Serialize(vertex);
         if (!file) throw std::runtime_error("cannot write synthetic replay request");
     }
     std::puts("synthetic guarded replay requests written");

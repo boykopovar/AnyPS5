@@ -28,7 +28,9 @@
 
 #include "prx/libSceJsc/include/ArrayBufferContentsExports.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
@@ -175,8 +177,15 @@ void APS5_VABI _ZN3JSC19ArrayBufferContents5clearEv(ArrayBufferContents* self) {
 
 const char* APS5_VABI _ZN3JSC23errorMesasgeForTransferEPNS_11ArrayBufferE(ArrayBuffer* buffer) {
     if (!buffer) throw std::invalid_argument(std::string(__func__) + " requires an ArrayBuffer");
-    if (LoadPacked<SharedArrayBufferContents>(buffer->contents.shared)) return "Cannot transfer a SharedArrayBuffer";
-    if (buffer->isWasmMemory) return "Cannot transfer a WebAssembly.Memory";
+    const int savedErrno = errno;
+    ArrayBuffer local{};
+    if (!GuestCopyIn_nid_no_patch(&local, buffer, sizeof(local))) {
+        errno = savedErrno;
+        throw std::invalid_argument(std::string(__func__) + " requires a readable ArrayBuffer");
+    }
+    errno = savedErrno;
+    if (LoadPacked<SharedArrayBufferContents>(local.contents.shared)) return "Cannot transfer a SharedArrayBuffer";
+    if (local.isWasmMemory) return "Cannot transfer a WebAssembly.Memory";
     return "Cannot transfer an ArrayBuffer whose backing store has been accessed by the JavaScriptCore C API";
 }
 

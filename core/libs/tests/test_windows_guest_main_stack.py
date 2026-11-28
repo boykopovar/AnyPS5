@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 import struct
@@ -47,7 +48,31 @@ def main():
         run = subprocess.run([str(output), 'stack'], env={**os.environ, 'PATH': str(runtime) + os.pathsep + os.environ['PATH']},
                              capture_output=True, text=True, timeout=20)
         assert run.returncode == 42, (run.returncode, run.stdout, run.stderr)
+
+        image = executable('libc.prx', 'exit_nid_postfix')
+        code = bytes.fromhex('48 83 ec 08 bf 2a 00 00 00 ff 15')
+        code += struct.pack('<i', 0x4a20 - (0x4000 + len(code) + 4)) + bytes.fromhex('0f 0b')
+        image[0x4000:0x4000 + len(code)] = code
+        source.write_bytes(image)
+        output = work / 'early-exit.exe'
+        converted = subprocess.run([str(relinker), '--skip-sce-module', '--windows', '--rpath', str(runtime), str(source), str(output)],
+                                   capture_output=True, text=True, timeout=20)
+        assert converted.returncode == 0, (converted.stdout, converted.stderr)
+        env = {**os.environ, 'PATH': str(runtime) + os.pathsep + os.environ['PATH'], 'APS5_REPORT': '1'}
+        run = subprocess.run([str(output)], env=env, capture_output=True, text=True, timeout=20)
+        assert run.returncode == 42, (run.returncode, run.stdout, run.stderr)
+        report_path = work / 'anyps5-report.json'
+        report = json.loads(report_path.read_text(encoding='utf-8'))['run']
+        assert report['stage'] == 'starts' and report['framesPresented'] == 0, report
+        milestones = report['milestones']
+        assert set(milestones) == {'loaded', 'started'}, milestones
+        assert 0 <= milestones['loaded'] <= milestones['started'] <= report['seconds'], report
+
+        report_path.unlink()
+        run = subprocess.run([str(output), '--aps5-report=off'], env=env, capture_output=True, text=True, timeout=20)
+        assert run.returncode == 42 and not report_path.exists(), (run.returncode, run.stdout, run.stderr)
     print('Windows guest entry uses a nonzero stack region and retains its argument block')
+    print('Windows guest exit before rendering reports only the two startup milestones')
 
 
 if __name__ == '__main__':

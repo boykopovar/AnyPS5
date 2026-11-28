@@ -61,7 +61,8 @@ def parse_db(path):
                 raise ValueError(f"{path}:{number}: expected a NID and a symbol name, got {s!r}")
             if re.fullmatch(r"[A-Za-z0-9+\-]{11}", nid) is None:
                 raise ValueError(f"{path}:{number}: invalid NID {nid!r}")
-            if nid not in mapping:
+            previous = mapping.setdefault(nid, name)
+            if previous != name and compute_nid(name) == nid and compute_nid(previous) != nid:
                 mapping[nid] = name
     return mapping
 

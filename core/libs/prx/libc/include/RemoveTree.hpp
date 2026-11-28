@@ -5,6 +5,7 @@
 #include <string>
 #include <system_error>
 #ifdef _WIN32
+#include <string_view>
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -13,6 +14,38 @@
 #endif
 #include <windows.h>
 #endif
+
+namespace File {
+
+template<typename TVisitor>
+inline void ForEachDirectoryEntry(const std::filesystem::path& directory, std::error_code& error, TVisitor visit) {
+#ifdef _WIN32
+    error.clear();
+    WIN32_FIND_DATAW data{};
+    const auto handle = FindFirstFileW((directory / L"*").c_str(), &data);
+    if (handle == INVALID_HANDLE_VALUE) {
+        const auto code = GetLastError();
+        if (code != ERROR_FILE_NOT_FOUND) error = std::error_code(code, std::system_category());
+        return;
+    }
+    struct Search { HANDLE handle; ~Search() { FindClose(handle); } } search{handle};
+    do {
+        const std::wstring_view name(data.cFileName);
+        if (name == L"." || name == L"..") continue;
+        visit(directory / data.cFileName);
+        if (error) return;
+    } while (FindNextFileW(handle, &data));
+    const auto code = GetLastError();
+    if (code != ERROR_NO_MORE_FILES) error = std::error_code(code, std::system_category());
+#else
+    for (std::filesystem::directory_iterator it(directory, error), end; !error && it != end; it.increment(error)) {
+        visit(it->path());
+        if (error) return;
+    }
+#endif
+}
+
+}
 
 inline void RemoveTree(const std::filesystem::path& target, std::error_code& error) {
     error.clear();
@@ -27,19 +60,8 @@ inline void RemoveTree(const std::filesystem::path& target, std::error_code& err
     }
     const bool directory = (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
     if (directory && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0) {
-        std::error_code listing;
-        {
-            std::filesystem::directory_iterator entries(target, listing);
-            while (!listing && entries != std::filesystem::directory_iterator()) {
-                RemoveTree(entries->path(), error);
-                if (error) return;
-                entries.increment(listing);
-            }
-        }
-        if (listing) {
-            error = listing;
-            return;
-        }
+        File::ForEachDirectoryEntry(target, error, [&](const auto& child) { RemoveTree(child, error); });
+        if (error) return;
     }
     if (directory ? RemoveDirectoryW(wide.c_str()) != 0 : DeleteFileW(wide.c_str()) != 0) return;
     const DWORD failed = GetLastError();

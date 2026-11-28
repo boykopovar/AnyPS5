@@ -261,6 +261,11 @@ static void TestPostCloseAndDoubleClose() {
 } // namespace
 
 int main() {
+#ifdef _WIN32
+    _putenv_s("SDL_AUDIODRIVER", "dummy");
+#else
+    setenv("SDL_AUDIODRIVER", "dummy", 1);
+#endif
     Require(sceAudioOutInit() == 0);
 
     TestParameterValidation();
