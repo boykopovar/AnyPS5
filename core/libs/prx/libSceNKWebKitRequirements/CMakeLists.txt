@@ -31,6 +31,17 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNKWebKitRequirements>")
     endif()
 
+    add_test_executable(guest_nk_req_sqlite_archive_tests tests/SqliteArchive.cpp)
+    target_include_directories(guest_nk_req_sqlite_archive_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_nk_req_sqlite_archive_tests PRIVATE libSceNKWebKitRequirements libc sqlite3 zarchive)
+    configure_windows_unwind(guest_nk_req_sqlite_archive_tests)
+    add_test(NAME guest_nk_req_sqlite_archive COMMAND guest_nk_req_sqlite_archive_tests)
+    set_tests_properties(guest_nk_req_sqlite_archive PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_nk_req_sqlite_archive PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNKWebKitRequirements>")
+    endif()
+
     add_test_executable(guest_nk_req_sqlite_binding_tests tests/SqliteBindingDestructors.cpp src/Sqlite.cpp)
     target_include_directories(guest_nk_req_sqlite_binding_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_nk_req_sqlite_binding_tests PRIVATE sqlite3 libc)
