@@ -147,6 +147,48 @@ void CheckPipe() {
     Require(fgetc_nid_postfix(&stream) == EOF, "discard pipe read-ahead and pushback");
     Require(stream.Close() == 0, "close pipe stream");
 }
+void CheckRepeatedPurge() {
+    BufferedStream file;
+    Require(std::fwrite("abcdef", 1, 6, file.native) == 6 && std::fflush(file.native) == 0, "prepare repeated-purge input");
+    Require(std::fseek(file.native, 0, SEEK_SET) == 0, "rewind repeated-purge input");
+    Require(fgetc_nid_postfix(&file.stream) == 'a', "read before repeated purge");
+    Require(ungetc_nid_postfix('Q', &file.stream) == 'Q', "push back before repeated purge");
+    Require(fpurge_nid_postfix(&file.stream) == 0 && fpurge_nid_postfix(&file.stream) == 0, "purge pending pushback twice");
+    Require(fgetc_nid_postfix(&file.stream) == 'Q', "the pending byte survives repeated purges");
+    Require(fgetc_nid_postfix(&file.stream) == 'b', "resume input after repeated purges");
+    Require(fpurge_nid_postfix(&file.stream) == 0, "purge after consuming the restored byte");
+    Require(fgetc_nid_postfix(&file.stream) == 'c', "a consumed byte does not return after repeated purges");
+}
+
+void CheckRepeatedPurgeWithMultipleBytes() {
+    BufferedStream file;
+    Require(std::setvbuf(file.native, nullptr, _IOFBF, 4096) == 0, "use a CRT-owned buffer for multi-byte pushback");
+    Require(std::fwrite("abcdef", 1, 6, file.native) == 6 && std::fflush(file.native) == 0, "prepare multi-byte repeated-purge input");
+    Require(std::fseek(file.native, 0, SEEK_SET) == 0, "rewind multi-byte repeated-purge input");
+    for (const char expected : {'a', 'b', 'c'}) Require(fgetc_nid_postfix(&file.stream) == expected, "read before multi-byte pushback");
+    Require(ungetc_nid_postfix('X', &file.stream) == 'X' && ungetc_nid_postfix('Y', &file.stream) == 'Y', "push back two bytes");
+    for (int count = 0; count < 3; ++count) Require(fpurge_nid_postfix(&file.stream) == 0, "purge multi-byte pushback repeatedly");
+    char bytes[2]{};
+    Require(fread_nid_postfix(bytes, 1, sizeof(bytes), &file.stream) == sizeof(bytes) && std::memcmp(bytes, "YX", sizeof(bytes)) == 0, "repeated purges preserve pushback order");
+    Require(fgetc_nid_postfix(&file.stream) == 'd', "resume after multi-byte pushback");
+    Require(fpurge_nid_postfix(&file.stream) == 0 && fgetc_nid_postfix(&file.stream) == 'e', "consumed multi-byte pushback does not return");
+}
+
+void CheckPurgeAfterReadingRestoredInput() {
+    BufferedStream file;
+    Require(std::setvbuf(file.native, nullptr, _IOFBF, 4096) == 0, "use native buffering for a restored read");
+    Require(std::fwrite("abcdef", 1, 6, file.native) == 6 && std::fflush(file.native) == 0, "prepare restored-read input");
+    Require(std::fseek(file.native, 0, SEEK_SET) == 0, "rewind restored-read input");
+    for (const char expected : {'a', 'b', 'c'}) Require(fgetc_nid_postfix(&file.stream) == expected, "read before single-byte pushback");
+    Require(ungetc_nid_postfix('X', &file.stream) == 'X', "push back before the restored read");
+    Require(fpurge_nid_postfix(&file.stream) == 0 && fpurge_nid_postfix(&file.stream) == 0, "purge single-byte pushback twice");
+    char bytes[3]{};
+    Require(fread_nid_postfix(bytes, 1, sizeof(bytes), &file.stream) == sizeof(bytes) && std::memcmp(bytes, "Xde", sizeof(bytes)) == 0, "read restored input and subsequent file bytes");
+    Require(std::ftell(file.native) == 5, "restored read leaves the logical position after e");
+    Require(fpurge_nid_postfix(&file.stream) == 0, "purge after the restored read");
+    Require(fgetc_nid_postfix(&file.stream) == 'f', "purge after a restored read never repeats e");
+}
+
 void CheckInvalid() {
     BufferedStream file;
     Require(file.stream.Close() == 0, "close stream");
@@ -166,6 +208,9 @@ int main() {
     CheckPushbackReadByFread();
     CheckUnbuffered();
     CheckLineBuffered();
+    CheckRepeatedPurge();
+    CheckRepeatedPurgeWithMultipleBytes();
+    CheckPurgeAfterReadingRestoredInput();
     CheckPipe();
     CheckInvalid();
     std::puts("stream purge tests passed");

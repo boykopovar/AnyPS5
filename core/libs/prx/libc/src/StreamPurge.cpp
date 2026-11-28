@@ -58,20 +58,32 @@ extern "C" int APS5_VABI fpurge_nid_postfix(FileStream* stream) {
         }
     }
     stream->ClearPushback();
+    bool synchronized = true;
 #ifdef _WIN32
     auto* state = reinterpret_cast<UcrtStreamState*>(native);
     state->pointer = state->base;
     state->count = 0;
 #elif defined(__linux__)
     ::__fpurge(native);
+    if (resume >= 0 && std::fflush(native) != 0) synchronized = false;
 #else
     if (::fpurge(native) != 0) return -1;
 #endif
-    if (resume >= 0) {
+    const int syncError = errno;
+    std::size_t restored = 0;
+    if (resume >= 0 && synchronized) {
         SeekDescriptor(native, resume);
-        for (const char byte : kept) stream->PushBack(static_cast<unsigned char>(byte));
+        for (const char byte : kept) {
+            if (stream->PushBack(static_cast<unsigned char>(byte)) == EOF) break;
+            ++restored;
+        }
     }
+    const bool complete = synchronized && restored == kept.size();
+    const int restoreError = synchronized ? errno : syncError;
+    kept.resize(restored);
     stream->GuestState().position = stream->GuestState().buffer;
     stream->SyncUnlockedStatus();
-    return 0;
+    for (const char byte : kept) stream->NotePushedBackByte(byte, stream->PushbackLive());
+    if (!complete) errno = restoreError;
+    return complete ? 0 : -1;
 }
