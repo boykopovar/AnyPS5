@@ -2698,7 +2698,7 @@ TableAccessResult EmitTableAccess(SpirvValueEmitContext& ctx, const IrValue& ins
         const auto outside = both(both(selected, negate(rejected)), negate(inBounds));
         EmitTableFault(ctx, inst, word, ConstantU32(state, ImageTableAbi::OutsideSnapshotPoison), both(both(exec, live), outside));
         const auto checked = both(both(selected, negate(rejected)), inBounds);
-        const auto entry = Binary(state, spv::OpShiftRightLogical, u32, element, ConstantU32(state, 2u));
+        const auto entry = Binary(state, spv::OpUDiv, u32, element, ConstantU32(state, ImageTableAbi::SamplerEntryElements));
         const auto driverFault = LoadTableMap(state, Select(state, u32, checked, Binary(state, spv::OpIAdd, u32, LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderSamplerFaults)), entry), ConstantU32(state, 0u)));
         const auto driverRejected = both(checked, flagged(driverFault));
         EmitTableFault(ctx, inst, word, driverFault, both(both(exec, live), driverRejected));
