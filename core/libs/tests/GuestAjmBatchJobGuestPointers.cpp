@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 #include <vector>
 
 #ifdef _WIN32
@@ -178,6 +179,135 @@ int main() {
     std::memcpy(end - sizeof(AjmBuffer), &oneIn, sizeof(AjmBuffer));
     errno = 71;
     Require(sceAjmBatchJobRunSplit(&info, instance, 0, reinterpret_cast<const AjmBuffer*>(end - sizeof(AjmBuffer)), 1, reinterpret_cast<const AjmBuffer*>(end - sizeof(AjmBuffer)), 1, &sidebandResult, sizeof(sidebandResult)) == 0 && info.offset == 144 && errno == 71, "valid RunSplit buffer lists at page end failed");
+
+    std::array<std::uint8_t, 512> startStorage{};
+    AjmBatchInfo startInfo{};
+    Require(sceAjmBatchInitialize(startStorage.data(), startStorage.size(), &startInfo) == 0, "initialize start batch");
+    std::uint64_t initSideband = 0xA5A5A5A5A5A5A5A5ull;
+    const std::array<std::uint32_t, 3> pcmParams{0, 1, 48000};
+    Require(sceAjmBatchJobInitialize(&startInfo, instance, pcmParams.data(), sizeof(pcmParams), &initSideband) == 0, "queue Initialize job");
+    const std::size_t oneJobBytes = startInfo.offset;
+    uint32_t batchId = 0;
+    AjmBatchError batchError{};
+
+    for (const AjmBatchInfo* badStartInfo : {reinterpret_cast<const AjmBatchInfo*>(std::uintptr_t{0x10}), reinterpret_cast<const AjmBatchInfo*>(end - 8)}) {
+        errno = 71;
+        Require(sceAjmBatchStart(context, badStartInfo, SCE_AJM_PRIORITY_MIN, &batchError, &batchId) == kInvalidParameter && errno == 71, "bad batch info accepted by Start");
+    }
+    for (uint32_t* badBatchId : {reinterpret_cast<uint32_t*>(std::uintptr_t{0x10}), reinterpret_cast<uint32_t*>(readOnlyMemory), reinterpret_cast<uint32_t*>(end - 2)}) {
+        errno = 71;
+        Require(sceAjmBatchStart(context, &startInfo, SCE_AJM_PRIORITY_MIN, &batchError, badBatchId) == kInvalidParameter && errno == 71, "unwritable batch id accepted by Start");
+        Require(initSideband == 0xA5A5A5A5A5A5A5A5ull, "Start executed jobs despite batch registration failure");
+    }
+    for (AjmBatchError* badError : {reinterpret_cast<AjmBatchError*>(std::uintptr_t{0x10}), reinterpret_cast<AjmBatchError*>(readOnlyMemory), reinterpret_cast<AjmBatchError*>(end - 8)}) {
+        errno = 71;
+        Require(sceAjmBatchStart(context, &startInfo, SCE_AJM_PRIORITY_MIN, badError, &batchId) == kInvalidParameter && errno == 71, "unwritable error accepted by Start");
+        Require(initSideband == 0xA5A5A5A5A5A5A5A5ull, "Start executed jobs despite error output failure");
+    }
+
+    std::array<std::uint8_t, 512> partialStorage{};
+    AjmBatchInfo partialSrc{};
+    Require(sceAjmBatchInitialize(partialStorage.data(), partialStorage.size(), &partialSrc) == 0, "initialize two-job batch");
+    Require(sceAjmBatchJobInitialize(&partialSrc, instance, pcmParams.data(), sizeof(pcmParams), &initSideband) == 0, "queue first job for partial test");
+    std::uint64_t clearSideband = 0xA5A5A5A5A5A5A5A5ull;
+    Require(sceAjmBatchJobClearContext(&partialSrc, instance, &clearSideband) == 0, "queue second job for partial test");
+    const std::size_t mappedBytes = oneJobBytes + 8;
+    std::memcpy(end - mappedBytes, partialStorage.data(), mappedBytes);
+    AjmBatchInfo partialInfo{end - mappedBytes, partialSrc.offset, partialStorage.size()};
+    errno = 71;
+    Require(sceAjmBatchStart(context, &partialInfo, SCE_AJM_PRIORITY_MIN, &batchError, &batchId) == kInvalidParameter && errno == 71, "partially mapped batch accepted by Start");
+    Require(initSideband == 0xA5A5A5A5A5A5A5A5ull, "Start executed first job when second job faulted");
+
+    errno = 71;
+    Require(sceAjmBatchStart(context, &startInfo, SCE_AJM_PRIORITY_MIN, &batchError, &batchId) == 0 && batchId != 0 && errno == 71, "valid Start failed");
+    Require(initSideband == 0, "valid Initialize job did not update sideband");
+    for (AjmBatchError* badError : {reinterpret_cast<AjmBatchError*>(std::uintptr_t{0x10}), reinterpret_cast<AjmBatchError*>(readOnlyMemory), reinterpret_cast<AjmBatchError*>(end - 8)}) {
+        errno = 71;
+        Require(sceAjmBatchWait(context, batchId, 0, badError) == kInvalidParameter && errno == 71, "unwritable error accepted by Wait");
+    }
+    errno = 71;
+    Require(sceAjmBatchWait(context, batchId, 0, &batchError) == 0 && errno == 71, "valid Wait failed after unwritable error probe");
+    constexpr int kInvalidBatch = static_cast<int>(0x80930004);
+    errno = 71;
+    Require(sceAjmBatchWait(context, batchId, 0, nullptr) == kInvalidBatch && errno == 71, "completed batch stayed registered");
+
+    const auto appendBufferChunk = [](std::array<std::uint32_t, 32>& words, std::size_t index, std::uint32_t kind, const void* pointer, std::size_t size) {
+        words[index] = kind;
+        words[index + 1] = static_cast<std::uint32_t>(size);
+        const auto address = reinterpret_cast<std::uintptr_t>(pointer);
+        words[index + 2] = static_cast<std::uint32_t>(address);
+        words[index + 3] = static_cast<std::uint32_t>(address >> 32);
+    };
+    std::array<std::uint8_t, 24> streamSideband{};
+    streamSideband.fill(0xA5);
+    std::array<std::uint32_t, 32> consoleJobs{};
+    consoleJobs[0] = instance << 6;
+    consoleJobs[1] = 56;
+    appendBufferChunk(consoleJobs, 2, 1, inputData.data(), sizeof(inputData));
+    consoleJobs[6] = 4 | (0x8000u << 6);
+    consoleJobs[7] = 0;
+    appendBufferChunk(consoleJobs, 8, 17, outputData.data(), sizeof(outputData));
+    appendBufferChunk(consoleJobs, 12, 18, streamSideband.data(), streamSideband.size());
+    for (std::size_t i = 0; i < 16; ++i) consoleJobs[16 + i] = consoleJobs[i];
+    const auto* consoleBytes = reinterpret_cast<const std::uint8_t*>(consoleJobs.data());
+
+    for (const std::uint8_t* badBatch : {reinterpret_cast<const std::uint8_t*>(std::uintptr_t{0x10}), reinterpret_cast<const std::uint8_t*>(end - 4)}) {
+        errno = 71;
+        Require(sceAjmBatchStartBuffer(context, badBatch, 8, SCE_AJM_PRIORITY_MIN, &batchError, &batchId) == kInvalidParameter && errno == 71, "unreadable buffer accepted by StartBuffer");
+    }
+    const std::size_t mappedConsole = 64 + 12;
+    std::memcpy(end - mappedConsole, consoleBytes, mappedConsole);
+    errno = 71;
+    Require(sceAjmBatchStartBuffer(context, reinterpret_cast<const std::uint8_t*>(end - mappedConsole), 128, SCE_AJM_PRIORITY_MIN, &batchError, &batchId) == kInvalidParameter && errno == 71, "second console job faulting in ReadConsoleJob accepted by StartBuffer");
+    Require(streamSideband[0] == 0xA5, "StartBuffer executed first console job when second job faulted");
+
+    const std::uint32_t malformedWords[2]{instance << 6, 4};
+    for (AjmBatchError* badError : {reinterpret_cast<AjmBatchError*>(std::uintptr_t{0x10}), reinterpret_cast<AjmBatchError*>(readOnlyMemory), reinterpret_cast<AjmBatchError*>(end - 8)}) {
+        errno = 71;
+        Require(sceAjmBatchStartBuffer(context, reinterpret_cast<const std::uint8_t*>(malformedWords), sizeof(malformedWords), SCE_AJM_PRIORITY_MIN, badError, &batchId) == kInvalidParameter && errno == 71, "malformed StartBuffer wrote unwritable error");
+    }
+    for (uint32_t* badBatchId : {reinterpret_cast<uint32_t*>(std::uintptr_t{0x10}), reinterpret_cast<uint32_t*>(readOnlyMemory), reinterpret_cast<uint32_t*>(end - 2)}) {
+        errno = 71;
+        Require(sceAjmBatchStartBuffer(context, consoleBytes, 64, SCE_AJM_PRIORITY_MIN, &batchError, badBatchId) == kInvalidParameter && errno == 71, "StartBuffer accepted unwritable batch id");
+        Require(streamSideband[0] == 0xA5, "StartBuffer executed job despite batch registration failure");
+    }
+    batchId = 0;
+    errno = 71;
+    Require(sceAjmBatchStartBuffer(context, consoleBytes, 64, SCE_AJM_PRIORITY_MIN, &batchError, &batchId) == 0 && batchId != 0 && errno == 71, "valid StartBuffer failed");
+    Require(sceAjmBatchWait(context, batchId, 0, &batchError) == 0, "wait for valid StartBuffer batch failed");
+    Require(streamSideband[0] == 0, "valid StartBuffer job did not write sideband");
+
+    std::array<std::uint8_t, 256> throwStorage{};
+    AjmBatchInfo throwInfo{};
+    Require(sceAjmBatchInitialize(throwStorage.data(), throwStorage.size(), &throwInfo) == 0, "initialize throwing batch");
+    Require(sceAjmBatchJobGetStatistics(&throwInfo, 1.0f, reinterpret_cast<void*>(std::uintptr_t{0x10})) == 0, "queue throwing statistics job");
+    std::uint32_t thrownStartId = 0;
+    bool startThrew = false;
+    try {
+        sceAjmBatchStart(context, &throwInfo, SCE_AJM_PRIORITY_MIN, &batchError, &thrownStartId);
+    } catch (const std::runtime_error&) {
+        startThrew = true;
+    }
+    Require(startThrew && thrownStartId != 0, "Start execution fault did not throw");
+    Require(sceAjmBatchWait(context, thrownStartId, 0, nullptr) == kInvalidBatch, "failed Start left batch registered");
+    Require(sceAjmBatchCancel(context, thrownStartId) == kInvalidBatch, "failed Start left batch cancellable");
+
+    std::array<std::uint32_t, 32> throwConsole{};
+    throwConsole[0] = 0x80000u << 6;
+    throwConsole[1] = 24;
+    throwConsole[2] = 4;
+    throwConsole[3] = 0;
+    appendBufferChunk(throwConsole, 4, 18, reinterpret_cast<void*>(std::uintptr_t{0x10}), 24);
+    std::uint32_t thrownBufferId = 0;
+    bool bufferThrew = false;
+    try {
+        sceAjmBatchStartBuffer(context, reinterpret_cast<const std::uint8_t*>(throwConsole.data()), 32, SCE_AJM_PRIORITY_MIN, &batchError, &thrownBufferId);
+    } catch (const std::runtime_error&) {
+        bufferThrew = true;
+    }
+    Require(bufferThrew && thrownBufferId != 0, "StartBuffer execution fault did not throw");
+    Require(sceAjmBatchWait(context, thrownBufferId, 0, nullptr) == kInvalidBatch, "failed StartBuffer left batch registered");
+    Require(sceAjmBatchCancel(context, thrownBufferId) == kInvalidBatch, "failed StartBuffer left batch cancellable");
 
     Require(sceAjmInstanceDestroy(context, instance) == 0, "destroy PCM instance");
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
