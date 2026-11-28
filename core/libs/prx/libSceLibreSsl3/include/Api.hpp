@@ -133,7 +133,14 @@ struct LibreSsl3X509Crl {
     Asn1String* signature;
     int references;
     int flags;
-    unsigned char rest[112];
+    void* akid;
+    void* idp;
+    int idpFlags;
+    int idpReasons;
+    Asn1String* crlNumber;
+    Asn1String* baseCrlNumber;
+    unsigned char hash[64];
+    const LibreSsl3Stack* issuers;
 };
 
 static_assert(sizeof(LibreSsl3Revoked) == 40);
@@ -145,6 +152,12 @@ static_assert(offsetof(LibreSsl3CrlInfo, extensions) == 48);
 static_assert(sizeof(LibreSsl3X509Crl) == 144);
 static_assert(offsetof(LibreSsl3X509Crl, references) == 24);
 static_assert(offsetof(LibreSsl3X509Crl, flags) == 28);
+static_assert(offsetof(LibreSsl3X509Crl, akid) == 32);
+static_assert(offsetof(LibreSsl3X509Crl, idpReasons) == 52);
+static_assert(offsetof(LibreSsl3X509Crl, crlNumber) == 56);
+static_assert(offsetof(LibreSsl3X509Crl, baseCrlNumber) == 64);
+static_assert(offsetof(LibreSsl3X509Crl, hash) == 72);
+static_assert(offsetof(LibreSsl3X509Crl, issuers) == 136);
 
 struct LibreSsl3Dh {
     int pad;
