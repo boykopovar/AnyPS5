@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawCache.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
 #include "prx/libSceAgc/Shader/include/ShaderConstants.hpp"
 #include "SceShaders.hpp"
@@ -135,6 +136,26 @@ void TestUntimedCommits() {
     pipeline.Stop();
     Check(ran == 3, "the queued commits did not run");
     Check(DrawPipeline::CommitClockReads() == 0, "the committer read the clock with draw profiling and pipeline statistics off");
+}
+
+void TestCommitterTimingContext() {
+    using AgcDriver::DriverDetail::DrawPipeline;
+    auto& pipeline = DrawPipeline::Queue0();
+    const auto caller = std::this_thread::get_id();
+    std::thread::id ranOn;
+    AgcDriver::FrameTiming* context = reinterpret_cast<AgcDriver::FrameTiming*>(1);
+    pipeline.Enqueue([&] {
+        ranOn = std::this_thread::get_id();
+        context = AgcDriver::PerformanceContext::Current();
+        AgcDriver::PerformanceTimer timing("Test.Committer");
+        timing.Mark("stage");
+    }, {});
+    pipeline.Stop();
+    Check(ranOn != std::thread::id{} && ranOn != caller, "the commit did not run on the draw committer");
+    Check(context == AgcDriver::FrameTiming::Async(), "the draw committer did not record into the background frame timing");
+    if (auto* async = AgcDriver::FrameTiming::Async()) {
+        Check(async->Get("Test.Committer", "total")->count == 1u && async->Get("Test.Committer", "stage")->count == 1u, "a timer in a pipelined commit was not recorded");
+    }
 }
 
 void TestDecodeDrainSkip() {
@@ -310,6 +331,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::strcmp(argv[1], "--untimed") == 0) {
             TestUntimedCommits();
             std::cout << "Draw pipeline untimed commits passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "committer-timing") {
+            TestCommitterTimingContext();
+            std::cout << "Draw committer timing context passed\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "decode-drain-skip") {

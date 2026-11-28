@@ -23,6 +23,13 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAgcDriver>")
     endif()
     set_property(TEST agc_driver_pipeline_untimed APPEND PROPERTY ENVIRONMENT_MODIFICATION "APS5_PROFILE_DRAW=unset:" "APS5_PIPELINE_STATS=unset:")
+    add_test(NAME agc_driver_committer_timing COMMAND agc_driver_pipeline_profile_tests committer-timing)
+    set_tests_properties(agc_driver_committer_timing PROPERTIES TIMEOUT 20
+        ENVIRONMENT "APS5_DRAW_PIPELINE=1;APS5_PIPELINED_DRAWS=8")
+    if(WIN32)
+        set_tests_properties(agc_driver_committer_timing PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAgcDriver>")
+    endif()
     add_test(NAME agc_driver_decode_drain_skip COMMAND agc_driver_pipeline_profile_tests decode-drain-skip)
     set_tests_properties(agc_driver_decode_drain_skip PROPERTIES TIMEOUT 20
         ENVIRONMENT "APS5_DRAW_PIPELINE=1;APS5_PIPELINED_DRAWS=8")

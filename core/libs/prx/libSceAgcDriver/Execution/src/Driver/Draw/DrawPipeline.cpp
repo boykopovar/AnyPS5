@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Queues/WorkerAffinity.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/HandoffSpin.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileCounter.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
@@ -592,6 +593,9 @@ void DrawPipeline::run() {
         ~CommitterScope() { committerPipeline = nullptr; }
     } const committerScope{this};
     PerformanceTrace::BindThread("draw committer");
+    // Timers in a commit (Graphics.Draw and below) record into the thread's context; without one the
+    // timing log drops everything the committer does.
+    PerformanceContext timingContext(FrameTiming::Async());
     ReserveCommitterCore();
     StartCommitterSampler();
     static const bool timed = std::getenv("APS5_PROFILE_DRAW") != nullptr || std::getenv("APS5_PIPELINE_STATS") != nullptr;
