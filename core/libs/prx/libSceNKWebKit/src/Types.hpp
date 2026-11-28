@@ -440,6 +440,14 @@ public:
     }
 };
 
+class Error final : public ObjectOf<ObjectType::Error> {
+public:
+    std::string domain;
+    std::int32_t errorCode = 0;
+    std::string failingURL;
+    std::string localizedDescription;
+};
+
 class IconDatabase final : public ObjectOf<ObjectType::IconDatabase> {
 public:
     std::map<std::string, std::string> pageURLToIconURL;
