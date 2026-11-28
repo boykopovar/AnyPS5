@@ -18,6 +18,7 @@
 #include "HashTable.hpp"
 #include "Version.hpp"
 #include "RecoveredInventory.hpp"
+#include "ConverterToUnicodeWriters.hpp"
 #include "ConverterCallbacks.hpp"
 #include "CString.hpp"
 #include "prx/libSceIcu/include/Availability.hpp"
