@@ -461,12 +461,12 @@ bool TranslationContext::vMad64x32(const RdnaInstruction& inst, bool sign) {
     writeOperand(inst.destination, &result.Value());
     if (inst.destination2.kind != RdnaOperandKind::Null && inst.destination2.kind != RdnaOperandKind::Unknown) {
         if (!sign) {
-            writeMask(inst.destination2, carry);
+            writeCompareResult(inst.destination2, carry);
             return true;
         }
         const IrU32 signsDiffer(ir.ShiftRightLogical(ir.BitwiseXor(mulHigh.Value(), add[1].Value()), ir.Constant(31u)));
         const IrU32 carryU32(ir.Select(carry.Value(), ir.Constant(1u), ir.Constant(0u)));
-        writeMask(inst.destination2, IrU1(ir.INotEqual(signsDiffer.Value(), carryU32.Value())));
+        writeCompareResult(inst.destination2, IrU1(ir.INotEqual(signsDiffer.Value(), carryU32.Value())));
     }
     return true;
 }
