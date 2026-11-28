@@ -2,7 +2,6 @@
 
 ### Silent stubs
 
-- [sceAjmModuleRegister, sceAjmModuleUnregister](../../../core/libs/prx/libSceAjm.native/src/Ajm.cpp) (libSceAjm.native) - return 0 without recording the codec, so instances are created the same whether or not their codec's module was registered. Only `sceAjmModuleRegister`'s nonzero `reserved` is refused (0x80930005), as firmware 13.42 does before its driver request (read from disassembly, not measured on a console). Borderlands 4 (PPSA01494), Ghost of Tsushima (PPSA02225), Forspoken (PPSA03984), Metal Gear Solid 4 (PPSA18194), Crimson Desert (PPSA25286), MXGP 26 (PPSA30839) and Super Meat Boy 3D (PPSA31162) call both; Call of Duty: Black Ops II (PPSA34502) calls `sceAjmModuleRegister` once
 - [sceAjmFinalize](../../../core/libs/prx/libSceAjm.native/src/Ajm.cpp) (libSceAjm.native) - returns 0 without releasing anything for the context, and the next `sceAjmInitialize` hands out a new context number. The seven titles above that unregister modules also call it
 - [sceAjmBatchErrorDump](../../../core/libs/prx/libSceAjm.native/src/Ajm.cpp) (libSceAjm.native) - ignores the batch information and returns 0 with the error record zeroed when one is passed. Borderlands 4, Forspoken, Metal Gear Solid 4, MXGP 26 and Super Meat Boy 3D call it
 
@@ -40,6 +39,7 @@
 
 ### Functional
 
+- [sceAjmModuleRegister, sceAjmModuleUnregister](../../../core/libs/prx/libSceAjm.native/src/Ajm.cpp) (libSceAjm.native) - follow a payload process on a PS5 (firmware 13.590.001): codecs are registered per context, and `sceAjmInstanceCreate` refuses an unregistered codec with `0x8093000A`. Ids 0 to 4, 12 to 14 and 22 to 24 can be registered; any other id returns `0x80930005` from both calls. A second register returns `0x80930009`; unregistering a codec that is not registered returns `0x8093000A`, and one with a live instance `0x8093000D`, leaving it registered. A bad context returns `0x80930002`. The order of the checks when several apply is not measured, and creating an instance of such an id throws. Borderlands 4 (PPSA01494), Ghost of Tsushima (PPSA02225), Forspoken (PPSA03984), Metal Gear Solid 4 (PPSA18194), Crimson Desert (PPSA25286), MXGP 26 (PPSA30839) and Super Meat Boy 3D (PPSA31162) call both; Call of Duty: Black Ops II (PPSA34502) calls `sceAjmModuleRegister` once
 - [sceAjmInstanceCreate guest output](../../../core/libs/prx/libSceAjm.native/src/Ajm.cpp) (libSceAjm.native) - returning SCE_AJM_ERROR_INVALID_PARAMETER with caller errno preserved for an unwritable instance pointer via GuestCopyOut_nid_no_patch is a host-safety fallback; whether the console faults or returns an argument error on unmapped memory is unmeasured.
 - [sceAjmBatchInitialize guest output](../../../core/libs/prx/libSceAjm.native/src/Ajm.cpp) (libSceAjm.native) - returning SCE_AJM_ERROR_INVALID_PARAMETER with caller errno preserved for an unwritable info pointer via GuestCopyOut_nid_no_patch is a host-safety fallback; whether the console faults or returns an argument error on unmapped memory is unmeasured.
 
