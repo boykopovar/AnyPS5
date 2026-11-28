@@ -152,29 +152,32 @@ class TitlesTests(unittest.TestCase):
     def test_default_entry(self):
         self.assertEqual(title_run.relink_args({}, "windows"), ["--windows"])
         self.assertEqual(title_run.relink_args({}, "linux"), [])
+        self.assertEqual(title_run.relink_args({}, "macos"), ["--macos", "--to-rosetta"])
 
-    def test_entry_on_windows_and_linux(self):
+    def test_entry_on_each_platform(self):
         entry = {"relink": ["--registry"], "fixed_base": "0x400000", "executables": ["picker/picker.bin"]}
         self.assertEqual(title_run.relink_args(entry, "windows"),
                          ["--windows", "--registry", "--windows-fixed-base", "0x400000", "--executable", "picker/picker.bin"])
         self.assertEqual(title_run.relink_args(entry, "linux"),
                          ["--registry", "--linux-fixed-base", "0x400000", "--executable", "picker/picker.bin"])
-
-    def test_fixed_base_on_macos_is_refused(self):
-        with self.assertRaisesRegex(ValueError, "fixed_base is not supported on macos"):
-            title_run.relink_args({"fixed_base": "0x400000"}, "macos")
+        self.assertEqual(title_run.relink_args(entry, "macos"),
+                         ["--macos", "--registry", "--to-rosetta", "--macos-fixed-base", "0x400000", "--executable", "picker/picker.bin"])
 
     def test_intel_host_gets_to_intel(self):
         self.assertEqual(title_run.relink_args({}, "linux", intel_host=True), ["--to-intel"])
         self.assertEqual(title_run.relink_args({}, "windows", intel_host=True), ["--windows", "--to-intel"])
+        self.assertEqual(title_run.relink_args({}, "macos", intel_host=True), ["--macos", "--to-intel"])
 
     def test_amd_host_keeps_the_entry_flags(self):
         self.assertEqual(title_run.relink_args({}, "linux", intel_host=False), [])
 
-    def test_an_explicit_conversion_is_not_duplicated(self):
+    def test_explicit_relinker_flags_override_host_defaults(self):
         self.assertEqual(title_run.relink_args({"relink": ["--to-intel"]}, "linux", intel_host=True), ["--to-intel"])
-        self.assertEqual(title_run.relink_args({"relink": ["--to-rosetta"]}, "macos", intel_host=True), ["--to-rosetta"])
-        self.assertEqual(title_run.relink_args({"relink": ["--to-avx"]}, "macos", intel_host=True), ["--to-avx"])
+        for flag in ("--to-intel", "--to-rosetta", "--to-avx"):
+            entry = {"relink": ["--macos", flag]}
+            for intel_host in (False, True):
+                with self.subTest(flag=flag, intel_host=intel_host):
+                    self.assertEqual(title_run.relink_args(entry, "macos", intel_host=intel_host), ["--macos", flag])
 
 
 def bmp(path, width, height, color):
@@ -1240,7 +1243,7 @@ class PreparationTests(unittest.TestCase):
             Path(command[-1]).write_bytes(b"converted executable")
             return subprocess.CompletedProcess(command, 0)
 
-        with unittest.mock.patch.object(title_run.subprocess, "run", side_effect=convert):
+        with patch.object(title_run, "host_is_intel", return_value=False), patch.object(title_run.subprocess, "run", side_effect=convert):
             executable = title_run.prepare("PPSA00001", {"package": source}, entry, "linux", build, work)
         self.assertEqual(executable.read_bytes(), b"converted executable")
         self.assertEqual((work / "input/sce_module/libc.prx").read_bytes(), elf)
@@ -1423,9 +1426,11 @@ class NativeRuntimePreparationTests(unittest.TestCase):
             Path(command[-1]).write_bytes(b"converted fixture")
             return subprocess.CompletedProcess(command, 0)
 
-        with unittest.mock.patch.object(title_run.subprocess, "run", side_effect=convert):
+        with patch.object(title_run, "host_is_intel", return_value=False), patch.object(title_run.subprocess, "run", side_effect=convert) as relink:
             executable = title_run.prepare("PPSA00001", {"package": self.package}, {}, platform, self.build, work)
         self.assertEqual(executable.read_bytes(), b"converted fixture")
+        if platform == "macos":
+            self.assertEqual(relink.call_args.args[0][1:-2], ["--macos", "--to-rosetta"])
         return {path.name: path.read_bytes() for path in (work / "libs").iterdir()}
 
     def test_prepare_stages_only_the_target_allocator_and_compiler_runtimes(self):
@@ -2328,10 +2333,34 @@ class HostIsIntelTests(unittest.TestCase):
                 self.assertIs(self.check(SimpleNamespace(name="nt", environ={"PROCESSOR_IDENTIFIER": identifier})), expected)
         self.assertIs(self.check(SimpleNamespace(name="nt", environ={})), False)
 
-    def test_macos_is_intel_only_on_x86_64(self):
-        for machine, expected in (("x86_64", True), ("arm64", False)):
-            system = SimpleNamespace(name="posix", uname=lambda machine=machine: SimpleNamespace(machine=machine))
-            self.assertIs(self.check(system, platform="darwin"), expected)
+    def test_native_apple_silicon_does_not_need_a_hardware_query(self):
+        system = SimpleNamespace(name="posix", uname=lambda: SimpleNamespace(machine="arm64"))
+        with patch.object(ctypes, "CDLL") as library:
+            self.assertFalse(self.check(system, platform="darwin"))
+        library.assert_not_called()
+
+    def test_x86_64_macos_checks_process_translation(self):
+        system = SimpleNamespace(name="posix", uname=lambda: SimpleNamespace(machine="x86_64"))
+
+        def query(name, value_ptr, size_ptr, new_value, new_size):
+            self.assertEqual(name, b"sysctl.proc_translated")
+            self.assertIsNone(new_value)
+            self.assertEqual(new_size, 0)
+            ctypes.cast(value_ptr, ctypes.POINTER(ctypes.c_int)).contents.value = translated
+            ctypes.cast(size_ptr, ctypes.POINTER(ctypes.c_size_t)).contents.value = size
+            return result
+
+        size_of_int = ctypes.sizeof(ctypes.c_int)
+        cases = ((0, 0, 0, size_of_int, True), (0, 0, 1, size_of_int, False),
+                 (0, 0, 2, size_of_int, False), (0, 0, 0, 0, False),
+                 (-1, errno.ENOENT, -1, size_of_int, True), (-1, errno.EIO, 0, size_of_int, False))
+        for result, error, translated, size, intel in cases:
+            with self.subTest(result=result, error=error, translated=translated, size=size), \
+                    patch.object(ctypes, "CDLL") as library, patch.object(ctypes, "get_errno", return_value=error):
+                library.return_value.sysctlbyname.side_effect = query
+                self.assertIs(self.check(system, platform="darwin"), intel)
+                library.assert_called_once_with(None, use_errno=True)
+                library.return_value.sysctlbyname.assert_called_once()
 
     def test_linux_reads_proc_cpuinfo(self):
         system = SimpleNamespace(name="posix")
