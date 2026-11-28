@@ -56,6 +56,7 @@ public:
         append(key, request.context.vertex);
         append(key, request.context.floatMode);
         append(key, request.context.convertedSamples);
+        append(key, UnsignedPacked32ModesWanted(request.context));
         append(key, request.context.layerRowSamples);
         appendFallbacks(key, request);
         appendMesh(key, request);
@@ -102,6 +103,7 @@ private:
         append(key, request.context.vertex);
         append(key, request.context.floatMode);
         append(key, request.context.convertedSamples);
+        append(key, UnsignedPacked32ModesWanted(request.context));
         append(key, request.context.layerRowSamples);
         appendFallbacks(key, request);
         appendMesh(key, request);

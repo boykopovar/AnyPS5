@@ -434,6 +434,9 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     if (request.context.convertedSamples) {
         for (auto& image : program.Resources().info.images) image.convertedSamples = true;
     }
+    if (UnsignedPacked32ModesWanted(request.context)) {
+        for (auto& image : program.Resources().info.images) image.unsignedPacked32Modes = true;
+    }
     if (request.context.layerRowSamples) {
         for (auto& image : program.Resources().info.images) image.maxArrayLayers = request.target.maxImageArrayLayers;
     }
@@ -1875,6 +1878,8 @@ auto CountedCompile(Compile&& compile) {
         return result;
     } catch (const ConvertedSampleRequired&) {
         throw;
+    } catch (const UnsignedPacked32ModesRequired&) {
+        throw;
     } catch (const std::exception&) {
         NoteFailureOnce();
         throw;
@@ -1976,6 +1981,8 @@ RecompileResult recompileOnce(const RecompileRequest& request) {
     return materializeVariant(*source, request, snapshot);
 }
 
+std::atomic<std::uint64_t> unsignedPacked32ModeRetries{0};
+
 RecompileResult RecompileImpl(const RecompileRequest& request) {
     auto current = request;
     while (true) {
@@ -1984,6 +1991,10 @@ RecompileResult RecompileImpl(const RecompileRequest& request) {
         } catch (const ConvertedSampleRequired&) {
             if (current.context.convertedSamples) throw;
             current.context.convertedSamples = true;
+        } catch (const UnsignedPacked32ModesRequired&) {
+            if (UnsignedPacked32ModesWanted(current.context)) throw;
+            NoteUnsignedPacked32ModeRetry();
+            current.context.unsignedPacked32Modes = true;
         } catch (const LayerRowSamplesRequired&) {
             if (current.context.layerRowSamples) throw;
             current.context.layerRowSamples = true;
@@ -2556,6 +2567,8 @@ auto recompileReporting(const RecompileRequest& request, Impl&& impl) -> decltyp
         return impl();
     } catch (const ConvertedSampleRequired&) {
         throw;
+    } catch (const UnsignedPacked32ModesRequired&) {
+        throw;
     } catch (const std::exception& e) {
         NoteFailureOnce();
         constexpr auto requestSerializer = RequestSerializer{};
@@ -2829,6 +2842,14 @@ void SetResultMemoBudget(std::uint64_t bytes) {
 void SetResultMemoTrimHook(std::function<void()> hook) {
     std::lock_guard lock(resultMemoTrimMutex());
     resultMemoTrimHook() = std::move(hook);
+}
+
+void NoteUnsignedPacked32ModeRetry() {
+    unsignedPacked32ModeRetries.fetch_add(1, std::memory_order_relaxed);
+}
+
+std::uint64_t UnsignedPacked32ModeRetries() {
+    return unsignedPacked32ModeRetries.load(std::memory_order_relaxed);
 }
 
 std::uint64_t ResultMemoBytes() {
