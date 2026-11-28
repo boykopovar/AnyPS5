@@ -269,7 +269,7 @@ int APS5_VABI sceKernelGetOpenPsIdForSystem(void* id);
 int APS5_VABI sceKernelGetPagingStatsOfAllObjects(void);
 int APS5_VABI sceKernelGetPagingStatsOfAllThreads(void);
 int APS5_VABI sceKernelGetParentApp(void);
-int APS5_VABI sceKernelGetPhysPageSize(void);
+int APS5_VABI sceKernelGetPhysPageSize(const void* address, std::uint64_t* pageSize);
 int APS5_VABI sceKernelGetProcessName(void);
 int APS5_VABI sceKernelGetProcessTypeOfBudget(void);
 int APS5_VABI sceKernelGetProductCode(void);
