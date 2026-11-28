@@ -159,19 +159,30 @@ function localizedError(render) {
 }
 
 function renderError() {
-  if (!errorState || $("error").hidden) return;
+  const error = $("error");
+  if (!errorState || error.hidden || errorState.renderedLocale === locale) return;
   const message = [messageText(errorState.message), ...errorState.appended].join("\n");
   const report = failureReport({ ...errorState.context, message, locale });
-  if (report === message) $("error").replaceChildren(document.createTextNode(message));
-  else {
-    const details = document.createElement("details");
-    const summary = document.createElement("summary");
-    summary.textContent = translate(locale, "failureDetails");
-    const text = document.createElement("pre");
-    text.textContent = report;
-    details.append(summary, text);
-    $("error").replaceChildren(document.createTextNode(message), details);
+  if (!errorState.view) {
+    const headline = document.createTextNode(message);
+    const view = { headline };
+    if (report === message) error.replaceChildren(headline);
+    else {
+      const details = document.createElement("details");
+      view.summary = document.createElement("summary");
+      view.text = document.createElement("pre");
+      details.append(view.summary, view.text);
+      error.replaceChildren(headline, details);
+    }
+    errorState.view = view;
   }
+  const { headline, summary, text } = errorState.view;
+  headline.textContent = message;
+  if (summary) {
+    summary.textContent = translate(locale, "failureDetails");
+    text.textContent = report;
+  }
+  errorState.renderedLocale = locale;
 }
 
 async function fail(value, { keepInspection = false } = {}) {
@@ -324,9 +335,9 @@ async function onMessage({ data }, currentWorker) {
       working = false;
       $("done").hidden = false;
       $("status").hidden = true;
-      const { apps, mode, size, release: tag, outputName } = data;
+      const { apps, mode, size, release: tag, revision, outputName } = data;
       completedResult = {
-        apps, mode, size, tag, outputName,
+        apps, mode, size, tag, revision, outputName,
         folderName: mode === "disk" ? outputTransaction.name : null,
         target: document.querySelector('input[name="target"]:checked').value
       };
@@ -356,9 +367,9 @@ async function onMessage({ data }, currentWorker) {
 
 function renderResult() {
   if (!completedResult || $("done").hidden) return;
-  const { apps, mode, size, tag, outputName, folderName, target } = completedResult;
+  const { apps, mode, size, tag, revision, outputName, folderName, target } = completedResult;
   const unit = mode === "disk" ? translate(locale, "resultUnitFiles") : "ZIP";
-  const values = { apps, size: bytes(size), unit, release: tag, outputName };
+  const values = { apps, size: bytes(size), unit, release: revision ? tag + " (" + revision + ")" : tag, outputName };
   let info = translate(locale, apps > 1 ? "resultInfoBatch" : "resultInfoSingle", values);
   if (mode === "zip") {
     info += translate(locale, "resultZipSavedToDisk");

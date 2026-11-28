@@ -573,10 +573,10 @@ void UnknownLevelsFollowFreeBsd() {
     int pair[2]{-1, -1};
     Require(socketpair_nid_postfix(1, Stream, 0, pair) == 0, "socketpair failed");
     Require(SetFails(pair[0], 999, 1, &one, sizeof(one), ErrorInvalid), "an unknown protocol level on an AF_UNIX socket must fail with EINVAL (22), uipc_ctloutput");
-    Require(SetFails(pair[0], 0, 77, &one, sizeof(one), 45), "an unknown option at level 0 on an AF_UNIX socket must fail with EOPNOTSUPP (45), uipc_ctloutput");
+    Require(SetFails(pair[0], 0, 77, &one, sizeof(one), ErrorNoProtocolOption), "setting an unknown option at level 0 on an AF_UNIX socket must fail with ENOPROTOOPT (42), uipc_ctloutput");
     size = sizeof(value);
     Require(getsockopt_nid_postfix(pair[0], 0, 77, &value, &size) == -1 && *__error_nid_postfix() == 45, "getsockopt of an unknown option at level 0 on an AF_UNIX socket must fail with EOPNOTSUPP (45)");
-    Require(SetFails(pair[0], 0, 1, &one, sizeof(one), 45), "setting LOCAL_PEERCRED on an AF_UNIX socket must fail with EOPNOTSUPP (45)");
+    Require(SetFails(pair[0], 0, 1, &one, sizeof(one), ErrorNoProtocolOption), "setting LOCAL_PEERCRED on an AF_UNIX socket must fail with ENOPROTOOPT (42)");
     std::uint32_t original[16]{};
     const int originalCount = getgroups_nid_postfix(16, original);
     Require(originalCount >= 1, "getgroups failed");

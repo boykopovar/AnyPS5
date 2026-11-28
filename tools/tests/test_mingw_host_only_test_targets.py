@@ -457,6 +457,16 @@ class HostOnlyTargets(unittest.TestCase):
         )
         self.assertEqual(selected, ["second_tests"])
 
+    def test_list_only_reads_git_nul_delimited_paths(self):
+        source = "core/libs/tests/Café.cpp"
+        build = self.fixture([self.target("host_tests", source=source)])
+        changed = Path(self.temporary.name) / "changed.txt"
+        changed.write_bytes(("docs/file.md\0" + source + "\0").encode("utf-8"))
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(build_mingw_host_only_tests.main([str(build), str(changed), "--list-only"]), 0)
+        self.assertIn("host_tests", output.getvalue().splitlines())
+
     def test_list_only_reads_the_first_changed_path_after_a_bom(self):
         build = self.fixture([self.target("host_tests")])
         changed = Path(self.temporary.name) / "changed.txt"

@@ -312,14 +312,16 @@ void testMarkers() {
     check(acbPush == acb.words.data() && acbPush[0] == Agc::Command::Header(0x10, 3, 0x0bu << 2u), "ACB push marker header mismatch");
     check(std::strcmp(reinterpret_cast<const char*>(acbPush + 1), "frame") == 0, "ACB push marker text mismatch");
     const auto* acbPop = sceAgcAcbPopMarker(&acb.buffer);
-    check(acbPop == acb.words.data() + 3 && acbPop[0] == Agc::Command::Header(0x10, 2, 0x0cu << 2u) && acbPop[1] == 0, "ACB pop marker mismatch");
-    sceAgcDcbPopMarker(&dcb.buffer);
+    check(acbPop == acb.words.data() + 3 && acbPop[0] == Agc::Command::Header(0x79, 3, 0) && acbPop[1] == 0x342u && acbPop[2] == 0xc2000000u, "ACB pop marker mismatch");
+    const auto* dcbPop = sceAgcDcbPopMarker(&dcb.buffer);
+    check(dcbPop == dcb.words.data() + 3 && dcbPop[0] == Agc::Command::Header(0x79, 3, 4) && dcbPop[1] == 0x342u && dcbPop[2] == 0xc2000000u, "DCB pop marker mismatch");
     const auto* acbSet = sceAgcAcbSetMarker(&acb.buffer, nullptr, 0);
     const auto* dcbSet = sceAgcDcbSetMarker(&dcb.buffer, nullptr, 0);
-    check(acbSet == acb.words.data() + 5 && dcbSet == dcb.words.data() + 5, "set marker did not return its push packet");
+    check(acbSet == acb.words.data() + 6 && dcbSet == dcb.words.data() + 6, "set marker did not return its push packet");
     check(acbSet[0] == Agc::Command::Header(0x10, 2, 0x0bu << 2u) && acbSet[1] == 0 && acbSet[2] == Agc::Command::Header(0x10, 2, 0x0cu << 2u), "ACB set marker is not a push and pop pair");
-    check(dcbPush == dcb.words.data() && dcb.words == acb.words, "ACB and DCB markers differ");
-    check(acb.buffer.cursor_up == acb.words.data() + 9, "incorrect ACB marker cursor advance");
+    check(dcbPush == dcb.words.data() && std::equal(acb.words.begin(), acb.words.begin() + 3, dcb.words.begin()), "ACB and DCB push markers differ");
+    check(std::equal(acbSet, acbSet + 4, dcbSet), "ACB and DCB set markers differ");
+    check(acb.buffer.cursor_up == acb.words.data() + 10 && dcb.buffer.cursor_up == dcb.words.data() + 10, "incorrect marker cursor advance");
     expectFailure([] { sceAgcAcbPushMarker(nullptr, "frame", 0); });
     expectFailure([] { sceAgcAcbPopMarker(nullptr); });
     expectFailure([] { sceAgcAcbSetMarker(nullptr, "frame", 0); });
@@ -467,6 +469,8 @@ void testWorkloadStreams() {
     check(sceAgcAcbSetWorkloadsActive(&registered.buffer, 1, nullptr, 2) == nullptr, "ACB null workload ids accepted");
     check(sceAgcAcbSetWorkloadsActive(&registered.buffer, 0, ids, 2) == nullptr, "ACB stream id 0 accepted");
     check(sceAgcAcbSetWorkloadsActive(&registered.buffer, 32, ids, 2) == nullptr, "ACB stream id 32 accepted");
+    const auto* cursor = registered.buffer.cursor_up;
+    check(sceAgcAcbSetWorkloadsActive(&registered.buffer, 1, reinterpret_cast<const std::uint32_t*>(std::uintptr_t{0x10}), 2) == nullptr && registered.buffer.cursor_up == cursor, "ACB unmapped workload ids accepted");
     check(sceAgcAcbSetWorkloadComplete(&registered.buffer, 1, 64) == nullptr, "ACB workload complete id 64 accepted");
     check(sceAgcAcbSetWorkloadsActive(nullptr, 1, ids, 2) == nullptr, "ACB null command buffer accepted for active");
     check(sceAgcDcbSetWorkloadStreamInactive(nullptr, 1) == nullptr && sceAgcAcbSetWorkloadsActive(nullptr, 1, ids, 2) == nullptr &&

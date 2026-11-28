@@ -2,10 +2,15 @@
 #include "unicode/ustring.h"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include <algorithm>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
+#include <string>
+#include <vector>
 
 namespace {
 
@@ -13,13 +18,51 @@ bool Lead(char16_t value) { return value >= 0xd800 && value <= 0xdbff; }
 bool Trail(char16_t value) { return value >= 0xdc00 && value <= 0xdfff; }
 bool Surrogate(char16_t value) { return value >= 0xd800 && value <= 0xdfff; }
 
-std::int32_t Length(const char16_t* text, const char* function) {
-    std::size_t length = 0;
-    while (text[length] != 0) {
-        if (length == static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max())) NotImplemented_nid_no_patch(function);
-        ++length;
+std::vector<char16_t> ReadOperand(const char16_t* operand, std::int32_t count, const char* caller) {
+    constexpr std::uintptr_t Chunk = 0x1000;
+    const auto address = reinterpret_cast<std::uintptr_t>(operand);
+    const std::size_t limit = count >= 0 ? static_cast<std::size_t>(count) * sizeof(char16_t) : 0;
+    std::vector<unsigned char> bytes;
+    bool done = false;
+    while (!done) {
+        const std::size_t offset = bytes.size();
+        std::size_t amount = Chunk - (address + offset) % Chunk;
+        if (count >= 0) {
+            amount = (std::min)(amount, limit - offset);
+            if (!amount) break;
+        }
+        bytes.resize(offset + amount);
+        const int saved = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(bytes.data() + offset, reinterpret_cast<const void*>(address + offset), amount);
+        errno = saved;
+        if (!copied) throw std::invalid_argument(std::string(caller) + ": unreadable operand");
+        if (count >= 0) {
+            done = bytes.size() == limit;
+            continue;
+        }
+        for (std::size_t scanned = offset & ~std::size_t{1}; scanned + sizeof(char16_t) <= bytes.size(); scanned += sizeof(char16_t)) {
+            char16_t unit = 0;
+            std::memcpy(&unit, bytes.data() + scanned, sizeof(unit));
+            if (unit != 0) continue;
+            bytes.resize(scanned + sizeof(char16_t));
+            done = true;
+            break;
+        }
     }
-    return static_cast<std::int32_t>(length);
+    std::vector<char16_t> units(bytes.size() / sizeof(char16_t) + (bytes.empty() ? 1 : 0));
+    if (!bytes.empty()) std::memcpy(units.data(), bytes.data(), bytes.size());
+    return units;
+}
+
+char16_t* Find(const char16_t* text, std::int32_t count, const char16_t* needle, std::int32_t needleCount,
+               bool last, const char* caller) {
+    const auto sub = ReadOperand(needle, needleCount, caller);
+    const auto subLength = needleCount >= 0 ? needleCount : static_cast<std::int32_t>(sub.size() - 1);
+    if (subLength == 0) return const_cast<char16_t*>(text);
+    const auto units = ReadOperand(text, count, caller);
+    const char16_t* found = last ? u_strFindLast(units.data(), count, sub.data(), needleCount)
+                                 : u_strFindFirst(units.data(), count, sub.data(), needleCount);
+    return found ? const_cast<char16_t*>(text) + (found - units.data()) : nullptr;
 }
 
 bool Paired(const char16_t* text, std::size_t position, std::int32_t count) {
@@ -93,16 +136,15 @@ char16_t* APS5_VABI u_strrchr_nid_postfix(const char16_t* text, char16_t value) 
 }
 
 char16_t* APS5_VABI u_strFindFirst_nid_postfix(const char16_t* text, std::int32_t count, const char16_t* needle, std::int32_t needleCount) {
-    if (text && count >= 0 && needle && needleCount == -1) needleCount = Length(needle, __func__);
-    return u_strFindFirst(text, count, needle, needleCount);
+    if (!needle || needleCount < -1) return const_cast<char16_t*>(text);
+    if (!text || count < -1) return nullptr;
+    return Find(text, count, needle, needleCount, false, __func__);
 }
 
 char16_t* APS5_VABI u_strFindLast_nid_postfix(const char16_t* text, std::int32_t count, const char16_t* needle, std::int32_t needleCount) {
     if (!needle || needleCount < -1) return const_cast<char16_t*>(text);
     if (!text || count < -1) return nullptr;
-    if (needleCount == -1) needleCount = Length(needle, __func__);
-    if (count == -1 && (needleCount > 1 || (needleCount == 1 && Surrogate(needle[0])))) count = Length(text, __func__);
-    return u_strFindLast(text, count, needle, needleCount);
+    return Find(text, count, needle, needleCount, true, __func__);
 }
 
 std::int32_t APS5_VABI u_strcmpCodePointOrder_nid_postfix(const char16_t* first, const char16_t* second) {

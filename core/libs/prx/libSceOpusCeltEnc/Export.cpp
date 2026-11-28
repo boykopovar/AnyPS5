@@ -174,14 +174,18 @@ int APS5_VABI sceOpusCeltEncEncodeWithPriority(OpusCeltEncoder* state, const std
 }
 
 int APS5_VABI sceOpusCeltEncEncodeFloatWithPriority(OpusCeltEncoder* state, const float* samples, int frameSize, std::uint8_t* data, int maxDataBytes, std::uint32_t priority) {
-    (void)data;
-    (void)maxDataBytes;
-    (void)priority;
     if (state == nullptr) return encoderError(codes.nullErrorOffset);
     if (samples == nullptr) return encoderError(codes.nullSamplesErrorOffset);
     if (frameSize == 0) return encoderError(codes.frameErrorOffset);
     if (!hasStateMarker(state, codes.stateMagicOffset)) return encoderError(codes.destroyStateErrorOffset);
-    NotImplemented_nid_no_patch(__func__);
+    if (frameSize < 0 || static_cast<std::uint64_t>(frameSize) * guestStateWord(state, codes.stateChannelsOffset) * 4u > 0x800000u) {
+        return library.EncodeFloat(state, samples, frameSize, data, maxDataBytes);
+    }
+    if (data == nullptr) return encoderError(codes.nullDataErrorOffset);
+    if (maxDataBytes == 0) return encoderError(codes.sizeErrorOffset);
+    if (priority < lowestPriority || priority > highestPriority) return encoderError(priorityErrorOffset);
+    if (!acceptedPriorityFrame(guestStateWord(state, codes.stateRateOffset), static_cast<std::uint32_t>(frameSize))) return encoderError(codes.frameErrorOffset);
+    return library.EncodeFloat(state, samples, frameSize, data, maxDataBytes);
 }
 
 int APS5_VABI sceOpusCeltEncGetAjmContext(const OpusCeltEncoder* state, std::uint32_t* context) {

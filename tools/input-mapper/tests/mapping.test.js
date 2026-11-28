@@ -82,6 +82,19 @@ test('setting names and order agree with the current native parser', () => {
     assert.equal(new Set(definitions).size, definitions.length);
 });
 
+test('setting hints show the built-in values of the native settings', () => {
+    const source = readFileSync(new URL('../../../core/libs/prx/libScePad/include/InputMapping.hpp', import.meta.url), 'utf8');
+    const constants = Object.fromEntries([...source.matchAll(/inline constexpr \w+ (\w+) = ([\d.]+);/gu)].map(match => [match[1], match[2]]));
+    const fields = source.match(/struct InputSettings \{([^}]*)\}/u)[1];
+    const native = {};
+    for (const [, field, value] of fields.matchAll(/(?:int|double) (\w+) = (\w[\w.]*);/gu)) {
+        native[field[0].toUpperCase() + field.slice(1).replace(/Percent$/u, '')] = Number(constants[value] ?? value);
+    }
+    native.MouseStickTarget = /bool mouseControlsRightStick = true;/u.test(fields) ? 'Right' : 'Left';
+    const builtin = Object.fromEntries(settings.filter(setting => setting.builtin !== undefined).map(setting => [setting.name, setting.name === 'MouseStickTarget' ? setting.builtin : Number(setting.builtin)]));
+    assert.deepEqual(builtin, native);
+});
+
 test('ToggleActions values follow the current native list parser', () => {
     const source = readFileSync(new URL('../../../core/libs/prx/libSceVideoOut/src/InputMapping.cpp', import.meta.url), 'utf8');
     const parser = source.match(/std::uint32_t parseToggleActions[\s\S]*?return mask;/u)[0];
@@ -334,7 +347,7 @@ test('all exportable SDL names validate and unsafe comment names are rejected', 
 test('mouse values and action restrictions match the current INI format', () => {
     for (const action of actions) {
         for (const value of mouseValues) {
-            assert.equal(validate([binding(action, 'MOUSE', value)]).errors.length === 0, !['ToggleFullscreen', 'TogglePerformanceOverlay', 'Screenshot', 'ShowPadStatus', 'VolumeUp', 'VolumeDown', 'ToggleMute', 'ReloadInputMapping'].includes(action));
+            assert.equal(validate([binding(action, 'MOUSE', value)]).errors.length === 0, !['ToggleFullscreen', 'ToggleBorderless', 'TogglePerformanceOverlay', 'Screenshot', 'ShowPadStatus', 'VolumeUp', 'VolumeDown', 'ToggleMute', 'ReloadInputMapping'].includes(action));
         }
     }
     assert.ok(validate([binding('Cross', 'MOUSE', 'Button1')]).errors.length);

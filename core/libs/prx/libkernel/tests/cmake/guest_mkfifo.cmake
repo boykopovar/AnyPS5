@@ -1,0 +1,6 @@
+add_test_executable(guest_mkfifo_tests ${LIBS_INCLUDE_DIR}/tests/GuestMkfifo.cpp)
+target_include_directories(guest_mkfifo_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(guest_mkfifo_tests PRIVATE libkernel libc)
+configure_windows_unwind(guest_mkfifo_tests)
+add_test(NAME guest_mkfifo COMMAND guest_mkfifo_tests guest_mkfifo.tmp)
+set_tests_properties(guest_mkfifo PROPERTIES TIMEOUT 20)

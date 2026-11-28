@@ -428,6 +428,12 @@ GuestDirectoryEntry* CopyDirectoryEntry(const GuestDirectoryEntry* source) {
     return copy;
 }
 
+using DirectoryCompare = int (APS5_VABI *)(const GuestDirectoryEntry* const*, const GuestDirectoryEntry* const*);
+
+int APS5_VABI CompareThroughThunk(void* thunk, const void* left, const void* right) {
+    return (*static_cast<const DirectoryCompare*>(thunk))(static_cast<const GuestDirectoryEntry* const*>(left), static_cast<const GuestDirectoryEntry* const*>(right));
+}
+
 void FreeDirectoryEntries(std::vector<GuestDirectoryEntry*>& entries) {
     for (auto* entry : entries) free_nid_postfix(entry);
     entries.clear();
@@ -461,13 +467,6 @@ int APS5_VABI scandir_nid_postfix(const char* path, GuestDirectoryEntry*** namel
         errno = readError;
         return -1;
     }
-    if (compar != nullptr) {
-        std::sort(entries.begin(), entries.end(), [compar](GuestDirectoryEntry* left, GuestDirectoryEntry* right) {
-            const GuestDirectoryEntry* first = left;
-            const GuestDirectoryEntry* second = right;
-            return compar(&first, &second) < 0;
-        });
-    }
     auto** array = static_cast<GuestDirectoryEntry**>(malloc_nid_postfix(std::max<std::size_t>(entries.size(), 1) * sizeof(GuestDirectoryEntry*)));
     if (array == nullptr) {
         FreeDirectoryEntries(entries);
@@ -475,6 +474,7 @@ int APS5_VABI scandir_nid_postfix(const char* path, GuestDirectoryEntry*** namel
         return -1;
     }
     std::copy(entries.begin(), entries.end(), array);
+    if (!entries.empty() && compar != nullptr) qsort_r_nid_postfix(array, entries.size(), sizeof(*array), &compar, CompareThroughThunk);
     if (!GuestCopyOut_nid_no_patch(namelist, &array, sizeof(array))) {
         free_nid_postfix(array);
         FreeDirectoryEntries(entries);

@@ -558,7 +558,7 @@ void CheckContextConstruction() {
 int main() {
     void* api[10]{};
     ApplicationHeapRegister_nid_no_patch(api);
-    CheckRetain<LibreSsl3Ssl>(SSL_up_ref_nid_postfix, 176);
+    CheckRetain<LibreSslSsl>(SSL_up_ref_nid_postfix, 168);
     CheckRetain<LibreSsl3SslSession>(SSL_SESSION_up_ref_nid_postfix, 184);
     CheckVersionName();
     CheckInfoCallback();

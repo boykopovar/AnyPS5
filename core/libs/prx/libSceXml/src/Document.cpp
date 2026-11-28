@@ -3,6 +3,7 @@
 #include "prx/libSceXml/src/AttributeList.hpp"
 #include "prx/libSceXml/src/DomReader.hpp"
 #include "prx/libSceXml/src/NodeList.hpp"
+#include "prx/libSceXml/src/Serializer.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include <algorithm>
@@ -32,6 +33,7 @@ struct DocumentRef {
     std::shared_ptr<Generation> generation;
     XmlMemAllocator* allocator = nullptr;
     void* userData = nullptr;
+    std::string serialized;
 };
 
 template <typename T>
@@ -991,6 +993,24 @@ int DocumentElementsByTagName(const XmlHandle* document, XmlNodeId node, const X
     return NodeListReplace(list, items);
 }
 
+struct WritableSerializerView {
+    const WritableTree& tree;
+
+    const DomNode* Root() const { return tree.Root(); }
+    const DomNode* FirstChild(const DomNode* node) const { return tree.FirstChild(node); }
+    const DomNode* Sibling(const DomNode* node) const { return tree.NextSibling(node); }
+    const DomNode* FirstAttribute(const DomNode* node) const { return tree.FirstAttribute(node); }
+    const DomNode* NextAttribute(const DomNode* attribute) const { return tree.NextAttribute(attribute); }
+    std::uint32_t NodeType(const DomNode* node) const { return node != nullptr ? node->type : InvalidNodeTypeValue; }
+    std::uint32_t EntityType(const DomNode* node) const { return node != nullptr && (node->type & 0x0fu) == NodeTypeEntity ? node->entityType : InvalidEntityTypeValue; }
+    const char* NodeName(const DomNode* node) const { return tree.NodeName(node); }
+    const char* Text(const DomNode* node) const { return tree.Text(node); }
+    const char* SkippedText(const DomNode* node) const { return tree.SkippedText(node); }
+    const char* AttributeName(const DomNode* attribute) const { return tree.AttributeName(attribute); }
+    const char* AttributeValue(const DomNode* attribute) const { return tree.AttributeValue(attribute); }
+    const char* Entity(const DomNode* node) const { return tree.Entity(node); }
+};
+
 std::uint32_t GenerationNodeType(const Generation& generation, XmlNodeId id) {
     if (generation.writable && generation.tree != nullptr) {
         const DomNode* resolved = ResolveWritable(generation, id);
@@ -1021,6 +1041,20 @@ const char* GenerationNodeName(const Generation& generation, XmlNodeId id) {
         return generation.tree->NodeName(resolved);
     }
     return Reader(generation.buffers).NodeName(OffsetOf(id));
+}
+
+const std::string& DocumentSerialize(const XmlHandle* document, bool declaration) {
+    if (document == nullptr || document->impl == nullptr) throw std::invalid_argument("sce::Xml::Dom::Document: null object");
+    const Generation& generation = Live(document);
+    DocumentRef* ref = RefOf(document);
+    if (generation.writable && generation.tree != nullptr) {
+        const WritableSerializerView view{*generation.tree};
+        ref->serialized = Serializer<WritableSerializerView>(view).Run(declaration);
+    } else {
+        const Reader reader(generation.buffers);
+        ref->serialized = Serializer<Reader>(reader).Run(declaration);
+    }
+    return ref->serialized;
 }
 
 XmlNodeId NodeListFindByName(const XmlHandle* list, const std::string& name) {

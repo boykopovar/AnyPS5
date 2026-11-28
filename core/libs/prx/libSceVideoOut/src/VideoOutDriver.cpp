@@ -5,6 +5,7 @@
 #include <cstring>
 #include <cstdio>
 #include <exception>
+#include <memory>
 #include <thread>
 #include <limits>
 #include <optional>
@@ -350,6 +351,7 @@ VideoOutDriver& VideoOutDriver::Get() {
 VideoOutDriver::VideoOutDriver() {
     OnMainThread([] {
         SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
+        SDL_SetHint(SDL_HINT_IME_SUPPORT_EXTENDED_TEXT, "1");
 #ifdef _WIN32
         SDL_SetHintWithPriority(SDL_HINT_DIRECTINPUT_ENABLED, "0", SDL_HINT_DEFAULT);
         if (std::getenv("APS5_NO_WGI") != nullptr) SDL_SetHintWithPriority(SDL_HINT_JOYSTICK_WGI, "0", SDL_HINT_DEFAULT);
@@ -854,6 +856,7 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
             const bool quit = OnMainThread([&] {
                 SDL_Event event;
                 while (SDL_PollEvent(&event)) {
+                    const std::unique_ptr<char, decltype(&SDL_free)> extendedText(event.type == SDL_TEXTEDITING_EXT ? event.editExt.text : nullptr, SDL_free);
                     if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_CLOSE) windowCloseSeen = true;
                     if (event.type == SDL_QUIT) return true;
                     const bool padOwnedMouse = padInput->MouseModeEnabled();

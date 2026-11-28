@@ -17,13 +17,6 @@ static void Require(bool condition) {
     }
 }
 
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include <sys/mman.h>
-#include <unistd.h>
-#endif
-
 int main() {
     GuardedBuffer hayBuffer, needleBuffer;
     for (std::size_t length = 0; length <= 160; ++length) {

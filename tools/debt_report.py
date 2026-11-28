@@ -275,9 +275,11 @@ def report(root, libraries=None):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Label technical debt entries: who can close them (console, firmware, gpu, title or code), no-test when no test names what they name, stale? when they link a file that no longer exists, and the platforms they name. A Labels: trailer on an entry replaces the inferred labels of its family. A report, not a gate: it always exits 0.")
+    parser = argparse.ArgumentParser(description="Label technical debt entries: who can close them (console, firmware, gpu, title or code), no-test when no test names what they name, stale? when they link a file that no longer exists, and the platforms they name. A Labels: trailer on an entry replaces the inferred labels of its family. A valid report exits 0 even when no entries match.")
     parser.add_argument("libraries", nargs="*", help="debt file names without .md, such as libkernel or TechnicalDebt (default: all)")
-    parser.add_argument("--label", action="append", default=[], help="show only entries with this label; repeat to require several")
+    report_labels = {"stale?"} | {label for family in DEBT_LABELS.values() for label in family if label != "tested"}
+    parser.add_argument("--label", action="append", choices=sorted(report_labels), default=[],
+                        help="show only entries with this label; repeat to require several")
     parser.add_argument("--json", action="store_true", help="print the rows as JSON")
     args = parser.parse_args(argv)
     known = {path.stem for path in debt_files(ROOT)}
