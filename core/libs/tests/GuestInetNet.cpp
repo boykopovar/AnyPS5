@@ -89,6 +89,7 @@ int main() {
     std::uint8_t binary[16] = {};
     Require(inet_nsap_addr_nid_postfix("0x47.0005.8000.5a00", binary, 16) == 7);
     Require(std::memcmp(binary, nsap, sizeof(nsap)) == 0);
+    Require(inet_nsap_addr_nid_postfix("0x47.0005.8000.5a00", binary, -1) == 0);
     Require(inet_nsap_addr_nid_postfix("1234", binary, 16) == 0);
 
     char text[800];

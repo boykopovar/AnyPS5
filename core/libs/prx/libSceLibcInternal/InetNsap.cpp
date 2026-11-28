@@ -72,7 +72,8 @@ extern "C" std::uint32_t APS5_VABI inet_nsap_addr_nid_postfix(const char* ascii,
         return result;
     };
     int c;
-    while ((c = GuestCharAt(ascii, pos++, ok)) != 0 && length < static_cast<std::uint32_t>(maxlen)) {
+    const std::uint32_t limit = maxlen > 0 ? static_cast<std::uint32_t>(maxlen) : 0;
+    while ((c = GuestCharAt(ascii, pos++, ok)) != 0 && length < limit) {
         if (c == '.' || c == '+' || c == '/') continue;
         if (!IsAscii(c)) return finish(0);
         c = ToUpper(c);
