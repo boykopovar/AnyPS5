@@ -242,6 +242,14 @@ class GitHistoryTests(GitHistoryCase):
         with self.assertRaisesRegex(ValueError, "ancestor"):
             performance_bisect.first_parent_commits(self.repo, self.commits[-1], self.good)
 
+    def test_revisions_that_look_like_options_are_resolved_as_revisions(self):
+        subprocess.run(["git", "-C", str(self.repo), "update-ref", "refs/heads/-good", self.good], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "update-ref", "refs/heads/-bad", self.commits[-1]], check=True)
+        good, bad, commits = performance_bisect.first_parent_commits(self.repo, "-good", "-bad")
+        self.assertEqual(good, self.good)
+        self.assertEqual(bad, self.commits[-1])
+        self.assertEqual(commits, self.commits)
+
 
 
 class CommandTests(unittest.TestCase):
