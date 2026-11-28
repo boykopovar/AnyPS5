@@ -116,6 +116,7 @@ void MsaaEnableDrawsLikeDisabled() {
     DrawsLikeDisabled(4, "triangle");
     DrawsLikeDisabled(2, "line list");
     DrawsLikeDisabled(3, "line strip");
+    DrawsLikeDisabled(1, "point list");
 }
 
 }
@@ -128,7 +129,7 @@ int main() {
         }
         MsaaEnableDrawsLikeDisabled();
         AgcDriverShutdown_nid_postfix();
-        std::puts("MSAA_ENABLE on a single-sample target drew the same triangle, line list and line strip pixels as the state without it");
+        std::puts("MSAA_ENABLE on a single-sample target drew the same triangle, line list, line strip and point list pixels as the state without it");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
