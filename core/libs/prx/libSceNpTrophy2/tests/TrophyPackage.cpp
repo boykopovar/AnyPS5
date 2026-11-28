@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <random>
 #include <set>
@@ -284,6 +285,29 @@ void testPackage() {
         thrown = true;
     }
     check(thrown, "language 31 has a tag");
+}
+
+void testIcons() {
+    using Icons = std::map<std::int32_t, std::string>;
+    Files files{{"tropconf.json", TropConf}, {"tropmeta_en-US.json", TropMetaEnglish}, {"tropmeta_fr-FR.json", TropMetaFrench}};
+    for (const auto& icon : Files{{"icon0_en-US.png", "game en"}, {"icon0_fr-FR.png", "game fr"}, {"gr0001_en-US.png", "group en"}, {"gr0009_en-US.png", "unused group"},
+                                  {"trop0001.png", "trophy 1"}, {"trop0006.png", "trophy 6"}, {"reward0006.png", "reward 6"}, {"trop0042.png", "not a trophy"},
+                                  {"icon0.png", "no language"}, {"trop1.png", "short name"}, {"TROP0002.PNG", "upper case"}}) {
+        files.push_back(icon);
+    }
+    const auto data = ucp(files);
+    const auto english = NpTrophy2::ParseTrophyPackage(data, "en-US");
+    check(english.gameIcon == std::optional<std::string>("game en") && english.groupIcons == Icons{{1, "group en"}} && english.trophyIcons == Icons{{1, "trophy 1"}, {6, "trophy 6"}} &&
+              english.rewardIcons == Icons{{6, "reward 6"}},
+          "the icons were not read by their names, or a file that is not the icon of the game, a group in use or a trophy was kept");
+    const auto french = NpTrophy2::ParseTrophyPackage(data, "fr-FR");
+    check(french.gameIcon == std::optional<std::string>("game fr") && french.groupIcons == Icons{{1, "group en"}}, "the system language's icon was not preferred, or English was not the fallback");
+    std::string conf = TropConf;
+    conf.replace(conf.find("en-US"), 5, "ja-JP");
+    const auto japanese = NpTrophy2::ParseTrophyPackage(ucp({{"tropconf.json", conf}, {"tropmeta_ja-JP.json", TropMetaEnglish}, {"icon0_ja-JP.png", "game ja"}}), "de-DE");
+    check(japanese.gameIcon == std::optional<std::string>("game ja"), "the default language's icon was not the last fallback");
+    const auto withoutIcons = NpTrophy2::ParseTrophyPackage(ucp({{"tropconf.json", TropConf}, {"tropmeta_en-US.json", TropMetaEnglish}}), "en-US");
+    check(!withoutIcons.gameIcon && withoutIcons.groupIcons.empty() && withoutIcons.trophyIcons.empty() && withoutIcons.rewardIcons.empty(), "a package without icons reported one");
 }
 
 void testProgressAndPlatinum() {
@@ -589,6 +613,7 @@ int main() {
     testContainer();
     testJson();
     testPackage();
+    testIcons();
     testProgressAndPlatinum();
     testStatRules();
     testConditions();
