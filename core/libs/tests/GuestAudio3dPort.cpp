@@ -38,6 +38,7 @@ constexpr int INVALID_PARAMETER = static_cast<int>(0x80EA0004);
 constexpr int OUT_OF_MEMORY = static_cast<int>(0x80EA0005);
 constexpr int OUT_OF_RESOURCES = static_cast<int>(0x80EA0006);
 constexpr int NOT_READY = static_cast<int>(0x80EA0007);
+constexpr int NOT_SUPPORTED = static_cast<int>(0x80EA0008);
 constexpr int AUDIO_OUT_INVALID_FORMAT = static_cast<int>(0x80260007);
 constexpr int AUDIO_OUT_INVALID_PORT_TYPE = static_cast<int>(0x8026000A);
 constexpr int SYSTEM_USER = 0xFF;
@@ -589,6 +590,18 @@ void CheckBed() {
     const float floats[8] = {};
     Require(sceAudio3dBedWrite(0, 2, 1, floats, 4) == 0, "float bed write");
     consume();
+    const float nonFiniteFloats[8] = {
+        std::numeric_limits<float>::quiet_NaN(),
+        std::numeric_limits<float>::infinity(),
+        -std::numeric_limits<float>::infinity(),
+        0.25f,
+        std::numeric_limits<float>::quiet_NaN(),
+        -std::numeric_limits<float>::infinity(),
+        std::numeric_limits<float>::infinity(),
+        -0.25f,
+    };
+    Require(sceAudio3dBedWrite(0, 2, 1, nonFiniteFloats, 4) == 0, "non-finite float bed write");
+    consume();
     const std::uint32_t granularity = parameters.granularity;
     std::vector<std::int16_t> wide(static_cast<std::size_t>(granularity) * 8, 0);
     Require(sceAudio3dBedWrite(0, 6, 0, wide.data(), granularity) == 0, "6 channel bed write");
@@ -768,7 +781,33 @@ void CheckPs4Process() {
     Require(sceAudio3dPortOpenEx(1, &defaults, &id) == INVALID_PARAMETER && id == 7, "open ex in a PS4 process checks like open");
     Require(sceAudio3dPortOpenEx(SYSTEM_USER, &defaults, &id) == 0 && id == 0, "open ex in a PS4 process opens the port");
     id = 7;
-    Require(open([](auto& p) { p.buffer_mode = 0; }) == OUT_OF_RESOURCES && id == 7, "a PS4 process reports the open port before an unsupported buffer mode");
+    Audio3dOpenParameters changed = defaults;
+    changed.granularity = 512;
+    changed.buffer_mode = 0;
+    Require(sceAudio3dPortOpen(1, &changed, &id) == INVALID_PARAMETER && id == 7,
+            "a PS4 process stores the parameter block before validating the user id");
+    Require(sceAudio3dPortAdvance(0) == NOT_SUPPORTED,
+            "a failed PS4 open updates the buffer mode before validating the user id");
+    Require(sceAudio3dAudioOutOpen(0, SYSTEM_USER, 3, 0, defaults.granularity, 48000, 1) == INVALID_PARAMETER,
+            "a failed PS4 open updates the granularity before validating the user id");
+
+    Require(Open(defaults, &id) == OUT_OF_RESOURCES && id == 7,
+            "a PS4 process stores valid parameters before checking the open port");
+    Require(sceAudio3dPortAdvance(0) == 0,
+            "a failed open-port check still updates the buffer mode");
+
+    changed.rate = 1;
+    Require(Open(changed, &id) == INVALID_PARAMETER && id == 7,
+            "a PS4 process stores the parameter block before validating its values");
+    Require(sceAudio3dPortAdvance(0) == NOT_SUPPORTED,
+            "an invalid-value PS4 open still updates the buffer mode");
+    Require(sceAudio3dAudioOutOpen(0, SYSTEM_USER, 3, 0, defaults.granularity, 48000, 1) == INVALID_PARAMETER,
+            "an invalid-value PS4 open still updates the granularity");
+
+    Require(Open(defaults, &id) == OUT_OF_RESOURCES && id == 7,
+            "a PS4 process restores default parameters before checking the open port");
+    Require(sceAudio3dPortAdvance(0) == 0,
+            "the restored buffer mode is visible after the failed open");
     Require(sceAudio3dPortClose(0) == 0, "close after open ex in a PS4 process");
     Require(sceAudio3dPortCreate(0x100, 0, 1, &id) == INVALID_PARAMETER && id == 7, "create in a PS4 process needs a zero reserved argument");
     RequireThrows([&] { sceAudio3dPortCreate(0x100, 0, 0, &id); }, "create in a PS4 process selects the unsupported buffer mode 0");
@@ -808,7 +847,7 @@ int RunAsPs4Process(const char* program) {
     const std::wstring command = L"\"cd /d \"" + directory.wstring() + L"\" && \"" + executable + L"\" ps4-process\"";
     const int status = _wsystem(command.c_str());
 #else
-    const std::string command = "cd \"" + directory.string() + "\" && \"" + program + "\" ps4-process";
+    const std::string command = "cd \"" + directory.string() + "\" && \"" + std::filesystem::absolute(program).string() + "\" ps4-process";
     const int status = std::system(command.c_str());
 #endif
     std::filesystem::remove_all(directory);
@@ -818,6 +857,11 @@ int RunAsPs4Process(const char* program) {
 }
 
 int main(int argc, char** argv) {
+#ifdef _WIN32
+    _putenv_s("SDL_AUDIODRIVER", "dummy");
+#else
+    setenv("SDL_AUDIODRIVER", "dummy", 1);
+#endif
     if (argc == 2 && std::string_view(argv[1]) == "ps4-process") {
         CheckPs4Process();
         return 0;

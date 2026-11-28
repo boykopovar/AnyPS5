@@ -9,6 +9,7 @@
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libScePad/include/Pad.hpp"
 #include "prx/libScePad/include/PadIdentify.hpp"
+#include "prx/libScePad/include/ControllerAssignment.hpp"
 #include "prx/libSceVideoOut/include/PadOutputPacing.hpp"
 #include "prx/libSceVideoOut/include/Port0Presence.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PadStatus.hpp"
@@ -56,7 +57,7 @@ private:
 
     explicit PadInput(Pad::InputConfiguration configuration);
     void publish(std::uint64_t frame);
-    void applyMappingSnapshot();
+    bool applyMappingSnapshot();
     void reloadInputMapping();
     void dispatchPadChords(DisplayWindow& window);
     void applyRequests(const Pad::InputRequests& requests, bool windowFocused, DisplayWindow& window);
@@ -64,6 +65,8 @@ private:
     void watchInputMapping(std::string titleId, Pad::InputMappingWatch watch);
     void publish(std::uint64_t frame, int slot);
     void setMouseMode(bool enabled);
+    void pauseMouseMode();
+    void showMouseModeStatus() const;
     void openAvailableControllers();
     void openController(int deviceIndex);
     void closeController(int slot);
@@ -86,12 +89,14 @@ private:
     std::shared_ptr<const Pad::InputConfiguration> appliedMapping;
     Pad::KeyboardMouse keyboardMouse;
     Pad::IdentifyMode identifyMode = Pad::IdentifyMode::Off;
+    Pad::ControllerAssignment controllerAssignment = Pad::ControllerAssignment::FromEnvironment();
     std::array<ControllerSlot, PAD_MAX_CONTROLLERS> slots{};
     VideoOutTelemetry::PadChangeFilter telemetryFilter;
     AgcDriver::PadStatusProvider statusProvider;
     Port0Presence::Mode port0Mode;
     Port0Presence::Presence port0;
     bool padCaptured = false;
+    bool mouseModePaused = false;
     bool hostFocusSynced = false;
     SDL_hid_device* haptics = nullptr;
     std::atomic<bool> hapticsRunning{false};

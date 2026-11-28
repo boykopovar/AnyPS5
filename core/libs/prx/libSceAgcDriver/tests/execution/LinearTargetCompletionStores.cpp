@@ -222,13 +222,24 @@ std::array<float, 4> Texel(const std::uint8_t* target, std::uint32_t x, std::uin
     return texel;
 }
 
-void Label(AgcDriver::VulkanDevice& device, const Block& block, std::uint32_t value, std::uint64_t submissions, bool watched, const char* what) {
+bool Label(AgcDriver::VulkanDevice& device, const Block& block, std::uint32_t value, std::uint64_t& submissions, bool watched, const char* what) {
     const auto bytes = std::as_bytes(std::span(&value, 1));
     const auto reason = device.WriteLabelOnGpu(block.Address() + LabelOffset, bytes, value, 0);
     Require(reason == 0, std::string(what) + ": the label was not recorded on the GPU (outcome " + std::to_string(reason) + ")");
-    Require(StorageTexture::FindPending(block.Address(), TargetBytes) == nullptr, std::string(what) + ": the drawn linear target was still pending after a label the GPU writes");
     const auto* recorder = AgcDriver::Graphics::Recorder::Active();
     Require(!watched || (recorder != nullptr && recorder->Submissions() == submissions), std::string(what) + ": storing the drawn linear target before the label waited for recorded work (" + std::to_string(recorder != nullptr ? recorder->Submissions() - submissions : 0) + " submissions)");
+    bool trapped = false;
+#if defined(__APPLE__)
+    if (std::getenv("APS5_NO_LABEL_READ_TRAP") == nullptr && StorageTexture::FindPending(block.Address(), TargetBytes) != nullptr) {
+        trapped = true;
+        Require(watched, std::string(what) + ": the drawn linear target outside the write watch was left pending after a label the GPU writes");
+        const volatile std::uint8_t touched = block.data[0];
+        static_cast<void>(touched);
+        if (recorder != nullptr) submissions = recorder->Submissions();
+    }
+#endif
+    Require(StorageTexture::FindPending(block.Address(), TargetBytes) == nullptr, std::string(what) + ": the drawn linear target was still pending after a label the GPU writes and the first CPU read of its memory");
+    return trapped;
 }
 
 bool Expect(AgcDriver::VulkanDevice& device) {
@@ -249,17 +260,26 @@ bool Expect(AgcDriver::VulkanDevice& device) {
     };
     Draw(device, color, red, {{0, 0}, {Width, Height}});
     pending("after the first draw");
-    const auto submissions = recorder->Submissions();
+    auto submissions = recorder->Submissions();
     Draw(device, color, blue, {{0, 0}, {Width / 2u, Height}});
     pending("after the second draw");
     Require(!watched || recorder->Submissions() == submissions, "the second draw into the linear target submitted recorded work");
     Draw(device, color, red, {{Width / 4u, Height / 4u}, {Width / 4u, Height / 2u}});
     pending("after the third draw");
     Require(!watched || recorder->Submissions() == submissions, "the third draw into the linear target submitted recorded work");
-    Label(device, block, 1u, submissions, watched, "the first label");
+    const bool trapped = Label(device, block, 1u, submissions, watched, "the first label");
+    for (std::uint32_t y = 0; trapped && y < Height; ++y) {
+        for (std::uint32_t x = 0; x < Width; ++x) {
+            const bool thirdRed = x >= Width / 4u && x < Width / 2u && y >= Height / 4u && y < Height * 3u / 4u;
+            const float z = thirdRed || x >= Width / 2u ? 0.0f : 1.0f;
+            const std::array<float, 4> expected{static_cast<float>(x), static_cast<float>(y), z, 1.0f};
+            const auto texel = Texel(block.data, x, y);
+            Require(texel == expected, "after the first label, CPU read: pixel (" + std::to_string(x) + ", " + std::to_string(y) + ") holds (" + std::to_string(texel[0]) + ", " + std::to_string(texel[1]) + ", " + std::to_string(texel[2]) + ", " + std::to_string(texel[3]) + ")");
+        }
+    }
     Draw(device, color, blue, {{Width / 2u, 0}, {Width / 2u, Height}});
     pending("after the fourth draw");
-    Label(device, block, 2u, submissions, watched, "the second label");
+    static_cast<void>(Label(device, block, 2u, submissions, watched, "the second label"));
     Draw(device, color, red, {{0, Height / 2u}, {Width, Height / 2u}});
     pending("after the fifth draw");
     Require(!watched || recorder->Submissions() == submissions, "the fifth draw into the linear target submitted recorded work");

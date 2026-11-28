@@ -10,6 +10,20 @@
 #include <cstring>
 #include <thread>
 #include <string>
+#include <cstdint>
+#include <stdexcept>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 struct ErrorString {
@@ -158,6 +172,46 @@ static void TestThreads() {
     replacement.join();
 }
 
+static void TestGuestBuffer() {
+#ifdef _WIN32
+    const std::size_t pageSize = 4096;
+    void* page = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(page != nullptr, "page allocated");
+#else
+    const std::size_t pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE) > 0 ? sysconf(_SC_PAGESIZE) : 4096);
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED, "page allocated");
+#endif
+    std::memset(page, '#', pageSize);
+#ifdef _WIN32
+    DWORD oldProtect = 0;
+    Require(VirtualProtect(page, pageSize, PAGE_READONLY, &oldProtect) != 0, "page protected");
+#else
+    Require(mprotect(page, pageSize, PROT_READ) == 0, "page protected");
+#endif
+    auto* readOnlyBuffer = static_cast<char*>(page);
+    auto* unmappedBuffer = reinterpret_cast<char*>(std::uintptr_t{0x10});
+    auto rejectsKeepingErrno = [](auto call) {
+        errno = 71;
+        bool caught = false;
+        try { call(); }
+        catch (const std::invalid_argument&) { caught = true; }
+        return caught && errno == 71;
+    };
+    Require(rejectsKeepingErrno([&] { ERR_error_string_n_nid_postfix(0xe1abc789, unmappedBuffer, 256); }), "unmapped buffer rejected");
+    Require(rejectsKeepingErrno([&] { ERR_error_string_n_nid_postfix(0xe1abc789, readOnlyBuffer, 256); }), "read-only buffer rejected");
+    Require(rejectsKeepingErrno([&] { ERR_error_string_n_nid_postfix(0xe1abc789, readOnlyBuffer, 1); }), "read-only terminator rejected");
+    Require(rejectsKeepingErrno([&] { ERR_error_string_n_nid_postfix(0xe1abc789, nullptr, 256); }), "null buffer with a length rejected");
+    Require(rejectsKeepingErrno([&] { ERR_error_string_n_nid_postfix(0xe1abc789, nullptr, 1); }), "null buffer with a one-byte length rejected");
+    ERR_error_string_n_nid_postfix(0xe1abc789, readOnlyBuffer, 0);
+    for (std::size_t index = 0; index < pageSize; ++index) Require(readOnlyBuffer[index] == '#', "read-only buffer unchanged");
+#ifdef _WIN32
+    VirtualFree(page, 0, MEM_RELEASE);
+#else
+    munmap(page, pageSize);
+#endif
+}
+
 int main(int argc, char** argv) {
     if (argc == 2) {
         if (std::strcmp(argv[1], "free") == 0) TestStrings();
@@ -174,6 +228,7 @@ int main(int argc, char** argv) {
         return 0;
     }
     TestStrings();
+    TestGuestBuffer();
     ERR_load_crypto_strings_nid_postfix();
     TestStrings();
     TestQueue();

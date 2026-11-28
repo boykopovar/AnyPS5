@@ -2,12 +2,19 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <source_location>
 #include <stdexcept>
 #include <type_traits>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 using SetKey = int (APS5_VABI*)(LibreSsl3Rsa*, LibreSsl3Bignum*, LibreSsl3Bignum*, LibreSsl3Bignum*);
 using SetFactors = int (APS5_VABI*)(LibreSsl3Rsa*, LibreSsl3Bignum*, LibreSsl3Bignum*);
@@ -88,6 +95,61 @@ template<typename TCall> void Throws(TCall call) {
     bool threw = false;
     try { call(); } catch (const std::invalid_argument&) { threw = true; }
     Require(threw);
+}
+
+class ReadOnlyPage {
+public:
+    ReadOnlyPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        bytes = info.dwPageSize;
+        data = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        Require(data != nullptr);
+#else
+        const long page = sysconf(_SC_PAGESIZE);
+        Require(page > 0);
+        bytes = static_cast<std::size_t>(page);
+        data = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(data != nullptr && data != MAP_FAILED);
+#endif
+    }
+
+    ~ReadOnlyPage() {
+#ifdef _WIN32
+        VirtualFree(data, 0, MEM_RELEASE);
+#else
+        munmap(data, bytes);
+#endif
+    }
+
+    template <typename T>
+    T* Set(const T& value) {
+        Require(sizeof(value) <= bytes);
+        std::memcpy(data, &value, sizeof(value));
+        return static_cast<T*>(data);
+    }
+
+    void Protect() {
+#ifdef _WIN32
+        DWORD previous{};
+        Require(VirtualProtect(data, bytes, PAGE_READONLY, &previous) != 0);
+#else
+        Require(mprotect(data, bytes, PROT_READ) == 0);
+#endif
+    }
+
+private:
+    void* data = nullptr;
+    std::size_t bytes = 0;
+};
+
+template<typename TCall> void Rejects(TCall call) {
+    errno = EINVAL;
+    bool threw = false;
+    try { call(); } catch (const std::runtime_error&) { threw = true; }
+    Require(threw);
+    Require(errno == EINVAL);
 }
 
 using Field = void* LibreSsl3Rsa::*;
@@ -199,6 +261,106 @@ void Invalid() {
     Clean();
 }
 
+void GuestPointers() {
+    auto* badBn = reinterpret_cast<LibreSsl3Bignum*>(0x10);
+    auto* badRsa = reinterpret_cast<LibreSsl3Rsa*>(0x10);
+    auto* badData = reinterpret_cast<std::uint64_t*>(0x10);
+
+    Rejects([&] { BN_clear_free_nid_postfix(badBn); });
+
+    {
+        ReadOnlyPage page;
+        std::array<std::uint64_t, 2> limb{0x11, 0x22};
+        LibreSsl3Bignum ro{limb.data(), 1, 2, 0, 2};
+        auto* roBn = page.Set(ro);
+        page.Protect();
+        Rejects([&] { BN_clear_free_nid_postfix(roBn); });
+        Require(roBn->data == limb.data() && roBn->capacity == 2 && limb[0] == 0x11);
+    }
+
+    {
+        ReadOnlyPage page;
+        LibreSsl3Bignum bn{badData, 1, 2, 0, 0};
+        auto* roPtr = page.Set(bn);
+        page.Protect();
+        Rejects([&] { BN_clear_free_nid_postfix(roPtr); });
+    }
+
+    {
+        LibreSsl3Bignum unmappedData{badData, 1, 2, 0, 0};
+        const auto expected = unmappedData;
+        Rejects([&] { BN_clear_free_nid_postfix(&unmappedData); });
+        Require(std::memcmp(&unmappedData, &expected, sizeof(unmappedData)) == 0);
+    }
+
+    {
+        ReadOnlyPage dataPage;
+        auto* roData = dataPage.Set(std::uint64_t{0xdeadbeef});
+        dataPage.Protect();
+        LibreSsl3Bignum bn{roData, 1, 1, 0, 0};
+        const auto expected = bn;
+        Rejects([&] { BN_clear_free_nid_postfix(&bn); });
+        Require(std::memcmp(&bn, &expected, sizeof(bn)) == 0 && *roData == 0xdeadbeef);
+    }
+
+    auto* first = Number(2);
+    auto* second = Number(2);
+    auto* third = Number(2);
+
+    Rejects([&] { RSA_set0_key_nid_postfix(badRsa, first, second, third); });
+    Rejects([&] { RSA_set0_factors_nid_postfix(badRsa, first, second); });
+    Rejects([&] { RSA_set0_crt_params_nid_postfix(badRsa, first, second, third); });
+
+    {
+        auto* old = Number(2);
+        ReadOnlyPage page;
+        LibreSsl3Rsa ro{};
+        ro.n = ro.p = ro.dmp1 = old;
+        ro.e = ro.q = ro.dmq1 = old;
+        ro.iqmp = old;
+        auto* roRsa = page.Set(ro);
+        page.Protect();
+        const auto beforeFrees = frees;
+        Rejects([&] { RSA_set0_key_nid_postfix(roRsa, first, second, nullptr); });
+        Rejects([&] { RSA_set0_factors_nid_postfix(roRsa, first, second); });
+        Rejects([&] { RSA_set0_crt_params_nid_postfix(roRsa, first, second, third); });
+        Require(frees == beforeFrees);
+        BN_clear_free_nid_postfix(old);
+    }
+
+    {
+        auto* old = Number(2);
+        LibreSsl3Rsa rsa{};
+        rsa.n = old;
+        rsa.e = badBn;
+        const auto expected = rsa;
+        const auto beforeFrees = frees;
+        Rejects([&] { RSA_set0_key_nid_postfix(&rsa, first, second, nullptr); });
+        Require(std::memcmp(&rsa, &expected, sizeof(rsa)) == 0 && frees == beforeFrees);
+
+        rsa = {};
+        rsa.p = old;
+        rsa.q = badBn;
+        const auto expectedFactors = rsa;
+        Rejects([&] { RSA_set0_factors_nid_postfix(&rsa, first, second); });
+        Require(std::memcmp(&rsa, &expectedFactors, sizeof(rsa)) == 0 && frees == beforeFrees);
+
+        rsa = {};
+        rsa.dmp1 = old;
+        rsa.dmq1 = second;
+        rsa.iqmp = badBn;
+        const auto expectedCrt = rsa;
+        Rejects([&] { RSA_set0_crt_params_nid_postfix(&rsa, first, nullptr, third); });
+        Require(std::memcmp(&rsa, &expectedCrt, sizeof(rsa)) == 0 && frees == beforeFrees);
+        BN_clear_free_nid_postfix(old);
+    }
+
+    BN_clear_free_nid_postfix(first);
+    BN_clear_free_nid_postfix(second);
+    BN_clear_free_nid_postfix(third);
+    Clean();
+}
+
 }
 
 int main() {
@@ -212,6 +374,7 @@ int main() {
     Matrix(2);
     Disposal();
     Invalid();
+    GuestPointers();
     Clean();
     std::printf("RSA ownership: %zu matrix cases, %zu checks, %zu cleared allocations, zero live allocations\n", cases, checks, frees);
 }

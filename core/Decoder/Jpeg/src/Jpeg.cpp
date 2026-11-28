@@ -47,36 +47,61 @@ int toSubsampling(Sampling sampling) {
     throw std::invalid_argument("Jpeg::Encode: invalid sampling");
 }
 
+void validateEncodeOptions(std::uint32_t width, std::uint32_t height, int quality,
+                           std::uint32_t restartBlocks, std::uint32_t restartRows) {
+    if (width == 0 || height == 0 || width > MAX_DIMENSION || height > MAX_DIMENSION) {
+        throw std::invalid_argument("Jpeg::Encode: unsupported image size");
+    }
+    if (quality < 1 || quality > 100) throw std::invalid_argument("Jpeg::Encode: quality must be 1-100");
+    if (restartBlocks > MAX_DIMENSION || restartRows > MAX_DIMENSION || (restartBlocks != 0 && restartRows != 0)) {
+        throw std::invalid_argument("Jpeg::Encode: invalid restart interval");
+    }
+}
+
+void configureEncoder(tjhandle handle, int quality, int subsampling, std::uint32_t restartBlocks, std::uint32_t restartRows) {
+    if (tj3Set(handle, TJPARAM_QUALITY, quality) < 0 || tj3Set(handle, TJPARAM_SUBSAMP, subsampling) < 0 ||
+        (restartBlocks != 0 && tj3Set(handle, TJPARAM_RESTARTBLOCKS, static_cast<int>(restartBlocks)) < 0) ||
+        (restartRows != 0 && tj3Set(handle, TJPARAM_RESTARTROWS, static_cast<int>(restartRows)) < 0)) {
+        throw std::runtime_error("Jpeg::Encode: encoder configuration failed");
+    }
+}
+
 }  // namespace
 
 std::vector<std::uint8_t> Encode(std::span<const std::uint8_t> pixels, std::uint32_t width, std::uint32_t height,
                                  std::uint32_t channels, int quality, Sampling sampling, std::uint32_t restartBlocks,
                                  std::uint32_t restartRows) {
-    if (width == 0 || height == 0 || width > MAX_DIMENSION || height > MAX_DIMENSION) {
-        throw std::invalid_argument("Jpeg::Encode: unsupported image size");
-    }
+    validateEncodeOptions(width, height, quality, restartBlocks, restartRows);
     if (channels != 1 && channels != 3) throw std::invalid_argument("Jpeg::Encode: channels must be 1 or 3");
-    if (quality < 1 || quality > 100) throw std::invalid_argument("Jpeg::Encode: quality must be 1-100");
     if (pixels.size() < static_cast<std::size_t>(width) * height * channels) {
         throw std::invalid_argument("Jpeg::Encode: pixel buffer is too small");
     }
-    if (restartBlocks > MAX_DIMENSION || restartRows > MAX_DIMENSION || (restartBlocks != 0 && restartRows != 0)) {
-        throw std::invalid_argument("Jpeg::Encode: invalid restart interval");
-    }
     const int subsampling = toSubsampling(sampling);
     Handle handle(TJINIT_COMPRESS);
-    if (tj3Set(handle, TJPARAM_QUALITY, quality) < 0 || tj3Set(handle, TJPARAM_SUBSAMP, channels == 1 ? TJSAMP_GRAY : subsampling) < 0) {
-        throw std::runtime_error("Jpeg::Encode: encoder configuration failed");
-    }
-    if ((restartBlocks != 0 && tj3Set(handle, TJPARAM_RESTARTBLOCKS, static_cast<int>(restartBlocks)) < 0) ||
-        (restartRows != 0 && tj3Set(handle, TJPARAM_RESTARTROWS, static_cast<int>(restartRows)) < 0)) {
-        throw std::runtime_error("Jpeg::Encode: encoder configuration failed");
-    }
+    configureEncoder(handle, quality, channels == 1 ? TJSAMP_GRAY : subsampling, restartBlocks, restartRows);
     Buffer buffer;
     std::size_t size = 0;
     const int pixelFormat = channels == 1 ? TJPF_GRAY : TJPF_RGB;
     if (tj3Compress8(handle, pixels.data(), static_cast<int>(width), 0, static_cast<int>(height), pixelFormat, &buffer.data, &size) < 0) {
         throw std::runtime_error("Jpeg::Encode: encoding failed");
+    }
+    return {buffer.data, buffer.data + size};
+}
+
+std::vector<std::uint8_t> EncodePlanarYuv(std::span<const std::uint8_t> pixels, std::uint32_t width, std::uint32_t height,
+                                          int quality, Sampling sampling, std::uint32_t restartBlocks, std::uint32_t restartRows) {
+    validateEncodeOptions(width, height, quality, restartBlocks, restartRows);
+    const int subsampling = toSubsampling(sampling);
+    const int cols = static_cast<int>(width);
+    const int rows = static_cast<int>(height);
+    const auto required = tj3YUVBufSize(cols, 1, rows, subsampling);
+    if (required == 0 || pixels.size() < required) throw std::invalid_argument("Jpeg::EncodePlanarYuv: pixel buffer is too small");
+    Handle handle(TJINIT_COMPRESS);
+    configureEncoder(handle, quality, subsampling, restartBlocks, restartRows);
+    Buffer buffer;
+    std::size_t size = 0;
+    if (tj3CompressFromYUV8(handle, pixels.data(), cols, 1, rows, &buffer.data, &size) < 0) {
+        throw std::runtime_error("Jpeg::EncodePlanarYuv: encoding failed");
     }
     return {buffer.data, buffer.data + size};
 }
@@ -116,6 +141,12 @@ std::optional<Image> DecodeScaled(std::span<const std::uint8_t> jpeg, std::uint3
         return std::nullopt;
     }
     return image;
+}
+
+bool HasScanHeader(std::span<const std::uint8_t> jpeg) {
+    Handle handle(TJINIT_DECOMPRESS);
+    if (tj3Set(handle, TJPARAM_STOPONWARNING, 1) < 0) throw std::runtime_error("Jpeg::HasScanHeader: decoder configuration failed");
+    return tj3DecompressHeader(handle, jpeg.data(), jpeg.size()) == 0 && tj3Get(handle, TJPARAM_JPEGWIDTH) > 0;
 }
 
 std::optional<Header> ParseHeader(std::span<const std::uint8_t> jpeg) {
@@ -167,6 +198,46 @@ std::optional<Image> Decode(std::span<const std::uint8_t> jpeg) {
 
     Image image{static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height), static_cast<std::uint32_t>(channels), {}};
     image.pixels.assign(decoded.get(), decoded.get() + static_cast<std::size_t>(image.width) * image.height * image.channels);
+    return image;
+}
+
+std::optional<PlanarImage> DecodePlanarYuv(std::span<const std::uint8_t> jpeg, std::uint32_t denominator) {
+    if (denominator != 1 && denominator != 2 && denominator != 4 && denominator != 8) {
+        throw std::invalid_argument("Jpeg::DecodePlanarYuv: the scale must be 1/1, 1/2, 1/4 or 1/8");
+    }
+    if (jpeg.empty() || jpeg.size() > INT_MAX) return std::nullopt;
+
+    Handle handle(TJINIT_DECOMPRESS);
+    if (tj3Set(handle, TJPARAM_STOPONWARNING, 1) < 0) throw std::runtime_error("Jpeg::DecodePlanarYuv: decoder configuration failed");
+    if (tj3DecompressHeader(handle, jpeg.data(), jpeg.size()) < 0) return std::nullopt;
+    const int colorspace = tj3Get(handle, TJPARAM_COLORSPACE);
+    if (colorspace != TJCS_YCbCr && colorspace != TJCS_GRAY) {
+        throw std::runtime_error("Jpeg::DecodePlanarYuv: planar decoding of an image that is not YCbCr or grayscale is not implemented");
+    }
+    const int subsampling = tj3Get(handle, TJPARAM_SUBSAMP);
+    if (subsampling == TJSAMP_UNKNOWN) throw std::runtime_error("Jpeg::DecodePlanarYuv: planar decoding of an unusual chroma subsampling is not implemented");
+    const int width = tj3Get(handle, TJPARAM_JPEGWIDTH);
+    const int height = tj3Get(handle, TJPARAM_JPEGHEIGHT);
+    if (width <= 0 || height <= 0) return std::nullopt;
+    if (tj3SetScalingFactor(handle, tjscalingfactor{1, static_cast<int>(denominator)}) < 0) {
+        throw std::runtime_error("Jpeg::DecodePlanarYuv: the decoder refused the scaling factor");
+    }
+
+    PlanarImage image{ScaledDimension(static_cast<std::uint32_t>(width), denominator), ScaledDimension(static_cast<std::uint32_t>(height), denominator),
+                      subsampling == TJSAMP_GRAY ? 1u : 3u};
+    unsigned char* planes[3]{};
+    int strides[3]{};
+    for (std::uint32_t component = 0; component < image.components; ++component) {
+        const int planeWidth = tj3YUVPlaneWidth(static_cast<int>(component), static_cast<int>(image.width), subsampling);
+        const int planeHeight = tj3YUVPlaneHeight(static_cast<int>(component), static_cast<int>(image.height), subsampling);
+        if (planeWidth <= 0 || planeHeight <= 0) throw std::runtime_error("Jpeg::DecodePlanarYuv: the decoder reported no plane size");
+        image.planeWidths[component] = static_cast<std::uint32_t>(planeWidth);
+        image.planeHeights[component] = static_cast<std::uint32_t>(planeHeight);
+        image.planes[component].resize(static_cast<std::size_t>(planeWidth) * static_cast<std::size_t>(planeHeight));
+        planes[component] = image.planes[component].data();
+        strides[component] = planeWidth;
+    }
+    if (tj3DecompressToYUVPlanes8(handle, jpeg.data(), jpeg.size(), planes, strides) < 0) return std::nullopt;
     return image;
 }
 

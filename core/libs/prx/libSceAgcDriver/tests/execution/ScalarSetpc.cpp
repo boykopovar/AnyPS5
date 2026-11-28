@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "ExecutionHelpers.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -237,17 +238,6 @@ constexpr std::uint32_t Expected64[64][5] = {
 
 constexpr const char* Names[Checked] = {"jump_table", "jump_table_offset", "skip_forward", "loop_add_negative", "loop_sub"};
 
-std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
-    const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
-}
-
-std::string Hex(std::uint32_t value) {
-    char text[16];
-    std::snprintf(text, sizeof(text), "0x%08x", value);
-    return text;
-}
-
 ShaderRecompiler::RecompileResult Compile(std::span<const std::uint32_t> code, std::uint32_t waveSize, const ShaderRecompiler::SpirvTarget& target) {
     std::vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
@@ -274,11 +264,14 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, s
     device.WaitIdle();
 }
 
-std::vector<std::uint32_t> Scheduled(std::span<const std::uint32_t> original) {
+std::vector<std::uint32_t> Scheduled(std::span<const std::uint32_t> original, bool aroundLoad = false) {
     std::vector<std::uint32_t> code(original.begin(), original.end());
-    code.insert(code.begin() + 25, 0x7e3c0280u);
-    code.insert(code.begin() + 24, 0x7e3e0280u);
-    const auto relocated = [](std::int32_t word) { return word + (word >= 24 ? 1 : 0) + (word >= 25 ? 1 : 0); };
+    const std::int32_t first = aroundLoad ? 29 : 24;
+    const std::int32_t second = aroundLoad ? 32 : 25;
+    code.insert(code.begin() + second, 0x7e3c0280u);
+    code.insert(code.begin() + first, 0x7e3e0280u);
+    const auto relocated = [=](std::int32_t word) { return word + (word >= first ? 1 : 0) + (word >= second ? 1 : 0); };
+    if (aroundLoad) code[27] += 8u;
     for (std::int32_t word = 0; word < static_cast<std::int32_t>(original.size()); ++word) {
         const auto instruction = original[static_cast<std::size_t>(word)];
         const auto opcode = instruction & 0xffff0000u;
@@ -329,6 +322,14 @@ int main() {
         Run(*device, scheduled64, 64, device->Target());
         Check(Expected64);
         Run(*device, scheduled64, 64, device->ComputeTarget(32));
+        Check(Expected64);
+        const auto aroundLoad32 = Scheduled(Wave32Code, true);
+        const auto aroundLoad64 = Scheduled(Wave64Code, true);
+        Run(*device, aroundLoad32, 32, device->ComputeTarget(32));
+        Check(Expected32);
+        Run(*device, aroundLoad64, 64, device->Target());
+        Check(Expected64);
+        Run(*device, aroundLoad64, 64, device->ComputeTarget(32));
         Check(Expected64);
         CheckReversedSubtractRefused(*device);
         std::puts("setpc tests passed");

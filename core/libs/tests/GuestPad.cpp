@@ -10,7 +10,6 @@
 #include <atomic>
 #include <array>
 #include <chrono>
-#include <cerrno>
 #include <climits>
 #include <cmath>
 #include <cstdlib>
@@ -123,7 +122,7 @@ static void CheckInputCommands() {
     const auto lifted = commands.Poll(4201000);
     Require(lifted.hasTouch && !lifted.touchActive && lifted.touchId == 127 && lifted.buttons == 0);
     std::uint64_t poll = 4301000;
-    for (const char* invalid : {"touch(1920,0,0,1)", "touch(0,943,0,1)", "touch(0,0,128,1)",
+    for (const char* invalid : {"touch(1920,0,0,1)", "touch(0,1080,0,1)", "touch(0,0,128,1)",
             "touch(0,0,0,2)", "touch(-1,0,0,1)", "touch(0,0,0)", "touch(0,0,0,1,1)",
             "touch(0,,0,1)", "touch(0,0,0,1)x", "touch(0,0,0,1) trailing"}) {
         std::ofstream(path) << "13 0 5000 " << invalid << '\n';
@@ -180,6 +179,7 @@ static void CheckAngularVelocityDeadband(int handle) {
         Require(scePadSetAngularVelocityDeadbandState(invalidHandle, true) == PAD_ERROR_INVALID_HANDLE);
         Require(scePadSetAngularVelocityDeadbandState(invalidHandle, false) == PAD_ERROR_INVALID_HANDLE);
         Require(scePadSetAngularVelocityBiasCorrectionState(invalidHandle, false) == PAD_ERROR_INVALID_HANDLE);
+        Require(scePadSetAngularVelocityBiasCorrectionState(invalidHandle, true) == PAD_ERROR_INVALID_HANDLE);
     }
     Require(scePadSetAngularVelocityBiasCorrectionState(handle, false) == PAD_OK);
 }
@@ -199,9 +199,12 @@ static void CheckTouchContact(int handle) {
     Require(scePadReadState(handle, reinterpret_cast<PadData*>(std::uintptr_t{0x10})) == PAD_ERROR_INVALID_ARG);
     Require(errno == 71);
     Require(scePadRead_nid_postfix(handle, nullptr, 1) == PAD_ERROR_INVALID_ARG);
-    for (const int invalid : {-1, 0, handle + 1, 9999}) {
+    for (const int invalid : {-9999, -100, -2, -1, 0, handle + 1, 9999}) {
         Require(scePadReadState(invalid, nullptr) == PAD_ERROR_INVALID_ARG);
         Require(scePadRead_nid_postfix(invalid, nullptr, 1) == PAD_ERROR_INVALID_ARG);
+        PadData invalidData{};
+        Require(scePadReadState(invalid, &invalidData) == PAD_ERROR_INVALID_HANDLE);
+        Require(scePadRead_nid_postfix(invalid, &invalidData, 1) == PAD_ERROR_INVALID_HANDLE);
     }
     PadInputState touch;
     touch.buttons = static_cast<std::uint32_t>(Pad::PadButton::TouchPad);
@@ -220,6 +223,197 @@ static void CheckTouchContact(int handle) {
     Require(data.touch_data_touch0_y == 471);
     PadPublishInput_nid_postfix(PadInputState{});
     Pad::ReadState();
+}
+
+static void CheckTouchpadBoundsAndGyroClampingAudit(int handle) {
+    PadControllerInformation info{};
+    Require(scePadGetControllerInformation(handle, &info) == PAD_OK);
+    Require(info.touchPadInfo.resolution.x == kTouchPadWidth);
+    Require(info.touchPadInfo.resolution.y == kTouchPadHeight);
+    Require(info.touchPadInfo.resolution.x == 1920);
+    Require(info.touchPadInfo.resolution.y == 1080);
+    Require(info.touchPadInfo.pixelDensity == 44.86f);
+
+    for (const auto& [x, y] : {
+            std::pair<std::uint16_t, std::uint16_t>{0, 0},
+            std::pair<std::uint16_t, std::uint16_t>{kTouchPadWidth - 1, 0},
+            std::pair<std::uint16_t, std::uint16_t>{0, kTouchPadHeight - 1},
+            std::pair<std::uint16_t, std::uint16_t>{kTouchPadWidth - 1, kTouchPadHeight - 1},
+            std::pair<std::uint16_t, std::uint16_t>{kTouchPadWidth / 2, kTouchPadHeight / 2},
+            std::pair<std::uint16_t, std::uint16_t>{1, 1},
+            std::pair<std::uint16_t, std::uint16_t>{1918, 1078}}) {
+        PadInputState touchState;
+        touchState.touch[0] = {true, x, y, 0};
+        PadPublishInput_nid_postfix(touchState);
+        PadData sample{};
+        Require(scePadReadState(handle, &sample) == PAD_OK);
+        Require(sample.touch_data_touch_num == 1);
+        Require(sample.touch_data_touch0_x == x);
+        Require(sample.touch_data_touch0_y == y);
+    }
+
+    PadInputState dualTouch;
+    dualTouch.touch[0] = {true, 0, 0, 0};
+    dualTouch.touch[1] = {true, kTouchPadWidth - 1, kTouchPadHeight - 1, 0};
+    PadPublishInput_nid_postfix(dualTouch);
+    PadData dualSample{};
+    Require(scePadReadState(handle, &dualSample) == PAD_OK);
+    Require(dualSample.touch_data_touch_num == 2);
+    Require(dualSample.touch_data_touch0_x == 0 && dualSample.touch_data_touch0_y == 0);
+    Require(dualSample.touch_data_touch1_x == kTouchPadWidth - 1 && dualSample.touch_data_touch1_y == kTouchPadHeight - 1);
+    const auto firstId0 = dualSample.touch_data_touch0_id;
+    const auto firstId1 = dualSample.touch_data_touch1_id;
+    Require(firstId0 != firstId1);
+
+    dualTouch.touch[0] = {true, 100, 200, 0};
+    dualTouch.touch[1] = {true, 1800, 900, 0};
+    PadPublishInput_nid_postfix(dualTouch);
+    Require(scePadReadState(handle, &dualSample) == PAD_OK);
+    Require(dualSample.touch_data_touch_num == 2);
+    Require(dualSample.touch_data_touch0_x == 100 && dualSample.touch_data_touch0_y == 200);
+    Require(dualSample.touch_data_touch1_x == 1800 && dualSample.touch_data_touch1_y == 900);
+    Require(dualSample.touch_data_touch0_id == firstId0);
+    Require(dualSample.touch_data_touch1_id == firstId1);
+
+    dualTouch.touch[0] = {false, 0, 0, 0};
+    PadPublishInput_nid_postfix(dualTouch);
+    PadData singleRemaining{};
+    Require(scePadReadState(handle, &singleRemaining) == PAD_OK);
+    Require(singleRemaining.touch_data_touch_num == 1);
+    Require(singleRemaining.touch_data_touch0_x == 1800 && singleRemaining.touch_data_touch0_y == 900);
+    Require(singleRemaining.touch_data_touch0_id == firstId1);
+
+    dualTouch.touch[1] = {false, 0, 0, 0};
+    PadPublishInput_nid_postfix(dualTouch);
+    PadData liftedSample{};
+    Require(scePadReadState(handle, &liftedSample) == PAD_OK);
+    Require(liftedSample.touch_data_touch_num == 0);
+
+    for (std::uint8_t cycle = 0; cycle < 130; ++cycle) {
+        PadInputState tap;
+        tap.touch[0] = {true, 500, 600, 0};
+        PadPublishInput_nid_postfix(tap);
+        PadData tapSample{};
+        Require(scePadReadState(handle, &tapSample) == PAD_OK);
+        Require(tapSample.touch_data_touch_num == 1);
+        Require(tapSample.touch_data_touch0_id <= 0x7F);
+        tap.touch[0] = {false, 0, 0, 0};
+        PadPublishInput_nid_postfix(tap);
+        Require(scePadReadState(handle, &tapSample) == PAD_OK);
+        Require(tapSample.touch_data_touch_num == 0);
+    }
+
+    PadInputState virtualBoth;
+    virtualBoth.touchLeft = true;
+    virtualBoth.touchRight = true;
+    PadPublishInput_nid_postfix(virtualBoth);
+    PadData virtualData{};
+    Require(scePadReadState(handle, &virtualData) == PAD_OK);
+    Require(virtualData.touch_data_touch_num == 1);
+    Require(virtualData.touch_data_touch0_x == kTouchPadWidth * 3 / 4);
+    Require(virtualData.touch_data_touch0_y == kTouchPadHeight / 2);
+
+    PadPublishInput_nid_postfix(PadInputState{});
+    Pad::ReadState();
+
+    constexpr float deadband = 0.017453292f;
+    Require(scePadSetAngularVelocityDeadbandState(handle, true) == PAD_OK);
+
+    for (const float subThreshold : {0.0f, 0.001f, 0.01f, 0.017f, deadband - 1e-5f, -0.001f, -0.01f, -0.017f, -deadband + 1e-5f}) {
+        PadInputState gyroState;
+        gyroState.hasMotion = true;
+        gyroState.accel = {0.0f, 9.80665f, 0.0f};
+        gyroState.gyro = {subThreshold, 0.0f, 0.0f};
+        PadPublishInput_nid_postfix(gyroState);
+        PadData gyroSample{};
+        Require(scePadReadState(handle, &gyroSample) == PAD_OK);
+        Require(gyroSample.angular_velocity_x == 0.0f);
+
+        gyroState.gyro = {0.0f, subThreshold, 0.0f};
+        PadPublishInput_nid_postfix(gyroState);
+        Require(scePadReadState(handle, &gyroSample) == PAD_OK);
+        Require(gyroSample.angular_velocity_y == 0.0f);
+
+        gyroState.gyro = {0.0f, 0.0f, subThreshold};
+        PadPublishInput_nid_postfix(gyroState);
+        Require(scePadReadState(handle, &gyroSample) == PAD_OK);
+        Require(gyroSample.angular_velocity_z == 0.0f);
+
+        gyroState.gyro = {subThreshold, subThreshold, subThreshold};
+        PadPublishInput_nid_postfix(gyroState);
+        Require(scePadReadState(handle, &gyroSample) == PAD_OK);
+        Require(gyroSample.angular_velocity_x == 0.0f && gyroSample.angular_velocity_y == 0.0f && gyroSample.angular_velocity_z == 0.0f);
+    }
+
+    for (const float aboveThreshold : {deadband + 1e-4f, 0.02f, 0.1f, 1.0f, 5.0f, -deadband - 1e-4f, -0.02f, -0.1f, -1.0f, -5.0f}) {
+        PadInputState gyroState;
+        gyroState.hasMotion = true;
+        gyroState.accel = {0.0f, 9.80665f, 0.0f};
+        gyroState.gyro = {aboveThreshold, aboveThreshold, aboveThreshold};
+        PadPublishInput_nid_postfix(gyroState);
+        PadData gyroSample{};
+        Require(scePadReadState(handle, &gyroSample) == PAD_OK);
+        Require(gyroSample.angular_velocity_x == aboveThreshold);
+        Require(gyroSample.angular_velocity_y == aboveThreshold);
+        Require(gyroSample.angular_velocity_z == aboveThreshold);
+    }
+
+    Require(scePadSetAngularVelocityDeadbandState(handle, false) == PAD_OK);
+    for (const float subThreshold : {0.005f, 0.01f, 0.015f, -0.005f, -0.01f, -0.015f}) {
+        PadInputState gyroState;
+        gyroState.hasMotion = true;
+        gyroState.accel = {0.0f, 9.80665f, 0.0f};
+        gyroState.gyro = {subThreshold, -subThreshold, subThreshold};
+        PadPublishInput_nid_postfix(gyroState);
+        PadData gyroSample{};
+        Require(scePadReadState(handle, &gyroSample) == PAD_OK);
+        Require(gyroSample.angular_velocity_x == subThreshold);
+        Require(gyroSample.angular_velocity_y == -subThreshold);
+        Require(gyroSample.angular_velocity_z == subThreshold);
+    }
+
+    for (const auto& [gx, gy, gz] : {
+            std::array<float, 3>{10.0f, -10.0f, 15.0f},
+            std::array<float, 3>{-25.0f, 30.0f, -35.0f},
+            std::array<float, 3>{50.0f, -50.0f, 50.0f},
+            std::array<float, 3>{-100.0f, 100.0f, -100.0f}}) {
+        PadInputState extremeMotion;
+        extremeMotion.hasMotion = true;
+        extremeMotion.accel = {0.0f, 9.80665f, 0.0f};
+        extremeMotion.gyro = {gx, gy, gz};
+        PadPublishInput_nid_postfix(extremeMotion);
+        PadData sample{};
+        Require(scePadReadState(handle, &sample) == PAD_OK);
+        Require(sample.angular_velocity_x == gx);
+        Require(sample.angular_velocity_y == gy);
+        Require(sample.angular_velocity_z == gz);
+        const float norm = sample.orientation_w * sample.orientation_w +
+            sample.orientation_x * sample.orientation_x +
+            sample.orientation_y * sample.orientation_y +
+            sample.orientation_z * sample.orientation_z;
+        Require(std::isfinite(sample.orientation_w) && std::isfinite(sample.orientation_x) &&
+            std::isfinite(sample.orientation_y) && std::isfinite(sample.orientation_z));
+        Require(std::abs(norm - 1.0f) < 1e-3f);
+    }
+
+    Require(scePadSetMotionSensorState(handle, false) == PAD_OK);
+    PadInputState motionDisabled;
+    motionDisabled.hasMotion = true;
+    motionDisabled.accel = {0.0f, 9.80665f, 0.0f};
+    motionDisabled.gyro = {10.0f, 20.0f, 30.0f};
+    PadPublishInput_nid_postfix(motionDisabled);
+    PadData disabledSample{};
+    Require(scePadReadState(handle, &disabledSample) == PAD_OK);
+    Require(disabledSample.angular_velocity_x == 0.0f);
+    Require(disabledSample.angular_velocity_y == 0.0f);
+    Require(disabledSample.angular_velocity_z == 0.0f);
+    Require(disabledSample.orientation_w == 1.0f);
+    Require(disabledSample.orientation_x == 0.0f && disabledSample.orientation_y == 0.0f && disabledSample.orientation_z == 0.0f);
+
+    Require(scePadSetMotionSensorState(handle, true) == PAD_OK);
+    PadPublishInput_nid_postfix(PadInputState{});
+    Require(scePadResetOrientation(handle) == PAD_OK);
+    Require(scePadSetAngularVelocityDeadbandState(handle, false) == PAD_OK);
 }
 
 static void CheckTouchPadInformation(int handle) {
@@ -245,6 +439,16 @@ static void CheckExtControllerInformation(int handle) {
     for (const int invalid : {-9999, -100, -2, -1, 0, handle + 1, 9999}) {
         Require(scePadGetExtControllerInformation(invalid, extended.data()) == PAD_ERROR_INVALID_HANDLE);
     }
+    const int special = scePadOpen_nid_postfix(0x20000099, PAD_PORT_TYPE_SPECIAL, 0, nullptr);
+    Require(special > 0);
+    extended.fill(0x5a);
+    Require(scePadGetExtControllerInformation(special, extended.data()) == PAD_OK);
+    for (std::size_t i = 0; i < 0x2c; ++i) Require(extended[i] == 0);
+    for (std::size_t i = 0x2c; i < extended.size(); ++i) Require(extended[i] == 0x5a);
+    errno = 71;
+    Require(scePadGetExtControllerInformation(special, reinterpret_cast<void*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
+    Require(scePadClose_nid_postfix(special) == PAD_OK);
 }
 
 static bool LightBarValid() {
@@ -1611,6 +1815,11 @@ int main() {
     PadData earlyPadData{};
     Require(scePadRead_nid_postfix(0x999, &earlyPadData, 1) == PAD_ERROR_NOT_INITIALIZED);
     Require(scePadRead_nid_postfix(earlyPad, &earlyPadData, 1) == PAD_ERROR_NOT_INITIALIZED);
+    for (const int earlyHandle : {earlyPad, 0x999}) {
+        Require(scePadRead_nid_postfix(earlyHandle, nullptr, 1) == PAD_ERROR_NOT_INITIALIZED);
+        Require(scePadRead_nid_postfix(earlyHandle, &earlyPadData, 0) == PAD_ERROR_NOT_INITIALIZED);
+        Require(scePadRead_nid_postfix(earlyHandle, nullptr, 0) == PAD_ERROR_NOT_INITIALIZED);
+    }
     Require(scePadReadState(earlyPad, &earlyPadData) == PAD_ERROR_NOT_INITIALIZED);
     Require(scePadReadState(0x999, &earlyPadData) == PAD_ERROR_NOT_INITIALIZED);
     for (const int earlyHandle : {earlyPad, 0x999}) {
@@ -1639,6 +1848,7 @@ int main() {
     CheckTiltCorrection(handle);
     CheckAngularVelocityDeadband(handle);
     CheckTouchContact(handle);
+    CheckTouchpadBoundsAndGyroClampingAudit(handle);
     CheckHandleQueries(user, handle);
     CheckVirtualTouchContact(handle);
     CheckTouchPadInformation(handle);
@@ -1675,7 +1885,8 @@ int main() {
     Require(scePadResetLightBar(handle + 1) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadSetMotionSensorState(handle, true) == PAD_OK);
     Require(scePadSetMotionSensorState(handle, false) == PAD_OK);
-    for (const int invalid : {-1, 0, handle + 1, 9999}) {
+    Require(scePadSetMotionSensorState(handle, true) == PAD_OK);
+    for (const int invalid : {-9999, -100, -2, -1, 0, handle + 1, 9999}) {
         Require(scePadSetMotionSensorState(invalid, true) == PAD_ERROR_INVALID_HANDLE);
         Require(scePadSetMotionSensorState(invalid, false) == PAD_ERROR_INVALID_HANDLE);
     }
@@ -1788,6 +1999,9 @@ int main() {
     Require(scePadSetTriggerEffect(handle2 + 99, triggerZero.data()) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadSetTriggerEffect(-1, triggerZero.data()) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadSetTriggerEffect(handle2, nullptr) == PAD_ERROR_INVALID_ARG);
+    errno = 71;
+    Require(scePadSetTriggerEffect(handle2, reinterpret_cast<const void*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
 
     PadInputState p0MotionSample{};
     p0MotionSample.hasMotion = true;
@@ -1808,7 +2022,15 @@ int main() {
     Require(p2DataMotion.angular_velocity_x == 0.1f && p2DataMotion.angular_velocity_y == 0.2f && p2DataMotion.angular_velocity_z == -0.3f);
     Require(p2DataMotion.acceleration_x > 0.49f && p2DataMotion.acceleration_x < 0.51f);
 
+    std::uint32_t p2Seq = 0;
+    PadOutputState p2Out{};
+    PadFetchOutputForPort_nid_postfix(1, &p2Seq, &p2Out);
+
     Require(scePadSetMotionSensorState(handle2, false) == PAD_OK);
+    Require(PadFetchOutputForPort_nid_postfix(1, &p2Seq, &p2Out));
+    Require(p2Out.motionEnabled == false);
+    Require(scePadSetMotionSensorState(handle2, false) == PAD_OK);
+    Require(!PadFetchOutputForPort_nid_postfix(1, &p2Seq, &p2Out));
     Require(scePadReadState(handle2, &p2DataMotion) == PAD_OK);
     Require(p2DataMotion.angular_velocity_x == 0.0f && p2DataMotion.angular_velocity_y == 0.0f && p2DataMotion.angular_velocity_z == 0.0f);
     Require(p2DataMotion.acceleration_x == 0.0f);
@@ -1818,6 +2040,10 @@ int main() {
     Require(p0DataMotion.angular_velocity_x == 0.5f && p0DataMotion.angular_velocity_y == 0.5f && p0DataMotion.angular_velocity_z == 0.5f);
 
     Require(scePadSetMotionSensorState(handle2, true) == PAD_OK);
+    Require(PadFetchOutputForPort_nid_postfix(1, &p2Seq, &p2Out));
+    Require(p2Out.motionEnabled == true);
+    Require(scePadSetMotionSensorState(handle2, true) == PAD_OK);
+    Require(!PadFetchOutputForPort_nid_postfix(1, &p2Seq, &p2Out));
     Require(scePadReadState(handle2, &p2DataMotion) == PAD_OK);
     Require(p2DataMotion.angular_velocity_x == 0.1f && p2DataMotion.angular_velocity_y == 0.2f && p2DataMotion.angular_velocity_z == -0.3f);
 

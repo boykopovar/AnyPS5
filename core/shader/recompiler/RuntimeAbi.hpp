@@ -44,6 +44,7 @@ inline constexpr std::uint32_t BindlessTableSlots = 16u;
 inline constexpr std::uint32_t StorageMipSlots = 16u;
 inline constexpr std::uint32_t StorageHeapCapacity = 64u;
 inline constexpr std::uint32_t SamplerHeapCapacity = 64u;
+inline constexpr std::uint32_t AtomicLockCount = 1u << 20u;
 inline constexpr std::uint32_t StateExportMappings = 0u;
 inline constexpr std::uint32_t StateDwords = 2u;
 inline constexpr std::uint32_t StateVertexSelectors = 0u;
@@ -113,8 +114,12 @@ inline std::uint32_t BindingNumber(Stage stage, Binding binding) {
 inline bool UintStorageImageBinding(std::uint32_t number) {
     const auto count = static_cast<std::uint32_t>(Binding::Count);
     if (number >= StageCount * count) return false;
-    const auto local = number % count;
-    return local >= FirstStorageImageBinding + 7u && local < FirstStorageImageBinding + 14u;
+    const auto first = FirstStorageImageBinding + 7u;
+    const auto last = FirstStorageImageBinding + 14u;
+    return (number >= first && number < last)
+        || (number >= count + first && number < count + last)
+        || (number >= count * 2u + first && number < count * 2u + last)
+        || (number >= count * 3u + first && number < count * 3u + last);
 }
 
 static_assert(FirstImageBinding + ImageBindingCount == static_cast<std::uint32_t>(Binding::Samplers));

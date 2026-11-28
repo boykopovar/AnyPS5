@@ -118,6 +118,49 @@ void RequireImeKeyboardTypeMapping() {
     }
 }
 
+char16_t Abnt2Character(std::uint32_t keycode, std::uint32_t state) {
+    char16_t character = u'?';
+    Require(sceConvertKeycodeGetCharacter(keycode, state, 17, &character) == 0);
+    return character;
+}
+
+void RequireAbnt2Layout() {
+    constexpr std::uint32_t leftShift = 0x200u;
+    constexpr std::uint32_t rightShift = 0x2000u;
+    constexpr std::uint32_t altGr = 0x4000u;
+    constexpr std::uint32_t numLock = 0x10000u;
+    constexpr std::uint32_t capsLock = 0x20000u;
+    struct Row {
+        std::uint32_t keycode;
+        char16_t normal;
+        char16_t shifted;
+        char16_t thirdLevel;
+    };
+    constexpr Row rows[] = {
+        {0x04, u'a', u'A', 0}, {0x08, u'e', u'E', 0x00B0}, {0x14, u'q', u'Q', u'/'}, {0x1a, u'w', u'W', u'?'},
+        {0x1e, u'1', u'!', 0x00B9}, {0x1f, u'2', u'@', 0x00B2}, {0x20, u'3', u'#', 0x00B3}, {0x21, u'4', u'$', 0x00A3},
+        {0x22, u'5', u'%', 0x00A2}, {0x23, u'6', 0x00A8, 0x00AC}, {0x24, u'7', u'&', 0}, {0x27, u'0', u')', 0},
+        {0x2d, u'-', u'_', 0}, {0x2e, u'=', u'+', 0x00A7}, {0x2f, 0x00B4, u'`', 0}, {0x30, u'[', u'{', 0x00AA},
+        {0x32, u']', u'}', 0x00BA}, {0x33, 0x00E7, 0x00C7, 0}, {0x34, u'~', u'^', 0}, {0x35, u'\'', u'"', 0},
+        {0x36, u',', u'<', 0}, {0x37, u'.', u'>', 0}, {0x38, u';', u':', 0}, {0x64, u'\\', u'|', 0},
+        {0x87, u'/', u'?', 0x00B0}};
+    for (const auto& row : rows) {
+        Require(Abnt2Character(row.keycode, 0) == row.normal);
+        Require(Abnt2Character(row.keycode, leftShift) == row.shifted);
+        Require(Abnt2Character(row.keycode, rightShift) == row.shifted);
+        if (row.thirdLevel != 0) Require(Abnt2Character(row.keycode, altGr) == row.thirdLevel);
+    }
+    Require(Abnt2Character(0x31, 0) == 0);
+    Require(Abnt2Character(0x33, capsLock) == 0x00C7 && Abnt2Character(0x33, capsLock | leftShift) == 0x00E7);
+    Require(Abnt2Character(0x04, capsLock) == u'A' && Abnt2Character(0x1e, capsLock) == u'1');
+    Require(Abnt2Character(0x87, capsLock) == u'/' && Abnt2Character(0x34, capsLock) == u'~');
+    Require(Abnt2Character(0x14, altGr | capsLock) == u'/');
+    Require(Abnt2Character(0x85, 0) == u',' && Abnt2Character(0x85, numLock) == u',');
+    Require(Abnt2Character(0x63, 0) == 0 && Abnt2Character(0x63, numLock) == u'.');
+    Require(Abnt2Character(0x59, 0) == 0 && Abnt2Character(0x59, numLock) == u'1');
+    Require(Abnt2Character(0x54, 0) == u'/' && Abnt2Character(0x58, 0) == char16_t{0x0a});
+}
+
 }  // namespace
 
 int main() {
@@ -226,6 +269,7 @@ int main() {
     Require(!ImeKeyboardType::IsPs4TitleId("HOMEBREW1"));
 
     RequireImeKeyboardTypeMapping();
+    RequireAbnt2Layout();
     Require(sceConvertKeycodeGetCharacter(4, 0, 0, nullptr) == invalidAddress);
     errno = 71;
     Require(sceConvertKeycodeGetCharacter(4, 0, 4, reinterpret_cast<char16_t*>(0x10)) == invalidAddress);
@@ -363,6 +407,33 @@ int main() {
     numLock.led = 1;
     numLock.key_code[0] = 89;
     Require(sceConvertKeycodeGetCharacterFromKeyboardData(&numLock, 0, 0, 4, &kbdChar) == 0 && kbdChar == u'1');
+    for (const auto layout : {1u, 2u, 3u, 4u, 9u, 10u, 12u, 24u, 30u}) {
+        for (const auto modifier : {0u, 2u, 32u}) {
+            for (const auto led : {0u, 1u, 2u, 3u}) {
+                KeyboardData packet{};
+                packet.length = 3;
+                packet.modifier_key = modifier;
+                packet.led = led;
+                packet.key_code[0] = 4;
+                packet.key_code[1] = 29;
+                packet.key_code[2] = 89;
+                for (int index = 0; index < packet.length; ++index) {
+                    char16_t direct = u'?', fromPacket = u'!';
+                    const auto state = (modifier << 8) | (led << 16);
+                    Require(sceConvertKeycodeGetCharacter(packet.key_code[index], state, layout, &direct) == 0);
+                    Require(sceConvertKeycodeGetCharacterFromKeyboardData(&packet, index, 0, layout, &fromPacket) == 0);
+                    Require(fromPacket == direct);
+                }
+            }
+        }
+    }
+    KeyboardData rightShift = keyData;
+    rightShift.length = 2;
+    rightShift.key_code[1] = 5;
+    rightShift.modifier_key = 0x20;
+    Require(sceConvertKeycodeGetCharacterFromKeyboardData(&rightShift, 1, 0, 4, &kbdChar) == 0 && kbdChar == u'B');
+    rightShift.led = 2;
+    Require(sceConvertKeycodeGetCharacterFromKeyboardData(&rightShift, 1, 0, 4, &kbdChar) == 0 && kbdChar == u'b');
     KeyboardData full = keyData;
     full.length = 16;
     full.key_code[15] = 5;

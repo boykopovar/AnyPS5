@@ -55,6 +55,19 @@ void testComputeEventWrite() {
     check(flush == storage.words.data() + 2 && flush[0] == 0xc0004600u && flush[1] == 0x407u, "ACB CS_PARTIAL_FLUSH does not carry event index 4");
     check(storage.buffer.cursor_up == storage.words.data() + 4, "ACB EVENT_WRITE cursor advance mismatch");
     expectFailure(storage, [&] { sceAgcAcbEventWrite(&storage.buffer, 0x40, nullptr); }, "an ACB event type above 0x3f was accepted");
+    struct Case {
+        std::uint8_t eventType;
+        std::uintptr_t address;
+    };
+    for (const Case item : {Case{0x11, 0x22222222u}, Case{1, 2u}, Case{0x22, 0x3333333344444444ull}}) {
+        Storage console;
+        const auto* written = sceAgcAcbEventWrite(&console.buffer, item.eventType, reinterpret_cast<const volatile void*>(item.address));
+        check(written == console.words.data() && written[0] == 0xc0004600u && written[1] == item.eventType && console.buffer.cursor_up == console.words.data() + 2, "ACB EVENT_WRITE with an address does not match the console's packet");
+    }
+    alignas(8) std::uint64_t counters = 0;
+    for (const auto eventType : {std::uint8_t{0x38}, std::uint8_t{0x39}}) {
+        expectFailure(storage, [&] { sceAgcAcbEventWrite(&storage.buffer, eventType, &counters); }, "an ACB sample event with an address was accepted");
+    }
 }
 
 }

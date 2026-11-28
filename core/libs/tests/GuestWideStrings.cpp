@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <climits>
 #include <cstddef>
 #include <cstdio>
@@ -10,12 +11,23 @@
 #include <cstdint>
 #include <cstring>
 #include <functional>
+#include <stdexcept>
 #include <string>
 
 namespace {
 
 void require(bool condition) {
     if (!condition) std::abort();
+}
+
+template<typename TCall>
+void requireRejected(TCall call) {
+    try {
+        call();
+    } catch (const std::invalid_argument&) {
+        return;
+    }
+    require(false);
 }
 
 bool same(const char16_t* left, const char16_t* right, std::size_t count) {
@@ -399,6 +411,11 @@ int main() {
     require(wmemmove_nid_postfix(overlap + 1, overlap, 4) == overlap + 1);
     const char16_t shifted[] = {u'1', u'1', u'2', u'3', u'4'};
     require(same(overlap, shifted, 5));
+    char16_t wideDest[4] = {u'w', u'x', u'y', u'z'};
+    const char16_t wideSrc[4] = {u'a', u'b', u'c', u'd'};
+    requireRejected([&] { wmemcpy_nid_postfix(wideDest, wideSrc, (SIZE_MAX / 2) + 2); });
+    requireRejected([&] { wmemmove_nid_postfix(wideDest, wideSrc, (SIZE_MAX / 2) + 2); });
+    require(same(wideDest, u"wxyz", 4));
     require(wmemset_nid_postfix(copy, u'世', 3) == copy && copy[0] == u'世' && copy[2] == u'世' && copy[3] == u'y');
 
     require(wmemchr_nid_postfix(units, u'x', 0) == nullptr);
@@ -425,6 +442,45 @@ int main() {
     const char16_t* wideDigit = u"12١";
     require(wcstoll_nid_postfix(wideDigit, &end, 10) == 12 && end == wideDigit + 2);
     require(wcstoull_nid_postfix(u"18446744073709551615", nullptr, 10) == ULLONG_MAX);
+    struct UnsignedCase {
+        const char16_t* text;
+        int base;
+        unsigned long long value;
+        std::size_t consumed;
+        int error;
+    };
+    const UnsignedCase unsignedCases[] = {
+        {u"-18446744073709551616!", 10, ULLONG_MAX, 21, ERANGE},
+        {u"18446744073709551616!", 10, ULLONG_MAX, 20, ERANGE},
+        {u"-0x10000000000000000!", 0, ULLONG_MAX, 20, ERANGE},
+        {u"-0x10000000000000000!", 16, ULLONG_MAX, 20, ERANGE},
+        {u"-18446744073709551615!", 10, 1, 21, 0},
+        {u"42!", 10, 42, 2, 0},
+        {u"0!", 10, 0, 1, 0},
+        {u"", 10, 0, 0, 0},
+        {u"words", 10, 0, 0, 0},
+        {u" \t-!", 10, 0, 0, 0}
+    };
+    const auto checkUnsigned = [&](auto parse, const char* name) {
+        for (const auto& test : unsignedCases) {
+            for (const int saved : {0, 13, ERANGE}) {
+                const int expectedError = test.error != 0 ? test.error : saved;
+                char16_t* parsedEnd = nullptr;
+                *__error_nid_postfix() = saved;
+                const auto value = parse(test.text, &parsedEnd, test.base);
+                if (value != test.value || parsedEnd != test.text + test.consumed || *__error_nid_postfix() != expectedError) {
+                    std::fprintf(stderr, "Guest %s failed at expected offset %zu in base %d with incoming errno %d\n", name, test.consumed, test.base, saved);
+                    std::abort();
+                }
+                *__error_nid_postfix() = saved;
+                require(parse(test.text, nullptr, test.base) == test.value && *__error_nid_postfix() == expectedError);
+            }
+        }
+    };
+    checkUnsigned(wcstoul_nid_postfix, "wcstoul");
+    checkUnsigned(wcstoull_nid_postfix, "wcstoull");
+    checkUnsigned(wcstoumax_nid_postfix, "wcstoumax");
+    checkUnsigned(_WStoul_nid_postfix, "_WStoul");
     const char16_t* letters = u"abc";
     require(wcstol_nid_postfix(letters, &end, 10) == 0 && end == letters);
     const char16_t* binary = u" -0b101";

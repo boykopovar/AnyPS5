@@ -5,9 +5,12 @@
 #include FT_LCD_FILTER_H
 
 #include <array>
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <stdexcept>
 
 using namespace FreeType;
 
@@ -18,6 +21,17 @@ static void Check(bool value, int line) {
     }
 }
 #define Require(value) Check((value), __LINE__)
+
+template <class F>
+static bool Rejects(F call) {
+    errno = 71;
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        return errno == 71;
+    }
+    return false;
+}
 
 int main() {
     GuestLibrary library{};
@@ -36,5 +50,16 @@ int main() {
     Require(FT_Library_SetLcdFilter_nid_postfix(&uninitialized, FT_LCD_FILTER_DEFAULT) == FT_Library_SetLcdFilter(nullptr, FT_LCD_FILTER_DEFAULT));
     Require(FT_Library_SetLcdFilterWeights_nid_postfix(nullptr, weights.data()) == FT_Library_SetLcdFilterWeights(nullptr, weights.data()));
     Require(FT_Library_SetLcdFilterWeights_nid_postfix(&uninitialized, weights.data()) == FT_Library_SetLcdFilterWeights(nullptr, weights.data()));
+    auto* badLibrary = reinterpret_cast<GuestLibrary*>(std::uintptr_t{0x10});
+    auto* badWeights = reinterpret_cast<unsigned char*>(std::uintptr_t{0x10});
+    Require(Rejects([&] { FT_Library_SetLcdFilter_nid_postfix(badLibrary, FT_LCD_FILTER_DEFAULT); }));
+    Require(Rejects([&] { FT_Library_SetLcdFilterWeights_nid_postfix(badLibrary, weights.data()); }));
+    Require(Rejects([&] { FT_Library_SetLcdFilterWeights_nid_postfix(badLibrary, nullptr); }));
+    Require(Rejects([&] { FT_Library_SetLcdFilterWeights_nid_postfix(&library, badWeights); }));
+    Require(Rejects([&] { FT_Library_SetLcdFilterWeights_nid_postfix(nullptr, badWeights); }));
+    alignas(std::max_align_t) std::array<std::byte, 64> misalignedStorage{};
+    auto* const misaligned = reinterpret_cast<GuestLibrary*>(misalignedStorage.data() + 1);
+    Require(Rejects([&] { FT_Library_SetLcdFilter_nid_postfix(misaligned, FT_LCD_FILTER_DEFAULT); }));
+    Require(Rejects([&] { FT_Library_SetLcdFilterWeights_nid_postfix(misaligned, weights.data()); }));
     Require(FT_Done_FreeType(library.host) == 0 && FT_Done_FreeType(native) == 0);
 }

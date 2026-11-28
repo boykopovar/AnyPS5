@@ -61,10 +61,25 @@ void testUnusedFields() {
     packet = sceAgcCbBranch(&buffer, 1, 0, nullptr, 0, 0, 0, nullptr, 0, 0, nullptr, 0);
     check(packet[1] == 1u && packet[2] == 0u && packet[8] == 0u && packet[10] == 0u, "an empty always-taken branch was not written");
     const auto cursor = buffer.cursor_up;
-    expectFailure([&] { sceAgcCbBranch(&buffer, 1, 3, compareAt(0x0000001234567894ull), 0, 0, 0, targetAt(0x2000u), 1, 0, nullptr, 0); });
     expectFailure([&] { sceAgcCbBranch(&buffer, 1, 0, nullptr, 0, 0, 0, nullptr, 1, 0, nullptr, 0); });
     expectFailure([&] { sceAgcCbBranch(&buffer, 2, 0, nullptr, 0, 0, 0, targetAt(0x2000u), 1, 0, nullptr, 1); });
     check(buffer.cursor_up == cursor, "a rejected branch advanced the command buffer");
+}
+
+template <std::size_t Size>
+void expectBranch(std::uint8_t mode, std::uint8_t compareFunction, std::uint64_t compareAddress, std::uint64_t mask, std::uint64_t reference, const std::array<std::uint32_t, Size>& head) {
+    std::array<std::uint32_t, 16> words{};
+    CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
+    const auto* packet = sceAgcCbBranch(&buffer, mode, compareFunction, compareAt(compareAddress), mask, reference, 0, nullptr, 0, 0, nullptr, 0);
+    check(packet == words.data() && std::equal(head.begin(), head.end(), packet), "console branch arguments were not encoded as the console does");
+    check(buffer.cursor_up == packet + 14, "console branch cursor advance mismatch");
+}
+
+void testConsoleArguments() {
+    expectBranch(0x11, 0x22, 0x33333333u, 0x44444444u, 0x55555555u, std::array{0xc00c3f00u, 0x201u, 0x33333330u, 0u, 0x44444444u, 0u, 0x55555555u, 0u});
+    expectBranch(1, 2, 3, 4, 5, std::array{0xc00c3f00u, 0x201u, 0u, 0u, 4u, 0u, 5u, 0u});
+    expectBranch(0x22, 0x44, 0, 0, 0, std::array{0xc00c3f00u, 0x402u, 0u, 0u, 0u, 0u, 0u, 0u});
+    expectBranch(1, 3, 0x0000001234567894ull, 0, 0, std::array{0xc00c3f00u, 0x301u, 0x34567890u, 0x12u});
 }
 
 void testCompareAddress() {
@@ -140,11 +155,23 @@ void testMalformedPackets() {
 
 }
 
+void testUnmappedCompareAddressPacket() {
+    Storage storage;
+    static const std::array<std::uint32_t, 14> readOnly{0xc00c3f00u};
+    check(storage.packet[0] == readOnly[0], "read-only branch fixture header differs from a branch packet");
+    auto* unmapped = reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10});
+    expectFailure([&] { sceAgcBranchPatchSetCompareAddress(unmapped, compareAt(0x1000u)); });
+    expectFailure([&] { sceAgcBranchPatchSetCompareAddress(const_cast<std::uint32_t*>(readOnly.data()), compareAt(0x1000u)); });
+    check(readOnly[2] == 0 && readOnly[3] == 0, "a compare address patch of a read-only packet changed it");
+}
+
 int main() {
     try {
         testWriter();
         testUnusedFields();
+        testConsoleArguments();
         testCompareAddress();
+        testUnmappedCompareAddressPacket();
         testTarget(sceAgcBranchPatchSetThenTarget, 8, 0x10000000u, "then target setter wrote the wrong words");
         testTarget(sceAgcBranchPatchSetElseTarget, 11, 0x20000000u, "else target setter wrote the wrong words");
         testTargetWithCachePolicy(sceAgcBranchPatchSetThenTarget_0300, 8, "3.00 then target setter wrote the wrong words");

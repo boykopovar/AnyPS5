@@ -42,17 +42,30 @@
 
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 #include "prx/libkernel/include/Api.hpp"
 
+#include <cerrno>
 #include <stdexcept>
 
 namespace {
 
+struct ErrnoGuard {
+    int savedErrno = errno;
+    ~ErrnoGuard() { errno = savedErrno; }
+};
+
 WebRtcThreadManager* CreateThreadManager() {
     auto* manager = static_cast<WebRtcThreadManager*>(_Znwm_nid_postfix(sizeof(WebRtcThreadManager)));
-    manager->key = 0;
-    if (pthread_key_create_nid_postfix(&manager->key, nullptr) != 0)
+    PthreadKey key = 0;
+    if (pthread_key_create_nid_postfix(&key, nullptr) != 0)
         throw std::runtime_error("rtc::ThreadManager: pthread_key_create failed");
+    const WebRtcThreadManager hostManager{key};
+    {
+        ErrnoGuard guard;
+        if (!GuestPtr<WebRtcThreadManager>(manager).CopyOut(hostManager))
+            throw std::runtime_error("rtc::ThreadManager: failed to initialize guest manager");
+    }
     return manager;
 }
 
@@ -68,7 +81,13 @@ WebRtcThreadManager* APS5_VABI _ZN3rtc13ThreadManager8InstanceEv_nid_postfix() {
 void* APS5_VABI _ZN3rtc13ThreadManager13CurrentThreadEv_nid_postfix(WebRtcThreadManager* manager) {
     if (!manager)
         throw std::invalid_argument("ThreadManager::CurrentThread requires a manager");
-    return pthread_getspecific_nid_postfix(manager->key);
+    WebRtcThreadManager hostManager{};
+    {
+        ErrnoGuard guard;
+        if (!GuestPtr<const WebRtcThreadManager>(manager).CopyIn(hostManager))
+            throw std::invalid_argument("ThreadManager::CurrentThread requires a manager");
+    }
+    return pthread_getspecific_nid_postfix(hostManager.key);
 }
 
 void* APS5_VABI _ZN3rtc6Thread7CurrentEv_nid_postfix() {

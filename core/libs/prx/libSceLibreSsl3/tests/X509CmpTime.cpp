@@ -1,8 +1,11 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 
+#include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
+#include <stdexcept>
 #include <string_view>
 
 namespace {
@@ -11,6 +14,18 @@ void Require(bool condition, std::source_location location = std::source_locatio
     if (condition) return;
     std::fprintf(stderr, "LibreSSL3 X509_cmp_current_time check failed at line %u\n", location.line());
     std::abort();
+}
+
+template <typename TCall>
+void RejectsRuntime(TCall call, std::source_location location = std::source_location::current()) {
+    errno = 71;
+    bool rejected = false;
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        rejected = errno == 71;
+    }
+    Require(rejected, location);
 }
 
 int Compare(std::string_view text, int type) {
@@ -49,4 +64,11 @@ int main() {
     Require(X509_cmp_current_time_nid_postfix(nullptr) == 0);
     Asn1String empty{13, 23, nullptr, 0};
     Require(X509_cmp_current_time_nid_postfix(&empty) == 0);
+    auto* badTime = reinterpret_cast<const Asn1String*>(std::uintptr_t{0x10});
+    auto* badData = reinterpret_cast<unsigned char*>(std::uintptr_t{0x10});
+    RejectsRuntime([&] { X509_cmp_current_time_nid_postfix(badTime); });
+    Asn1String badUtc{13, 23, badData, 0};
+    RejectsRuntime([&] { X509_cmp_current_time_nid_postfix(&badUtc); });
+    Asn1String badGeneralized{15, 24, badData, 0};
+    RejectsRuntime([&] { X509_cmp_current_time_nid_postfix(&badGeneralized); });
 }

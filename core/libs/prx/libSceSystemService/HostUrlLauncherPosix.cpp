@@ -1,6 +1,7 @@
 #include "prx/libSceSystemService/HostUrl.hpp"
 #include "prx/libSceSystemService/HostUrlBackends.hpp"
 #include <cerrno>
+#include <csignal>
 #include <fcntl.h>
 #include <spawn.h>
 #include <sys/types.h>
@@ -51,11 +52,29 @@ bool HostBrowserLauncher::Launch(const std::string& url) {
         --*running;
         return false;
     }
+    posix_spawnattr_t attributes;
+    if (posix_spawnattr_init(&attributes) != 0) {
+        posix_spawn_file_actions_destroy(&actions);
+        --*running;
+        return false;
+    }
+    sigset_t emptyMask;
+    short spawnFlags = POSIX_SPAWN_SETSIGMASK;
+#ifdef __APPLE__
+    spawnFlags = static_cast<short>(spawnFlags | POSIX_SPAWN_CLOEXEC_DEFAULT);
+#endif
     bool prepared = posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0) == 0 &&
                     posix_spawn_file_actions_addopen(&actions, 1, "/dev/null", O_WRONLY, 0) == 0 &&
-                    posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0) == 0;
+                    posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0) == 0 &&
+                    sigemptyset(&emptyMask) == 0 &&
+                    posix_spawnattr_setsigmask(&attributes, &emptyMask) == 0 &&
+                    posix_spawnattr_setflags(&attributes, spawnFlags) == 0;
+#ifndef __APPLE__
+    prepared = prepared && posix_spawn_file_actions_addclosefrom_np(&actions, 3) == 0;
+#endif
     pid_t child = 0;
-    const int error = prepared ? posix_spawnp(&child, name.c_str(), &actions, nullptr, arguments, HostEnvironment()) : -1;
+    const int error = prepared ? posix_spawnp(&child, name.c_str(), &actions, &attributes, arguments, HostEnvironment()) : -1;
+    posix_spawnattr_destroy(&attributes);
     posix_spawn_file_actions_destroy(&actions);
     if (error != 0) {
         --*running;

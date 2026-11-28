@@ -1,8 +1,11 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include "prx/libSceLibreSsl/include/Evp.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <stdexcept>
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -12,6 +15,18 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 struct Algorithm {
     const char* name;
@@ -312,6 +327,132 @@ static void OneShotCleanup() {
     }
 }
 
+static void TestMdCtxCopy() {
+    Require(liveBlocks == 0);
+    std::array<unsigned char, 32> expected{};
+    std::uint32_t expectedSize = 0;
+    Require(EVP_Digest_nid_postfix("abc", 3, expected.data(), &expectedSize, EVP_sha256_nid_postfix(), nullptr) == 1);
+    Require(expectedSize == 32);
+
+    EvpMdContext selfCtx{};
+    EVP_MD_CTX_init_nid_postfix(&selfCtx);
+    Require(EVP_DigestInit_ex_nid_postfix(&selfCtx, EVP_sha256_nid_postfix(), nullptr) == 1);
+    Require(EVP_DigestUpdate_nid_postfix(&selfCtx, "ab", 2) == 1);
+    Require(CopyContext_nid_no_patch(selfCtx, selfCtx, "self") == 1);
+    Require(EVP_DigestUpdate_nid_postfix(&selfCtx, "c", 1) == 1);
+    std::array<unsigned char, 32> digest{};
+    std::uint32_t digestSize = 0;
+    Require(EVP_DigestFinal_ex_nid_postfix(&selfCtx, digest.data(), &digestSize) == 1);
+    Require(digestSize == 32 && digest == expected);
+    Require(EVP_MD_CTX_cleanup_nid_postfix(&selfCtx) == 1);
+
+    EvpMdContext reusedTarget{};
+    EvpMdContext reusedSource{};
+    EVP_MD_CTX_init_nid_postfix(&reusedTarget);
+    EVP_MD_CTX_init_nid_postfix(&reusedSource);
+    Require(EVP_DigestInit_ex_nid_postfix(&reusedTarget, EVP_sha256_nid_postfix(), nullptr) == 1);
+    Require(EVP_DigestUpdate_nid_postfix(&reusedTarget, "xy", 2) == 1);
+    Require(EVP_DigestInit_ex_nid_postfix(&reusedSource, EVP_sha256_nid_postfix(), nullptr) == 1);
+    Require(EVP_DigestUpdate_nid_postfix(&reusedSource, "ab", 2) == 1);
+    Require(CopyContext_nid_no_patch(reusedTarget, reusedSource, "reuse") == 1);
+    Require(EVP_DigestUpdate_nid_postfix(&reusedTarget, "c", 1) == 1);
+    digest.fill(0);
+    digestSize = 0;
+    Require(EVP_DigestFinal_ex_nid_postfix(&reusedTarget, digest.data(), &digestSize) == 1);
+    Require(digestSize == 32 && digest == expected);
+    Require(EVP_MD_CTX_cleanup_nid_postfix(&reusedTarget) == 1);
+    Require(EVP_MD_CTX_cleanup_nid_postfix(&reusedSource) == 1);
+
+    failureStage = FailureStage::None;
+    EvpMd badMd{};
+    badMd.type = 12346;
+    badMd.mdSize = 4;
+    badMd.init = FailingInit;
+    badMd.update = FailingUpdate;
+    badMd.finalize = FailingFinal;
+    badMd.cleanup = FailingCleanup;
+    badMd.blockSize = 64;
+    badMd.contextSize = 16;
+
+    EvpMdContext badTarget{};
+    EvpMdContext badSource{};
+    EVP_MD_CTX_init_nid_postfix(&badTarget);
+    EVP_MD_CTX_init_nid_postfix(&badSource);
+    Require(EVP_DigestInit_ex_nid_postfix(&badTarget, &badMd, nullptr) == 1);
+    Require(EVP_DigestInit_ex_nid_postfix(&badSource, &badMd, nullptr) == 1);
+    badMd.contextSize = -1;
+    bool caught = false;
+    try {
+        CopyContext_nid_no_patch(badTarget, badSource, "neg");
+    } catch (const std::invalid_argument&) {
+        caught = true;
+    }
+    Require(caught);
+    badMd.contextSize = 16;
+    Require(EVP_MD_CTX_cleanup_nid_postfix(&badTarget) == 1);
+    Require(EVP_MD_CTX_cleanup_nid_postfix(&badSource) == 1);
+    Require(liveBlocks == 0);
+}
+
+template<typename TCall> static void RejectsPreservingErrno(TCall call, std::source_location location = std::source_location::current()) {
+    errno = 71;
+    bool rejected = false;
+    try { call(); } catch (const std::runtime_error&) { rejected = errno == 71; }
+    Require(rejected, location);
+}
+
+static void TestGuestPointers() {
+    Require(liveBlocks == 0);
+    auto* unmappedContext = reinterpret_cast<EvpMdContext*>(std::uintptr_t{0x10});
+    const auto* unmappedMd = reinterpret_cast<const EvpMd*>(std::uintptr_t{0x10});
+    RejectsPreservingErrno([&] { EVP_MD_size_nid_postfix(unmappedMd); });
+    RejectsPreservingErrno([&] { EVP_MD_CTX_destroy_nid_postfix(unmappedContext); });
+    unsigned char digest[64] {};
+    for (const auto* md : {EVP_md5_nid_postfix(), EVP_sha256_nid_postfix(), EVP_sha384_nid_postfix(), EVP_sha512_nid_postfix()}) {
+        RejectsPreservingErrno([&] { md->init(unmappedContext); });
+        RejectsPreservingErrno([&] { md->update(unmappedContext, digest, 0); });
+        RejectsPreservingErrno([&] { md->finalize(unmappedContext, digest); });
+    }
+    Require(AllZero(digest, sizeof(digest)));
+
+#ifdef _WIN32
+    SYSTEM_INFO info {};
+    GetSystemInfo(&info);
+    const std::size_t pageSize = info.dwPageSize;
+    void* page = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(page != nullptr);
+#else
+    const std::size_t pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED);
+#endif
+    auto* readOnlyContext = static_cast<EvpMdContext*>(page);
+    EVP_MD_CTX_init_nid_postfix(readOnlyContext);
+    Require(EVP_DigestInit_ex_nid_postfix(readOnlyContext, EVP_sha256_nid_postfix(), nullptr) == 1 && liveBlocks == 1);
+    EvpMdContext snapshot;
+    std::memcpy(&snapshot, readOnlyContext, sizeof(snapshot));
+#ifdef _WIN32
+    DWORD previous = 0;
+    Require(VirtualProtect(page, pageSize, PAGE_READONLY, &previous) != 0);
+#else
+    Require(mprotect(page, pageSize, PROT_READ) == 0);
+#endif
+    Require(EVP_MD_size_nid_postfix(EVP_sha256_nid_postfix()) == 32);
+    RejectsPreservingErrno([&] { EVP_MD_CTX_destroy_nid_postfix(readOnlyContext); });
+    Require(std::memcmp(&snapshot, readOnlyContext, sizeof(snapshot)) == 0 && liveBlocks == 1);
+#ifdef _WIN32
+    Require(VirtualProtect(page, pageSize, PAGE_READWRITE, &previous) != 0);
+#else
+    Require(mprotect(page, pageSize, PROT_READ | PROT_WRITE) == 0);
+#endif
+    Require(EVP_MD_CTX_cleanup_nid_postfix(readOnlyContext) == 1 && liveBlocks == 0);
+#ifdef _WIN32
+    VirtualFree(page, 0, MEM_RELEASE);
+#else
+    munmap(page, pageSize);
+#endif
+}
+
 int main() {
     InitializeHeap();
     const std::vector<unsigned char> empty;
@@ -594,5 +735,7 @@ int main() {
         Require(allocationsBeforeFailure == -1 && liveBlocks == 0);
     }
     OneShotCleanup();
+    TestMdCtxCopy();
+    TestGuestPointers();
     return 0;
 }

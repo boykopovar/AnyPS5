@@ -110,10 +110,10 @@ int APS5_VABI sceNpSessionSignalingGetGroupFromPeerAddress(std::uint32_t context
 int APS5_VABI sceNpSessionSignalingInitializeWithPort(const SessionSignalingInitParam* param, std::uint32_t port, std::uint32_t reserved);
 int APS5_VABI sceNpSessionSignalingJoinActivate(const char* sessionId, const void* param, std::uint32_t* groupId, std::uint32_t* connectionId);
 int APS5_VABI sceNpSessionSignalingSetCustomProperty(std::uint32_t contextId, const std::uint32_t* property, std::uint32_t* previous);
-int APS5_VABI sceNpSessionSignalingManualUdpAbortConnection();
-int APS5_VABI sceNpSessionSignalingManualUdpCreateJoin();
-int APS5_VABI sceNpSessionSignalingManualUdpEstablishConnection();
-int APS5_VABI sceNpSessionSignalingManualUdpJoin();
+int APS5_VABI sceNpSessionSignalingManualUdpAbortConnection(std::uint32_t contextId);
+int APS5_VABI sceNpSessionSignalingManualUdpCreateJoin(const void* param, std::uint32_t* id, std::uint32_t* extra);
+int APS5_VABI sceNpSessionSignalingManualUdpEstablishConnection(std::uint32_t contextId, std::uint32_t value);
+int APS5_VABI sceNpSessionSignalingManualUdpJoin(const void* param, const char* name, std::uint32_t* id, std::uint32_t* extra);
 int APS5_VABI sceNpSessionSignalingRegisterInternalCallback(std::uint32_t contextId, void* callback, void* userData);
 
 }

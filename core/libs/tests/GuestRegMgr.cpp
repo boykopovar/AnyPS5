@@ -20,6 +20,16 @@
 static void Require(bool value) { if (!value) std::abort(); }
 
 template <typename TCall>
+static bool ThrowsWithMessage(const char* message, TCall call) {
+    try {
+        call();
+    } catch (const std::runtime_error& error) {
+        return std::string(error.what()) == message;
+    }
+    return false;
+}
+
+template <typename TCall>
 static bool ReportsNotImplemented(const char* name, TCall call) {
     try {
         call();
@@ -175,10 +185,122 @@ static void CheckStringLengthCap() {
     Require(sceRegMgrIsChange(0x2013, 0x0d010001u) == 0);
 }
 
+static void CheckZeroLengthCalls() {
+    char text[8] = {};
+    std::uint8_t bytes[4] = {};
+    const std::uint8_t payload[] = {0x11, 0x22};
+    Require(sceRegMgrSetStr(0x2050, "keep", 5) == 0);
+    std::strcpy(text, "CANARY");
+    Require(sceRegMgrGetStr(0x2050, text, 0) == static_cast<int>(0x80820004));
+    Require(std::strcmp(text, "CANARY") == 0);
+    Require(sceRegMgrSetBin(0x2051, payload, sizeof(payload)) == 0);
+    bytes[0] = 0x77;
+    Require(sceRegMgrGetBin(0x2051, bytes, 0) == static_cast<int>(0x80820004));
+    Require(bytes[0] == 0x77);
+    Require(sceRegMgrGetStr(0x2052, text, 0) == static_cast<int>(0x80820002));
+    Require(sceRegMgrGetBin(0x2052, bytes, 0) == static_cast<int>(0x80820002));
+    Require(ThrowsWithMessage("sceRegMgrSetStr: a zero-length write is unmeasured",
+        [&] { sceRegMgrSetStr(0x2050, "gone", 0); }));
+    Require(ThrowsWithMessage("sceRegMgrSetBin: a zero-length write is unmeasured",
+        [&] { sceRegMgrSetBin(0x2051, payload, 0); }));
+    Require(sceRegMgrGetStr(0x2050, text, sizeof(text)) == 0 && std::strcmp(text, "keep") == 0);
+    Require(sceRegMgrGetBin(0x2051, bytes, sizeof(bytes)) == 0 && bytes[0] == 0x11 && bytes[1] == 0x22);
+}
+
+static void CheckStringAndMemsetHelpers() {
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::size_t page = info.dwPageSize;
+    auto* pages = static_cast<char*>(VirtualAlloc(nullptr, page * 2, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+    Require(pages != nullptr);
+    DWORD previous = 0;
+    Require(VirtualProtect(pages + page, page, PAGE_NOACCESS, &previous) != 0);
+#else
+    const std::size_t page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    auto* pages = static_cast<char*>(mmap(nullptr, page * 2, PROT_READ | PROT_WRITE,
+                                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(pages != MAP_FAILED);
+    Require(mprotect(pages + page, page, PROT_NONE) == 0);
+#endif
+    void* const errorPtr = reinterpret_cast<void*>(static_cast<std::uintptr_t>(1));
+    char* const errorStr = reinterpret_cast<char*>(static_cast<std::uintptr_t>(1));
+
+    char fill[16];
+    std::memset(fill, 0x5A, sizeof(fill));
+    errno = 71;
+    Require(sceRegMgrMemset(fill, 0xAB, 4) == static_cast<void*>(fill));
+    Require(errno == 71);
+    Require(std::memcmp(fill, "\xAB\xAB\xAB\xAB\x5A", 5) == 0);
+    Require(sceRegMgrMemset(fill, 0x11, 0) == static_cast<void*>(fill));
+    Require(errno == 71);
+    Require(std::memcmp(fill, "\xAB\xAB\xAB\xAB\x5A", 5) == 0);
+    Require(sceRegMgrMemset(nullptr, 0, 0) == errorPtr);
+    Require(errno == 71);
+    Require(sceRegMgrMemset(nullptr, 0xAA, 4) == errorPtr);
+    Require(errno == 71);
+    Require(sceRegMgrMemset(reinterpret_cast<void*>(0x10), 0xAA, 4) == errorPtr);
+    Require(errno == 71);
+    Require(sceRegMgrMemset(pages + page - 2, 0xAA, 4) == errorPtr);
+    Require(errno == 71);
+
+    char copied[8];
+    std::memset(copied, 0x5A, sizeof(copied));
+    errno = 71;
+    Require(sceRegMgrStrncpy(copied, "xyz", 3) == copied);
+    Require(errno == 71);
+    Require(std::memcmp(copied, "xyz", 3) == 0 && copied[3] == 0x5A);
+
+    std::memset(copied, 0x5A, sizeof(copied));
+    Require(sceRegMgrStrncpy(copied, "hi", 5) == copied);
+    Require(errno == 71);
+    Require(std::memcmp(copied, "hi\0\0\0\x5A", 6) == 0);
+
+    std::memset(copied, 0x5A, sizeof(copied));
+    Require(sceRegMgrStrncpy(copied, "abc", 0) == copied);
+    Require(errno == 71);
+    Require(copied[0] == 0x5A);
+
+    Require(sceRegMgrStrncpy(nullptr, "x", 1) == errorStr);
+    Require(errno == 71);
+    Require(sceRegMgrStrncpy(copied, nullptr, 1) == errorStr);
+    Require(errno == 71);
+    Require(sceRegMgrStrncpy(nullptr, nullptr, 0) == errorStr);
+    Require(errno == 71);
+    Require(copied[0] == 0x5A);
+
+    Require(sceRegMgrStrncpy(copied, reinterpret_cast<const char*>(0x10), 4) == errorStr);
+    Require(errno == 71);
+    Require(copied[0] == 0x5A);
+    Require(sceRegMgrStrncpy(reinterpret_cast<char*>(0x10), "abc", 4) == errorStr);
+    Require(errno == 71);
+
+    char* input = pages + page - 3;
+    std::memcpy(input, "ok", 3);
+    std::memset(copied, 0x5A, sizeof(copied));
+    Require(sceRegMgrStrncpy(copied, input, sizeof(copied)) == copied);
+    Require(errno == 71);
+    Require(std::memcmp(copied, "ok\0\0\0\0\0\0", sizeof(copied)) == 0);
+
+    std::memcpy(input, "abc", 3);
+    std::memset(copied, 0x5A, sizeof(copied));
+    Require(sceRegMgrStrncpy(copied, input, sizeof(copied)) == errorStr);
+    Require(errno == 71);
+    Require(copied[0] == 0x5A);
+
+#ifdef _WIN32
+    Require(VirtualFree(pages, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(pages, page * 2) == 0);
+#endif
+}
+
 int main() {
     CheckRemovedRangeKeys();
     CheckStringPageBoundary();
     CheckStringLengthCap();
+    CheckZeroLengthCalls();
+    CheckStringAndMemsetHelpers();
     int32_t intVal = 0;
     char strBuf[64] = {};
     uint8_t binBuf[32] = {};
@@ -351,6 +473,7 @@ int main() {
     Require(ReportsNotImplemented("sceRegMgrGetStrInitVal", [&] { sceRegMgrGetStrInitVal(); }));
     Require(ReportsNotImplemented("sceRegMgrGetBinInitVal", [&] { sceRegMgrGetBinInitVal(); }));
     Require(ReportsNotImplemented("sceRegMgrSrvGetQAFforReg", [&] { sceRegMgrSrvGetQAFforReg(); }));
+    Require(sceRegMgrGetVersion() == static_cast<int>(0x01140001));
 
     CheckBoundedBinaryInput();
     return 0;

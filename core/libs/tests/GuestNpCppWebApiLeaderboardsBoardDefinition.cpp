@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <source_location>
 
 namespace {
@@ -99,12 +100,71 @@ void RequireFlagsTrackMemory() {
     Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody15entryLimitIsSetEv(model));
 }
 
+void RequireSortAndUpdateModes() {
+    Storage storage{};
+    Fill(storage);
+    const void* model = storage.bytes;
+    Put32(storage, 0x6c, 0xffffffff);
+    storage.bytes[0x70] = 0x80;
+    Put32(storage, 0x74, 0x7fffffff);
+    storage.bytes[0x78] = 0;
+    Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody11getSortModeEv(model) == -1);
+    Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody13sortModeIsSetEv(model));
+    Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody13getUpdateModeEv(model) == 0x7fffffff);
+    Require(!_ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody15updateModeIsSetEv(model));
+    Put32(storage, 0x6c, 0x11223344);
+    storage.bytes[0x70] = 0;
+    Put32(storage, 0x74, 0);
+    storage.bytes[0x78] = 1;
+    Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody11getSortModeEv(model) == 0x11223344);
+    Require(!_ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody13sortModeIsSetEv(model));
+    Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody13getUpdateModeEv(model) == 0);
+    Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody15updateModeIsSetEv(model));
+}
+
 }  // namespace
+
+void RequireSharedInstantiations() {
+    constexpr int kTransactionNotStarted = static_cast<int>(0x80553508);
+    Require(_ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_12Leaderboards2V122GetRankingResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE11hasResponseEv() == 0);
+    Require(_ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_12Leaderboards2V123RecordScoreResponseBodyEEENS4_INS6_9RecordApi26RecordScoreResponseHeadersEEEE11hasResponseEv() == 0);
+    Require(_ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_12Leaderboards2V130GetBoardDefinitionResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE11hasResponseEv() == 0);
+    Require(_ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_12Leaderboards2V122GetRankingResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE5abortEv() == kTransactionNotStarted);
+    Require(_ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_12Leaderboards2V123RecordScoreResponseBodyEEENS4_INS6_9RecordApi26RecordScoreResponseHeadersEEEE5abortEv() == kTransactionNotStarted);
+    Require(_ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_12Leaderboards2V130GetBoardDefinitionResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE5abortEv() == kTransactionNotStarted);
+
+    alignas(8) unsigned char object[0x40] = {};
+    std::int32_t references = 1;
+    std::memcpy(object, &references, sizeof(references));
+    IntrusivePtr source{object, nullptr, nullptr};
+    IntrusivePtr copy{};
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_12Leaderboards2V15EntryEEC1ERS7_(&copy, &source);
+    std::int32_t updated = 0;
+    std::memcpy(&updated, object, sizeof(updated));
+    Require(copy.object == object && updated == 2);
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_12Leaderboards2V15EntryEED1Ev(&copy);
+    std::memcpy(&updated, object, sizeof(updated));
+    Require(updated == 1 && copy.object == object);
+    source.object = nullptr;
+
+    IntrusivePtr vectorHandle{};
+    Require(_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_12Leaderboards2V15EntryEEEEEE3getEv(&vectorHandle) == nullptr);
+    bool rejected = false;
+    try {
+        _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_12Leaderboards2V15EntryEEEEixEm(&vectorHandle, 0);
+    } catch (...) {
+        rejected = true;
+    }
+    Require(rejected);
+}
+
 
 int main() {
     RequireLimits();
     RequireScoreLimits();
     RequireWidthsDoNotOverlap();
     RequireFlagsTrackMemory();
+    RequireSortAndUpdateModes();
+    RequireSharedInstantiations();
     return 0;
 }

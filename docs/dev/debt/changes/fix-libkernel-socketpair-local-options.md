@@ -1,0 +1,5 @@
+# libkernel
+
+## add Functional
+
+- [LOCAL_PEERCRED, LOCAL_CREDS and LOCAL_CONNWAIT](../../../core/libs/prx/libkernel/Socket/src/Udp.cpp) (libkernel) - throw on an `AF_UNIX` socket received through `SCM_RIGHTS` or adopted from the host, whose peer credentials are not known, and setting `LOCAL_CREDS` throws on every `AF_UNIX` socket, as `recvmsg` adds no `SCM_CREDS` message. On a `socketpair` socket they follow FreeBSD 11.4's [`kern_socketpair`](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/sys/kern/uipc_syscalls.c#L696-L705) and [`uipc_ctloutput`](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/sys/kern/uipc_usrreq.c#L1222-L1300): a stream or sequenced-packet pair reports the `xucred` of the identity it was made with (`geteuid` and the first 16 groups of `getgroups`), a datagram pair fails with `EINVAL`, `LOCAL_CREDS` reads 0, and `LOCAL_CONNWAIT` reads what was last set on that socket. That flag only delays a `connect` to a listener, which an `AF_UNIX` socket cannot make here

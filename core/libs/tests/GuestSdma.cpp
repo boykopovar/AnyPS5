@@ -1,5 +1,6 @@
 #include "prx/libSceSdma/libSceSdma.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -49,6 +50,16 @@ void RequireOpen() {
         Require(sceSdmaOpen(&handle, buffer.data(), 0x8000, &param) == InvalidArgument);
     }
     Require(handle == nullptr);
+    param.engine = 12;
+    errno = 71;
+    Require(sceSdmaOpen(reinterpret_cast<void**>(0x10), buffer.data(), 0x8000, &param) == InvalidArgument);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceSdmaOpen(&handle, buffer.data(), 0x8000, reinterpret_cast<const SdmaOpenParam*>(0x10)) == InvalidArgument);
+    Require(errno == 71);
+    Require(sceSdmaOpen(&handle, buffer.data(), 0x8000, &param) == 0 && handle);
+    Require(sceSdmaOpen(nullptr, buffer.data(), 0x8000, &param) == InvalidArgument);
+    Require(sceSdmaClose(handle) == 0);
     for (std::uint32_t engine = 12; engine < 20; ++engine) {
         param.engine = engine;
         void* first = nullptr;
@@ -59,6 +70,13 @@ void RequireOpen() {
         Require(sceSdmaOpen(&second, buffer.data(), 0x8000, &param) == 0 && second == first);
         Require(sceSdmaClose(second) == 0);
     }
+}
+
+void RequireArgumentsAfterHandle(void* handle, std::uint8_t* bytes) {
+    Require(sceSdmaConstantFill(handle, 0x12345678u, Address(bytes), 16, 0) == InvalidArgument);
+    Require(sceSdmaConstantFillNonBlocking(handle, 0x12345678u, Address(bytes) + 1, 15, 1) == InvalidArgument);
+    Require(sceSdmaCopyWindowL2L(handle, Address(bytes), Address(bytes), 8, 0, 1, 1, 1, 0, 0, 1, 1, 0, 0) == InvalidArgument);
+    Require(sceSdmaCopyWindowL2LNonBlocking(handle, Address(bytes), Address(bytes), 8, 1, 1, 0x80001, 1, 0x4000, 0, 1, 1, 0, 0) == InvalidArgument);
 }
 
 void RequireNullHandle() {
@@ -78,6 +96,7 @@ void RequireNullHandle() {
     Require(sceSdmaFlushAll(handle) == InvalidArgument);
     Require(sceSdmaKickQueue(handle) == InvalidArgument);
     Require(sceSdmaTryFlush(handle) == InvalidArgument);
+    RequireArgumentsAfterHandle(handle, bytes);
 }
 
 void RequireClosedHandle() {
@@ -90,7 +109,36 @@ void RequireClosedHandle() {
     Require(sceSdmaCopyLinear(closed, Address(source), Address(destination), 16) == InvalidArgument);
     Require(sceSdmaCopyLinearNonBlocking(closed, Address(source), Address(destination), 16) == InvalidArgument);
     Require(sceSdmaCopyWindowL2L(closed, Address(source), Address(destination), 8, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0) == InvalidArgument);
+    RequireArgumentsAfterHandle(closed, destination);
     for (std::uint8_t byte : destination) Require(byte == 0);
+}
+
+void RequireForeignHandle() {
+    Engine engine(12, 0x8000);
+    std::vector<std::uint8_t> storage(0x100, 0xab);
+    std::uint8_t source[16]{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
+    std::uint8_t destination[16]{};
+    for (void* handle : {reinterpret_cast<void*>(0x10), static_cast<void*>(storage.data()), static_cast<void*>(static_cast<std::uint8_t*>(engine.handle) + 1)}) {
+        Require(sceSdmaClose(handle) == InvalidArgument);
+        Require(sceSdmaBeginQueueMode(handle) == InvalidArgument);
+        Require(sceSdmaCancelQueue(handle) == InvalidArgument);
+        Require(sceSdmaConstantFill(handle, 0x5a5a5a5au, Address(destination), 16, 0) == InvalidArgument);
+        Require(sceSdmaConstantFillNonBlocking(handle, 0x5a5a5a5au, Address(destination), 16, 0) == InvalidArgument);
+        Require(sceSdmaCopyLinear(handle, Address(source), Address(destination), 16) == InvalidArgument);
+        Require(sceSdmaCopyLinearNonBlocking(handle, Address(source), Address(destination), 16) == InvalidArgument);
+        Require(sceSdmaCopyWindowL2L(handle, Address(source), Address(destination), 8, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0) == InvalidArgument);
+        Require(sceSdmaCopyWindowL2LNonBlocking(handle, Address(source), Address(destination), 8, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0) == InvalidArgument);
+        Require(sceSdmaEndQueueMode(handle) == InvalidArgument);
+        Require(sceSdmaFenceNonBlocking(handle) == InvalidArgument);
+        Require(sceSdmaFlushAll(handle) == InvalidArgument);
+        Require(sceSdmaKickQueue(handle) == InvalidArgument);
+        Require(sceSdmaTryFlush(handle) == InvalidArgument);
+        RequireArgumentsAfterHandle(handle, destination);
+    }
+    for (std::uint8_t byte : storage) Require(byte == 0xab);
+    for (std::uint8_t byte : destination) Require(byte == 0);
+    Require(sceSdmaCopyLinear(engine.handle, Address(source), Address(destination), 16) == 0);
+    Require(std::memcmp(destination, source, 16) == 0);
 }
 
 void RequireLinear() {
@@ -236,6 +284,7 @@ int main() {
     RequireOpen();
     RequireNullHandle();
     RequireClosedHandle();
+    RequireForeignHandle();
     RequireLinear();
     RequireFill();
     RequireWindow();

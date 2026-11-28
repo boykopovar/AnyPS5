@@ -767,19 +767,23 @@ static std::size_t APS5_VABI CollectBytes(char* bytes, std::size_t size, std::si
     return length;
 }
 
+static std::filesystem::path CreateTempFile(const std::string& prefix, const std::string& payload) {
+    const auto path = std::filesystem::temp_directory_path() /
+        (prefix + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::ofstream file(path, std::ios::binary);
+    Require(static_cast<bool>(file.write(payload.data(), static_cast<std::streamsize>(payload.size()))));
+    file.close();
+    Require(!file.fail());
+    return path;
+}
+
 static void TestFileTransferUsesCustomHeap() {
     Require(trackerA.LiveCount() == 0 && trackerB.LiveCount() == 0);
     Require(curl_global_init_mem_nid_postfix(CURL_GLOBAL_DEFAULT, AllocatorA_Malloc, AllocatorA_Free, AllocatorA_Realloc, AllocatorA_Strdup, AllocatorA_Calloc) == CURLE_OK);
     const auto globalPointersA = trackerA.livePointers;
-    const auto path = std::filesystem::temp_directory_path() /
-        ("anyps5-curl-allocator-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     const char bytes[] = {'a', '\0', 'b', static_cast<char>(0xff), '\r', '\n'};
-    {
-        std::ofstream file(path, std::ios::binary);
-        Require(static_cast<bool>(file.write(bytes, sizeof(bytes))));
-        file.close();
-        Require(!file.fail());
-    }
+    const std::string payload(bytes, sizeof(bytes));
+    const auto path = CreateTempFile("anyps5-curl-allocator-", payload);
     auto* easy = curl_easy_init_nid_postfix();
     Require(easy != nullptr && trackerA.livePointers.contains(easy));
     const auto url = "file://" + path.generic_string();
@@ -788,8 +792,69 @@ static void TestFileTransferUsesCustomHeap() {
     Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_WRITEFUNCTION, CollectBytes) == CURLE_OK);
     Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_WRITEDATA, &output) == CURLE_OK);
     Require(curl_easy_perform_nid_postfix(easy) == CURLE_OK);
-    Require(output == std::string(bytes, sizeof(bytes)));
+    Require(output == payload);
     curl_easy_cleanup_nid_postfix(easy);
+    Require(trackerA.livePointers == globalPointersA && trackerB.LiveCount() == 0);
+    Require(std::filesystem::remove(path));
+    curl_global_cleanup_nid_postfix();
+    Require(trackerA.LiveCount() == 0 && trackerB.LiveCount() == 0);
+}
+
+static void TestDuphandleAllocatorFailureAndRetry() {
+    Require(trackerA.LiveCount() == 0 && trackerB.LiveCount() == 0);
+    trackerA.ResetCounts();
+    trackerB.ResetCounts();
+    trackerA.ClearFailures();
+    Require(curl_global_init_mem_nid_postfix(CURL_GLOBAL_DEFAULT, AllocatorA_Malloc, AllocatorA_Free, AllocatorA_Realloc, AllocatorA_Strdup, AllocatorA_Calloc) == CURLE_OK);
+    const auto globalPointersA = trackerA.livePointers;
+
+    const char bytes[] = {'d', 'u', 'p', '\0', 'o', 'k', '\n'};
+    const std::string payload(bytes, sizeof(bytes));
+    const auto path = CreateTempFile("anyps5-curl-duphandle-", payload);
+    const auto url = "file://" + path.generic_string();
+
+    CURL* source = curl_easy_init_nid_postfix();
+    Require(source != nullptr && trackerA.livePointers.contains(source));
+    std::string sourceOutput;
+    Require(curl_easy_setopt_nid_postfix(source, CURLOPT_URL, url.c_str()) == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(source, CURLOPT_WRITEFUNCTION, CollectBytes) == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(source, CURLOPT_WRITEDATA, &sourceOutput) == CURLE_OK);
+
+    const auto sourcePointersA = trackerA.livePointers;
+    const auto strdupCallsBefore = trackerA.strdupCalls;
+    trackerA.failNextStrdup = true;
+    CURL* failedDuplicate = curl_easy_duphandle_nid_postfix(source);
+    Require(failedDuplicate == nullptr);
+    Require(!trackerA.failNextStrdup);
+    Require(trackerA.strdupCalls > strdupCallsBefore);
+    Require(trackerA.livePointers == sourcePointersA);
+    Require(trackerB.TotalAllocations() == 0);
+
+    Require(curl_easy_perform_nid_postfix(source) == CURLE_OK);
+    Require(sourceOutput == payload);
+
+    trackerA.ClearFailures();
+    CURL* duplicate = curl_easy_duphandle_nid_postfix(source);
+    Require(duplicate != nullptr && duplicate != source);
+    Require(trackerA.livePointers.contains(duplicate));
+
+    std::string duplicateOutput;
+    Require(curl_easy_setopt_nid_postfix(duplicate, CURLOPT_WRITEDATA, &duplicateOutput) == CURLE_OK);
+    Require(curl_easy_perform_nid_postfix(duplicate) == CURLE_OK);
+    Require(duplicateOutput == payload);
+    Require(sourceOutput == payload);
+
+    sourceOutput.clear();
+    Require(curl_easy_perform_nid_postfix(source) == CURLE_OK);
+    Require(sourceOutput == payload);
+    Require(duplicateOutput == payload);
+
+    curl_easy_cleanup_nid_postfix(source);
+    duplicateOutput.clear();
+    Require(curl_easy_perform_nid_postfix(duplicate) == CURLE_OK);
+    Require(duplicateOutput == payload);
+
+    curl_easy_cleanup_nid_postfix(duplicate);
     Require(trackerA.livePointers == globalPointersA && trackerB.LiveCount() == 0);
     Require(std::filesystem::remove(path));
     curl_global_cleanup_nid_postfix();
@@ -813,6 +878,7 @@ int main() {
     TestBackendObjectsLifecycle();
     TestRepeatSetupTeardown();
     TestFileTransferUsesCustomHeap();
+    TestDuphandleAllocatorFailureAndRetry();
 
     return 0;
 }

@@ -41,9 +41,14 @@ static std::size_t DefaultThreadStackSize() {
 static void CheckDefaultStackSize() {
     Require(NewAttrStackSize() == INITIAL_DEFAULT);
     Require(pthread_set_defaultstacksize_np_nid_postfix(0) == POSIX_EINVAL);
-    Require(pthread_set_defaultstacksize_np_nid_postfix(16384) == POSIX_EINVAL);
-    Require(scePthreadSetDefaultstacksize(16384) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadSetDefaultstacksize(0) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadSetDefaultstacksize(16383) == SCE_KERNEL_ERROR_EINVAL);
     Require(NewAttrStackSize() == INITIAL_DEFAULT);
+
+    Require(scePthreadSetDefaultstacksize(16384) == 0);
+    Require(NewAttrStackSize() == 16384);
+    Require(pthread_set_defaultstacksize_np_nid_postfix(16384) == 0);
+    Require(NewAttrStackSize() == 16384);
 
     Require(pthread_set_defaultstacksize_np_nid_postfix(16385) == 0);
     Require(NewAttrStackSize() == 16385);

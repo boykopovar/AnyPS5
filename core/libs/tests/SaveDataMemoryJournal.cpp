@@ -54,6 +54,7 @@ int main() {
     constexpr std::int32_t userId = 7531;
     const auto memoryPath = std::filesystem::path("_sd_mem/u7531/slot0.bin");
     const auto journalPath = std::filesystem::path("_sd_mem/u7531/slot0.journal");
+    const auto paramPath = std::filesystem::path("_sd_mem/u7531/slot0.param");
     const auto temporaryPath = std::filesystem::path("_sd_mem/u7531/slot0.bin.tmp");
     const auto aliasPath = std::filesystem::path("alias.bin");
 
@@ -107,6 +108,46 @@ int main() {
     Require(Read(memoryPath) == expected);
     Require(Read(aliasPath) == expected);
     Require(!std::filesystem::exists(journalPath));
+
+    SaveDataParam param{};
+    param.user_param = 17;
+    SaveDataMemorySet2 paramOnly{};
+    paramOnly.user_id = userId;
+    paramOnly.param = &param;
+    Require(sceSaveDataSetSaveDataMemory2(&paramOnly) == 0);
+    const auto oldParam = Read(paramPath);
+    Require(std::filesystem::remove(paramPath));
+    Require(std::filesystem::create_directory(paramPath));
+
+    param.user_param = 24;
+    first.fill('p');
+    set.param = &param;
+    Require(sceSaveDataSetSaveDataMemory2(&set) == static_cast<int>(0x809F000Bu));
+    Require(std::filesystem::is_regular_file(journalPath));
+    Require(std::filesystem::remove(paramPath));
+    Write(paramPath, oldParam);
+    Write(memoryPath, expected);
+
+    Require(sceSaveDataTerminate() == 0);
+    Require(sceSaveDataInitialize3(nullptr) == 0);
+    range.offset = data[0].offset;
+    SaveDataParam recovered{};
+    get.param = &recovered;
+    Require(sceSaveDataGetSaveDataMemory2(&get) == 0);
+    Require(got == first);
+    Require(std::memcmp(&recovered, &param, sizeof(param)) == 0);
+    Require(!std::filesystem::exists(journalPath));
+    std::copy(first.begin(), first.end(), expected.begin() + 8);
+    Require(Read(memoryPath) == expected);
+    Require(Read(aliasPath) == expected);
+
+    first.fill('v');
+    param.user_param = 32;
+    Require(sceSaveDataSetSaveDataMemory2(&set) == 0);
+    Require(!std::filesystem::exists(journalPath));
+    Require(sceSaveDataGetSaveDataMemory2(&get) == 0);
+    Require(got == first);
+    Require(std::memcmp(&recovered, &param, sizeof(param)) == 0);
 
     Require(sceSaveDataTerminate() == 0);
     std::filesystem::current_path(previous);

@@ -10,6 +10,7 @@ add_library(libSceAgc SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Cb/src/Registers.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Cb/src/Sync.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Command/src/Memory.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Command/src/Memset.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Command/src/Control.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Command/src/Draw.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Command/src/RegisterDefaults.cpp
@@ -58,7 +59,7 @@ add_library(libSceAgc SHARED EXCLUDE_FROM_ALL
 )
 
 target_include_directories(libSceAgc PRIVATE ${LIBS_INCLUDE_DIR})
-target_link_libraries(libSceAgc PRIVATE libSceAgcDriver libc)
+target_link_libraries(libSceAgc PRIVATE libSceAgcDriver libkernel libc)
 
 foreach(runtimeLinkFlag IN ITEMS -static-libgcc -static-libstdc++ -static)
     string(REPLACE "${runtimeLinkFlag}" "" CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
@@ -185,7 +186,7 @@ endif()
 
 add_test_executable(agc_semaphore_tests EXCLUDE_FROM_ALL tests/Semaphore.cpp)
 target_include_directories(agc_semaphore_tests PRIVATE ${LIBS_INCLUDE_DIR})
-target_link_libraries(agc_semaphore_tests PRIVATE libSceAgc libc)
+target_link_libraries(agc_semaphore_tests PRIVATE libSceAgc libSceAgcDriver libc)
 configure_windows_unwind(agc_semaphore_tests)
 if(BUILD_TESTING)
     set_target_properties(agc_semaphore_tests PROPERTIES EXCLUDE_FROM_ALL FALSE)
@@ -205,6 +206,20 @@ if(BUILD_TESTING)
     add_test(NAME agc_nop_and_compute_event COMMAND agc_nop_and_compute_event_tests)
     if(WIN32)
         set_tests_properties(agc_nop_and_compute_event PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
+add_test_executable(agc_concurrent_allocation_tests EXCLUDE_FROM_ALL tests/ConcurrentAllocation.cpp)
+target_include_directories(agc_concurrent_allocation_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(agc_concurrent_allocation_tests PRIVATE libSceAgc libc)
+configure_windows_unwind(agc_concurrent_allocation_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_concurrent_allocation_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_concurrent_allocation COMMAND agc_concurrent_allocation_tests)
+    set_tests_properties(agc_concurrent_allocation PROPERTIES TIMEOUT 60)
+    if(WIN32)
+        set_tests_properties(agc_concurrent_allocation PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
@@ -295,6 +310,19 @@ if(BUILD_TESTING)
     add_test(NAME agc_end_of_pipe_type_patch COMMAND agc_end_of_pipe_type_patch_tests)
     if(WIN32)
         set_tests_properties(agc_end_of_pipe_type_patch PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
+add_test_executable(agc_release_mem_tests EXCLUDE_FROM_ALL tests/ReleaseMem.cpp)
+target_include_directories(agc_release_mem_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(agc_release_mem_tests PRIVATE libSceAgc libc)
+configure_windows_unwind(agc_release_mem_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_release_mem_tests PROPERTIES EXCLUDE_FROM_ALL FALSE)
+    add_test(NAME agc_release_mem COMMAND agc_release_mem_tests)
+    if(WIN32)
+        set_tests_properties(agc_release_mem PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()

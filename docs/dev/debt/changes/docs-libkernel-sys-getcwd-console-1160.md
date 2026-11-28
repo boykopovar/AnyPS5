@@ -1,0 +1,5 @@
+# libkernel_sys
+
+## change [__getcwd]
+
+- [__getcwd](../../../core/libs/prx/libkernel_sys/Export.cpp) (libkernel_sys) implements the raw `int __getcwd(char *buf, size_t buflen)` syscall using the guest-root-aware cwd model shared with libc `getcwd`. It requires caller-provided storage, returns 0 on success and -1 with the guest errno on failure. The syscall signature follows FreeBSD `sys___getcwd`; console behaviour is unverified except on firmware 11.60 (payload process): sizes 0 and 1 gave `EINVAL`, sizes 2 and 1024 succeeded with `/`, a null buffer `EFAULT`, and `chdir` was followed. Errors follow FreeBSD 11.4's [`kern___getcwd`](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/sys/kern/vfs_cache.c#L2139-L2179): the size is taken as a 32-bit `u_int` and a size below 2 answers `EINVAL` before the buffer is looked at, a size above `MAXPATHLEN` (1024) is lowered to it, a path that does not fit answers `ENOMEM`, and a null or unwritable buffer answers `EFAULT` only after the path is found.

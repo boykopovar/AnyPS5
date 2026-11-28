@@ -10,8 +10,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <climits>
+
+extern "C" void libSceNpWebApiUnknown_V6DhvHJCGfM_nid_no_patch();
+extern "C" void libSceNpWebApiUnknown_eJ1gJsUhQW4_nid_no_patch();
 #include <cstring>
 #include <initializer_list>
+#include <limits>
 #include <stdexcept>
 #include <thread>
 
@@ -130,6 +134,13 @@ void TestLibraryContexts() {
     Require(sceNpWebApiDeleteHandle(context, handle) == 0, "delete the handle");
     Require(sceNpWebApiDeleteHandle(context, handle) == HandleNotFound, "handle deleted twice");
 
+    Require(sceNpWebApiSetMaxConnection(context, 17) == InvalidArgument, "more than 16 connections");
+    Require(sceNpWebApiSetMaxConnection(0x7fff + 1, 17) == InvalidArgument, "the connection limit is checked before the library context");
+    Require(sceNpWebApiSetMaxConnection(0x7fff + 1, 16) == LibContextNotFound, "connection limit of an unknown context");
+    Require(sceNpWebApiSetMaxConnection(context, 16) == 0, "16 connections");
+    Require(sceNpWebApiSetMaxConnection(context, 0) == 0, "no lower bound on the connection limit");
+    Require(sceNpWebApiSetMaxConnection(context, -1) == 0, "a negative connection limit");
+
     Require(sceNpWebApiTerminate(context) == 0, "terminate the library context");
     Require(sceNpWebApiTerminate(context) == LibContextNotFound, "library context terminated twice");
     Require(sceNpWebApiCreateHandle(context) == LibContextNotFound, "handle of a terminated context");
@@ -169,6 +180,10 @@ void TestUserContexts() {
     const int user = sceNpWebApiCreateContext(context, onlineId);
     Require(user > 0 && (user >> 16) == context && (user & 0xffff) != 0, "user context id holds its library context");
     Require(sceNpWebApiCreateContext(context, onlineId) == UserContextAlreadyExist, "a second user context for the same user");
+    Require(sceNpWebApiClearAllUnusedConnection(user, false) == 0, "clear the connections of a user context without any");
+    Require(sceNpWebApiClearAllUnusedConnection(user, true) == 0, "clear the connections with the flag set");
+    Require(sceNpWebApiClearAllUnusedConnection(user + 1, false) == UserContextNotFound, "clear the connections of an unknown user context");
+    Require(sceNpWebApiClearAllUnusedConnection((other << 16) | 1, false) == LibContextNotFound, "clear the connections of a terminated library context");
 
     Require(sceNpWebApiDeleteContext(user + 1) == UserContextNotFound, "delete an unknown user context");
     Require(sceNpWebApiDeleteContext(-1) == LibContextNotFound, "delete user context -1");
@@ -197,6 +212,9 @@ void TestRequests() {
     Require(sceNpWebApiCreateRequest(user, "group", "/path", MethodPost, &untyped, &request) == InvalidContentParameter, "content without a type");
     Require(sceNpWebApiCreateRequest(0, "group", "/path", MethodPost, &untyped, &request) == InvalidContentParameter, "content is checked before the user context");
     Require(sceNpWebApiCreateRequest(user, "group", "/path", MethodPatch, nullptr, &request) == InvalidArgument, "PATCH with SDK 2.50 or later");
+    Require(sceNpWebApiCreateRequest(user, "group", "/path", -1, nullptr, &request) == InvalidArgument && request == 0, "negative method rejected");
+    SetSdkVersion(0x02000000);
+    Require(sceNpWebApiCreateRequest(user, "group", "/path", -1, nullptr, &request) == InvalidArgument && request == 0, "negative method rejected before SDK 2.50");
     SetSdkVersion(0x05050001);
     request = 0;
     Require(sceNpWebApiCreateRequest(user, "userProfile", "/v1/users/me/profile", 99, nullptr, &request) == InvalidArgument && request == 0, "method 99 at SDK 0x05050001");
@@ -499,6 +517,7 @@ void TestMultipartRequests() {
     Require(sceNpWebApiCreateMultipartRequest(user, nullptr, "/path", MethodPost, &request) == InvalidArgument, "multipart request without an API group");
     Require(sceNpWebApiCreateMultipartRequest(user, "group", nullptr, MethodPost, &request) == InvalidArgument, "multipart request without a path");
     Require(sceNpWebApiCreateMultipartRequest(0, "group", "/path", MethodPatch, &request) == InvalidArgument, "the method is checked before the user context from SDK 2.50");
+    Require(sceNpWebApiCreateMultipartRequest(user, "group", "/path", -1, &request) == InvalidArgument && request == 0, "negative multipart method rejected");
     Require(sceNpWebApiCreateMultipartRequest(user + 1, "group", "/path", MethodPost, &request) == UserContextNotFound, "multipart request of an unknown user context");
     Require(sceNpWebApiCreateMultipartRequest(0, "group", "/path", MethodPost, &request) == LibContextNotFound, "multipart request of user context 0");
     Require(request == 0, "a failed multipart request leaves the id alone");
@@ -516,6 +535,8 @@ void TestMultipartRequests() {
     Require(sceNpWebApiSendRequest(request, nullptr, 0) == RequestNotFound, "send a deleted multipart request");
 
     SetSdkVersion(0x02000000);
+    std::int64_t negRequest = 55;
+    Require(sceNpWebApiCreateMultipartRequest(user, "group", "/path", -1, &negRequest) == InvalidArgument && negRequest == 55, "negative multipart method rejected before SDK 2.50");
     Require(sceNpWebApiCreateMultipartRequest(user, "group", "/path", MethodPatch, &request) == 0, "multipart PATCH before SDK 2.50");
     SetSdkVersion(0x04508001);
     Require(sceNpWebApiTerminate(context) == 0, "terminate the multipart library context");
@@ -664,11 +685,28 @@ void TestMultipartParts() {
     sceNpWebApiCheckTimeout();
     Require(sceNpWebApiSendMultipartRequest(timedReq, 1, "67890", 5) == NotSignedIn, "timed out multipart request returns NotSignedIn");
 
+    std::int64_t overflowReq = 0;
+    Require(sceNpWebApiCreateMultipartRequest(user, "group", "/path", MethodPost, &overflowReq) == 0, "create overflow multipart request");
+    int oIndex = 0;
+    const NpWebApiMultipartPartParameter overflowParam{nullptr, 0, 10};
+    Require(sceNpWebApiAddMultipartPart(overflowReq, &overflowParam, &oIndex) == 0, "add overflow part");
+    Require(sceNpWebApiSendMultipartRequest(overflowReq, 1, "12345", 5) == 0, "partial send before overflow");
+    Require(sceNpWebApiSendMultipartRequest(overflowReq, 1, "x", std::numeric_limits<std::size_t>::max() - 2) == NotSignedIn, "large send saturates instead of wrapping");
+
+    std::int64_t overflowReq2 = 0;
+    Require(sceNpWebApiCreateMultipartRequest(user, "group", "/path", MethodPost, &overflowReq2) == 0, "create overflow2 multipart request");
+    int oIndex2 = 0;
+    Require(sceNpWebApiAddMultipartPart(overflowReq2, &overflowParam, &oIndex2) == 0, "add overflow2 part");
+    Require(sceNpWebApiSendMultipartRequest2(overflowReq2, 1, "12345", 5, nullptr) == 0, "partial send2 before overflow");
+    Require(sceNpWebApiSendMultipartRequest2(overflowReq2, 1, "x", std::numeric_limits<std::size_t>::max(), nullptr) == NotSignedIn, "large send2 saturates instead of wrapping");
+
     Require(sceNpWebApiDeleteRequest(multipartRequest) == 0, "delete multipart request");
     Require(sceNpWebApiDeleteRequest(emptyMultipart) == 0, "delete empty multipart request");
     Require(sceNpWebApiDeleteRequest(chunkReq) == 0, "delete chunked multipart request");
     Require(sceNpWebApiDeleteRequest(abortReq) == 0, "delete abort multipart request");
     Require(sceNpWebApiDeleteRequest(timedReq) == 0, "delete timed multipart request");
+    Require(sceNpWebApiDeleteRequest(overflowReq) == 0, "delete overflow multipart request");
+    Require(sceNpWebApiDeleteRequest(overflowReq2) == 0, "delete overflow2 multipart request");
     Require(sceNpWebApiTerminate(context) == 0, "terminate multipart parts library context");
 }
 
@@ -842,6 +880,29 @@ void TestConnectionChecks() {
     Require(sceNpWebApiTerminate(context) == 0, "terminate the connection checks library context");
 }
 
+void TestErrorCode() {
+    constexpr char topLevel[] = R"({"code":7})";
+    constexpr char nested[] = R"({"error":{"code":8}})";
+    SetSdkVersion(0x024fffff);
+    Require(sceNpWebApiGetErrorCode(404, topLevel, sizeof(topLevel) - 1) == static_cast<int>(0x82F00194u),
+        "the old error parser needs error.code");
+    Require(sceNpWebApiGetErrorCode(404, nested, sizeof(nested) - 1) == static_cast<int>(0x82000008u),
+        "the old error parser reads error.code");
+    SetSdkVersion(0x02500000);
+    Require(sceNpWebApiGetErrorCode(404, topLevel, sizeof(topLevel) - 1) == static_cast<int>(0x82000007u),
+        "the new error parser reads a top-level code");
+    Require(sceNpWebApiGetErrorCode(404, nested, sizeof(nested) - 1) == static_cast<int>(0x82000008u),
+        "the new error parser reads error.code");
+    Require(sceNpWebApiGetErrorCode(503, nullptr, 1) == static_cast<int>(0x82F001F7u),
+        "an absent body falls back to the HTTP status");
+    SetSdkVersion(0x04508001);
+}
+
+}
+
+void TestEmptyExports() {
+    libSceNpWebApiUnknown_V6DhvHJCGfM_nid_no_patch();
+    libSceNpWebApiUnknown_eJ1gJsUhQW4_nid_no_patch();
 }
 
 int main() {
@@ -857,6 +918,7 @@ int main() {
     TestResponses();
     TestPushEventCallbacks();
     TestConsoleMeasuredExports();
+    TestEmptyExports();
     TestOlderSdks();
     TestHandleOperations();
     TestRequestOptions();
@@ -868,6 +930,7 @@ int main() {
     TestInternalServicePushEventFilter();
     TestMultipartSendOnPlainRequest();
     TestConnectionChecks();
+    TestErrorCode();
     {
         errno = 71;
         Require(sceNpWebApiIntInitialize(reinterpret_cast<const NpWebApiIntInitializeArgs*>(static_cast<std::uintptr_t>(0x10))) == InvalidArgument && errno == 71,

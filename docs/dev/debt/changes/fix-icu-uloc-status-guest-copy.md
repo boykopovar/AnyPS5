@@ -1,0 +1,5 @@
+# libSceIcu
+
+## add Unknown function info
+
+- [uloc_getVariant and uloc_setKeywordValue status](../../../core/libs/prx/libSceIcu/LocaleSyntax.cpp) (libSceIcu) - the guest `UErrorCode* status` is read once with `GuestCopyIn_nid_no_patch` and written back with `GuestCopyOut_nid_no_patch` only when ICU changes it; an unreadable or unwritable status throws the invalid-argument exception a null status throws, with `errno` preserved, because the console's behaviour on unmapped memory is unmeasured. `uloc_setKeywordValue` also copies the keyword and value in up to their terminators and the locale buffer up to its terminator, at most `capacity + 1` bytes, in page-bounded chunks, runs ICU on a host buffer that starts at the locale's length and grows once to the length ICU reports, never to `capacity` alone, and writes the result back with one checked copy only when ICU succeeds; an unreadable string or unwritable buffer throws the same exception. The `uloc_getVariant` locale and result buffer are still accessed in place.

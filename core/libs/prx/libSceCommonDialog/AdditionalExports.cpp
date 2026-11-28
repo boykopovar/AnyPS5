@@ -3,7 +3,6 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include "prx/libSceCommonDialog/include/Exports.hpp"
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -13,18 +12,11 @@ namespace {
 
 constexpr int kResult80B8000E = static_cast<int>(0x80B8000Eu);
 
-bool CopyInPreservingErrno(void* dst, const void* src, std::size_t size) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(dst, src, size);
-    errno = savedErrno;
-    return copied;
-}
-
 bool HasClientImplementation(const void* client) {
     std::uint64_t implementation = 0;
     if (client == nullptr ||
         reinterpret_cast<std::uintptr_t>(client) > std::numeric_limits<std::uintptr_t>::max() - 8 ||
-        !CopyInPreservingErrno(&implementation, static_cast<const std::byte*>(client) + 8, sizeof(implementation))) {
+        !GuestCopyIn_nid_no_patch(&implementation, static_cast<const std::byte*>(client) + 8, sizeof(implementation))) {
         throw std::invalid_argument("CommonDialogUtil client: unreadable client");
     }
     return implementation != 0;
@@ -78,14 +70,14 @@ int APS5_VABI libSceCommonDialogUnknown_afLdI6i0lQw_nid_no_patch(const void* par
     std::uint32_t magic = 0;
     if (param == nullptr ||
         address > std::numeric_limits<std::uintptr_t>::max() - offsetof(CommonDialogBaseParam, magic) ||
-        !CopyInPreservingErrno(&magic, static_cast<const std::byte*>(param) + offsetof(CommonDialogBaseParam, magic), sizeof(magic))) {
+        !GuestCopyIn_nid_no_patch(&magic, static_cast<const std::byte*>(param) + offsetof(CommonDialogBaseParam, magic), sizeof(magic))) {
         throw std::invalid_argument("afLdI6i0lQw: unreadable parameter");
     }
     if (magic != static_cast<std::uint32_t>(address) - 1060003575u) {
         return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
     }
     CommonDialogBaseParam local{};
-    if (!CopyInPreservingErrno(&local, param, sizeof(local))) {
+    if (!GuestCopyIn_nid_no_patch(&local, param, sizeof(local))) {
         throw std::invalid_argument("afLdI6i0lQw: unreadable parameter");
     }
     return ValidateCommonDialogBaseParam(local, address) ? COMMON_DIALOG_OK : COMMON_DIALOG_ERROR_INVALID_ARGUMENT;

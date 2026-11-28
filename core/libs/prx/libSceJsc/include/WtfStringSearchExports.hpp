@@ -4,6 +4,7 @@
 #include "prx/libSceJsc/src/WtfStringAbi.hpp"
 
 #include <cstddef>
+#include <cstdint>
 
 extern "C" {
 
@@ -27,5 +28,6 @@ std::size_t APS5_VABI _ZNK3WTF10StringImpl21findIgnoringASCIICaseERKS0_(const Js
 std::size_t APS5_VABI _ZNK3WTF10StringImpl21findIgnoringASCIICaseERKS0_j(const Jsc::WtfAbi::StringImpl* self, const Jsc::WtfAbi::StringImpl* match, unsigned startOffset);
 bool APS5_VABI _ZNK3WTF10StringView8containsEPKc(const Jsc::WtfAbi::StringView* self, const char* string);
 bool APS5_VABI _ZN3WTF10protocolIsENS_10StringViewEPKc(Jsc::WtfAbi::StringView string, const char* protocol);
+std::int32_t APS5_VABI _ZN3WTF10StringImpl23defaultWritingDirectionEPb(Jsc::WtfAbi::StringImpl* self, bool* hasStrongDirectionality);
 
 }

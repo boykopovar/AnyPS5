@@ -60,7 +60,7 @@ int APS5_VABI sceVideoRecordingOpen2(const char* path, const VideoRecordingParam
 std::int64_t APS5_VABI sceVideoRecordingQueryHddSize2(const VideoRecordingParam2* param);
 int APS5_VABI sceVideoRecordingQueryMemSize(const VideoRecordingParam* param);
 int APS5_VABI sceVideoRecordingQueryMemSize2(const VideoRecordingParam2* param);
-int APS5_VABI sceVideoRecordingRestModeProcessGetStatus(void* status);
+int APS5_VABI sceVideoRecordingRestModeProcessGetStatus(void);
 int APS5_VABI sceVideoRecordingRestModeProcessStart(void* param);
 int APS5_VABI sceVideoRecordingSendCommand(int cmd, const void* param);
 int APS5_VABI sceVideoRecordingSetInfo(std::int32_t info, const void* data, std::size_t size);
@@ -69,7 +69,7 @@ int APS5_VABI sceVideoRecordingStop(void);
 int APS5_VABI sceVideoRecordingTerm(void);
 int APS5_VABI videoRecordingUnknown_iQS6DUtLybE(void);
 
-int APS5_VABI sceVideoRecordingGetCopyrightImageMemory();
+int APS5_VABI sceVideoRecordingGetCopyrightImageMemory(void** addr, std::size_t* size);
 int APS5_VABI sceVideoRecordingCloseWithTruncationByHandle();
 
 

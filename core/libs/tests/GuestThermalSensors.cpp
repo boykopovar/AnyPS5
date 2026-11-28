@@ -3,11 +3,13 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include <algorithm>
+#include <array>
 #include <climits>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -20,6 +22,7 @@
 extern "C" {
 void ReadThermalSensors_nid_no_patch(const char* root, int celsius[3]);
 bool StorageDescriptorAllowsTemperatureQuery_nid_no_patch(const void* descriptor, std::size_t bytes);
+int ExtractStorageTemperature_nid_no_patch(const void* descriptor, std::size_t bytes);
 
 }
 
@@ -30,6 +33,14 @@ static void Require(bool value) {
     }
 }
 
+static void WriteU16(unsigned char* buffer, std::size_t offset, std::uint16_t value) {
+    std::memcpy(buffer + offset, &value, sizeof(value));
+}
+
+static void WriteI16(unsigned char* buffer, std::size_t offset, std::int16_t value) {
+    std::memcpy(buffer + offset, &value, sizeof(value));
+}
+
 int main() {
     unsigned char storageDescriptor[32]{};
     storageDescriptor[28] = 8;
@@ -38,6 +49,49 @@ int main() {
     Require(StorageDescriptorAllowsTemperatureQuery_nid_no_patch(storageDescriptor, sizeof(storageDescriptor)));
     Require(!StorageDescriptorAllowsTemperatureQuery_nid_no_patch(storageDescriptor, sizeof(storageDescriptor) - 1));
     Require(!StorageDescriptorAllowsTemperatureQuery_nid_no_patch(nullptr, sizeof(storageDescriptor)));
+
+    constexpr std::size_t kInfoCountOffset = 12;
+    constexpr std::size_t kInfoOffset = 24;
+    constexpr std::size_t kInfoSize = 16;
+    constexpr std::size_t kTempOffset = 2;
+    std::array<unsigned char, kInfoOffset + 16 * kInfoSize> tempDescriptor{};
+    Require(ExtractStorageTemperature_nid_no_patch(nullptr, tempDescriptor.size()) == -1);
+    WriteU16(tempDescriptor.data(), kInfoCountOffset, 1);
+    WriteI16(tempDescriptor.data(), kInfoOffset + kTempOffset, 42);
+    Require(ExtractStorageTemperature_nid_no_patch(tempDescriptor.data(), 0) == -1);
+    Require(ExtractStorageTemperature_nid_no_patch(tempDescriptor.data(), kInfoOffset) == -1);
+    Require(ExtractStorageTemperature_nid_no_patch(tempDescriptor.data(), kInfoOffset + kTempOffset + 1) == -1);
+    Require(ExtractStorageTemperature_nid_no_patch(tempDescriptor.data(), kInfoOffset + kTempOffset + 2) == 42);
+
+    WriteU16(tempDescriptor.data(), kInfoCountOffset, 0);
+    Require(ExtractStorageTemperature_nid_no_patch(tempDescriptor.data(), tempDescriptor.size()) == -1);
+
+    tempDescriptor.fill(0);
+    WriteU16(tempDescriptor.data(), kInfoCountOffset, 2);
+    WriteI16(tempDescriptor.data(), kInfoOffset + kTempOffset, -5);
+    WriteI16(tempDescriptor.data(), kInfoOffset + kInfoSize + kTempOffset, 41);
+    Require(ExtractStorageTemperature_nid_no_patch(tempDescriptor.data(), tempDescriptor.size()) == 41);
+    Require(ExtractStorageTemperature_nid_no_patch(tempDescriptor.data(), kInfoOffset + kInfoSize) == -1);
+    Require(ExtractStorageTemperature_nid_no_patch(tempDescriptor.data(), kInfoOffset + kInfoSize + kTempOffset + 1) == -1);
+    Require(ExtractStorageTemperature_nid_no_patch(tempDescriptor.data(), kInfoOffset + kInfoSize + kTempOffset + 2) == 41);
+
+    tempDescriptor.fill(0);
+    WriteU16(tempDescriptor.data(), kInfoCountOffset, 3);
+    WriteI16(tempDescriptor.data(), kInfoOffset + kTempOffset, 500);
+    WriteI16(tempDescriptor.data(), kInfoOffset + kInfoSize + kTempOffset, -10);
+    WriteI16(tempDescriptor.data(), kInfoOffset + 2 * kInfoSize + kTempOffset, 38);
+    Require(ExtractStorageTemperature_nid_no_patch(tempDescriptor.data(), tempDescriptor.size()) == 38);
+
+    std::array<unsigned char, kInfoOffset + 17 * kInfoSize> oversizedDescriptor{};
+    WriteU16(oversizedDescriptor.data(), kInfoCountOffset, 64);
+    for (std::size_t i = 0; i < 16; ++i) {
+        WriteI16(oversizedDescriptor.data(), kInfoOffset + i * kInfoSize + kTempOffset, -5);
+    }
+    WriteI16(oversizedDescriptor.data(), kInfoOffset + 16 * kInfoSize + kTempOffset, 44);
+    Require(ExtractStorageTemperature_nid_no_patch(oversizedDescriptor.data(), kInfoOffset + 16 * kInfoSize) == -1);
+    Require(ExtractStorageTemperature_nid_no_patch(oversizedDescriptor.data(), oversizedDescriptor.size()) == -1);
+    WriteI16(oversizedDescriptor.data(), kInfoOffset + 15 * kInfoSize + kTempOffset, 44);
+    Require(ExtractStorageTemperature_nid_no_patch(oversizedDescriptor.data(), kInfoOffset + 16 * kInfoSize) == 44);
 
     const auto root = std::filesystem::path("anyps5-thermal-sensors-test");
     std::filesystem::remove_all(root);
@@ -107,7 +161,7 @@ int main() {
     Require(sceKernelGetSocSensorTemperature(64, reinterpret_cast<int*>(0x10)) == SCE_KERNEL_ERROR_EFAULT && *__error_nid_postfix() == 14);
     int channel64 = -12345;
     Require(sceKernelGetSocSensorTemperature(64, &channel64) == 0 && channel64 == -49);
-    for (const int measured : {3, 62, 63}) {
+    for (int measured = 3; measured <= 63; ++measured) {
         int channel = -12345;
         const int measuredResult = sceKernelGetSocSensorTemperature(measured, &channel);
         Require(measuredResult == result);

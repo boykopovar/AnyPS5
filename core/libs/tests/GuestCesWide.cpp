@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -233,6 +234,7 @@ static void RequireWideDecoding(Utf16Decode utf16le, Utf32Decode utf32be, Utf32D
 
 int main() {
     constexpr int invalidParameter = static_cast<int>(0x805C0001);
+    constexpr int invalidProfile = static_cast<int>(0x805C0004);
     constexpr int invalidSrcBuffer = static_cast<int>(0x805C0010);
     constexpr int srcBufferEnd = static_cast<int>(0x805C0011);
     constexpr int invalidEncode = static_cast<int>(0x805C0014);
@@ -266,7 +268,7 @@ int main() {
     Require(sceCesUcs2ToSbc(0x20AC, cp1252, &sbc) == 0 && sbc == 0x80);
     Require(sceCesUcs2ToSbc(0x0410, cp1251, &sbc) == 0 && sbc == 0xC0);
     Require(sceCesUcs2ToSbc(0x3042, cp1252, &sbc) == unassignedCode);
-    Require(sceCesUcs2ToSbc(0xD800, cp1252, &sbc) == invalidEncode);
+    Require(sceCesUcs2ToSbc(0xD800, cp1252, &sbc) == illegalCode && sbc == 0);
     Require(sceCesUcs2ToSbc(0x41, cp1252, nullptr) == invalidDstBuffer);
     Require(sceCesUcs2ToSbc(0x41, static_cast<const std::uint8_t*>(sjis), &sbc) == invalidParameter);
     const std::uint16_t euro[] = {0x20AC};
@@ -296,7 +298,7 @@ int main() {
     Require(sceCesUtf32beToSbc(nullptr, cp1252, &sbc) == invalidSrcBuffer);
     Require(sceCesUtf16beToSbc(nullptr, 1, &length, cp1252, &sbc) == invalidSrcBuffer);
     Require(sceCesUtf16leToSbc(nullptr, 1, &length, cp1252, &sbc) == invalidSrcBuffer);
-    Require(sceCesUtf32ToSbc(0x0178, nullptr, &sbc) == invalidParameter);
+    Require(sceCesUtf32ToSbc(0x0178, nullptr, &sbc) == invalidProfile && sbc == 0);
     for (int value = 0; value < 256; ++value) {
         if (value == 0x98) {
             Require(sceCesSbcToUtf32(cp1251, static_cast<std::uint8_t>(value), &utf32) == unassignedCode);
@@ -353,6 +355,31 @@ int main() {
     Require(sceCesMbcsUcsContextInit(context, cp1252) == 0);
     Require(sceCesMbcsStrToUtf16Str(context, Bytes("\x80\xE9"), 2, &length, utf16Out, 4, &outLength) == 0);
     Require(outLength == 2 && utf16Out[0] == 0x20AC && utf16Out[1] == 0x00E9);
+
+    for (const void* profile : {sceCesRefersUcsProfileCp1254(), sceCesRefersUcsProfileCp1258()}) {
+        Require(sceCesMbcsUcsContextInit(context, profile) == 0);
+        const auto checkDecode = [&](const std::uint8_t* source, std::uint32_t size, int status,
+                                     std::uint32_t count, std::uint16_t unit) {
+            length = outLength = 42;
+            Require(sceCesMbcsStrToUtf16Str(context, source, size, &length, utf16Out, 4, &outLength) == status);
+            Require(length == count && outLength == count);
+            if (count != 0) Require(utf16Out[0] == unit);
+            length = outLength = 42;
+            Require(sceCesMbcsStrGetUtf16Len(context, source, size, &length, &outLength) == status);
+            Require(length == count && outLength == count);
+        };
+        checkDecode(Bytes("\x80"), 1, 0, 1, 0x20AC);
+        checkDecode(Bytes("\x82"), 1, 0, 1, 0x201A);
+        checkDecode(Bytes("\x9F"), 1, 0, 1, 0x0178);
+        for (const std::uint8_t byte : {0x81, 0x8D, 0x8E, 0x8F, 0x90, 0x9D, 0x9E}) {
+            checkDecode(&byte, 1, unassignedCode, 0, 0);
+        }
+        if (profile == sceCesRefersUcsProfileCp1258()) {
+            checkDecode(Bytes("\x8A"), 1, unassignedCode, 0, 0);
+            checkDecode(Bytes("\x9A"), 1, unassignedCode, 0, 0);
+        }
+        checkDecode(Bytes("A\x81" "B"), 3, unassignedCode, 1, 'A');
+    }
 
     alignas(8) std::uint8_t eucJpSheet[64] = {};
     alignas(8) std::uint8_t eucCnSheet[64] = {};

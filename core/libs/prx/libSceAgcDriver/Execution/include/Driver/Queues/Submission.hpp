@@ -34,6 +34,7 @@ struct Submission {
 
     std::shared_ptr<const ShaderRegistry> shaders;
     std::map<std::size_t, std::shared_ptr<IFlipRequest>> flips;
+    std::map<std::size_t, std::uint32_t> flipHandles;
     std::map<std::size_t, std::shared_ptr<IRenderingWait>> renderingWaits;
     std::map<std::size_t, std::size_t> conditionalEnds;
     std::map<std::size_t, std::vector<std::uint32_t>> registerLists;
@@ -54,12 +55,19 @@ struct Submission {
     std::chrono::steady_clock::time_point orderedAt{};
     const std::uint32_t* rewindTail = nullptr;
     std::size_t rewindWords = 0;
+    struct RewindReturn {
+        std::shared_ptr<const std::vector<std::uint32_t>> words;
+        const std::uint32_t* origin = nullptr;
+    };
+    std::vector<RewindReturn> rewindReturns;
     using PreparedWaits = std::map<std::pair<std::uint32_t, std::uint32_t>, std::shared_ptr<IRenderingWait>>;
     struct IndirectSegment {
         std::size_t start;
         const std::uint32_t* target;
         std::size_t words;
         std::shared_ptr<const PreparedWaits> waits{};
+        std::uint64_t copiedAt = 0;
+        bool copiedUnderWrite = false;
     };
     std::vector<IndirectSegment> indirectSegments;
 };

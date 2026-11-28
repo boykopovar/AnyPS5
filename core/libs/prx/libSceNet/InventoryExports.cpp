@@ -27,6 +27,7 @@ int APS5_VABI libSceNetUnknown_DnB6WJ91HGg_nid_no_patch(const std::uint8_t* opti
     if (!GuestCopyIn_nid_no_patch(&wanted, &option->code, sizeof(wanted)) || !GuestCopyOut_nid_no_patch(&option->length, cleared, sizeof(cleared))) return invalid;
     if (length < 2) return invalid;
     for (std::int32_t offset = 0; offset < length;) {
+        if (length - offset < 2) return invalid;
         offset += 2;
         const std::int32_t remaining = length - offset;
         std::uint8_t header[2] = {};

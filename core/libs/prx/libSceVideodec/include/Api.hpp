@@ -113,7 +113,7 @@ int APS5_VABI sceVideodecDecode(SceVideodec::Ctrl* ctrl, const SceVideodec2::Inp
 int APS5_VABI sceVideodecDeleteDecoder(SceVideodec::Ctrl* ctrl);
 int APS5_VABI sceVideodecFlush(SceVideodec::Ctrl* ctrl, SceVideodec::FrameBuffer* frameBuffer, SceVideodec::PictureInfo* picture);
 int APS5_VABI sceVideodecReset(SceVideodec::Ctrl* ctrl);
-int APS5_VABI sceVideodecMapMemory(void);
+int APS5_VABI sceVideodecMapMemory(SceVideodec::Ctrl* ctrl, const void* memory);
 int APS5_VABI sceVideodecQueryResourceInfo(const SceVideodec::ConfigInfo* config, SceVideodec::ResourceInfo* resource);
 
 }

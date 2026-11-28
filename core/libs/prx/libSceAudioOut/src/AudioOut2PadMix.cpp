@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -67,16 +68,28 @@ bool AudioOut2IsPadAudioDevice(const char* name) {
 
 void AudioOut2AccumulatePadFrame(AudioOut2Route route, const float* in, std::uint32_t channels, const float* volume, float* pad) {
     if (route == AudioOut2Route::Main || (channels != 1 && channels != 2)) throw std::invalid_argument("AudioOut2AccumulatePadFrame: the port does not play on the controller");
+    if (in == nullptr || volume == nullptr || pad == nullptr) throw std::invalid_argument("AudioOut2AccumulatePadFrame: null audio buffer");
     const auto left = route == AudioOut2Route::PadSpeaker ? AUDIO_OUT2_PAD_SPEAKER_LEFT : AUDIO_OUT2_PAD_VIBRATION_LEFT;
     const auto right = route == AudioOut2Route::PadSpeaker ? AUDIO_OUT2_PAD_SPEAKER_RIGHT : AUDIO_OUT2_PAD_VIBRATION_RIGHT;
     const auto rightSource = channels == 2 ? 1u : 0u;
-    pad[left] += in[0] * volume[0];
-    pad[right] += in[rightSource] * volume[rightSource];
+    const auto sanitize = [](float value) { return std::isfinite(value) ? value : 0.0f; };
+    const auto saturate = [](float value) { return std::isfinite(value) ? value : std::copysign(std::numeric_limits<float>::max(), value); };
+    const auto accumulateChannel = [&](std::uint32_t sourceIndex, std::uint32_t padIndex) {
+        const float product = saturate(sanitize(in[sourceIndex]) * sanitize(volume[sourceIndex]));
+        pad[padIndex] = saturate(sanitize(pad[padIndex]) + product);
+    };
+    accumulateChannel(0, left);
+    accumulateChannel(rightSource, right);
 }
 
 void AudioOut2FinishPadMix(float* out, std::uint32_t frames) {
+    if (frames == 0) return;
+    if (out == nullptr) throw std::invalid_argument("AudioOut2FinishPadMix: null output buffer");
     const auto samples = static_cast<std::size_t>(frames) * AUDIO_OUT2_PAD_CHANNELS;
-    for (std::size_t index = 0; index < samples; index++) out[index] = std::clamp(out[index], -1.0f, 1.0f);
+    for (std::size_t index = 0; index < samples; index++) {
+        const auto sample = std::isfinite(out[index]) ? out[index] : 0.0f;
+        out[index] = std::clamp(sample, -1.0f, 1.0f);
+    }
 }
 
 std::array<std::uint8_t, 2> AudioOut2RumbleFromPadFrames(const float* pad, std::uint32_t frames) {
@@ -105,16 +118,27 @@ AudioOut2PadLayout AudioOut2PadLayoutForDriver(const char* driver) {
 }
 
 void AudioOut2WritePadFrames(const float* pad, const AudioOut2PadLayout& layout, float* out, std::uint32_t frames, unsigned vibrationPercent) {
+    if (layout.channels < AUDIO_OUT2_PAD_CHANNELS) throw std::invalid_argument("AudioOut2WritePadFrames: layout must have at least 4 channels");
+    for (std::uint32_t channel = 0; channel < AUDIO_OUT2_PAD_CHANNELS; channel++) {
+        if (layout.position[channel] >= layout.channels) throw std::invalid_argument("AudioOut2WritePadFrames: channel position out of bounds");
+    }
+    if (frames == 0) return;
+    if (pad == nullptr || out == nullptr) throw std::invalid_argument("AudioOut2WritePadFrames: null audio buffer");
     std::fill(out, out + static_cast<std::size_t>(frames) * layout.channels, 0.0f);
     const bool scaled = vibrationPercent < 100;
     const float gain = static_cast<float>(vibrationPercent) / 100.0f;
     for (std::uint32_t frame = 0; frame < frames; frame++) {
         for (std::uint32_t channel = 0; channel < AUDIO_OUT2_PAD_CHANNELS; channel++) {
+            const auto sample = pad[static_cast<std::size_t>(frame) * AUDIO_OUT2_PAD_CHANNELS + channel];
+            const auto finiteSample = std::isfinite(sample) ? sample : 0.0f;
             if (scaled && (channel == AUDIO_OUT2_PAD_VIBRATION_LEFT || channel == AUDIO_OUT2_PAD_VIBRATION_RIGHT)) {
-                if (vibrationPercent != 0) out[static_cast<std::size_t>(frame) * layout.channels + layout.position[channel]] = pad[static_cast<std::size_t>(frame) * AUDIO_OUT2_PAD_CHANNELS + channel] * gain;
+                if (vibrationPercent != 0) {
+                    const auto scaledSample = finiteSample * gain;
+                    out[static_cast<std::size_t>(frame) * layout.channels + layout.position[channel]] = std::isfinite(scaledSample) ? scaledSample : 0.0f;
+                }
                 continue;
             }
-            out[static_cast<std::size_t>(frame) * layout.channels + layout.position[channel]] = pad[static_cast<std::size_t>(frame) * AUDIO_OUT2_PAD_CHANNELS + channel];
+            out[static_cast<std::size_t>(frame) * layout.channels + layout.position[channel]] = finiteSample;
         }
     }
 }

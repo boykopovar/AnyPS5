@@ -1,14 +1,32 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <exception>
 #include <limits>
 #include <source_location>
+#include <stdexcept>
 #include <string>
 #include <vector>
+#ifdef __linux__
+#include <sys/resource.h>
+#endif
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -330,6 +348,117 @@ void ToStatus() {
 
 }
 
+long PeakKilobytes() {
+#ifdef __linux__
+    rusage usage{};
+    getrusage(RUSAGE_SELF, &usage);
+    return usage.ru_maxrss;
+#else
+    return 0;
+#endif
+}
+
+void GuestBuffers() {
+    const std::int32_t wide[] = {0x41, 0x1f600, 0};
+    const char16_t narrow[] = {0x41, 0xd83d, 0xde00, 0};
+    auto* const unmappedUnits = reinterpret_cast<char16_t*>(0x10);
+    auto* const unmappedScalars = reinterpret_cast<std::int32_t*>(0x10);
+    std::array<char16_t, 8> units{};
+    std::array<std::int32_t, 8> scalars{};
+    std::int32_t length = -1;
+    std::int32_t substitutions = -1;
+    std::int32_t status = 0;
+    errno = 71;
+    Require(u_strFromUTF32WithSub_nid_postfix(units.data(), 8, &length, reinterpret_cast<const std::int32_t*>(0x10), -1, 0xfffd, nullptr, &status) == nullptr && status == 1);
+    status = 0;
+    Require(u_strFromUTF32WithSub_nid_postfix(unmappedUnits, 8, &length, wide, -1, 0xfffd, nullptr, &status) == nullptr && status == 1);
+    status = 0;
+    Require(u_strFromUTF32WithSub_nid_postfix(units.data(), 8, unmappedScalars, wide, -1, 0xfffd, nullptr, &status) == nullptr && status == 1);
+    status = 0;
+    Require(u_strFromUTF32WithSub_nid_postfix(units.data(), 8, &length, wide, -1, 0xfffd, unmappedScalars, &status) == nullptr && status == 1);
+    status = 0;
+    Require(u_strToUTF32WithSub_nid_postfix(scalars.data(), 8, &length, reinterpret_cast<const char16_t*>(0x10), -1, 0xfffd, nullptr, &status) == nullptr && status == 1);
+    status = 0;
+    Require(u_strToUTF32WithSub_nid_postfix(unmappedScalars, 8, &length, narrow, -1, 0xfffd, nullptr, &status) == nullptr && status == 1);
+    status = 0;
+    Require(u_strToUTF32WithSub_nid_postfix(scalars.data(), 8, &length, narrow, -1, 0xfffd, unmappedScalars, &status) == nullptr && status == 1);
+    const long peakBefore = PeakKilobytes();
+    status = 0;
+    Require(u_strFromUTF32WithSub_nid_postfix(units.data(), 8, &length, reinterpret_cast<const std::int32_t*>(0x10), 0x7fffffff, 0xfffd, nullptr, &status) == nullptr && status == 1);
+    status = 0;
+    Require(u_strToUTF32WithSub_nid_postfix(scalars.data(), 8, &length, reinterpret_cast<const char16_t*>(0x10), 0x7fffffff, 0xfffd, nullptr, &status) == nullptr && status == 1);
+    Require(PeakKilobytes() - peakBefore < 64 * 1024);
+    Require(errno == 71);
+    const std::vector<std::int32_t> many(3000, 0x42);
+    std::vector<char16_t> converted(3001, 0xffff);
+    status = 0;
+    Require(u_strFromUTF32WithSub_nid_postfix(converted.data(), 3001, &length, many.data(), 3000, 0xfffd, nullptr, &status) == converted.data());
+    Require(status == 0 && length == 3000 && converted[0] == 0x42 && converted[2999] == 0x42 && converted[3000] == 0);
+    status = 0;
+    Require(u_strFromUTF32WithSub_nid_postfix(units.data(), 8, &length, wide, -1, 0xfffd, &substitutions, &status) == units.data());
+    Require(status == 0 && length == 3 && substitutions == 0 && units[0] == 0x41 && units[1] == 0xd83d && units[2] == 0xde00 && units[3] == 0);
+    status = 0;
+    Require(u_strToUTF32WithSub_nid_postfix(scalars.data(), 8, &length, narrow, -1, 0xfffd, &substitutions, &status) == scalars.data());
+    Require(status == 0 && length == 2 && substitutions == 0 && scalars[0] == 0x41 && scalars[1] == 0x1f600 && scalars[2] == 0);
+}
+
+void GuestStatus() {
+#ifdef _WIN32
+    const std::size_t pageSize = 4096;
+    void* page = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(page != nullptr);
+#else
+    const std::size_t pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE) > 0 ? sysconf(_SC_PAGESIZE) : 4096);
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED);
+#endif
+    std::memset(page, 0, pageSize);
+    static_cast<std::int32_t*>(page)[1] = Illegal;
+#ifdef _WIN32
+    DWORD oldProtect = 0;
+    Require(VirtualProtect(page, pageSize, PAGE_READONLY, &oldProtect) != 0);
+#else
+    Require(mprotect(page, pageSize, PROT_READ) == 0);
+#endif
+    auto* const readOnlyStatus = static_cast<std::int32_t*>(page);
+    auto* const readOnlyFailure = readOnlyStatus + 1;
+    auto* const unmappedStatus = reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10});
+    const auto rejectsKeepingErrno = [](auto call) {
+        errno = 71;
+        bool caught = false;
+        try { call(); } catch (const std::invalid_argument&) { caught = true; }
+        return caught && errno == 71;
+    };
+    const std::int32_t wide[] = {0x41, 0x1f600, 0};
+    const char16_t narrow[] = {0x41, 0xd83d, 0xde00, 0};
+    std::array<char16_t, 8> units;
+    std::array<std::int32_t, 8> scalars;
+    std::int32_t length = -77;
+    units.fill(Fill);
+    scalars.fill(Fill32);
+    Require(rejectsKeepingErrno([&] { u_strFromUTF32WithSub_nid_postfix(units.data(), 8, &length, wide, -1, 0xfffd, nullptr, unmappedStatus); }));
+    Require(rejectsKeepingErrno([&] { u_strFromUTF32_nid_postfix(units.data(), 8, &length, wide, -1, unmappedStatus); }));
+    Require(rejectsKeepingErrno([&] { u_strToUTF32WithSub_nid_postfix(scalars.data(), 8, &length, narrow, -1, 0xfffd, nullptr, unmappedStatus); }));
+    Require(rejectsKeepingErrno([&] { u_strToUTF32_nid_postfix(scalars.data(), 8, &length, narrow, -1, unmappedStatus); }));
+    Require(length == -77 && units[0] == Fill && scalars[0] == Fill32);
+    Require(u_strFromUTF32WithSub_nid_postfix(units.data(), 8, &length, wide, -1, 0xfffd, nullptr, readOnlyStatus) == units.data());
+    Require(length == 3 && units[0] == 0x41 && units[1] == 0xd83d && units[2] == 0xde00 && units[3] == 0);
+    Require(u_strToUTF32WithSub_nid_postfix(scalars.data(), 8, &length, narrow, -1, 0xfffd, nullptr, readOnlyStatus) == scalars.data());
+    Require(length == 2 && scalars[0] == 0x41 && scalars[1] == 0x1f600 && scalars[2] == 0);
+    length = -77;
+    Require(u_strFromUTF32WithSub_nid_postfix(units.data(), 8, &length, wide, -1, 0xfffd, nullptr, readOnlyFailure) == nullptr);
+    Require(u_strToUTF32WithSub_nid_postfix(scalars.data(), 8, &length, narrow, -1, 0xfffd, nullptr, readOnlyFailure) == nullptr);
+    Require(length == -77);
+    Require(rejectsKeepingErrno([&] { u_strFromUTF32WithSub_nid_postfix(units.data(), 1, &length, wide, -1, 0xfffd, nullptr, readOnlyStatus); }));
+    Require(rejectsKeepingErrno([&] { u_strToUTF32WithSub_nid_postfix(scalars.data(), 1, &length, narrow, -1, 0xfffd, nullptr, readOnlyStatus); }));
+    Require(*readOnlyStatus == 0 && *readOnlyFailure == Illegal);
+#ifdef _WIN32
+    VirtualFree(page, 0, MEM_RELEASE);
+#else
+    munmap(page, pageSize);
+#endif
+}
+
 int main() {
     Valid();
     Capacity();
@@ -341,5 +470,7 @@ int main() {
     ToSubstitution();
     ToArguments();
     ToStatus();
+    GuestBuffers();
+    GuestStatus();
     std::puts("ICU UTF-32 conversion tests passed");
 }

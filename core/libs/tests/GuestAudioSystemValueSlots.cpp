@@ -1,4 +1,5 @@
 #include "prx/libSceAudioSystem/libSceAudioSystem.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
 
@@ -100,6 +101,10 @@ int main() {
     errno = 71;
     RequireThrows([&] { libSceAudioSystemUnknown_FkFcs7NTFDo_nid_no_patch(reinterpret_cast<std::int32_t*>(0x10)); }, "FkFcs7NTFDo threw on unmapped output");
     Require(errno == 71, "FkFcs7NTFDo preserved errno on unmapped output");
+    const std::uint64_t reportedBefore = NotImplementedCalls_nid_no_patch();
+    RequireThrows([&] { libSceAudioSystemUnknown_mS9gpe47Eio_nid_no_patch(reinterpret_cast<std::int32_t*>(0x10)); }, "mS9gpe47Eio threw on a second unmapped output");
+    RequireThrows([&] { libSceAudioSystemUnknown_FkFcs7NTFDo_nid_no_patch(reinterpret_cast<std::int32_t*>(0x10)); }, "FkFcs7NTFDo threw on a second unmapped output");
+    Require(NotImplementedCalls_nid_no_patch() == reportedBefore, "an unmapped output slot was reported as an unimplemented export");
 
     std::puts("AudioSystem value slot tests passed");
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);

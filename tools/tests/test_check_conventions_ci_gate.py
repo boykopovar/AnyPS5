@@ -7,6 +7,7 @@ from collections import defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import check_conventions
 from check_conventions import Check
 
 CHECKER = Path(__file__).resolve().parents[1] / "check_conventions.py"
@@ -213,6 +214,32 @@ class CiGateTests(unittest.TestCase):
         self.assertIn("build.yml", files)
         result = run_checker(files)
         self.assertNotIn("ci-gate", result.stdout, result.stdout + result.stderr)
+
+
+class YamlHelperTests(unittest.TestCase):
+    def test_block_returns_the_deeper_lines_under_a_key(self):
+        lines = [(1, 0, "jobs", ""), (2, 2, "a", ""), (3, 4, "x", ""), (4, 2, "b", ""), (5, 0, "top", "")]
+        self.assertEqual(check_conventions.block(lines, 0), [(2, 2, "a", ""), (3, 4, "x", ""), (4, 2, "b", "")])
+
+    def test_field_joins_indented_continuation_lines_into_one_value(self):
+        self.assertEqual(check_conventions.field(["key: a", "  b", "  c", "next: 1"], (1, 0, "key", "a")), "a b c")
+
+    def test_pull_request_filtered_reads_scalar_and_flow_triggers(self):
+        lines = [(1, 0, "on", "")]
+        self.assertTrue(check_conventions.pull_request_filtered(lines, (1, 0, "on", "push")))
+        self.assertFalse(check_conventions.pull_request_filtered(lines, (1, 0, "on", "pull_request")))
+        self.assertTrue(check_conventions.pull_request_filtered(lines, (1, 0, "on", "{pull_request: {paths: [x]}}")))
+        self.assertFalse(check_conventions.pull_request_filtered(lines, (1, 0, "on", "{pull_request: {branches: [main]}}")))
+
+
+class JobListTests(unittest.TestCase):
+    def test_jobs_reports_each_job_with_its_needs_and_condition(self):
+        source = ['jobs:', '  build:', '    runs-on: ubuntu', '  test:', '    needs: [build]', '    if: always()', 'top:']
+        lines = [(1, 0, 'jobs', ''), (2, 2, 'build', ''), (3, 4, 'runs-on', 'ubuntu'), (4, 2, 'test', ''), (5, 4, 'needs', '[build]'), (6, 4, 'if', 'always()'), (7, 0, 'top', '')]
+        self.assertEqual(check_conventions.jobs(lines, source), [(2, 'build', [], ''), (4, 'test', ['build'], 'always()')])
+
+    def test_jobs_is_empty_without_a_jobs_section(self):
+        self.assertEqual(check_conventions.jobs([(1, 0, 'other', '')], []), [])
 
 
 if __name__ == "__main__":

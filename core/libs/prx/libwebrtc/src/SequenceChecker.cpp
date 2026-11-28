@@ -42,16 +42,32 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libkernel/include/Api.hpp"
 
+#include <cerrno>
 #include <stdexcept>
 #include <string>
+#include "prx/libc/include/GuestArena.hpp"
 
 namespace {
+
+struct ErrnoGuard {
+    int savedErrno = errno;
+    ~ErrnoGuard() { errno = savedErrno; }
+};
 
 void Check(int result, const char* call) {
     if (result != 0)
         throw std::runtime_error(std::string("SequenceCheckerImpl: ") + call + " failed with " + std::to_string(result));
+}
+
+void RequireWritable(WebRtcSequenceCheckerImpl* checker) {
+    if (!checker)
+        throw std::invalid_argument("SequenceCheckerImpl::SequenceCheckerImpl requires a checker");
+    GuestArena::HostWrite write(checker, sizeof(*checker));
+    if (!write.Open() || !GuestWritable_nid_no_patch(checker, sizeof(*checker)))
+        throw std::invalid_argument("SequenceCheckerImpl::SequenceCheckerImpl requires a checker");
 }
 
 }
@@ -59,17 +75,22 @@ void Check(int result, const char* call) {
 extern "C" {
 
 void APS5_VABI _ZN6webrtc32webrtc_sequence_checker_internal19SequenceCheckerImplC2Eb_nid_postfix(WebRtcSequenceCheckerImpl* checker, bool attachToCurrentThread) {
-    if (!checker)
-        throw std::invalid_argument("SequenceCheckerImpl::SequenceCheckerImpl requires a checker");
+    RequireWritable(checker);
     PthreadMutexattr attribute = nullptr;
     Check(pthread_mutexattr_init_nid_postfix(&attribute), "pthread_mutexattr_init");
-    const int result = pthread_mutex_init_nid_postfix(&checker->lock, &attribute);
+    WebRtcSequenceCheckerImpl guestChecker{};
+    const int result = pthread_mutex_init_nid_postfix(&guestChecker.lock, &attribute);
     const int destroyed = pthread_mutexattr_destroy_nid_postfix(&attribute);
     Check(result, "pthread_mutex_init");
     Check(destroyed, "pthread_mutexattr_destroy");
-    checker->attached = attachToCurrentThread;
-    checker->validThread = pthread_self_nid_postfix();
-    checker->validQueue = _ZN6webrtc13TaskQueueBase7CurrentEv_nid_postfix();
+    guestChecker.attached = attachToCurrentThread;
+    guestChecker.validThread = pthread_self_nid_postfix();
+    guestChecker.validQueue = _ZN6webrtc13TaskQueueBase7CurrentEv_nid_postfix();
+    ErrnoGuard guard;
+    if (!GuestCopyOut_nid_no_patch(checker, &guestChecker, sizeof(guestChecker))) {
+        pthread_mutex_destroy_nid_postfix(&guestChecker.lock);
+        throw std::invalid_argument("SequenceCheckerImpl::SequenceCheckerImpl requires a checker");
+    }
 }
 
 }

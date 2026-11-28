@@ -1,10 +1,12 @@
 #include "prx/libSceRazorCpu/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 
 namespace {
 
@@ -134,5 +136,52 @@ int main() {
     Require(sceRazorCpuWriteBookmarkEnd() == 0);
     Require(sceRazorCpuStartCaptureInternal() == static_cast<int>(0x80580000));
     Require(sceRazorCpuStopCaptureInternal() == static_cast<int>(0x80580000));
+    Require(sceRazorCpuIsCapturing() == 0);
+
+    Require(sceRazorCpuInitializeInternal(nullptr) == static_cast<int>(0x80580004));
+    errno = 71;
+    Require(sceRazorCpuInitializeInternal(reinterpret_cast<void*>(0x10)) == static_cast<int>(0x80580004));
+    Require(errno == 71);
+
+    std::array<std::uint8_t, 80> initContextWithCallback{};
+    const auto nonNullCallback = reinterpret_cast<std::uintptr_t>(&CountMarkerCallback);
+    std::memcpy(initContextWithCallback.data() + 0x48, &nonNullCallback, sizeof(nonNullCallback));
+    bool rejectedCallback = false;
+    try {
+        sceRazorCpuInitializeInternal(initContextWithCallback.data());
+    } catch (const std::runtime_error&) {
+        rejectedCallback = true;
+    }
+    Require(rejectedCallback);
+    Require(sceRazorCpuGetDataTagStorageSize(16) == 0);
+
+    std::array<std::uint8_t, 80> initContext{};
+    Require(sceRazorCpuInitializeInternal(initContext.data()) == 0);
+    Require(sceRazorCpuInitializeInternal(initContext.data()) == static_cast<int>(0x80580001));
+    Require(sceRazorCpuInitializeInternal(nullptr) == static_cast<int>(0x80580001));
+
+    Require(sceRazorCpuGetDataTagStorageSize(0) == 0);
+    Require(sceRazorCpuGetDataTagStorageSize(1) == 96);
+    Require(sceRazorCpuGetDataTagStorageSize(16) == 1536);
+    Require(sceRazorCpuGetDataTagStorageSize(0xffffffffu) == static_cast<std::size_t>(0xffffffffu) * 96u);
+
+    timeSpentInFlush = 0x123456789abcdef0ull;
+    Require(!sceRazorCpuFlushOccurred(&timeSpentInFlush));
+    Require(timeSpentInFlush == 0);
+    Require(!sceRazorCpuFlushOccurred(nullptr));
+
+    Require(sceRazorCpuInitDataTags(nullptr, 96) == static_cast<int>(0x80580004));
+    Require(sceRazorCpuInitDataTags(storage, 95) == static_cast<int>(0x80580005));
+    Require(sceRazorCpuInitDataTags(storage, 96) == 0);
+    for (std::size_t i = 0; i < 96; ++i) Require(storage[i] == 0);
+    for (std::size_t i = 96; i < sizeof(storage); ++i) Require(storage[i] == 0x5a);
+    Require(sceRazorCpuGetDataTagStorageSize(2) == 192);
+    std::memset(storage, 0x5a, sizeof(storage));
+    Require(sceRazorCpuInitDataTags(storage, 192) == 0);
+    for (std::size_t i = 0; i < 192; ++i) Require(storage[i] == 0);
+    for (std::size_t i = 192; i < sizeof(storage); ++i) Require(storage[i] == 0x5a);
+
+    Require(sceRazorCpuStartCaptureInternal() == static_cast<int>(0x8058000c));
+    Require(sceRazorCpuStopCaptureInternal() == static_cast<int>(0x8058000c));
     Require(sceRazorCpuIsCapturing() == 0);
 }

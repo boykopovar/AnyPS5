@@ -153,18 +153,12 @@ bool Initialized() {
 
 template <typename T>
 bool StoreGuest(T* destination, const T& value) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
-    errno = savedErrno;
-    return copied;
+    return GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
 }
 
 template <typename T>
 bool LoadGuest(T& value, const T* source) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(&value, source, sizeof(T));
-    errno = savedErrno;
-    return copied;
+    return GuestCopyIn_nid_no_patch(&value, source, sizeof(T));
 }
 
 template <std::uint32_t TCommand, typename TRequest>
@@ -592,11 +586,16 @@ int APS5_VABI sceHidControlSetRevokeList2(std::uint32_t first, std::uint32_t cou
 int APS5_VABI sceHidControlIsForceUpdateNeeded(std::uint32_t device, std::uint32_t value, std::uint8_t* needed) {
     if (!Initialized()) return ErrorNotInitialized;
     if (value == 0 || needed == nullptr) return ErrorInvalidArgument;
-    *needed = 0;
+    std::uint8_t initialNeeded = 0;
+    const bool copied = GuestCopyOut_nid_no_patch(needed, &initialNeeded, sizeof(initialNeeded));
+    if (!copied) return ErrorInvalidArgument;
     std::uint8_t reply = 0;
     Transfer request{device, value, &reply};
     const int result = Control<0x8010486b>(request);
-    if (result == 0 && reply == 1) *needed = 1;
+    if (result == 0 && reply == 1) {
+        std::uint8_t updateNeeded = 1;
+        GuestCopyOut_nid_no_patch(needed, &updateNeeded, sizeof(updateNeeded));
+    }
     return result;
 }
 
@@ -617,12 +616,16 @@ int APS5_VABI sceHidControlSetForceAdvancedVibrationMode(std::uint8_t enable) {
 int APS5_VABI sceHidControlPswUpdateIsUpdateNeeded(std::uint32_t device, const void* image, std::uint16_t* result) {
     if (!Initialized()) return ErrorNotInitialized;
     if (result == nullptr) return ErrorInvalidArgument;
-    *result = 0;
+    std::uint16_t initialResult = 0;
+    const bool copied = GuestCopyOut_nid_no_patch(result, &initialResult, sizeof(initialResult));
+    if (!copied) return ErrorInvalidArgument;
     if (image == nullptr) return ErrorInvalidArgument;
     std::uint16_t reply = 0;
     UpdateCheck request{device, 0, image, UpdateImageSize, &reply, nullptr};
     const int status = Control<UpdateCheckCommand>(request);
-    if (status == 0) *result = reply;
+    if (status == 0) {
+        GuestCopyOut_nid_no_patch(result, &reply, sizeof(reply));
+    }
     return status;
 }
 
@@ -654,9 +657,7 @@ int APS5_VABI libSceHidControlUnknown_00qes5NswlQ_nid_no_patch(std::uint32_t dev
     if (!StoreGuest(result, std::uint8_t{0})) return ErrorInvalidArgument;
     constexpr std::size_t copied = 0x10;
     std::array<std::uint8_t, 0x18> buffer{};
-    const int savedErrno = errno;
     const bool read = GuestCopyIn_nid_no_patch(buffer.data(), data, copied);
-    errno = savedErrno;
     if (!read) return ErrorInvalidArgument;
     std::uint8_t reply = 0;
     DataResult request{device, 0, buffer.data(), &reply};

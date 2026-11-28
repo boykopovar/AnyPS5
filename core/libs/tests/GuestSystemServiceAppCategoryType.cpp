@@ -32,10 +32,10 @@ int ReadLnc(std::int32_t appId, std::uint32_t* categoryType) {
     return sceLncUtilGetAppCategoryType(appId, categoryType);
 }
 
-bool BothThrow(std::int32_t appId) {
+bool RefusedAndLncThrows(std::int32_t appId) {
     std::uint32_t systemServiceValue = Sentinel;
     std::uint32_t lncValue = Sentinel;
-    return Throws([&] { static_cast<void>(ReadSystemService(appId, &systemServiceValue)); }) &&
+    return ReadSystemService(appId, &systemServiceValue) == LNC_UTIL_ERROR_GAME_PROCESS &&
            Throws([&] { static_cast<void>(ReadLnc(appId, &lncValue)); }) &&
            systemServiceValue == Sentinel && lncValue == Sentinel;
 }
@@ -54,7 +54,8 @@ void CheckUnwritableOutputs() {
 void CheckOtherApplications() {
     const std::int32_t others[] = {SYSTEM_SERVICE_RUNNING_APP_ID + 1, SYSTEM_SERVICE_RUNNING_APP_ID - 1, 0, -1,
                                    std::numeric_limits<std::int32_t>::min(), std::numeric_limits<std::int32_t>::max()};
-    for (const std::int32_t appId : others) Require(BothThrow(appId));
+    for (const std::int32_t appId : others) Require(RefusedAndLncThrows(appId));
+    Require(ReadSystemService(-1, nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
     std::uint32_t value = Sentinel;
     Require(ReadSystemService(SYSTEM_SERVICE_RUNNING_APP_ID, &value) == 0 && value == CategoryType);
 }

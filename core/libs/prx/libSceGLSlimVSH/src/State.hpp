@@ -162,9 +162,7 @@ bool ForEachGuestName(GLsizei count, const GLuint* guest, TVisit visit) {
     std::array<GLuint, 256> local{};
     for (GLsizei done = 0; done < count; done += static_cast<GLsizei>(local.size())) {
         const auto n = std::min(count - done, static_cast<GLsizei>(local.size()));
-        const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(local.data(), guest + done, static_cast<std::size_t>(n) * sizeof(GLuint));
-        errno = savedErrno;
         if (!copied) return false;
         for (GLsizei i = 0; i < n; ++i) visit(local[i]);
     }
@@ -183,8 +181,8 @@ void Generate_nid_no_patch(GLsizei count, GLuint* names, std::map<GLuint, std::s
             next.emplace(name, nullptr);
             result.push_back(name);
         }
+        if (!GuestCopyOut_nid_no_patch(names, result.data(), result.size() * sizeof(GLuint))) { Error_nid_no_patch(0x0505); return; }
         objects.swap(next);
-        std::copy(result.begin(), result.end(), names);
     } catch (const std::bad_alloc&) { Error_nid_no_patch(0x0505); }
 }
 

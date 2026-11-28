@@ -60,5 +60,5 @@ def executable(owner, symbol='shared#A#B', module_name=None, extra_dependencies=
     for index, offset in enumerate(symbol_offsets):
         struct.pack_into('<IBBHQQ', image, 0x4898 + 24 * index, offset, 0x12, 0, 0, 0, 0)
         struct.pack_into('<QQq', image, 0x4900 + 24 * index, 0x4a20 + 8 * index, ((index + 1) << 32) | 6, 0)
-    image[0x4000:0x4007] = b'\xff\x15' + struct.pack('<i', 0x4a20 - 0x4006) + b'\xc3'
+    image[0x4000:0x400f] = b'\x48\x83\xec\x08\xff\x15' + struct.pack('<i', 0x4a20 - 0x400a) + b'\x48\x83\xc4\x08\xc3'
     return image

@@ -106,7 +106,7 @@ void TrackedCommandOutsideCommandState();
 class FunctionName {
 public:
     consteval FunctionName(const char* name) : value(name) {
-        constexpr std::array<std::string_view, 32> tracked{
+        constexpr std::array<std::string_view, 33> tracked{
             "vkCmdBindPipeline", "vkCmdSetViewport", "vkCmdSetViewportWithCount", "vkCmdSetViewportWithCountEXT",
             "vkCmdSetScissor", "vkCmdSetScissorWithCount", "vkCmdSetScissorWithCountEXT", "vkCmdSetColorWriteMaskEXT", "vkCmdSetDepthBias",
             "vkCmdSetDepthBias2EXT", "vkCmdSetDepthBounds", "vkCmdSetCullMode", "vkCmdSetCullModeEXT",
@@ -114,7 +114,7 @@ public:
             "vkCmdSetDepthWriteEnable", "vkCmdSetDepthWriteEnableEXT", "vkCmdSetDepthCompareOp", "vkCmdSetDepthCompareOpEXT",
             "vkCmdSetDepthBoundsTestEnable", "vkCmdSetDepthBoundsTestEnableEXT", "vkCmdSetStencilTestEnable", "vkCmdSetStencilTestEnableEXT",
             "vkCmdSetStencilOp", "vkCmdSetStencilOpEXT", "vkCmdSetStencilCompareMask", "vkCmdSetStencilWriteMask",
-            "vkCmdSetStencilReference", "vkCmdBindShadersEXT", "vkCmdExecuteCommands"};
+            "vkCmdSetStencilReference", "vkCmdBindShadersEXT", "vkCmdExecuteCommands", "vkCmdSetDepthBiasEnableEXT"};
         for (const auto entry : tracked) {
             if (entry == name) TrackedCommandOutsideCommandState();
         }
@@ -147,6 +147,7 @@ struct DeviceFunctions {
     PFN_vkCmdUpdateBuffer cmdUpdateBuffer = nullptr;
     PFN_vkCmdFillBuffer cmdFillBuffer = nullptr;
     TrackedFunction<PFN_vkCmdBindPipeline> cmdBindPipeline;
+    TrackedFunction<PFN_vkCmdExecuteCommands> cmdExecuteCommands;
     PFN_vkCmdBindDescriptorSets cmdBindDescriptorSets = nullptr;
     PFN_vkCmdPushConstants cmdPushConstants = nullptr;
     PFN_vkCmdDispatch cmdDispatch = nullptr;
@@ -163,6 +164,7 @@ struct DeviceFunctions {
     TrackedFunction<PFN_vkCmdSetCullModeEXT> cmdSetCullMode;
     TrackedFunction<PFN_vkCmdSetFrontFaceEXT> cmdSetFrontFace;
     TrackedFunction<PFN_vkCmdSetDepthTestEnableEXT> cmdSetDepthTestEnable;
+    TrackedFunction<PFN_vkCmdSetDepthBiasEnableEXT> cmdSetDepthBiasEnable;
     TrackedFunction<PFN_vkCmdSetDepthWriteEnableEXT> cmdSetDepthWriteEnable;
     TrackedFunction<PFN_vkCmdSetDepthCompareOpEXT> cmdSetDepthCompareOp;
     TrackedFunction<PFN_vkCmdSetDepthBoundsTestEnableEXT> cmdSetDepthBoundsTestEnable;
@@ -224,12 +226,15 @@ struct Context {
     TextureCache* textureCache = nullptr;
     VkPipelineCache pipelineCache = VK_NULL_HANDLE;
     bool depthClamp = false;
-    // Nonzero when VK_EXT_external_memory_host is enabled: the required host pointer alignment.
     VkDeviceSize hostImportAlignment = 0;
+    mutable std::vector<std::pair<std::pair<VkFormat, std::uint32_t>, bool>> stencilShadowCopyProbes;
     bool drawInputsInPlace = true;
+    std::size_t drawInputsInPlaceBelow = 0;
     bool discreteGpu = false;
     bool integratedGpu = false;
+    bool hostPointerImport = true;
     bool dmaBufImport = false;
+    bool readTrapsOverHostPointerImports = false;
     bool sparseBinding = false;
     bool sparseResidencyBuffer = false;
     bool sparseResidencyAliased = false;
@@ -267,11 +272,14 @@ struct Context {
     bool samplerFilterMinmax = false;
     bool samplerMirrorClampToEdge = false;
     bool nonSeamlessCubeMap = false;
+    bool borderColorSwizzle = false;
+    bool borderColorSwizzleFromImage = false;
     VkSampleCountFlags mergedCoverageSampleCounts = 0;
     VkSampleCountFlags truncatedCoverageSampleCounts = 0;
     bool mixedAttachmentSamples = false;
     bool conservativeRasterization = false;
     bool meshWave32 = false;
+    bool pixelWave32 = false;
     VkBuffer emptyBuffer = VK_NULL_HANDLE;
     VkBuffer oversizedBuffer = VK_NULL_HANDLE;
     bool exactRobustLoads = false;
@@ -290,13 +298,17 @@ struct Context {
     bool partiallyBound = false;
     bool variableDescriptorCount = false;
     bool sampledImageUpdateAfterBind = false;
+    bool storageBufferUpdateAfterBind = false;
     std::uint32_t imageTableCapacity = 0;
     std::uint32_t samplerTableCapacity = 0;
     bool individuallyFreeDescriptorSets = false;
+    bool hostImportsInHeapUsage = false;
     bool tessellationPipelineCache = true;
+    bool orderedInterlockEpilogs = false;
     bool imageTableUpdateAfterBind = false;
     bool samplerTableUpdateAfterBind = false;
     bool geometryShader = false;
+    bool multiViewport = false;
     bool largePoints = false;
     bool sampleRateShading = false;
     bool fillModeNonSolid = false;
@@ -309,10 +321,12 @@ struct Context {
     bool shaderCullDistance = false;
     bool nullDescriptors = false;
     bool bufferInt64Atomics = false;
+    VkDeviceAddress atomicLockTable = 0;
     const PlaceholderImages* placeholderImages = nullptr;
     bool viewportIndexLayer = false;
     bool demoteToHelperInvocation = false;
     bool earlyFragmentSampleMaskTestBeforeSampleCounting = false;
+    bool staticSampleMaskStopsShading = true;
     bool fmaFloat16 = false;
     bool primitiveListRestart = false;
     bool imageViewMinLod = false;
@@ -321,11 +335,15 @@ struct Context {
     bool pipelineExecutableInfo = false;
     bool maintenance8 = false;
     bool pushDescriptors = false;
+    bool depthUploadImage = false;
     bool graphicsPipelineLibrary = false;
     bool pipelineLinkTimeOptimization = true;
     bool dynamicColorWriteMask = false;
+    bool dynamicDepthBiasEnable = false;
     std::uint32_t srgbDecodeFormats = 0;
     std::uint32_t srgbCopyFormats = 0;
+    std::uint32_t scaledSampledFormats = 0;
+    std::uint32_t optionalSampledFormats = 0;
     bool provokingVertexLast = false;
     bool provokingVertexModePerPipeline = false;
     bool singlePassStorage = false;
@@ -510,6 +528,8 @@ std::uint32_t StorageTableCapacity(const Context& context);
 std::uint32_t SamplerTableCapacity(const Context& context);
 bool ImageTableUpdateAfterBind(const Context& context);
 bool SamplerTableUpdateAfterBind(const Context& context);
+
+void DestroyRecordingPools(const Context& context);
 
 }
 
