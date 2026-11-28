@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -51,6 +52,11 @@ static void TestBlockSize() {
     Require(EVP_CIPHER_block_size_nid_postfix(Cipher(cipher)) == 16);
     Require(std::memcmp(before, cipher, sizeof(cipher)) == 0);
     RequireThrows([] { EVP_CIPHER_block_size_nid_postfix(nullptr); });
+    errno = 71;
+    bool rejected = false;
+    try { EVP_CIPHER_block_size_nid_postfix(reinterpret_cast<const LibreSslEvpCipher*>(0x10)); }
+    catch (const std::runtime_error&) { rejected = errno == 71; }
+    Require(rejected);
 }
 
 int main() {

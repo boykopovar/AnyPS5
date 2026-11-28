@@ -4,6 +4,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -64,6 +65,19 @@ int main() {
     Require(RAND_file_name_nid_postfix(name, 0) == nullptr && name[0] == 'x');
     Require(RAND_file_name_nid_postfix(nullptr, 0) == nullptr);
     RequireThrows([] { RAND_file_name_nid_postfix(nullptr, 1); });
+    for (const std::size_t size : {std::size_t{1}, std::size_t{13}, ~std::size_t{0}}) {
+        errno = 71;
+        bool rejected = false;
+        try { RAND_file_name_nid_postfix(reinterpret_cast<char*>(0x10), size); }
+        catch (const std::runtime_error&) { rejected = errno == 71; }
+        Require(rejected);
+    }
+    static const char readOnlyName[16] {};
+    errno = 71;
+    bool rejected = false;
+    try { RAND_file_name_nid_postfix(const_cast<char*>(readOnlyName), sizeof(readOnlyName)); }
+    catch (const std::runtime_error&) { rejected = errno == 71; }
+    Require(rejected && readOnlyName[0] == '\0');
 
     auto* block = static_cast<unsigned char*>(CRYPTO_malloc_nid_postfix(64, "file.c", 10));
     Require(block != nullptr);

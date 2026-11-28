@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -34,8 +35,12 @@ const char* APS5_VABI RAND_file_name_nid_postfix(char* buffer, std::size_t size)
     if (size) {
         if (!buffer) throw std::invalid_argument(std::string(__func__) + ": null buffer");
         const std::size_t copied = size - 1 < sizeof(path) - 1 ? size - 1 : sizeof(path) - 1;
-        std::memcpy(buffer, path, copied);
-        buffer[copied] = '\0';
+        char text[sizeof(path)]{};
+        std::memcpy(text, path, copied);
+        const int savedErrno = errno;
+        const bool ok = GuestCopyOut_nid_no_patch(buffer, text, copied + 1);
+        errno = savedErrno;
+        if (!ok) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     }
     return sizeof(path) - 1 >= size ? nullptr : buffer;
 }

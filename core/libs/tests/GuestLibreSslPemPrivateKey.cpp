@@ -2,12 +2,14 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/FileStream.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <initializer_list>
 #include <source_location>
+#include <stdexcept>
 #include <string>
 
 namespace {
@@ -329,6 +331,21 @@ void TestCertificate() {
     BIO_free_nid_postfix(bio);
 }
 
+
+LibreSslRsa* const readOnlyTarget = nullptr;
+
+void TestUnreadableTarget() {
+    for (auto* target : {reinterpret_cast<LibreSslRsa**>(0x10), const_cast<LibreSslRsa**>(&readOnlyTarget)}) {
+        ERR_clear_error_nid_postfix();
+        errno = 71;
+        bool rejected = false;
+        try { ReadFile(RsaKey, target); }
+        catch (const std::runtime_error&) { rejected = errno == 71; }
+        Require(rejected && !readOnlyTarget);
+        RequireErrors({});
+    }
+}
+
 }
 
 int main() {
@@ -338,5 +355,6 @@ int main() {
     TestReuse();
     TestErrors();
     TestCertificate();
+    TestUnreadableTarget();
     std::puts("libSceLibreSsl PEM private key tests passed");
 }
