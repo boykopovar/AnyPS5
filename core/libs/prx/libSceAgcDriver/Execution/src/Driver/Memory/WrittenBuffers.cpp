@@ -179,7 +179,7 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> QueuedDrawReadRanges(const 
             for (std::uint32_t element = 0; element < binding.count; ++element) {
                 const auto* words = binding.guestDescriptor.data() + static_cast<std::size_t>(element) * 4u;
                 const ShaderRecompiler::ShaderBufferResource descriptor{{words[0], words[1], words[2], words[3]}};
-                add(descriptor.Base48(), descriptor.GetSize());
+                add(descriptor.Base48(), Graphics::ShaderResources::GuestBufferBytes(binding, element));
             }
         }
     }
