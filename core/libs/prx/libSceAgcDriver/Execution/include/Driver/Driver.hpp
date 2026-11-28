@@ -395,7 +395,7 @@ private:
     static std::size_t& currentPacketOffset();
     static bool& resolvingAhead();
     static bool& gateOpened();
-    void resolveGroupAhead(const Submission& submission, const QueueState& live, std::size_t from);
+    void resolveGroupAhead(const Submission& submission, const QueueState& live, std::size_t from, bool gateOpen);
     static void clearResolvedAhead();
     static void reportGroupCapture(std::uint32_t queue);
     static PollStats& pollStats();

@@ -12,6 +12,8 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
+#include <unordered_set>
 
 namespace AgcDriver::DriverDetail {
 
@@ -64,11 +66,30 @@ std::size_t& PrebuiltUntil() {
     return until;
 }
 
+std::uint64_t& PipelinesAtWalk() {
+    static thread_local std::uint64_t created = std::numeric_limits<std::uint64_t>::max();
+    return created;
+}
+
+bool& WalkingAhead() {
+    static thread_local bool walking = false;
+    return walking;
+}
+
+std::unordered_set<std::uint64_t>& WalkedRawPrograms() {
+    static thread_local std::unordered_set<std::uint64_t> programs;
+    return programs;
+}
+
 }
 
 void Driver::clearResolvedAhead() {
     PreviewedUntil() = 0;
     PrebuiltUntil() = 0;
+    if (WalkingAhead()) {
+        PipelinesAtWalk() = VulkanDevice::ComputePipelineCounts().created;
+        WalkingAhead() = false;
+    }
     auto& resolved = resolvedAhead();
     if (resolved.empty()) return;
     groupCaptureStats().stale += resolved.size();
@@ -127,12 +148,17 @@ bool OverlapsLabel(std::span<const ShaderRecompiler::MemoryRegion> regions, cons
 
 }
 
-void Driver::resolveGroupAhead(const Submission& submission, const QueueState& live, std::size_t from) {
+void Driver::resolveGroupAhead(const Submission& submission, const QueueState& live, std::size_t from, bool gateOpen) {
     static const bool allQueues = std::getenv("APS5_GROUP_CAPTURE_ALL_QUEUES") != nullptr;
     static const bool prebuildGraphicsQueue = std::getenv("APS5_NO_GRAPHICS_QUEUE_PIPELINE_PREBUILD") == nullptr;
     const bool prebuildOnly = submission.queue == 0 && (!allQueues || pipelineDispatch());
     static const bool probing = std::getenv("APS5_PROBE_DISPATCH") != nullptr;
+    if (!prebuildOnly && !gateOpen) return;
     if (prebuildOnly && (!prebuildGraphicsQueue || probing || AsyncDrawCompile() || from < PrebuiltUntil())) return;
+    if (prebuildOnly && !WalkingAhead()) {
+        if (VulkanDevice::ComputePipelineCounts().created == PipelinesAtWalk()) return;
+        WalkingAhead() = true;
+    }
     if (!prebuildOnly && submission.queue == 0 && DrawPipeline::Depth() != 0 && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, (submission.commands[from] >> 8u) & 0xffu, "group_ahead");
     auto& resolved = resolvedAhead();
     const auto localDevice = device.Load();
@@ -153,7 +179,7 @@ void Driver::resolveGroupAhead(const Submission& submission, const QueueState& l
         }
     } resolving;
     const auto& commands = submission.commands;
-    if (submission.shaders != nullptr && from >= PreviewedUntil()) {
+    if (!prebuildOnly && submission.shaders != nullptr && from >= PreviewedUntil()) {
         bool hasFurtherDispatch = false;
         std::size_t limit = from < commands.size() ? from + Pm4::PacketWords(commands[from]) : commands.size();
         while (limit < commands.size()) {
@@ -276,14 +302,29 @@ void Driver::resolveGroupAhead(const Submission& submission, const QueueState& l
         } else if (opcode == 0x15 || opcode == 0x16) {
             if (count < (opcode == 0x15 ? 5u : 3u) || resolved.contains(cursor)) break;
             if (prebuildOnly) {
-                currentPacketOffset() = cursor;
-                try {
-                    if (opcode == 0x15) dispatch(scratch, packet, submission);
-                    else dispatchIndirect(scratch, packet, submission);
-                } catch (const std::exception&) {
-                    ++stats.failures;
+                bool unprepared = false;
+                const auto low = scratch.shader.find(0x20c);
+                const auto high = scratch.shader.find(0x20d);
+                if (low != scratch.shader.end() && high != scratch.shader.end()) {
+                    const auto address = (static_cast<std::uint64_t>(low->second) << 8u) | (static_cast<std::uint64_t>(high->second & 0xffu) << 40u);
+                    const auto registered = submission.shaders != nullptr ? RegisteredProgram(*submission.shaders, address, {0}) : nullptr;
+                    if (registered == nullptr) {
+                        unprepared = WalkedRawPrograms().insert(address).second;
+                    } else if (registered->type == 0) {
+                        std::lock_guard lock(registered->prepared->mutex);
+                        unprepared = !registered->prepared->pending && registered->prepared->entries.empty();
+                    }
                 }
-                resolved.erase(cursor);
+                if (unprepared) {
+                    currentPacketOffset() = cursor;
+                    try {
+                        if (opcode == 0x15) dispatch(scratch, packet, submission);
+                        else dispatchIndirect(scratch, packet, submission);
+                    } catch (const std::exception&) {
+                        ++stats.failures;
+                    }
+                    resolved.erase(cursor);
+                }
                 try {
                     Pm4::NoteDispatchRegisters(packet, scratch);
                 } catch (const std::exception&) {

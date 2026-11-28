@@ -512,10 +512,9 @@ void Driver::execute(Submission& submission) {
             packetCounters.CountDispatch();
             landPendingWaits(submission.queue);
             currentPacketOffset() = cursor;
-            if (gateOpened()) {
-                gateOpened() = false;
-                timed(&WorkerProfile::dispatchMs, [&] { resolveGroupAhead(submission, queue, cursor); });
-            }
+            const bool gateOpen = gateOpened();
+            gateOpened() = false;
+            if (gateOpen || submission.queue == 0) timed(&WorkerProfile::dispatchMs, [&] { resolveGroupAhead(submission, queue, cursor, gateOpen); });
             const bool ringOverlap = submission.queue != 0 && Graphics::Recorder::DispatchOverlapEnabled();
             if (ringOverlap) Graphics::Recorder::SetDispatchOrder(submission.queue + 1u, ringOrder.afterDispatch);
             struct ClearOrder {
