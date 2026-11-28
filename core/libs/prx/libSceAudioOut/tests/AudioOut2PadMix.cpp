@@ -72,6 +72,15 @@ int main() {
         const float speakersOnly[] = {1.0f, 1.0f, 0.0f, 0.0f};
         Require(AudioOut2RumbleFromPadFrames(speakersOnly, 1) == std::array<std::uint8_t, 2>{}, "speaker sound does not rumble");
         Require(AudioOut2RumbleFromPadFrames(nullptr, 0) == std::array<std::uint8_t, 2>{}, "empty input does not rumble");
+        Require(AudioOut2RumbleFromPadFrames(nullptr, 4) == std::array<std::uint8_t, 2>{}, "a missing buffer does not rumble");
+        const auto infinity = std::numeric_limits<float>::infinity();
+        const auto nan = std::numeric_limits<float>::quiet_NaN();
+        const float nonfinite[] = {nan, infinity, 0.5f, nan, nan, -infinity, infinity, -0.25f, 0.0f, 0.0f, -infinity, infinity, 0.0f, 0.0f, nan, nan};
+        Require(AudioOut2RumbleFromPadFrames(nonfinite, 4) == std::array<std::uint8_t, 2>{128, 64}, "each motor ignores its own nonfinite samples while retaining the full frame count");
+        const float threshold[] = {1.0f, 1.0f, 0.01f, 0.009f};
+        Require(AudioOut2RumbleFromPadFrames(threshold, 1) == std::array<std::uint8_t, 2>{0, 0}, "subthreshold vibration stays silent");
+        const float aboveThreshold[] = {1.0f, 1.0f, 0.011f, -0.02f};
+        Require(AudioOut2RumbleFromPadFrames(aboveThreshold, 1) == std::array<std::uint8_t, 2>{6, 10}, "each motor preserves RMS threshold and rounding");
     }
     Require(AudioOut2RouteForPort(0x3, 1) == AudioOut2Route::PadSpeaker, "mono type 0x3 is the pad speaker");
     Require(AudioOut2RouteForPort(0x3, 2) == AudioOut2Route::PadSpeaker, "stereo type 0x3 is the pad speaker");
