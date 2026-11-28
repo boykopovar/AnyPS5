@@ -936,6 +936,21 @@ void RunTests(AgcDriver::VulkanDevice& device) {
     Require(!Faulted(classes), "image table: valid entries faulted:\n" + classes.log);
     Require(classes.imageTableCount == 3u, "image table: the table binding does not hold one element per distinct T# (" + std::to_string(classes.imageTableCount) + ")");
 
+    const auto adjustedCode = [] {
+        constexpr std::size_t sample = 19u;
+        static_assert(TableCode[sample] == 0xf09c8f08u);
+        std::array<std::uint32_t, TableCode.size() + 2u> code{};
+        std::copy_n(TableCode.begin(), sample, code.begin());
+        code[sample] = 0x8823ff23u;
+        code[sample + 1u] = 0x1000u;
+        std::copy(TableCode.begin() + sample, TableCode.end(), code.begin() + sample + 2u);
+        code[sample + 2u] = 0xf0808f09u;
+        return code;
+    }();
+    const auto adjusted = Run(device, adjustedCode, 6, Lanes, 64);
+    Require(!Faulted(adjusted), "adjusted sampler table: a valid record faulted:\n" + adjusted.log);
+    Require(adjusted.words == classes.words, "adjusted sampler table: the reference texels changed");
+
     const auto invariantPhiCode = [] {
         std::array<std::uint32_t, 39> code{};
         std::copy_n(TableCode.begin(), 19, code.begin());
