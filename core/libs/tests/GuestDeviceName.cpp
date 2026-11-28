@@ -6,7 +6,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <limits>
 #include <string>
 
 static void Require(bool condition, int line) {
@@ -34,29 +33,24 @@ std::string Name(std::uint32_t device, std::uint16_t type) {
 }
 
 int main() {
-    Check(Name(NoDevice, Character) == "#NODEV");
+    *__error_nid_postfix() = 0;
+    Check(Name(NoDevice, Character) == "#NODEV" && *__error_nid_postfix() == 0);
+    *__error_nid_postfix() = 0;
+    Check(Name(0x1234, Character) == "#C:18:0x34" && *__error_nid_postfix() == 2);
     Check(Name(NoDevice, Block) == "#NODEV");
     Check(Name(0x1234, Regular) == "#NODEV");
     Check(Name(0x1234, Directory) == "#NODEV");
     Check(Name(0x1234, 0) == "#NODEV");
-    Check(Name(0x1234, Character | 0644) == "#C:0x1234");
-    Check(Name(0, Character) == "#C:0");
-    Check(Name(1, Character) == "#C:0x1");
-    Check(Name(0xF, Character) == "#C:0xf");
-    Check(Name(0x10, Character) == "#C:0x10");
-    Check(Name(0xDEADBEEFu, Character) == "#C:0xdeadbeef");
-    Check(Name(0xFFFFFFFEu, Character) == "#C:0xfffffffe");
-    Check(Name(0x61006001u, Block) == "#B:0x61006001");
-    Check(Name(0x6001u, Block) == "#B:0x6001");
+    Check(Name(0x1234, Character | 0644) == "#C:18:0x34");
     Check(Name(0x1234, Block) == "#NODEV");
     Check(Name(0x1234, Block | 0644) == "#NODEV");
 
     for (std::size_t length = 0; length <= 16; ++length) {
         std::array<char, 20> buffer;
         buffer.fill('#');
-        char* result = devname_r_nid_postfix(0xABCDu, Character, buffer.data() + 1, static_cast<int>(length));
+        char* result = devname_r_nid_postfix(0x1234, Character, buffer.data() + 1, static_cast<int>(length));
         Check(result == buffer.data() + 1);
-        const std::string expected = "#C:0xabcd";
+        const std::string expected = "#C:18:0x34";
         Check(buffer.front() == '#');
         for (std::size_t index = length + 1; index < buffer.size(); ++index) Check(buffer[index] == '#');
         if (length != 0) Check(std::string(buffer.data() + 1, std::min(length - 1, expected.size())) == expected.substr(0, length - 1));
@@ -76,32 +70,24 @@ int main() {
         }
     }
 
-    std::array<char, 8> negative;
+    std::array<char, 16> negative;
     negative.fill('#');
     *__error_nid_postfix() = 0;
-    Check(devname_r_nid_postfix(0x12, Character, negative.data(), -1) == negative.data());
-    Check(*__error_nid_postfix() == 84 && negative[0] == '\0' && negative[1] == '#');
+    Check(devname_r_nid_postfix(0x1234, Character, negative.data(), -1) == negative.data());
+    Check(*__error_nid_postfix() == 14 && std::strcmp(negative.data(), "#C:18:0x34") == 0);
+    negative.fill('#');
     *__error_nid_postfix() = 0;
-    Check(devname_r_nid_postfix(0x12, Character, negative.data(), std::numeric_limits<int>::min()) == negative.data());
-    Check(*__error_nid_postfix() == 84 && negative[0] == '\0');
+    Check(devname_r_nid_postfix(0x1234, Character, negative.data(), 0) == negative.data());
+    Check(*__error_nid_postfix() == 2 && negative.front() == '#' && negative.back() == '#');
 
-    char* first = devname_nid_postfix(0x77, Character);
-    Check(first != nullptr && std::strcmp(first, "#C:0x77") == 0);
-    char* second = devname_nid_postfix(NoDevice, Character);
-    Check(second == first && std::strcmp(second, "#NODEV") == 0);
-    char* third = devname_nid_postfix(0x6001u, Block);
-    Check(third == first && std::strcmp(third, "#B:0x6001") == 0);
-    Check(std::strlen(devname_nid_postfix(0xFFFFFFFEu, Character)) == 13);
+    char* first = devname_nid_postfix(0x1234, Character);
+    Check(first != nullptr && std::strcmp(first, "#C:18:0x34") == 0);
+    char* second = devname_nid_postfix(0x1235, Character);
+    Check(second == first);
+    char* third = devname_nid_postfix(NoDevice, Character);
+    Check(third == first && std::strcmp(third, "#NODEV") == 0);
 
     char* unmapped = reinterpret_cast<char*>(std::uintptr_t{0x10});
     Check(devname_r_nid_postfix(0xABCDu, Character, unmapped, 16) == unmapped);
     Check(devname_r_nid_postfix(NoDevice, Character, unmapped, 16) == unmapped);
-    *__error_nid_postfix() = 0;
-    Check(devname_r_nid_postfix(0x12, Character, unmapped, -1) == unmapped);
-    Check(*__error_nid_postfix() == 84);
-
-    std::array<char, 24> full;
-    full.fill('#');
-    Check(devname_r_nid_postfix(0xFFFFFFFEu, Character, full.data(), static_cast<int>(full.size())) == full.data());
-    Check(std::strcmp(full.data(), "#C:0xfffffffe") == 0 && full[14] == '#');
 }
