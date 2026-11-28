@@ -57,6 +57,8 @@ Each tested revision runs `title_run.py` repeatedly with one measured run per in
 
 The command prints the first measured regression and its previous good commit. The optional JSON report records those commits, the supplied endpoints, the percentage threshold, the sample spread limit, the first-parent method, its monotonicity assumption, and every commit actually measured. `tested_commits` can be much smaller than `commits_between` because the search is logarithmic; it is not a claim that every commit was benchmarked.
 
+`previous_good` and `first_bad` are adjacent on the searched first-parent chain. A slowdown equal to `regression_pct` meets the threshold. Each measurement records its samples, median FPS, and `spread_pct`, calculated as 100 times the difference between the highest and lowest sample divided by the median. Read the starting endpoint under `good`. The `measurements` array starts after that endpoint, while `tested_commits` includes it.
+
 The output path must not already exist. Reports are written atomically so a failed write does not leave a partial JSON file. Keep the report with the recipe and the machine setup details when sharing or comparing results.
 
 ## Resume an interrupted search
