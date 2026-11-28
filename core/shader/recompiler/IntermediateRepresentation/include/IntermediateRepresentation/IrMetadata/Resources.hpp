@@ -126,6 +126,8 @@ struct ImageResource {
     std::uint32_t table = NoTable;
     TableOperation tableOperation = TableOperation::Supported;
     bool targetMerge = false;
+    bool flattened1DArray = false;
+    bool flattenAllowed = false;
     ImageOverwrite overwrite;
 
     bool operator==(const ImageResource& other) const = default;
