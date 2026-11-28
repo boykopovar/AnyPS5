@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
@@ -9,8 +10,16 @@
 #include <exception>
 #include <map>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 using NKWebKit::HttpAbi::HTTPHeaderMap;
 using NKWebKit::HttpAbi::HTTPHeaderName;
@@ -1150,6 +1159,162 @@ static void TestSetAsIsolatedCopy() {
     }
 }
 
+struct GuardedPages {
+    std::size_t pageSize = 0;
+    unsigned char* base = nullptr;
+
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(base + pageSize, pageSize, PAGE_READONLY, &previous) != 0);
+        Require(VirtualProtect(base + pageSize * 2, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+        pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        void* mapped = mmap(nullptr, pageSize * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        base = static_cast<unsigned char*>(mapped);
+        Require(mprotect(base + pageSize, pageSize, PROT_READ) == 0);
+        Require(mprotect(base + pageSize * 2, pageSize, PROT_NONE) == 0);
+#endif
+    }
+
+    ~GuardedPages() {
+        if (!base) return;
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, pageSize * 3);
+#endif
+    }
+
+    unsigned char* ReadOnly() const { return base + pageSize; }
+    unsigned char* Guard() const { return base + pageSize * 2; }
+};
+
+template<class TFunction>
+static bool ThrowsNotImplemented(TFunction function) {
+    const auto before = NotImplementedCalls_nid_no_patch();
+    try {
+        function();
+    } catch (const std::invalid_argument&) {
+        return false;
+    } catch (const std::logic_error&) {
+        return false;
+    } catch (const std::exception&) {
+        return NotImplementedCalls_nid_no_patch() == before + 1;
+    }
+    return false;
+}
+
+template<class TFunction>
+static bool ThrowsInvalidArgument(TFunction function) {
+    try {
+        function();
+    } catch (const std::invalid_argument&) {
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
+    return false;
+}
+
+static void TestGuestPointers() {
+    GuardedPages pages;
+    auto* guardReq = reinterpret_cast<ResourceRequestBase*>(pages.Guard());
+    auto* readOnlyReq = reinterpret_cast<ResourceRequestBase*>(pages.ReadOnly());
+    auto* guardLegacy = reinterpret_cast<LegacyResourceRequestBase*>(pages.Guard());
+    auto* readOnlyLegacy = reinterpret_cast<LegacyResourceRequestBase*>(pages.ReadOnly());
+    auto* guardString = reinterpret_cast<const String*>(pages.Guard());
+    auto* guardUrl = reinterpret_cast<const URL*>(pages.Guard());
+    auto* guardFormPtr = reinterpret_cast<FormData**>(pages.Guard());
+    auto* readOnlyFormPtr = reinterpret_cast<FormData**>(pages.ReadOnly());
+    auto* guardHeaders = reinterpret_cast<NKWebKit::WebCoreAbi::HTTPHeaderMap*>(pages.Guard());
+    auto* readOnlyHeaders = reinterpret_cast<NKWebKit::WebCoreAbi::HTTPHeaderMap*>(pages.ReadOnly());
+    auto* guardResponse = reinterpret_cast<const NKWebKit::WebCoreAbi::ResourceResponseBase*>(pages.Guard());
+
+    StringImpl* guardImplPtr = reinterpret_cast<StringImpl*>(pages.Guard());
+    const auto* badImplString = reinterpret_cast<const String*>(&guardImplPtr);
+    StringImpl badDataImpl{4, 8, pages.Guard(), 4};
+    StringImpl* badDataPtr = &badDataImpl;
+    const auto* badDataString = reinterpret_cast<const String*>(&badDataPtr);
+
+    auto req = MakeRequest();
+    auto legacy = MakeLegacyRequest();
+    auto sample = Make("POST");
+    String sampleText(&sample);
+    sample.refCount += 2;
+
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore19ResourceRequestBase3urlEv(guardReq); }));
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore19ResourceRequestBase6isNullEv(guardReq); }));
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore19ResourceRequestBase7isEmptyEv(guardReq); }));
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore19ResourceRequestBase15timeoutIntervalEv(guardReq); }));
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore19ResourceRequestBase11cachePolicyEv(guardReq); }));
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore19ResourceRequestBase8priorityEv(guardReq); }));
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore19ResourceRequestBase10isSameSiteEv(guardReq); }));
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore19ResourceRequestBase9isTopSiteEv(guardReq); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore19ResourceRequestBase14setCachePolicyENS_26ResourceRequestCachePolicyE(readOnlyReq, 2); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore19ResourceRequestBase11setPriorityENS_20ResourceLoadPriorityE(readOnlyReq, 2); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore19ResourceRequestBase13setIsSameSiteEb(readOnlyReq, true); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore19ResourceRequestBase12setIsTopSiteEb(readOnlyReq, true); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore19ResourceRequestBase6setURLERKN3WTF3URLE(&req, guardUrl); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore19ResourceRequestBase13setHTTPMethodERKN3WTF6StringE(&req, guardString); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore19ResourceRequestBase13setHTTPMethodERKN3WTF6StringE(&req, badDataString); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore19ResourceRequestBase15setHTTPReferrerERKN3WTF6StringE(&req, badImplString); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore19ResourceRequestBase13partitionNameERKN3WTF6StringE(guardString); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore19ResourceRequestBase13partitionNameERKN3WTF6StringE(badImplString); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore19ResourceRequestBase13partitionNameERKN3WTF6StringE(badDataString); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore19ResourceRequestBase11setHTTPBodyEON3WTF6RefPtrINS_8FormDataENS1_13DumbPtrTraitsIS3_EEEE(&legacy, guardFormPtr); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore19ResourceRequestBase11setHTTPBodyEON3WTF6RefPtrINS_8FormDataENS1_13DumbPtrTraitsIS3_EEEE(&legacy, readOnlyFormPtr); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore19ResourceRequestBase11setHTTPBodyEON3WTF6RefPtrINS_8FormDataENS1_13DumbPtrTraitsIS3_EEEE(readOnlyLegacy, readOnlyFormPtr); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore19ResourceRequestBase19setHTTPHeaderFieldsENS_13HTTPHeaderMapE(&req, guardHeaders); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore19ResourceRequestBase19setHTTPHeaderFieldsENS_13HTTPHeaderMapE(&req, readOnlyHeaders); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore19ResourceRequestBase19setHTTPHeaderFieldsENS_13HTTPHeaderMapE(readOnlyReq, readOnlyHeaders); }));
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore19ResourceRequestBase15httpHeaderFieldERKN3WTF6StringE(guardLegacy, &sampleText); }));
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore19ResourceRequestBase15httpHeaderFieldERKN3WTF6StringE(&legacy, badDataString); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore19ResourceRequestBase50setResponseContentDispositionEncodingFallbackArrayERKN3WTF6StringES4_S4_(&req, badImplString, &sampleText, &sampleText); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore19ResourceRequestBase5equalERKNS_15ResourceRequestES3_(&req, guardReq); }));
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore19ResourceRequestBase12isolatedCopyEv(guardReq); }));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore19ResourceRequestBase17setAsIsolatedCopyERKNS_15ResourceRequestE(&req, guardReq); }));
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore19ResourceRequestBase17redirectedRequestERKNS_16ResourceResponseEb(guardLegacy, guardResponse, false); }));
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore19ResourceRequestBase17redirectedRequestERKNS_16ResourceResponseEb(&legacy, guardResponse, false); }));
+
+    Require(ThrowsInvalidArgument([&] { _ZN7WebCore19ResourceRequestBase11setHTTPBodyEON3WTF6RefPtrINS_8FormDataENS1_13DumbPtrTraitsIS3_EEEE(readOnlyLegacy, nullptr); }));
+    Require(ThrowsInvalidArgument([&] { _ZN7WebCore19ResourceRequestBase19setHTTPHeaderFieldsENS_13HTTPHeaderMapE(readOnlyReq, nullptr); }));
+
+    URL readOnlyUrl{};
+    readOnlyUrl.impl = reinterpret_cast<StringImpl*>(pages.ReadOnly());
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore19ResourceRequestBase6setURLERKN3WTF3URLE(&req, &readOnlyUrl); }));
+
+    auto newBodyRef = _ZN7WebCore8FormData6createEPKvm("abc", 3);
+    FormData* incomingBody = std::exchange(newBodyRef.m_ptr, nullptr);
+    legacy.httpBody = pages.ReadOnly();
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore19ResourceRequestBase11setHTTPBodyEON3WTF6RefPtrINS_8FormDataENS1_13DumbPtrTraitsIS3_EEEE(&legacy, &incomingBody); }));
+    Require(incomingBody != nullptr);
+    Require(legacy.httpBody == pages.ReadOnly());
+    incomingBody->deref();
+    legacy.httpBody = nullptr;
+
+    FormData badElementsBody{};
+    badElementsBody.refCount = 1;
+    badElementsBody.elements.buffer = reinterpret_cast<FormDataElement*>(pages.Guard());
+    badElementsBody.elements.capacity = 1;
+    badElementsBody.elements.size = 1;
+    req.httpBody = &badElementsBody;
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore19ResourceRequestBase12isolatedCopyEv(&req); }));
+    req.httpBody = nullptr;
+
+    req.httpBody = reinterpret_cast<void*>(pages.Guard());
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore19ResourceRequestBase9hasUploadEv(&req); }));
+    req.httpBody = nullptr;
+    ReleaseRequest(req);
+    Clear(legacy);
+}
+
 int main() {
     void* api[10] = {reinterpret_cast<void*>(&Allocate_nid_no_patch), reinterpret_cast<void*>(&Free_nid_no_patch),
         reinterpret_cast<void*>(&Calloc_nid_no_patch), reinterpret_cast<void*>(&Reallocate_nid_no_patch),
@@ -1170,6 +1335,7 @@ int main() {
     TestSetExistingHTTPReferrer();
     TestIsolatedCopy();
     TestSetAsIsolatedCopy();
+    TestGuestPointers();
     Require(guestAllocations.empty());
     return 0;
 }
