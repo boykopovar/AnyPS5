@@ -7987,6 +7987,7 @@ void resourceTests() {
     expectSingleAccepted(changed([&](auto& binding) { binding.guestDescriptor = stridedBefore(8); binding.bufferWritten = {false}; }), "a read-only strided V# whose last record runs 8 bytes into the render target");
     expectSingleFailure(changed([&](auto& binding) { binding.guestDescriptor = stridedBefore(8); binding.bufferWritten = {true}; }), "aliases the render target");
     expectSingleFailure(changed([&](auto& binding) { binding.guestDescriptor = stridedBefore(60); }), "aliases the render target");
+    expectSingleFailure(changed([&](auto& binding) { binding.guestDescriptor = stridedBefore(60); binding.bufferWritten = {false}; binding.bufferReadBound = {64}; }), "aliases the render target");
     {
         mock = MockVulkan{};
         std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
@@ -8010,6 +8011,12 @@ void resourceTests() {
         Require(moved.has_value() && moved->size() == 1 && moved->front().address == state.color.address - 236u && moved->front().size == 236, "a strided buffer that moved to run 4 bytes into the render target was not listed at its size up to the target (" + listed(moved) + ")");
         moved = movedFor(60);
         Require(moved.has_value() && moved->size() == 1 && moved->front().address == state.color.address - 180u && moved->front().size == 240, "a strided buffer that moved to run a whole stride into the render target was cut (" + listed(moved) + ")");
+        auto bounded = vertex;
+        bounded.bindings[0].bufferReadBound = {236};
+        AgcDriver::Graphics::ShaderResources boundedResources(context, bounded, fragment, state.color, 0, 0);
+        const std::array<AgcDriver::Graphics::CompiledShader, 2> boundedStages{{{ShaderRecompiler::ShaderStage::Vertex, &bounded, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}}};
+        moved = boundedResources.MovedReadOnlyBuffers(boundedStages, recorder, &state.color);
+        Require(moved.has_value() && moved->empty(), "a cached build whose strided buffer is read 4 bytes into the render target took it as moved for the same words and target (" + listed(moved) + ")");
         recorder.Sync();
     }
     Require(mock.live == 0, "the strided buffer's moved check leaked Vulkan objects");
