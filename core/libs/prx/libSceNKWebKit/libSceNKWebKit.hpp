@@ -31,6 +31,7 @@
 #include "prx/libSceNKWebKit/include/IsoBoxExports.hpp"
 #include "prx/libSceNKWebKit/include/BlobDataItemExports.hpp"
 #include "prx/libSceNKWebKit/include/TrackPrivateBaseExports.hpp"
+#include "prx/libSceNKWebKit/include/ResourceLoadStatisticsExports.hpp"
 #include "prx/libSceNKWebKit/include/LegacyExports.hpp"
 #include "prx/libSceNKWebKit/include/LocalizedStringsExports.hpp"
 

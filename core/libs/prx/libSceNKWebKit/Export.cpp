@@ -17874,14 +17874,6 @@ int APS5_VABI _ZN7WebCore22MutableStylePropertiesD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore22ResourceLoadStatistics5mergeERKS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore22ResourceLoadStatistics6decodeERNS_12KeyedDecoderEj() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore22counterValueForElementEPNS_7ElementE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -25362,14 +25354,6 @@ int APS5_VABI _ZNK7WebCore22HTMLFormControlElement12autocompleteEv() {
 }
 
 int APS5_VABI _ZNK7WebCore22HTMLFormControlElement12autofillDataEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore22ResourceLoadStatistics6encodeERNS_12KeyedEncoderE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore22ResourceLoadStatistics8toStringEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
