@@ -88,11 +88,12 @@ public:
         if (!running) {
             if (!Due(now)) return false;
             running = true;
-            patternStart = now;
+            nextPulseAt = now;
             nextPulse = 0;
         }
         const IdentifyPulse& pulse = pattern.pulses[nextPulse];
-        if (now - patternStart < std::chrono::milliseconds(pulse.startMs)) return false;
+        if (now < nextPulseAt) return false;
+        nextPulseAt = now + std::chrono::milliseconds(kIdentifyPeriodMs);
         ++nextPulse;
         const bool sent = SendRumble(sink, pulse.strength, pulse.strength, percent, pulse.durationMs);
         if (nextPulse == pattern.count) {
@@ -117,7 +118,7 @@ private:
     bool finished = false;
     unsigned nextPulse = 0;
     TimePoint quietSince{};
-    TimePoint patternStart{};
+    TimePoint nextPulseAt{};
     TimePoint lastEnd{};
 };
 
