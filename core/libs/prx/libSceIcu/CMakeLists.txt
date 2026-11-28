@@ -844,6 +844,7 @@ set(ICU_RECOVERED_SOURCES
     NumberFormatter.cpp
     NumberingSystem.cpp
     PluralRules.cpp
+    PluralRulesBackend.cpp
     RelativeDateTimeFormatter.cpp
     ResourceBundle.cpp
     ResourceUtf8.cpp
