@@ -5,6 +5,7 @@
 #include "prx/libc/include/CodecvtUtf.hpp"
 #include "prx/libc/include/MallocManagedSize.hpp"
 #include "prx/libc/include/GuestTime.hpp"
+#include "prx/libc/include/GuestUuid.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
 #include "prx/libc/include/GuestDirectory.hpp"
 #include "prx/libc/include/GuestErrno.hpp"
@@ -589,14 +590,6 @@ char* APS5_VABI getwd_nid_postfix(char* buffer);
 void APS5_VABI sceLibcInternalBacktraceForGame_nid_postfix(const char* heapName);
 void APS5_VABI sceLibcInternalHeapErrorReportForGame_nid_postfix(void* heap, void* block, std::uint32_t error);
 int APS5_VABI gethostname_nid_postfix(char* name, std::size_t length);
-struct GuestUuid {
-    std::uint32_t time_low;
-    std::uint16_t time_mid;
-    std::uint16_t time_hi_and_version;
-    std::uint8_t clock_seq_hi_and_reserved;
-    std::uint8_t clock_seq_low;
-    std::uint8_t node[6];
-};
 std::int32_t APS5_VABI uuid_compare_nid_postfix(const GuestUuid* a, const GuestUuid* b, std::uint32_t* status);
 void APS5_VABI uuid_create_nid_postfix(GuestUuid* uuid, std::uint32_t* status);
 void APS5_VABI uuid_create_nil_nid_postfix(GuestUuid* uuid, std::uint32_t* status);

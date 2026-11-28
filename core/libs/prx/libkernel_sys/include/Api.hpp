@@ -1,6 +1,7 @@
 #pragma once
 
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/GuestUuid.hpp"
 #include "SceTypes.hpp"
 
 struct GuestAiocb {
@@ -39,15 +40,6 @@ struct KernelAuthInfo {
     std::uint64_t credentials[8];
 };
 static_assert(sizeof(KernelAuthInfo) == 0x88);
-
-struct GuestUuid {
-    std::uint32_t timeLow;
-    std::uint16_t timeMid;
-    std::uint16_t timeHiAndVersion;
-    std::uint8_t clockSeqHiAndReserved;
-    std::uint8_t clockSeqLow;
-    std::uint8_t node[6];
-};
 
 extern "C" {
 

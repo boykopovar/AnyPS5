@@ -123,11 +123,13 @@ extern "C" void APS5_VABI uuid_from_string_nid_postfix(const char* text, GuestUu
     SetStatus(status, UuidStatusInvalidString);
     if (std::strlen(text) != 36) return;
     if (text[8] != '-') return;
+    GuestUuid parsed{};
     const int converted = std::sscanf(text, "%8x-%4hx-%4hx-%2hhx%2hhx-%2hhx%2hhx%2hhx%2hhx%2hhx%2hhx",
-        &uuid->time_low, &uuid->time_mid, &uuid->time_hi_and_version,
-        &uuid->clock_seq_hi_and_reserved, &uuid->clock_seq_low, &uuid->node[0],
-        &uuid->node[1], &uuid->node[2], &uuid->node[3], &uuid->node[4], &uuid->node[5]);
+        &parsed.time_low, &parsed.time_mid, &parsed.time_hi_and_version,
+        &parsed.clock_seq_hi_and_reserved, &parsed.clock_seq_low, &parsed.node[0],
+        &parsed.node[1], &parsed.node[2], &parsed.node[3], &parsed.node[4], &parsed.node[5]);
     if (converted != 11) return;
+    *uuid = parsed;
     const unsigned int variant = uuid->clock_seq_hi_and_reserved;
     if ((variant & 0x80) != 0x00 && (variant & 0xc0) != 0x80 && (variant & 0xe0) != 0xc0) {
         SetStatus(status, UuidStatusBadVersion);
