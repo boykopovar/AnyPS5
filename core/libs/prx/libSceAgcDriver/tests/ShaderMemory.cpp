@@ -12461,17 +12461,80 @@ void verifyQuadMaskNeighbourReads() {
         require(!outputStoresNested(compile(livePermute, masked, true)), "a color export of a pixel program that reads neighbour lanes is stored inside an EXEC branch, which lets drivers move those reads out of uniform control flow");
         require(outputStoresKeepInactiveColor(compile(livePermute, masked, true)), "a color export of a pixel program that reads neighbour lanes does not keep an inactive lane's previous color, so a later valid-mask export would show a color written under EXEC clear");
     }
-    for (const auto code : {std::span<const std::uint32_t>(explicitExec), std::span<const std::uint32_t>(constantWqm), std::span<const std::uint32_t>(permute)}) {
+    const std::array<std::pair<std::span<const std::uint32_t>, spv::Op>, 3> neighbourReads{{
+        {std::span<const std::uint32_t>(explicitExec), spv::OpGroupNonUniformIAdd},
+        {std::span<const std::uint32_t>(constantWqm), spv::OpGroupNonUniformIAdd},
+        {std::span<const std::uint32_t>(permute), spv::OpGroupNonUniformShuffle},
+    }};
+    for (const auto& [code, crossLane] : neighbourReads) {
         const auto unmasked = compile(code, false, false);
-        require(declares(unmasked, spv::OpGroupNonUniformShuffle), "the neighbour-read test did not retain its cross-lane shuffle");
+        require(declares(unmasked, crossLane), "the neighbour-read test did not retain its cross-lane read");
         expectFailure([&] { static_cast<void>(compile(code, true, false)); }, "shaderDemoteToHelperInvocation", "a quad mask killed helper lanes before a cross-lane read with EXEC enabled for those lanes");
         const auto masked = compile(code, true, true);
-        require(declares(masked, spv::OpDemoteToHelperInvocation) && declares(masked, spv::OpGroupNonUniformShuffle), "a quad mask with demote did not preserve its cross-lane shuffle path");
+        require(declares(masked, spv::OpDemoteToHelperInvocation) && declares(masked, crossLane), "a quad mask with demote did not preserve its cross-lane read path");
     }
     require(declares(compile(comparisonBallot, false, false), spv::OpGroupNonUniformBallot), "the comparison test did not retain its subgroup ballot");
     expectFailure([&] { static_cast<void>(compile(comparisonBallot, true, false)); }, "shaderDemoteToHelperInvocation", "a quad mask killed helper lanes before a ballot with EXEC enabled for those lanes");
     const auto maskedBallot = compile(comparisonBallot, true, true);
     require(declares(maskedBallot, spv::OpDemoteToHelperInvocation) && declares(maskedBallot, spv::OpGroupNonUniformBallot), "a quad mask with demote did not preserve its ballot path");
+}
+
+void verifyReadFirstLaneWaveSum() {
+    using namespace ShaderRecompiler;
+    constexpr std::array<std::uint32_t, 6> explicitExec{0xbefe04c1u, 0x7e000500u, 0x7e020200u, 0xf800180fu, 0x01010101u, 0xbf810000u};
+    constexpr std::array<std::uint32_t, 5> shuffleOnly{spv::CapabilityShader, spv::CapabilityInt64, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle};
+    constexpr std::array<std::uint32_t, 6> arithmetic{spv::CapabilityShader, spv::CapabilityInt64, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle, spv::CapabilityGroupNonUniformArithmetic};
+    constexpr std::array<std::uint32_t, 7> clustered{spv::CapabilityShader, spv::CapabilityInt64, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle, spv::CapabilityGroupNonUniformArithmetic, spv::CapabilityGroupNonUniformClustered};
+    const auto compile = [&](std::uint32_t waveSize, std::uint32_t subgroupSize, std::span<const std::uint32_t> supported) {
+        RecompileRequest request{};
+        request.shader = {ShaderStage::Fragment, 0x59000u, explicitExec, 0, {}};
+        request.context.waveSize = waveSize;
+        request.context.pixel = ShaderPixelStageInfo{};
+        request.context.pixel->inputAddr = PixelInputBit(PixelInput::PositionX);
+        request.context.pixel->posX = true;
+        request.context.pixel->quadPixelMask = 0xfu;
+        request.context.pixel->targetOutputMode[0] = 9u;
+        request.context.pixel->targetExportMapping.fill(0xe4u);
+        request.target.vulkanVersion = 0x00401000u;
+        request.target.spirvVersion = 0x00010300u;
+        request.target.subgroupSize = subgroupSize;
+        request.target.supportedCapabilities = supported;
+        request.layout.pushConstantSizeBytes = 128u;
+        request.useCache = false;
+        return Recompile(request);
+    };
+    struct CrossLane {
+        bool shuffle = false;
+        std::vector<std::pair<std::uint32_t, std::uint32_t>> sums;
+    };
+    const auto crossLane = [](const RecompileResult& result) {
+        const auto& words = result.spirv.Words();
+        std::map<std::uint32_t, std::uint32_t> constants;
+        CrossLane found;
+        for (std::size_t cursor = 5; cursor < words.size();) {
+            const auto count = words[cursor] >> 16u;
+            require(count != 0 && count <= words.size() - cursor, "readfirstlane wave sum: truncated SPIR-V instruction");
+            const auto opcode = static_cast<spv::Op>(words[cursor] & 0xffffu);
+            if (opcode == spv::OpConstant && count == 4u) constants[words[cursor + 2]] = words[cursor + 3];
+            if (opcode == spv::OpGroupNonUniformShuffle) found.shuffle = true;
+            if (opcode == spv::OpGroupNonUniformIAdd) {
+                const auto cluster = count == 7u ? constants.at(words[cursor + 6]) : 0u;
+                found.sums.emplace_back(words[cursor + 4], cluster);
+            }
+            cursor += count;
+        }
+        return found;
+    };
+    const auto whole = crossLane(compile(32u, 32u, arithmetic));
+    require(!whole.shuffle && whole.sums.size() == 1u && whole.sums.front() == std::pair{static_cast<std::uint32_t>(spv::GroupOperationReduce), 0u}, "v_readfirstlane of a wave32 program on a 32-lane subgroup is not one Reduce over the subgroup");
+    const auto split = crossLane(compile(32u, 64u, clustered));
+    require(!split.shuffle && split.sums.size() == 1u && split.sums.front() == std::pair{static_cast<std::uint32_t>(spv::GroupOperationClusteredReduce), 32u}, "v_readfirstlane of a wave32 program on a 64-lane subgroup is not one ClusteredReduce over 32 lanes");
+    const auto splitWithoutClusters = crossLane(compile(32u, 64u, arithmetic));
+    require(splitWithoutClusters.shuffle && splitWithoutClusters.sums.empty(), "v_readfirstlane of a wave32 program on a 64-lane subgroup without clustered operations does not keep the shuffle");
+    const auto wide = crossLane(compile(64u, 32u, clustered));
+    require(wide.shuffle && wide.sums.empty(), "v_readfirstlane of a wave64 program on a 32-lane subgroup does not keep the shuffle");
+    const auto withoutArithmetic = crossLane(compile(32u, 32u, shuffleOnly));
+    require(withoutArithmetic.shuffle && withoutArithmetic.sums.empty(), "v_readfirstlane without subgroup arithmetic does not keep the shuffle");
 }
 
 void verifyFmaskImageMode() {
@@ -13794,6 +13857,11 @@ int main(int argc, char** argv) {
             std::cout << "Quad masks preserve neighbour-lane helpers or refuse without demote\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--readfirstlane-wave-sum") {
+            verifyReadFirstLaneWaveSum();
+            std::cout << "v_readfirstlane sums over the guest wave where the device can and keeps the shuffle elsewhere\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--spanned-shuffle-memory") {
             verifySpannedShuffleThroughMemory();
             std::cout << "Spanned wave64 shuffles go through workgroup memory only when the target asks for it\n";
@@ -14059,6 +14127,7 @@ int main(int argc, char** argv) {
         verifySrgbDepthCompareModes();
         verifyRuntimeImageSwitchDeduplication();
         verifyQuadMaskNeighbourReads();
+        verifyReadFirstLaneWaveSum();
         verifySpannedShuffleThroughMemory();
         verifyPixelQuadPermReads();
         verifyCoherentGds();

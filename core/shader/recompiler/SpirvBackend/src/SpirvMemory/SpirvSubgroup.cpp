@@ -179,14 +179,19 @@ namespace ShaderRecompiler
         state.module.AddFunction(spv::OpGroupNonUniformShuffle, type, result, ConstantU32(state, spv::ScopeSubgroup), value, lane);
     }
 
-    bool EmitWaveSum(SpirvEmitterState& state, std::uint32_t result, std::uint32_t value) {
-        if (state.spannedWave || HostSubgroupSingleLane(state)) return false;
+    bool WaveSumUsable(const SpirvEmitterState& state) {
+        if (state.spannedWave || HostSubgroupSingleLane(state) || state.program.WaveSize() / state.laneCount > state.hostSubgroupSize) return false;
         const auto supports = [&](spv::Capability capability) {
             return std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(capability)) != state.supportedCapabilities.end();
         };
+        const bool clustered = std::min(state.hostSubgroupSize, state.program.WaveSize() / state.laneCount) < state.hostSubgroupSize;
+        return supports(spv::CapabilityGroupNonUniformArithmetic) && (!clustered || supports(spv::CapabilityGroupNonUniformClustered));
+    }
+
+    bool EmitWaveSum(SpirvEmitterState& state, std::uint32_t result, std::uint32_t value) {
+        if (!WaveSumUsable(state)) return false;
         const auto cluster = std::min(state.hostSubgroupSize, state.program.WaveSize() / state.laneCount);
         const bool clustered = cluster < state.hostSubgroupSize;
-        if (!supports(spv::CapabilityGroupNonUniformArithmetic) || (clustered && !supports(spv::CapabilityGroupNonUniformClustered))) return false;
         state.module.EmitCapability(spv::CapabilityGroupNonUniformArithmetic);
         if (!clustered) {
             state.module.AddFunction(spv::OpGroupNonUniformIAdd, TypeU32(state), result, ConstantU32(state, spv::ScopeSubgroup), static_cast<std::uint32_t>(spv::GroupOperationReduce), value);
