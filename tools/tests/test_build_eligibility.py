@@ -270,7 +270,7 @@ class TestGraphCacheTests(unittest.TestCase):
             select = following.split("\n      - ", 1)[0]
             self.assertIn("id: test-graph-cache", restore)
             self.assertIn("GRAPH_KEY: ${{ steps.test-graph-cache.outputs.cache-matched-key }}", select)
-            self.assertIn('git diff --name-only -z "$graph_base" HEAD', select)
+            self.assertIn('git diff --name-only --no-renames -z "$graph_base" HEAD', select)
 
 
 if __name__ == "__main__":
