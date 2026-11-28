@@ -6,6 +6,7 @@
 #include <initializer_list>
 #include <new>
 #include <stdexcept>
+#include <string>
 
 namespace {
 
@@ -29,7 +30,7 @@ enum class Role { Client, Server };
 struct ContextStorage {
     ConfigStorage* config;
     Role role;
-    const char* error;
+    std::string error;
 };
 
 ConfigStorage* Storage(TlsConfig* config) {
@@ -127,7 +128,7 @@ void Release(ConfigStorage* config) {
 }
 
 TlsContext* NewContext(Role role) {
-    auto* context = new (std::nothrow) ContextStorage{&DefaultConfig(), role, nullptr};
+    auto* context = new (std::nothrow) ContextStorage{&DefaultConfig(), role, {}};
     if (!context) return nullptr;
     Retain(context->config);
     return Public(context);
@@ -181,12 +182,15 @@ TlsContext* APS5_VABI tls_server_nid_postfix() {
 void APS5_VABI tls_free_nid_postfix(TlsContext* context) {
     if (!context) return;
     auto* state = Storage(context);
+    TlsTransportFree_nid_no_patch(context);
     Release(state->config);
     delete state;
 }
 
 const char* APS5_VABI tls_error_nid_postfix(TlsContext* context) {
-    return context ? Storage(context)->error : nullptr;
+    if (!context) return nullptr;
+    const auto& error = Storage(context)->error;
+    return error.empty() ? nullptr : error.c_str();
 }
 
 int APS5_VABI tls_configure_nid_postfix(TlsContext* context, TlsConfig* config) {
@@ -206,12 +210,12 @@ int APS5_VABI tls_configure_nid_postfix(TlsContext* context, TlsConfig* config) 
 int APS5_VABI tls_close_nid_postfix(TlsContext* context) {
     if (!context) return -1;
     auto* state = Storage(context);
-    state->error = nullptr;
+    state->error.clear();
     if (state->role == Role::Server) {
         state->error = "invalid operation for context";
         return -1;
     }
-    return 0;
+    return TlsTransportClose_nid_no_patch(context);
 }
 
 int APS5_VABI tls_config_set_ca_mem_nid_postfix(TlsConfig* config, const std::uint8_t* ca, std::size_t length) {
@@ -254,6 +258,30 @@ void APS5_VABI tls_config_verify_client_nid_postfix(TlsConfig* config) {
 
 void APS5_VABI tls_config_insecure_noverifyname_nid_postfix(TlsConfig* config) {
     if (config) Storage(config)->verifyName = 0;
+}
+
+bool TlsTransportGetConfig_nid_no_patch(TlsContext* context, TlsTransportConfig* config) {
+    if (!context || !config) return false;
+    const auto* state = Storage(context);
+    config->ca = state->config->ca;
+    config->caLength = state->config->caLength;
+    config->cert = state->config->cert;
+    config->certLength = state->config->certLength;
+    config->key = state->config->key;
+    config->keyLength = state->config->keyLength;
+    config->ciphers = state->config->ciphers;
+    config->protocols = state->config->protocols;
+    config->client = state->role == Role::Client;
+    config->verifyName = state->config->verifyName != 0;
+    return true;
+}
+
+void TlsTransportSetError_nid_no_patch(TlsContext* context, const char* error) {
+    if (context) Storage(context)->error = error ? error : "TLS transport failed";
+}
+
+void TlsTransportClearError_nid_no_patch(TlsContext* context) {
+    if (context) Storage(context)->error.clear();
 }
 
 }
