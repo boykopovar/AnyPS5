@@ -8,6 +8,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libSceUserService/UserService.hpp"
 
 namespace {
@@ -42,6 +43,16 @@ int checkHandle(int32_t handle, bool validArguments = true) {
     if (!validArguments) return MOVE_ERROR_INVALID_ARG;
     if (!openHandles.contains(handle)) return MOVE_ERROR_INVALID_HANDLE;
     return MOVE_OK;
+}
+
+bool IsValidGuestWrite(void* pointer, std::size_t size) {
+    if (pointer == nullptr) return false;
+    const std::size_t checkedSize = size != 0 ? size : 1;
+    const int savedErrno = errno;
+    const GuestArena::HostWrite guard(pointer, checkedSize);
+    const bool writable = guard.Open() && GuestWritable_nid_no_patch(pointer, checkedSize);
+    errno = savedErrno;
+    return writable;
 }
 
 }
@@ -102,7 +113,7 @@ int APS5_VABI sceMoveReadStateLatest(int32_t handle, void* data) {
 
 int APS5_VABI sceMoveReadStateRecent(int32_t handle, int64_t timestamp, void* data, int32_t* outCount) {
     const bool dataAccepted = data != nullptr || ApplicationCompiledSdkVersion() <= MOVE_LAST_SDK_ALLOWING_NULL_DATA;
-    const bool countValid = outCount != nullptr && GuestWritable_nid_no_patch(outCount, sizeof(*outCount));
+    const bool countValid = IsValidGuestWrite(outCount, sizeof(*outCount));
     const int result = checkHandle(handle, timestamp >= 0 && dataAccepted && countValid);
     if (result == MOVE_ERROR_INVALID_HANDLE) {
         const int32_t none = 0;
@@ -132,7 +143,7 @@ int APS5_VABI sceMoveResetLightSphere(int32_t handle) {
     return checkHandle(handle);
 }
 int APS5_VABI sceMoveGetBluetoothAddress(int32_t handle, uint64_t* address) {
-    const bool valid = address != nullptr && GuestWritable_nid_no_patch(address, sizeof(*address));
+    const bool valid = IsValidGuestWrite(address, sizeof(*address));
     if (const int result = checkHandle(handle, valid); result != MOVE_OK) return result;
     return MOVE_NO_CONTROLLER_CONNECTED;
 }
@@ -143,7 +154,7 @@ int APS5_VABI sceMoveGetCalibrationInfo(int32_t handle, void* info) {
 }
 
 int APS5_VABI sceMoveGetDeviceId(int32_t handle, uint32_t* deviceId) {
-    const bool valid = deviceId != nullptr && GuestWritable_nid_no_patch(deviceId, sizeof(*deviceId));
+    const bool valid = IsValidGuestWrite(deviceId, sizeof(*deviceId));
     if (const int result = checkHandle(handle, valid); result != MOVE_OK) return result;
     return MOVE_NO_CONTROLLER_CONNECTED;
 }
