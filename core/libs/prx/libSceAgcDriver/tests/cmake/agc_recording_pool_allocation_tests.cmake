@@ -7,7 +7,7 @@ configure_windows_unwind(agc_recording_pool_allocation_tests)
 
 if(BUILD_TESTING)
     set_target_properties(agc_recording_pool_allocation_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
-    foreach(mode publish release failed-record)
+    foreach(mode publish release failed-record injected-failures)
         add_test(NAME agc_recording_pool_allocation_${mode} COMMAND agc_recording_pool_allocation_tests --${mode})
         set_tests_properties(agc_recording_pool_allocation_${mode} PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL:" TIMEOUT 30)
         if(WIN32)

@@ -1,11 +1,13 @@
 #include "prx/libSceAgcDriver/Graphics/include/OrderedAssembly.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/RecordingPool.hpp"
 #include "AllocationFailure.hpp"
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <string_view>
+#include <thread>
 
 using namespace AgcDriver::Graphics;
 using AgcDriver::Tests::SetAllocationFailureCountdown;
@@ -14,6 +16,8 @@ namespace {
 
 std::atomic<std::uintptr_t> nextHandle{0x1000};
 std::atomic<bool> failAfterReset{false};
+std::atomic<unsigned> gatedBegins{0};
+std::atomic<unsigned> arrivedBegins{0};
 
 VKAPI_ATTR VkResult VKAPI_CALL createPool(VkDevice, const VkCommandPoolCreateInfo*, const VkAllocationCallbacks*, VkCommandPool* pool) {
     *pool = reinterpret_cast<VkCommandPool>(nextHandle.fetch_add(16));
@@ -31,7 +35,13 @@ VKAPI_ATTR VkResult VKAPI_CALL resetBuffer(VkCommandBuffer, VkCommandBufferReset
     if (failAfterReset.exchange(false)) SetAllocationFailureCountdown(0);
     return VK_SUCCESS;
 }
-VKAPI_ATTR VkResult VKAPI_CALL beginBuffer(VkCommandBuffer, const VkCommandBufferBeginInfo*) { return VK_SUCCESS; }
+VKAPI_ATTR VkResult VKAPI_CALL beginBuffer(VkCommandBuffer, const VkCommandBufferBeginInfo*) {
+    const auto gate = gatedBegins.load();
+    if (gate == 0) return VK_SUCCESS;
+    arrivedBegins.fetch_add(1);
+    while (arrivedBegins.load() < gate) std::this_thread::yield();
+    return VK_SUCCESS;
+}
 VKAPI_ATTR VkResult VKAPI_CALL endBuffer(VkCommandBuffer) { return VK_SUCCESS; }
 
 VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL deviceProc(VkDevice, const char* name) {
@@ -97,6 +107,31 @@ int main(int argc, char** argv) {
         Expect(result.error != nullptr && result.commands == VK_NULL_HANDLE, "a failed recording was not reported");
         Expect(!failAfterReset, "a failed recording did not reset its buffer");
         ClearWorkerCountdown(pool);
+    } else if (mode == "--injected-failures") {
+        constexpr unsigned Workers = 4;
+        RecordingPool racing(context);
+        racing.Start(Workers);
+        bool exact = true;
+        for (unsigned round = 0; round < 2000 && exact; ++round) {
+            arrivedBegins = 0;
+            gatedBegins = Workers;
+            racing.FailNextRecordingsForTest(1);
+            OrderedAssembly<RecordingPool::Result> assembly;
+            std::array<std::uint64_t, Workers> sequences{};
+            for (auto& sequence : sequences) {
+                sequence = assembly.Reserve();
+                racing.Record(assembly, sequence, {}, [](VkCommandBuffer) {});
+            }
+            unsigned failed = 0;
+            for (const auto sequence : sequences) failed += assembly.Take(sequence).error != nullptr ? 1u : 0u;
+            gatedBegins = 0;
+            exact = failed == 1 && Run(racing, [](VkCommandBuffer) {}).error == nullptr;
+        }
+        Expect(exact, "one injected recording failure did not fail exactly one recording");
+        racing.FailNextRecordingsForTest(1);
+        Expect(Run(pool, [](VkCommandBuffer) {}).error == nullptr, "an injected recording failure reached another pool");
+        Expect(Run(racing, [](VkCommandBuffer) {}).error != nullptr, "an injected recording failure was lost");
+        racing.Stop();
     } else {
         std::fprintf(stderr, "FAIL: unknown mode\n");
         return 2;

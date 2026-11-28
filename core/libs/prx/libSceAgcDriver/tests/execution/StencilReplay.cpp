@@ -303,7 +303,8 @@ int main(int argc, char** argv) {
                     device->WaitIdle();
                 };
                 auto begun = RenderingsBegun.load();
-                AgcDriver::Graphics::RecordingPool::FailNextRecordingsForTest(1);
+                auto& recordingPool = AgcDriver::Graphics::DeviceRecordingPool(AgcDriver::VulkanDeviceTestAccess::ContextOf(*device));
+                recordingPool.FailNextRecordingsForTest(1);
                 bool workerFailed = false;
                 try {
                     Draw(*device, alternating, exported, replace(), 3u, 1u, false, depthOnlyState);
@@ -311,7 +312,7 @@ int main(int argc, char** argv) {
                     workerFailed = std::string_view(error.what()) == "AGC graphics: injected recording failure";
                     if (!workerFailed) throw;
                 }
-                AgcDriver::Graphics::RecordingPool::FailNextRecordingsForTest(0);
+                recordingPool.FailNextRecordingsForTest(0);
                 Require(workerFailed, "the injected recording failure of a pooled draw did not surface");
                 idle();
                 Require(RenderingsBegun.load() == begun, "a pooled draw whose recording failed began rendering");

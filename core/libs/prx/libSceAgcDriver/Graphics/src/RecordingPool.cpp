@@ -11,7 +11,6 @@ namespace {
 constexpr std::uint32_t RecordingThreads = 4;
 
 std::atomic<std::uint64_t> recordedBuffers{0};
-std::atomic<unsigned> injectedRecordingFailures{0};
 
 std::mutex& DevicePoolsMutex() {
     static std::mutex poolsMutex;
@@ -30,7 +29,13 @@ std::uint64_t RecordingPool::RecordedBuffers() {
 }
 
 void RecordingPool::FailNextRecordingsForTest(unsigned count) {
-    injectedRecordingFailures.store(count, std::memory_order_relaxed);
+    injectedFailures.store(count, std::memory_order_relaxed);
+}
+
+bool RecordingPool::takeInjectedFailure() {
+    auto remaining = injectedFailures.load(std::memory_order_relaxed);
+    while (remaining != 0 && !injectedFailures.compare_exchange_weak(remaining, remaining - 1, std::memory_order_relaxed)) {}
+    return remaining != 0;
 }
 
 struct RecordingPool::Returned {
@@ -147,7 +152,7 @@ void RecordingPool::run(VkCommandPool pool, const std::shared_ptr<Returned>& ret
             begin.pInheritanceInfo = &inheritance;
             Check(beginBuffer(result.commands, &begin), "vkBeginCommandBuffer recording worker");
             recording = true;
-            if (injectedRecordingFailures.load(std::memory_order_relaxed) != 0 && injectedRecordingFailures.fetch_sub(1, std::memory_order_relaxed) != 0) throw std::runtime_error("AGC graphics: injected recording failure");
+            if (takeInjectedFailure()) throw std::runtime_error("AGC graphics: injected recording failure");
             task.record(result.commands);
             recording = false;
             Check(endBuffer(result.commands), "vkEndCommandBuffer recording worker");

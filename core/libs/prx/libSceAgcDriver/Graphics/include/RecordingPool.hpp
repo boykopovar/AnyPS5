@@ -3,6 +3,7 @@
 
 #include "prx/libSceAgcDriver/Graphics/include/OrderedAssembly.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
+#include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -39,7 +40,7 @@ public:
 
     void Record(OrderedAssembly<Result>& assembly, std::uint64_t sequence, const Inheritance& inheritance, std::function<void(VkCommandBuffer)> record);
     static std::uint64_t RecordedBuffers();
-    static void FailNextRecordingsForTest(unsigned count);
+    void FailNextRecordingsForTest(unsigned count);
 
 private:
     struct Task {
@@ -52,6 +53,7 @@ private:
     struct Release;
     void run(VkCommandPool pool, const std::shared_ptr<Returned>& returned);
     VkCommandBuffer acquire(VkCommandPool pool, Returned& returned) const;
+    bool takeInjectedFailure();
 
     VkDevice device = VK_NULL_HANDLE;
     std::uint32_t queueFamily = 0;
@@ -67,6 +69,7 @@ private:
     std::vector<std::thread> workers;
     std::vector<VkCommandPool> pools;
     bool closing = false;
+    std::atomic<unsigned> injectedFailures{0};
 };
 
 RecordingPool& DeviceRecordingPool(const Context& context);
