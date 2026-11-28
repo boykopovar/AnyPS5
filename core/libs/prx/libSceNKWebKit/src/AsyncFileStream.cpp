@@ -116,6 +116,8 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
  */
 
+#include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/GuestErrno.hpp"
 #include "prx/libkernel/include/Api.hpp"
@@ -139,6 +141,7 @@
 #include <string>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -146,14 +149,89 @@ using NKWebKit::WebCoreAbi::AsyncFileStream;
 using NKWebKit::WebCoreAbi::FileStream;
 using NKWebKit::WebCoreAbi::FileStreamClient;
 using NKWebKit::WebCoreAbi::FileStreamClientFunction;
+using NKWebKit::WebCoreAbi::FileStreamClientVtable;
 using NKWebKit::WebCoreAbi::FileStreamOperationCallable;
+using NKWebKit::WebCoreAbi::FileStreamOperationCallableVtable;
 using NKWebKit::WebCoreAbi::FileStreamOperationFunction;
 using NKWebKit::WebCoreAbi::OptionalWallTime;
 using NKWebKit::WtfAbi::CString;
 using NKWebKit::WtfAbi::String;
+using NKWebKit::WtfAbi::StringImpl;
 using NKWebKit::WtfAbi::VoidCallableWrapper;
 using NKWebKit::WtfAbi::VoidCallableWrapperVtable;
 using NKWebKit::WtfAbi::VoidFunction;
+
+struct RawOptionalWallTime {
+    bool hasValue;
+    double value;
+};
+
+static_assert(std::is_trivially_copyable_v<AsyncFileStream>);
+static_assert(std::is_trivially_copyable_v<FileStreamClient>);
+static_assert(std::is_trivially_copyable_v<FileStreamClientVtable>);
+static_assert(std::is_trivially_copyable_v<FileStreamOperationFunction>);
+static_assert(std::is_trivially_copyable_v<FileStreamOperationCallable>);
+static_assert(std::is_trivially_copyable_v<FileStreamOperationCallableVtable>);
+static_assert(std::is_trivially_copyable_v<StringImpl>);
+static_assert(std::is_trivially_copyable_v<RawOptionalWallTime>);
+static_assert(sizeof(RawOptionalWallTime) == sizeof(OptionalWallTime));
+static_assert(offsetof(RawOptionalWallTime, hasValue) == offsetof(OptionalWallTime, hasValue));
+static_assert(offsetof(RawOptionalWallTime, value) == offsetof(OptionalWallTime, value));
+
+template<typename T>
+T ReadGuestValue(const T* pointer, const char* function) {
+    T value{};
+    if (!GuestCopyIn_nid_no_patch(&value, pointer, sizeof(T)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return value;
+}
+
+void RequireReadableGuestBytes(const void* pointer, std::size_t size, const char* function) {
+    if (!size) return;
+    if (!pointer) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(pointer, size);
+    if (!GuestReadable_nid_no_patch(pointer, size))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+void RequireWritableGuestBytes(void* pointer, std::size_t size, const char* function) {
+    if (!size) return;
+    if (!pointer) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    bool ok = false;
+    {
+        const GuestArena::HostWrite guard(pointer, size);
+        ok = guard.Open() && GuestWritable_nid_no_patch(pointer, size);
+    }
+    if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+template<typename T>
+bool TryPublishGuestValue(T* pointer, const T& value, const T& previous) {
+    if (GuestCopyOut_nid_no_patch(pointer, &value, sizeof(T))) return true;
+    static_cast<void>(GuestCopyOut_nid_no_patch(pointer, &previous, sizeof(T)));
+    return false;
+}
+
+String CopyGuestStringToHost(const String* source, const char* function) {
+    StringImpl* const impl = ReadGuestValue(reinterpret_cast<StringImpl* const*>(source), function);
+    if (!impl) return String{};
+    const StringImpl header = ReadGuestValue(impl, function);
+    if (!header.length) return String(NKWebKit::WtfAbi::EmptyStringImpl());
+    if (!header.data) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    const bool is8Bit = (header.hashAndFlags & 4u) != 0;
+    const std::size_t byteLength = static_cast<std::size_t>(header.length) * (is8Bit ? 1u : sizeof(char16_t));
+    RequireReadableGuestBytes(header.data, byteLength, function);
+    if (is8Bit) {
+        std::vector<unsigned char> narrow(header.length);
+        if (!GuestCopyIn_nid_no_patch(narrow.data(), header.data, byteLength))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        return _ZN3WTF10StringImpl6createEPKhj(narrow.data(), header.length);
+    }
+    std::vector<char16_t> wide(header.length);
+    if (!GuestCopyIn_nid_no_patch(wide.data(), header.data, byteLength))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return _ZN3WTF10StringImpl6createEPKDsj(wide.data(), header.length);
+}
 
 constexpr int kInvalidHandle = -1;
 constexpr int kGuestEintr = 4;
@@ -282,8 +360,11 @@ int Read(FileStream& stream, char* buffer, int bufferSize) {
     const long long remaining = stream.totalBytesToRead - stream.bytesProcessed;
     const int bytesToRead = remaining < bufferSize ? static_cast<int>(remaining) : bufferSize;
     if (bytesToRead <= 0) return 0;
-    const int bytesRead = ReadFromFile(stream.handle, buffer, bytesToRead);
+    std::vector<char> temp(static_cast<std::size_t>(bytesToRead));
+    const int bytesRead = ReadFromFile(stream.handle, temp.data(), bytesToRead);
     if (bytesRead < 0) return -1;
+    if (bytesRead > 0 && !GuestCopyOut_nid_no_patch(buffer, temp.data(), static_cast<std::size_t>(bytesRead)))
+        return -1;
     stream.bytesProcessed += bytesRead;
     return bytesRead;
 }
@@ -374,10 +455,11 @@ struct GuestOperation {
     }
 };
 
-AsyncFileStreamInternals& InternalsOf(AsyncFileStream* self) {
+AsyncFileStreamInternals& InternalsOf(AsyncFileStream* self, const char* function) {
     if (!self) throw std::invalid_argument("null WebCore::AsyncFileStream");
-    if (!self->internals) throw std::invalid_argument("destroyed WebCore::AsyncFileStream");
-    return *self->internals;
+    const AsyncFileStream snapshot = ReadGuestValue(self, function);
+    if (!snapshot.internals) throw std::invalid_argument("destroyed WebCore::AsyncFileStream");
+    return *snapshot.internals;
 }
 
 template<typename TOperation>
@@ -391,15 +473,32 @@ void Perform(AsyncFileStreamInternals& internals, TOperation&& operation) {
     });
 }
 
-void Construct(AsyncFileStream* self, FileStreamClient* client) {
+void Construct(AsyncFileStream* self, FileStreamClient* client, const char* function) {
     if (!self) throw std::invalid_argument("null WebCore::AsyncFileStream");
     if (!client) throw std::invalid_argument("null WebCore::FileStreamClient");
-    self->internals = new (_ZN3WTF10fastMallocEm(sizeof(AsyncFileStreamInternals))) AsyncFileStreamInternals(client);
+    RequireReadableGuestBytes(self, sizeof(AsyncFileStream), function);
+    RequireWritableGuestBytes(self, sizeof(AsyncFileStream), function);
+    const AsyncFileStream previous = ReadGuestValue(self, function);
+    const FileStreamClient clientHeader = ReadGuestValue(client, function);
+    if (!clientHeader.vtable) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    static_cast<void>(ReadGuestValue(clientHeader.vtable, function));
+    InternalsPtr internals(new (_ZN3WTF10fastMallocEm(sizeof(AsyncFileStreamInternals))) AsyncFileStreamInternals(client));
+    const AsyncFileStream constructed{internals.get()};
+    if (!TryPublishGuestValue(self, constructed, previous))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    internals.release();
 }
 
-void Destroy(AsyncFileStream* self) {
-    InternalsPtr internals(&InternalsOf(self));
-    self->internals = nullptr;
+void Destroy(AsyncFileStream* self, const char* function) {
+    if (!self) throw std::invalid_argument("null WebCore::AsyncFileStream");
+    RequireReadableGuestBytes(self, sizeof(AsyncFileStream), function);
+    RequireWritableGuestBytes(self, sizeof(AsyncFileStream), function);
+    const AsyncFileStream snapshot = ReadGuestValue(self, function);
+    if (!snapshot.internals) throw std::invalid_argument("destroyed WebCore::AsyncFileStream");
+    const AsyncFileStream cleared{nullptr};
+    if (!TryPublishGuestValue(self, cleared, snapshot))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    InternalsPtr internals(snapshot.internals);
     internals->destroyed = true;
     CallOnFileThread([internals = std::move(internals)]() mutable {
         CallOnMainThread([internals = std::move(internals)] {});
@@ -411,44 +510,57 @@ void Destroy(AsyncFileStream* self) {
 extern "C" {
 
 void APS5_VABI _ZN7WebCore15AsyncFileStreamC1ERNS_16FileStreamClientE(AsyncFileStream* self, FileStreamClient* client) {
-    Construct(self, client);
+    Construct(self, client, __func__);
 }
 
 void APS5_VABI _ZN7WebCore15AsyncFileStreamC2ERNS_16FileStreamClientE(AsyncFileStream* self, FileStreamClient* client) {
-    Construct(self, client);
+    Construct(self, client, __func__);
 }
 
 void APS5_VABI _ZN7WebCore15AsyncFileStreamD1Ev(AsyncFileStream* self) {
-    Destroy(self);
+    Destroy(self, __func__);
 }
 
 void APS5_VABI _ZN7WebCore15AsyncFileStreamD2Ev(AsyncFileStream* self) {
-    Destroy(self);
+    Destroy(self, __func__);
 }
 
 void APS5_VABI _ZN7WebCore15AsyncFileStream11openForReadERKN3WTF6StringExx(AsyncFileStream* self, const String* path, long long offset, long long length) {
-    AsyncFileStreamInternals& internals = InternalsOf(self);
-    Perform(internals, [path = _ZNKR3WTF6String12isolatedCopyEv(path), offset, length](FileStream& stream) {
+    AsyncFileStreamInternals& internals = InternalsOf(self, __func__);
+    if (!path) throw std::invalid_argument("null WTF::String for WebCore::AsyncFileStream::openForRead");
+    Perform(internals, [path = CopyGuestStringToHost(path, __func__), offset, length](FileStream& stream) {
         const bool success = OpenForRead(stream, path, offset, length);
         return [success](FileStreamClient& client) { client.vtable->didOpen(&client, success); };
     });
 }
 
 void APS5_VABI _ZN7WebCore15AsyncFileStream5closeEv(AsyncFileStream* self) {
-    AsyncFileStreamInternals& internals = InternalsOf(self);
+    AsyncFileStreamInternals& internals = InternalsOf(self, __func__);
     CallOnFileThread([&internals] { Close(internals.stream); });
 }
 
 void APS5_VABI _ZN7WebCore15AsyncFileStream7performEON3WTF8FunctionIFNS2_IFvRNS_16FileStreamClientEEEERNS_10FileStreamEEEE(
     AsyncFileStream* self, FileStreamOperationFunction* operation) {
-    AsyncFileStreamInternals& internals = InternalsOf(self);
+    AsyncFileStreamInternals& internals = InternalsOf(self, __func__);
     if (!operation) throw std::invalid_argument("null WTF::Function reference for WebCore::AsyncFileStream::perform");
-    if (!operation->callable) throw std::invalid_argument("null WTF::Function for WebCore::AsyncFileStream::perform");
-    Perform(internals, GuestOperation(std::exchange(operation->callable, nullptr)));
+    RequireReadableGuestBytes(operation, sizeof(FileStreamOperationFunction), __func__);
+    RequireWritableGuestBytes(operation, sizeof(FileStreamOperationFunction), __func__);
+    const FileStreamOperationFunction opSnapshot = ReadGuestValue(operation, __func__);
+    if (!opSnapshot.callable) throw std::invalid_argument("null WTF::Function for WebCore::AsyncFileStream::perform");
+    const FileStreamOperationCallable callableHeader = ReadGuestValue(opSnapshot.callable, __func__);
+    if (!callableHeader.vtable) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    const FileStreamOperationCallableVtable callableVtable = ReadGuestValue(callableHeader.vtable, __func__);
+    if (!callableVtable.call || !callableVtable.deletingDestructor)
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    const FileStreamOperationFunction cleared{nullptr};
+    if (!TryPublishGuestValue(operation, cleared, opSnapshot))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    Perform(internals, GuestOperation(opSnapshot.callable));
 }
 
 void APS5_VABI _ZN7WebCore15AsyncFileStream4readEPci(AsyncFileStream* self, char* buffer, int length) {
-    AsyncFileStreamInternals& internals = InternalsOf(self);
+    AsyncFileStreamInternals& internals = InternalsOf(self, __func__);
+    if (length > 0) RequireWritableGuestBytes(buffer, static_cast<std::size_t>(length), __func__);
     Perform(internals, [buffer, length](FileStream& stream) {
         const int bytesRead = Read(stream, buffer, length);
         return [bytesRead](FileStreamClient& client) { client.vtable->didRead(&client, bytesRead); };
@@ -457,15 +569,17 @@ void APS5_VABI _ZN7WebCore15AsyncFileStream4readEPci(AsyncFileStream* self, char
 
 void APS5_VABI _ZN7WebCore15AsyncFileStream7getSizeERKN3WTF6StringENS1_8OptionalINS1_8WallTimeEEE(
     AsyncFileStream* self, const String* path, const OptionalWallTime* expectedModificationTime) {
-    AsyncFileStreamInternals& internals = InternalsOf(self);
+    AsyncFileStreamInternals& internals = InternalsOf(self, __func__);
+    if (!path) throw std::invalid_argument("null WTF::String for WebCore::AsyncFileStream::getSize");
     if (!expectedModificationTime) throw std::invalid_argument("null WTF::Optional<WTF::WallTime> for WebCore::AsyncFileStream::getSize");
+    const RawOptionalWallTime rawExpected = ReadGuestValue(reinterpret_cast<const RawOptionalWallTime*>(expectedModificationTime), __func__);
     std::optional<double> expected;
-    if (expectedModificationTime->hasValue) {
-        if (std::isnan(expectedModificationTime->value))
+    if (rawExpected.hasValue) {
+        if (std::isnan(rawExpected.value))
             throw std::invalid_argument("WebCore::AsyncFileStream::getSize: the expected modification time is not a number");
-        expected = expectedModificationTime->value;
+        expected = rawExpected.value;
     }
-    Perform(internals, [path = _ZNKR3WTF6String12isolatedCopyEv(path), expected](FileStream&) {
+    Perform(internals, [path = CopyGuestStringToHost(path, __func__), expected](FileStream&) {
         const long long size = GetSize(path, expected);
         return [size](FileStreamClient& client) { client.vtable->didGetSize(&client, size); };
     });
