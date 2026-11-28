@@ -5,6 +5,7 @@
 #include "prx/libSceOpusDec/include/OpusDecodeVariants.hpp"
 #include <cstdarg>
 #include <cstdint>
+#include <mutex>
 #include "prx/libc/include/General.hpp"
 
 namespace {
@@ -12,6 +13,23 @@ namespace {
 OpusDecoderLibrary library("OpusDec", false);
 
 constexpr std::uint32_t ErrorBase = 0x81740000u;
+
+struct ModuleContext {
+    std::once_flag initialized;
+    std::uint32_t id = 0;
+    int result = 0;
+};
+
+int Create(void* state, int sampleRate, int channels) {
+    if (state == nullptr) return static_cast<int>(ErrorBase);
+    if (sampleRate != 8000 && sampleRate != 12000 && sampleRate != 16000 && sampleRate != 24000 && sampleRate != 48000)
+        return static_cast<int>(ErrorBase + 0x2);
+    if (channels != 1 && channels != 2) return static_cast<int>(ErrorBase + 0x3);
+    static ModuleContext context;
+    std::call_once(context.initialized, [&] { context.result = library.Initialize(&context.id); });
+    if (context.result != 0) return context.result;
+    return library.CreateEx(&context.id, state, sampleRate, channels);
+}
 
 } // namespace
 
@@ -40,11 +58,7 @@ int APS5_VABI sceOpusDecCancel(void* argument1) {
 }
 
 int APS5_VABI sceOpusDecCreate(void* argument1, std::int32_t argument2, std::int32_t argument3) {
-    if (argument1 == nullptr) return static_cast<int>(ErrorBase);
-    if (argument2 != 8000 && argument2 != 12000 && argument2 != 16000 && argument2 != 24000 && argument2 != 48000) return static_cast<int>(ErrorBase + 0x2);
-    if (argument3 != 1 && argument3 != 2) return static_cast<int>(ErrorBase + 0x3);
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Create(argument1, argument2, argument3);
 }
 
 int APS5_VABI sceOpusDecCtl(void* state, int request, ...) {
