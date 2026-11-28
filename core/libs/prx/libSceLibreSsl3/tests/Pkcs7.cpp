@@ -1607,16 +1607,17 @@ void TestIndefiniteNesting() {
 
 void TestExceptionOwnership() {
     const std::vector<unsigned char> validAlgor = Wrap(0x30, Wrap(0x06, {0x2b, 0x0e, 0x03, 0x02, 0x1a}));
-    const std::vector<unsigned char> throwingAlgor = WrapIndef(0x30, Wrap(0x06, {0x2b, 0x0e, 0x03, 0x02, 0x1a}));
+    const std::vector<unsigned char> berAlgor = WrapIndef(0x30, Wrap(0x06, {0x2b, 0x0e, 0x03, 0x02, 0x1a}));
     const std::vector<unsigned char> highTag{0x1f, 0x00};
+    const std::vector<unsigned char> throwingOctets = Wrap(0x24, highTag);
 
-    const std::vector<unsigned char> signedListThrows = ContentInfo(Pkcs7Oid(2), Wrap(0x30, Concat({
+    const std::vector<unsigned char> signedListBer = ContentInfo(Pkcs7Oid(2), Wrap(0x30, Concat({
         Wrap(0x02, {0x01}),
-        Wrap(0x31, Joined(validAlgor, throwingAlgor)),
+        Wrap(0x31, Joined(validAlgor, berAlgor)),
         ContentInfo(Pkcs7Oid(1), {}),
         Wrap(0x31, {}),
     })));
-    RequireThrows([&signedListThrows] { Decode(signedListThrows); });
+    RequireThrows([&signedListBer] { Decode(signedListBer); });
     ERR_clear_error_nid_postfix();
     Require(allocations.empty());
 
@@ -1669,8 +1670,8 @@ void TestExceptionOwnership() {
             signer[0].encoded,
             signer[1].encoded,
             signer[2].encoded,
-            throwingAlgor,
-            signer[5].encoded,
+            signer[4].encoded,
+            throwingOctets,
         }))),
     })));
     RequireThrows([&signerThrows] { Decode(signerThrows); });
@@ -1679,13 +1680,29 @@ void TestExceptionOwnership() {
 
     const std::vector<unsigned char> envelope(std::begin(Enveloped), std::end(Enveloped));
     const auto envFields = EnvelopeFields(envelope);
+    const auto validRecipient = Elements(envFields[1].content)[0].encoded;
     const auto recipient = Elements(Elements(envFields[1].content)[0].content);
+    const std::vector<unsigned char> badRecipient = Wrap(0x30, Concat({
+        recipient[0].encoded,
+        recipient[1].encoded,
+        recipient[2].encoded,
+        throwingOctets,
+    }));
     const std::vector<unsigned char> recipThrows = ContentInfo(Pkcs7Oid(3), Wrap(0x30, Concat({
         envFields[0].encoded,
-        Wrap(0x31, Wrap(0x30, Concat({recipient[0].encoded, recipient[1].encoded, throwingAlgor, recipient[3].encoded}))),
+        Wrap(0x31, badRecipient),
         envFields[2].encoded,
     })));
     RequireThrows([&recipThrows] { Decode(recipThrows); });
+    ERR_clear_error_nid_postfix();
+    Require(allocations.empty());
+
+    const std::vector<unsigned char> recipListThrows = ContentInfo(Pkcs7Oid(3), Wrap(0x30, Concat({
+        envFields[0].encoded,
+        Wrap(0x31, Joined(validRecipient, badRecipient)),
+        envFields[2].encoded,
+    })));
+    RequireThrows([&recipListThrows] { Decode(recipListThrows); });
     ERR_clear_error_nid_postfix();
     Require(allocations.empty());
 }
