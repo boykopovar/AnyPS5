@@ -61,6 +61,8 @@ The Conventions check runs automatically for every contributor, including first-
 python3 tools/check_conventions.py
 ```
 
+To check the pull request title and description the same way before opening it, add `--title "<title>" --body <file>`, where the file holds the description written from the template. HTML comments in it, such as the hints of the template, are ignored.
+
 ## Branches and pull requests
 
 The [pull request template](.github/pull_request_template.md) is the checklist for these rules.
