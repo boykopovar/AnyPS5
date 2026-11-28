@@ -177,7 +177,7 @@ extern "C" GuestInAddr6* APS5_VABI inet6_rthdr_getaddr_nid_postfix(GuestCmsghdr*
         if (rt0->ip6r0_len % 2 || 46 < rt0->ip6r0_len) return nullptr;
         const int naddr = static_cast<int>((rt0->ip6r0_len * 8) / InAddr6Bytes);
         if (idx <= 0 || naddr < idx) return nullptr;
-        return AddressAt(rt0, static_cast<std::size_t>(idx));
+        return AddressAt(rt0, static_cast<std::size_t>(idx - 1));
     }
     default:
         return nullptr;

@@ -51,7 +51,9 @@ int main() {
     Require(inet6_rthdr_add_nid_postfix(cmsg, &first, 0) == 0);
     Require(cmsg->cmsg_len == 40);
     Require(inet6_rthdr_segments_nid_postfix(cmsg) == 1);
-    Require(inet6_rthdr_getaddr_nid_postfix(cmsg, 1) == reinterpret_cast<GuestInAddr6*>(control + 40));
+    Require(inet6_rthdr_getaddr_nid_postfix(cmsg, 1) == reinterpret_cast<GuestInAddr6*>(control + 24));
+    Require(inet6_rthdr_getaddr_nid_postfix(cmsg, 0) == nullptr);
+    Require(inet6_rthdr_getaddr_nid_postfix(cmsg, 2) == nullptr);
     Require(inet6_rthdr_getflags_nid_postfix(cmsg, 0) == 0);
     Require(inet6_rthdr_add_nid_postfix(cmsg, &second, 1) == -1);
     return 0;
