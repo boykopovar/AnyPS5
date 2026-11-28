@@ -23,9 +23,11 @@ std::uint32_t* APS5_VABI sceAgcDcbAtomicGds_0900(CommandBuffer* buf, std::uint32
         static_cast<std::uint32_t>(extraData >> 32u)}, __func__);
 }
 
+#if !defined(APS5_AGC_VSH)
 std::uint32_t* APS5_VABI sceAgcDcbAtomicGds(CommandBuffer* buf, std::uint32_t engine, std::uint32_t control, std::uint32_t mode, std::uint32_t gdsOp, std::uint32_t src, std::uint16_t offset, std::uint16_t index, std::uint32_t mask, std::uint32_t data, std::uint64_t compareData, std::uint64_t extraData) {
     return sceAgcDcbAtomicGds_0900(buf, engine, control & ~0x80u, mode, gdsOp, src, offset, index, mask, data, compareData, extraData);
 }
+#endif
 
 
 uint32_t* APS5_VABI sceAgcDcbJump(CommandBuffer* buf, uint8_t mode, uint8_t cache_policy, const uint32_t* target, uint32_t size_in_dwords) {
@@ -36,11 +38,13 @@ std::uint32_t APS5_VABI sceAgcDcbJumpGetSize() {
     return 16;
 }
 
+#if !defined(APS5_AGC_VSH)
 std::uint32_t* APS5_VABI sceAgcDcbResetQueue(CommandBuffer* buf, std::uint32_t op, std::uint32_t state) {
     Agc::Command::CheckBits(op, 0xfffu, __func__);
     Agc::Command::CheckBits(state, 0xfu, __func__);
     return Agc::Command::Emit(buf, 0x12u, {state}, __func__);
 }
+#endif
 
 std::uint32_t* APS5_VABI sceAgcDcbClearState(CommandBuffer* buf, std::uint32_t command) {
     return Agc::Command::Emit(buf, 0x12u, {command & 0xfu}, __func__);
@@ -54,6 +58,7 @@ uint32_t APS5_VABI sceAgcDcbRewindGetSize(void) {
     return 8;
 }
 
+#if !defined(APS5_AGC_VSH)
 uint32_t* APS5_VABI sceAgcDcbWaitUntilSafeForRendering(CommandBuffer* buf, uint32_t video_out_handle, uint32_t display_buffer_index) {
     auto* packet = Agc::Command::Allocate(buf, AgcDriver::RenderingWaitPacketWords, __func__);
     packet[0] = AgcDriver::RenderingWaitPacketHeader;
@@ -62,5 +67,6 @@ uint32_t* APS5_VABI sceAgcDcbWaitUntilSafeForRendering(CommandBuffer* buf, uint3
     packet[3] = 0;
     return packet;
 }
+#endif
 
 }

@@ -8,10 +8,12 @@
 
 extern "C" {
 
+#if !defined(APS5_AGC_VSH)
 int APS5_VABI sceAgcSuspendPoint(void) {
     AgcDriverSuspendPoint_nid_postfix();
     return 0;
 }
+#endif
 
 int APS5_VABI sceAgcSetSubmitMode(std::uint32_t mode) {
     if (mode != 0) NotImplemented_nid_no_patch(__func__);

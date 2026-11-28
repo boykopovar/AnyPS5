@@ -35,12 +35,6 @@ std::uint32_t* StreamTake(CommandBuffer* buffer, std::uint32_t count) {
 
 extern "C" {
 
-int APS5_VABI sceAgcSuspendPointAndCheckStatus_nid_no_patch(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("b+fis+WZ3Ig", sceAgcSuspendPointAndCheckStatus_nid_no_patch);
-
 APS5_EXPORT("Aozdh0bCcO0", sceAgcVshUnknown_Aozdh0bCcO0);
 std::uint32_t* APS5_VABI sceAgcVshUnknown_Aozdh0bCcO0(CommandBuffer* buffer) {
     if (buffer == nullptr) return nullptr;

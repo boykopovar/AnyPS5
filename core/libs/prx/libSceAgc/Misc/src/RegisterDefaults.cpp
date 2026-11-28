@@ -9,13 +9,17 @@
 
 extern "C" {
 
+#if !defined(APS5_AGC_VSH)
 void* APS5_VABI sceAgcGetRegisterDefaults() {
     return Agc::Command::GetRegisterDefaults(13, false, __func__, Agc::Command::RegisterDefaultsTypeLayout::KeyBankPairs);
 }
+#endif
 
+#if !defined(APS5_AGC_VSH)
 void* APS5_VABI sceAgcGetRegisterDefaultsInternal() {
     return Agc::Command::GetRegisterDefaults(0, true, __func__);
 }
+#endif
 
 void* APS5_VABI sceAgcGetRegisterDefaults2(std::uint32_t version) {
     return Agc::Command::GetRegisterDefaults(version, false, __func__);
