@@ -348,12 +348,14 @@ int main() {
 
     alignas(8) std::byte overlapStorage[sizeof(Array) + sizeof(ArrayIterator)]{};
     auto* overlapArray = reinterpret_cast<Array*>(overlapStorage + 4);
-    overlapArray->items = valid.items;
+    std::memcpy(overlapStorage + 4, &valid.items, sizeof(valid.items));
     CHECK_THROWS(_ZN3sce4Json5Array6insertERKNS1_8iteratorERKNS0_5ValueE(reinterpret_cast<ArrayIterator*>(overlapStorage), overlapArray, &beginIter, &val1));
     CHECK_THROWS(_ZN3sce4Json5Array5eraseERKNS1_8iteratorE(reinterpret_cast<ArrayIterator*>(overlapStorage), overlapArray, &beginIter));
     CHECK_THROWS(_ZNK3sce4Json5Array5beginEv(reinterpret_cast<ArrayIterator*>(overlapStorage), overlapArray));
     CHECK_THROWS(_ZNK3sce4Json5Array3endEv(reinterpret_cast<ArrayIterator*>(overlapStorage), overlapArray));
-    CHECK(overlapArray->items == savedValidItems && _ZNK3sce4Json5Array4sizeEv(&valid) == 2);
+    decltype(valid.items) overlapItems = nullptr;
+    std::memcpy(&overlapItems, overlapStorage + 4, sizeof(overlapItems));
+    CHECK(overlapItems == savedValidItems && _ZNK3sce4Json5Array4sizeEv(&valid) == 2);
     CHECK(trace.live.size() == afterIters);
 
     CHECK_THROWS(_ZNK3sce4Json5Array5beginEv(reinterpret_cast<ArrayIterator*>(&valid), &valid));
