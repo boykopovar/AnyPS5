@@ -4,7 +4,7 @@
 
 extern "C" {
 
-int APS5_VABI sceAudioOut2GetSystemDebugState();
+int APS5_VABI sceAudioOut2GetSystemDebugState(float* state);
 int APS5_VABI sceAudioOut2LoContextCreateEx(const AudioOut2ContextParam* params, const void* exParams, void* buffer, size_t bufferSize, AudioOut2ContextHandle* ctx);
 int APS5_VABI sceAudioOut2LoContextGetAttributes(AudioOut2ContextHandle ctx, AudioOut2Attribute* attributes, uint32_t num);
 int APS5_VABI sceAudioOut2LoContextQueryMemoryEx(const AudioOut2ContextParam* params, const void* exParams, size_t* memorySize);
@@ -12,9 +12,9 @@ int APS5_VABI sceAudioOut2LoPortCreateEx(AudioOut2ContextHandle ctx, const Audio
 int APS5_VABI sceAudioOut2LoPortGetAttributes(AudioOut2PortHandle port, AudioOut2Attribute* attributes, uint32_t num);
 int APS5_VABI sceAudioOut2LoPortSetAttributesEx(AudioOut2PortHandle port, const AudioOut2Attribute* attributes, uint32_t num);
 int APS5_VABI sceAudioOut2PortSetAttributesEx(AudioOut2PortHandle port, const AudioOut2Attribute* attributes, uint32_t num);
-int APS5_VABI sceAudioOut2SetHrtfIdForCronos();
+int APS5_VABI sceAudioOut2SetHrtfIdForCronos(int32_t userId, int32_t hrtfId);
 int APS5_VABI sceAudioOut2SetSpeakerInfo();
-int APS5_VABI sceAudioOut2SetTvCorrectionInfo();
+int APS5_VABI sceAudioOut2SetTvCorrectionInfo(uint32_t mode, const void* info);
 
 }
 
@@ -47,7 +47,7 @@ int APS5_VABI libSceAudioOutUnknown_jEcHKuQ4k8I_nid_no_patch();
 int APS5_VABI libSceAudioOutUnknown_lyHeaetMYXg_nid_no_patch();
 int APS5_VABI sceAudioOutSysGetLastOutputTime();
 int APS5_VABI libSceAudioOutUnknown_rSyeebu6wWI_nid_no_patch();
-int APS5_VABI sceAudioOut2AssignHRTF();
+int APS5_VABI sceAudioOut2AssignHRTF(int32_t userId, int32_t hrtfId);
 int APS5_VABI libSceAudioOutUnknown_spvw78DsDzU_nid_no_patch();
 int APS5_VABI libSceAudioOutUnknown_tqTyWw6NgyU_nid_no_patch();
 int APS5_VABI libSceAudioOutUnknown_tvPlXmc4MHs_nid_no_patch();

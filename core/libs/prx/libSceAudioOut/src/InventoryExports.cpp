@@ -2,14 +2,28 @@
 #include "prx/libSceAudioOut/include/InventoryExports.hpp"
 #include "prx/libSceAudioOut/include/LaterExports.hpp"
 #include "prx/libc/include/General.hpp"
+#include "AudioOut2Internal.hpp"
+
+static int ValidateHrtfAssignment(int32_t userId, int32_t hrtfId) {
+    constexpr int ErrorInvalidParam = static_cast<int>(0x80268001);
+    constexpr int ErrorInvalidUser = static_cast<int>(0x80268010);
+    if (hrtfId != -1 && hrtfId != 0x80 && static_cast<uint32_t>(hrtfId) - 1u > 4u) return ErrorInvalidParam;
+    if (static_cast<uint32_t>(userId) - 0xfeu < 2u || userId == -1) return ErrorInvalidUser;
+    return 0;
+}
 
 extern "C" {
 
-int APS5_VABI sceAudioOut2GetSystemDebugState() {
+int APS5_VABI sceAudioOut2GetSystemDebugState(float* state) {
+    constexpr int ErrorNotInitialized = static_cast<int>(0x80268006);
+    (void)state;
+    if (!AudioOut2IsInitialized_nid_no_patch()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceAudioOut2SetHrtfIdForCronos() {
+int APS5_VABI sceAudioOut2SetHrtfIdForCronos(int32_t userId, int32_t hrtfId) {
+    const int status = ValidateHrtfAssignment(userId, hrtfId);
+    if (status != 0) return status;
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -17,7 +31,11 @@ int APS5_VABI sceAudioOut2SetSpeakerInfo() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceAudioOut2SetTvCorrectionInfo() {
+int APS5_VABI sceAudioOut2SetTvCorrectionInfo(uint32_t mode, const void* info) {
+    constexpr int ErrorInvalidParam = static_cast<int>(0x80268001);
+    constexpr int ErrorInvalidPointer = static_cast<int>(0x8026800c);
+    if (info == nullptr) return ErrorInvalidPointer;
+    if (mode > 1u) return ErrorInvalidParam;
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -157,7 +175,9 @@ int APS5_VABI libSceAudioOutUnknown_rSyeebu6wWI_nid_no_patch() {
 }
 APS5_EXPORT("rSyeebu6wWI", libSceAudioOutUnknown_rSyeebu6wWI_nid_no_patch);
 
-int APS5_VABI sceAudioOut2AssignHRTF() {
+int APS5_VABI sceAudioOut2AssignHRTF(int32_t userId, int32_t hrtfId) {
+    const int status = ValidateHrtfAssignment(userId, hrtfId);
+    if (status != 0) return status;
     NotImplemented_nid_no_patch(__func__);
 }
 
