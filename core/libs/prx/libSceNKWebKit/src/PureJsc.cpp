@@ -1,9 +1,13 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
+#include "prx/libc/include/General.hpp"
 
+#include <algorithm>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <iterator>
 
 namespace {
 
@@ -20,8 +24,11 @@ void APS5_VABI _ZN3JSC16clearArrayMemsetEPdj(double* base, unsigned int count) {
     const std::uint64_t pnanBits = 0x7FF8000000000000ULL;
     double pnanValue;
     std::memcpy(&pnanValue, &pnanBits, sizeof(double));
-    for (unsigned int i = 0; i < count; ++i) {
-        base[i] = pnanValue;
+    double chunk[512];
+    std::fill(std::begin(chunk), std::end(chunk), pnanValue);
+    for (std::size_t offset = 0; offset < count; offset += std::size(chunk)) {
+        const std::size_t length = std::min<std::size_t>(std::size(chunk), count - offset);
+        if (!GuestCopyOut_nid_no_patch(base + offset, chunk, length * sizeof(double))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     }
 }
 
