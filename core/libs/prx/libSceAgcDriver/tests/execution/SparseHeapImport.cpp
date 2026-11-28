@@ -384,7 +384,7 @@ int main() {
             return VulkanTestSkipped;
         }
         if (!ImportsEnabled && !SparseMirrors) {
-            std::puts("skipped, no sparse residency: the mirror path needs it");
+            std::puts("skipped, the device lacks sparseBinding, sparseResidencyBuffer or sparseResidencyAliased, which the mirror path needs");
             return VulkanTestSkipped;
         }
         const auto compiled = Compile(*device);

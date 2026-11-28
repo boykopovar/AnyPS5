@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cerrno>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -117,6 +118,13 @@ void WriteBackOutline(GuestFace& face) {
         outline.points[index].y = HostPosition(face.outlinePoints[index].y);
     }
     outline.flags = guest.flags;
+}
+
+static bool CopyGuestIn(void* dst, const void* src, std::size_t size) {
+    const auto preserved = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(dst, src, size);
+    errno = preserved;
+    return ok;
 }
 
 static bool CopyGuestOut(void* dst, const void* src, std::size_t size) {
@@ -287,7 +295,8 @@ int APS5_VABI FT_New_Size_nid_postfix(GuestFaceRec* face, GuestSizeRec** asize) 
         return FT_New_Size(hostFace, asize ? &unused : nullptr);
     }
     const bool activates = asize == &owner->rec.size;
-    *asize = nullptr;
+    GuestSizeRec* nullSize = nullptr;
+    if (!CopyGuestOut(asize, &nullSize, sizeof(nullSize))) return FT_Err_Invalid_Argument;
     if (activates) hostFace->size = nullptr;
     try {
         owner->sizes.emplace_back();
@@ -306,13 +315,21 @@ int APS5_VABI FT_New_Size_nid_postfix(GuestFaceRec* face, GuestSizeRec** asize) 
     entry->host = host;
     SyncSizeRecord_nid_no_patch(*owner, entry->rec, host);
     host->generic = {&entry->rec, FinalizeSize};
-    *asize = &entry->rec;
+    GuestSizeRec* created = &entry->rec;
+    if (!CopyGuestOut(asize, &created, sizeof(created))) {
+        FT_Done_Size(host);
+        owner->sizes.erase(entry);
+        SyncSizePointer_nid_no_patch(*owner);
+        return FT_Err_Invalid_Argument;
+    }
     SyncSizePointer_nid_no_patch(*owner);
     return 0;
 }
 
 int APS5_VABI FT_Activate_Size_nid_postfix(GuestSizeRec* size) {
-    FT_Size host = size ? static_cast<FT_Size>(size->internal) : nullptr;
+    GuestSizeRec guestSize{};
+    if (size && !CopyGuestIn(&guestSize, size, sizeof(guestSize))) return FT_Err_Invalid_Size_Handle;
+    FT_Size host = size ? static_cast<FT_Size>(guestSize.internal) : nullptr;
     const FT_Error error = FT_Activate_Size(host);
     if (error == 0) SyncSize(*static_cast<GuestFace*>(host->face->generic.data));
     return error;
@@ -519,6 +536,10 @@ std::uint64_t APS5_VABI FT_Get_Next_Char_nid_postfix(GuestFaceRec* face, std::ui
 void APS5_VABI FT_Set_Transform_nid_postfix(GuestFaceRec* face, const GuestMatrix* matrix, const GuestVector* delta) {
     GuestFace* owner = FaceOf(face);
     if (!owner) return;
+    GuestMatrix guestMatrix{};
+    GuestVector guestDelta{};
+    if (matrix && !CopyGuestIn(&guestMatrix, matrix, sizeof(guestMatrix))) return;
+    if (delta && !CopyGuestIn(&guestDelta, delta, sizeof(guestDelta))) return;
     const auto component = [](std::int64_t value) {
         if (value < std::numeric_limits<FT_Long>::min() || value > std::numeric_limits<FT_Long>::max()) {
             throw std::runtime_error("FT_Set_Transform: a component outside the host FT_Long range is not implemented");
@@ -527,8 +548,8 @@ void APS5_VABI FT_Set_Transform_nid_postfix(GuestFaceRec* face, const GuestMatri
     };
     FT_Matrix nativeMatrix{};
     FT_Vector nativeDelta{};
-    if (matrix) nativeMatrix = {component(matrix->xx), component(matrix->xy), component(matrix->yx), component(matrix->yy)};
-    if (delta) nativeDelta = {component(delta->x), component(delta->y)};
+    if (matrix) nativeMatrix = {component(guestMatrix.xx), component(guestMatrix.xy), component(guestMatrix.yx), component(guestMatrix.yy)};
+    if (delta) nativeDelta = {component(guestDelta.x), component(guestDelta.y)};
     FT_Set_Transform(owner->host, matrix ? &nativeMatrix : nullptr, delta ? &nativeDelta : nullptr);
 }
 
