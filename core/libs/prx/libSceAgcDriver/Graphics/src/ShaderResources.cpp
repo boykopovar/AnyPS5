@@ -6907,6 +6907,25 @@ void ShaderResources::resolveImageTables() {
             }
             return bind(element, sampled.words, std::move(texture), sampled.resource, sampled.guestBytes, decoded.firstLayer);
         };
+        const auto flushTableKeys = [&](const auto& wanted) {
+            if (!TableKeyFlushEnabled() || !GuestMemory::GpuMutex().HeldByThisThread()) return;
+            std::vector<std::pair<std::uint64_t, std::uint64_t>> keyRanges;
+            for (std::uint32_t element = 0; element < binding.count; ++element) {
+                if (static_cast<std::uint64_t>(table.elementBase) + element >= context.imageTableCapacity) continue;
+                if (element < binding.imageWritten.size() && binding.imageWritten[element]) continue;
+                if (!wanted(element)) continue;
+                const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u);
+                DecodedEntry decoded;
+                try {
+                    decoded = decodeEntry(element, words);
+                } catch (const std::runtime_error&) {
+                    continue;
+                }
+                if (!decoded.rejected.empty() || decoded.resource.dccAddress == 0 || decoded.guestBytes == 0) continue;
+                keyRanges.emplace_back(decoded.resource.dccAddress, decoded.resource.dccAddress + DccKeyBytes(decoded.guestBytes));
+            }
+            static_cast<void>(FlushTableKeys(keyRanges));
+        };
         const auto state = CurrentTableState();
         std::vector<std::shared_ptr<Texture>> cached;
         const bool storageTable = std::find(binding.imageWritten.begin(), binding.imageWritten.end(), true) != binding.imageWritten.end();
@@ -6924,6 +6943,7 @@ void ShaderResources::resolveImageTables() {
             table.representatives = reused->representatives;
             const bool replay = TableReplay() && reused->replayable && reused->imageSamplers == binding.imageSamplers && reused->samplers == samplerKey;
             if (!replay) reused->bound.assign(binding.count, {});
+            flushTableKeys([&](std::uint32_t element) { return reused->elements[element].live; });
             auto next = cached.begin();
             for (std::uint32_t element = 0; element < binding.count; ++element) {
                 const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u);
@@ -6983,6 +7003,7 @@ void ShaderResources::resolveImageTables() {
         for (const auto representative : representatives) {
             if (representative != NoRepresentative) representativeNeeded[representative] = true;
         }
+        flushTableKeys([&](std::uint32_t element) { return representatives.empty() || representatives[element] == NoRepresentative; });
         std::unordered_map<std::uint32_t, GuestTextureResource> representativeSources;
         std::vector<std::uint32_t> substitutes;
         std::vector<std::uint32_t> order;
