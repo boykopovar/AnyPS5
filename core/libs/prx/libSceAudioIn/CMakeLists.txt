@@ -67,3 +67,16 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioIn>")
     endif()
 endif()
+
+
+if(BUILD_TESTING)
+    add_test_executable(guest_audio_in_status_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestAudioInStatusBounds.cpp)
+    target_include_directories(guest_audio_in_status_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_audio_in_status_bounds_tests PRIVATE libSceAudioIn libc)
+    configure_windows_unwind(guest_audio_in_status_bounds_tests)
+    add_test(NAME guest_audio_in_status_bounds COMMAND guest_audio_in_status_bounds_tests)
+    if(WIN32)
+        set_tests_properties(guest_audio_in_status_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioIn>")
+    endif()
+endif()
