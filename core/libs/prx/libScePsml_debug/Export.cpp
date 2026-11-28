@@ -14,6 +14,7 @@
 #include <unordered_map>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 namespace {
 
@@ -99,7 +100,8 @@ bool CopyInPreservingErrno(void* destination, const void* source, std::size_t by
 
 bool CopyOutPreservingErrno(void* destination, const void* source, std::size_t bytes) {
  const int savedErrno = errno;
- const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
+ const GuestArena::HostWrite guard(destination, bytes);
+ const bool copied = guard.Open() && GuestWritable_nid_no_patch(destination, bytes) && GuestCopyOut_nid_no_patch(destination, source, bytes);
  errno = savedErrno;
  return copied;
 }
