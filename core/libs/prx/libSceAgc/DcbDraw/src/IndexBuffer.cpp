@@ -26,7 +26,6 @@ std::uint32_t APS5_VABI sceAgcDcbSetIndexCountGetSize() {
 
 std::uint32_t* APS5_VABI sceAgcDcbSetIndexSize(CommandBuffer* buf, std::uint8_t indexSize, std::uint8_t cachePolicy) {
     const std::uint32_t size = indexSize & 3u;
-    Agc::Command::Require(size <= 2, __func__, "invalid index element size");
     return Agc::Command::Emit(buf, 0x7au, {0x20000243u, 0x400u | size | ((cachePolicy & 3u) << 6u)}, __func__);
 }
 

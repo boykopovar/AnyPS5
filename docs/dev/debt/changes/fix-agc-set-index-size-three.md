@@ -1,0 +1,5 @@
+# libSceAgc
+
+## change [sceAgcDcbSetIndexBuffer, sceAgcDcbSetIndexSize]
+
+- [sceAgcDcbSetIndexBuffer, sceAgcDcbSetIndexSize](../../../core/libs/prx/libSceAgc/DcbDraw/src/IndexBuffer.cpp) (libSceAgc) - a PS5 (firmware 11.60, payload process; a title process may differ) wrote only the low two bits of the index size and of the cache policy into the packet of sceAgcDcbSetIndexSize, in two runs: bits 2 to 7 of either argument added nothing, and the index sizes 3 and 7 gave the size field 3 (0x403) without a signal, so that packet is written too. This is the packet the writer builds, not what the command processor does with a size of 3. sceAgcDcbSetIndexBuffer clears bit 0 of the address ([measured](https://github.com/mattias800/prosper/blob/d44c89db977a162af271d986a8d1febbc31e702f/prosper/tests/data/console_oracle/agcbuild.golden.tsv#L166-L168)) and the same runs kept bits 1 and 2. [OpenAGC](https://github.com/OpenAGC/OpenAGC/blob/3c7e8072f0d7684e930454794fd5c02056946d73/src/game_compat.c#L893-L907) keeps one bit of the cache policy.
