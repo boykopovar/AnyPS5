@@ -284,6 +284,11 @@ void TestMultisampledSingleClearDrainsDrawPipeline() {
 }
 
 int main() {
+#ifdef _WIN32
+    _putenv_s("APS5_NO_IDLE_STORE", "1");
+#else
+    setenv("APS5_NO_IDLE_STORE", "1", 1);
+#endif
     if (std::getenv("APS5_PIPELINED_DRAWS") == nullptr) {
 #ifdef _WIN32
         _putenv_s("APS5_PIPELINED_DRAWS", "32");

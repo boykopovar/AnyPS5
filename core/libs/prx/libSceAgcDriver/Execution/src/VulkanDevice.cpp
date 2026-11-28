@@ -732,6 +732,7 @@ struct VulkanDevice::State {
     // built once after setup (see graphicsContext); the context's pool reference is dropped before
     // the pool at teardown.
     Graphics::DeviceFunctions deviceFunctions;
+    Graphics::DeviceDispatch deviceDispatch{&deviceFunctions};
     bool functionsReady = false;
     Graphics::Context context;
     bool contextReady = false;
@@ -2833,7 +2834,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         if (!GuestMemory::GpuMutex().HeldByThisThread()) gpuLock.lock();
         state->placeholderImages = std::make_unique<Graphics::PlaceholderImages>(graphicsContext());
     }
-    state->recorder = std::make_unique<Graphics::Recorder>(graphicsContext(), state->timelineSemaphores);
+    state->recorder = std::make_unique<Graphics::Recorder>(graphicsContext(), state->timelineSemaphores, state->functionsReady ? &state->deviceFunctions : nullptr, family);
     state->recorder->Activate();
     state->context = buildContext();
     state->contextReady = true;
@@ -5170,6 +5171,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.exactRobustLoads = state->exactRobustLoads;
     context.copiedWriters = state->copiedWriters.get();
     context.functions = state->functionsReady ? &state->deviceFunctions : nullptr;
+    context.dispatch = state->functionsReady ? &state->deviceDispatch : nullptr;
     context.descriptorIndexing = state->descriptorIndexing;
     context.descriptorIndexingLimits = state->descriptorIndexingProperties;
     context.imageInt64Atomics = state->imageInt64Atomics;
@@ -6492,7 +6494,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
         } else if (splitSlice->runs.empty()) {
             if (splitGroups != 0) context.Resolved(&Graphics::DeviceFunctions::cmdDispatch, "vkCmdDispatch")(commands, splitGroups, 1, 1);
         } else {
-            const auto dispatchBase = context.Function<PFN_vkCmdDispatchBase>("vkCmdDispatchBase");
+            const auto dispatchBase = context.Resolved(&Graphics::DeviceFunctions::cmdDispatchBase, "vkCmdDispatchBase");
             for (const auto& [first, count] : splitSlice->runs) {
                 if (first >= splitGroups) break;
                 dispatchBase(commands, first, 0, 0, std::min(count, splitGroups - first), 1, 1);

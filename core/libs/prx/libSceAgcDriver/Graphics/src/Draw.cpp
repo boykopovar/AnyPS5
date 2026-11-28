@@ -2760,22 +2760,21 @@ std::shared_ptr<Buffer> directMeshArguments(const Context& context, const Pm4::D
     return arguments;
 }
 
-std::shared_ptr<Buffer> recordMeshArguments(const Context& context, VkCommandBuffer commands, Recorder* recorder, bool recorded, const State& state, const Pm4::DrawParameters& draw, const IndirectRecord& indirect, const std::function<void(std::uint32_t)>& countBarrier, std::span<const std::uint32_t> restartTable) {
+void recordMeshArguments(const Context& context, VkCommandBuffer commands, Recorder* recorder, bool recorded, const State& state, const Pm4::DrawParameters& draw, const IndirectRecord& indirect, const std::function<void(std::uint32_t)>& countBarrier, std::span<const std::uint32_t> restartTable, std::shared_ptr<Buffer>& arguments) {
     const auto* args = indirect.args;
     const auto rules = MeshArgumentRulesFor(context, *state.stages.mesh, draw);
-    auto arguments = meshArgumentBuffer(context, restartTable);
+    arguments = meshArgumentBuffer(context, restartTable);
     if (indirect.path == IndirectDrawPath::Gpu && recorder != nullptr && indirect.argumentImport->address != 0) {
         const std::array<std::uint32_t, 8> words{rules.indexCount, rules.inputSize, rules.step, rules.primitivesPerGroup, rules.maxGroups, rules.maxInstances, rules.maxTotal, rules.firstIgnored};
         if (recorder->RecordMeshArguments(commands, indirect.argumentImport->address + (args->arguments - indirect.argumentImport->base), arguments->DeviceAddress(), words)) {
             countBarrier(2);
             if (recorded) recorder->NotePendingRead(args->arguments, static_cast<std::size_t>(args->RangeBytes()), Recorder::ReadKind::Indirect);
-            return arguments;
+            return;
         }
     }
     const auto record = !indirect.records.empty() ? indirect.records.front() : Pm4::ReadDrawArguments(*args, 0);
     const auto resolved = ResolveMeshArguments(record, rules);
     std::memcpy(arguments->Bytes().data(), &resolved, sizeof(resolved));
-    return arguments;
 }
 
 // Debug aid: APS5_CHECK_INDIRECT_ARGS=1 reads the records of a GPU-side draw back on the CPU once
@@ -2820,7 +2819,9 @@ std::shared_ptr<std::shared_ptr<const void>> reserveSpaceKeep(Recorder& recorder
 }
 
 void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>& resources, const std::shared_ptr<Pipeline>& pipeline, const std::shared_ptr<Framebuffer>& framebuffer, DrawInputs& inputs, std::span<const std::shared_ptr<StorageTexture>> residents, std::span<const std::pair<std::uint32_t, std::uint32_t>> slices, VkRect2D scissor, std::unique_ptr<DeviceBuffer> scratch, std::function<void()> checkRecords, bool listed, bool completion, const DrawOutcome& outcome, std::shared_ptr<ShaderResources::DrawUse> use, std::shared_ptr<const void>* spaceKeep) {
-    std::shared_ptr<DeviceBuffer> scratchOwner(std::move(scratch));
+    std::shared_ptr<DeviceBuffer> scratchOwner;
+    const auto unwindGuard = recorder.UnwindGuard();
+    scratchOwner = std::move(scratch);
     recorder.ReserveRetention(4 + inputs.vertexBuffers.size() + residents.size() + (scratchOwner != nullptr ? 1u : 0u));
     resources->KeepStorageImageBytes(recorder);
     for (const auto& target : residents) {
@@ -3294,6 +3295,9 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     VkDeviceSize argumentOffset = 0;
     bool rewritten = false;
     if (!meshIndirect && !inputs.restartTable.empty()) meshArguments = directMeshArguments(context, draw, inputs.restartTable);
+    std::vector<std::shared_ptr<void>> reorderKept;
+    std::optional<Recorder::EncodingWindow> encoding(std::in_place, *recorder);
+    const auto unwindGuard = recorder->UnwindGuard();
     static const bool timeEachDraw = std::getenv("APS5_PROFILE_GPU_DRAWS") != nullptr;
     auto eachDrawTiming = Recorder::NoTiming;
     std::array<std::byte, PipelinePushConstantBytes> movedPush;
@@ -3334,7 +3338,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
             meshArguments = state.tessellationCapture->header;
             argumentBuffer = meshArguments->Handle();
         } else if (meshIndirect) {
-            meshArguments = recordMeshArguments(context, cb, recorder, true, state, draw, *record.indirect, countBarrier, inputs.restartTable);
+            recordMeshArguments(context, cb, recorder, true, state, draw, *record.indirect, countBarrier, inputs.restartTable, meshArguments);
             argumentBuffer = meshArguments->Handle();
         } else if (gpuIndirect) {
             rewritten = recordIndirectArguments(context, cb, recorder, true, *record.indirect, scratch, argumentSnapshot, argumentBuffer, argumentOffset, countBarrier);
@@ -3342,9 +3346,8 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         // Earlier recorded work (dispatches, the previous draw) wrote the images in the general
         // layout, which a lean draw renders in: no transitions.
         if (!record.reordered.empty()) {
-            std::vector<std::shared_ptr<void>> kept;
-            RecordSampleOrder(context, rec, record.reorderPass, record.reordered, true, kept);
-            for (auto& object : kept) recorder->Keep(std::move(object));
+            RecordSampleOrder(context, rec, record.reorderPass, record.reordered, true, reorderKept);
+            KeepSampleOrderOwners(*recorder, reorderKept);
         }
         for (const auto& write : record.staged) RecordStagedClear(context, cb, *write.temporary);
         APS5_LOG_OUT_DEBUG("Beginning pipeline renderExtent=%ux%u", state.renderExtent.width, state.renderExtent.height);
@@ -3418,7 +3421,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         recordPassOpen(recording, false);
         recordBody(recording);
     }
-
+    encoding.reset();
     recorder->EndGpuTiming(eachDrawTiming);
     if (meshArguments != nullptr) recorder->Keep(meshArguments);
     if (argumentSnapshot != nullptr) recorder->Keep(argumentSnapshot);
@@ -4950,7 +4953,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
         meshArguments = state.tessellationCapture->header;
         argumentBuffer = meshArguments->Handle();
     } else if (state.stages.mesh && args != nullptr) {
-        meshArguments = recordMeshArguments(context, commands, recorder, recorded, state, draw, indirect, countBarrier, inputs.restartTable);
+        recordMeshArguments(context, commands, recorder, recorded, state, draw, indirect, countBarrier, inputs.restartTable, meshArguments);
         argumentBuffer = meshArguments->Handle();
     } else if (!inputs.restartTable.empty()) {
         meshArguments = directMeshArguments(context, draw, inputs.restartTable);
@@ -5236,6 +5239,15 @@ std::vector<std::uint32_t> DrawResourceContentKey(const Context& context, const 
     static const bool trimKey = std::getenv("APS5_NO_DRAW_KEY_TRIM") == nullptr;
     const auto indexBytes = static_cast<std::uint64_t>(draw.indexCount) * draw.indexSize;
     return DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, indexBytes, !trimKey);
+}
+
+void RecordMeshArgumentsForTesting(const Context& context, VkCommandBuffer commands, Recorder& recorder, const State& state, const Pm4::DrawParameters& draw, const Pm4::DrawParameters::IndirectDraw& args, const HostImport& argumentImport, const std::function<void(std::uint32_t)>& countBarrier, std::shared_ptr<Buffer>& arguments) {
+    const IndirectRecord indirect{.args = &args, .path = IndirectDrawPath::Gpu, .argumentImport = &argumentImport};
+    recordMeshArguments(context, commands, &recorder, true, state, draw, indirect, countBarrier, {}, arguments);
+}
+
+void KeepSampleOrderOwners(Recorder& recorder, const std::vector<std::shared_ptr<void>>& owners) {
+    for (const auto& owner : owners) recorder.Keep(owner);
 }
 
 DrawResult Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipeOut, const DrawTraceContext* trace, std::uint64_t shape, const std::vector<std::uint32_t>* contentKey) {

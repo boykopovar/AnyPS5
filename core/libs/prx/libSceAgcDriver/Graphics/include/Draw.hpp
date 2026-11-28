@@ -110,6 +110,8 @@ struct MeshArgumentRules {
 };
 MeshArgumentRules MeshArgumentRulesFor(const Context& context, const ShaderRecompiler::MeshConfiguration& mesh, std::uint32_t indexCount);
 MeshArgumentRules MeshArgumentRulesFor(const Context& context, const ShaderRecompiler::MeshConfiguration& mesh, const Pm4::DrawParameters& draw);
+void RecordMeshArgumentsForTesting(const Context& context, VkCommandBuffer commands, Recorder& recorder, const State& state, const Pm4::DrawParameters& draw, const Pm4::DrawParameters::IndirectDraw& args, const HostImport& argumentImport, const std::function<void(std::uint32_t)>& countBarrier, std::shared_ptr<Buffer>& arguments);
+void KeepSampleOrderOwners(Recorder& recorder, const std::vector<std::shared_ptr<void>>& owners);
 struct MeshGrid {
     std::uint32_t groups;
     std::uint32_t instances;

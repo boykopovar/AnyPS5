@@ -6,5 +6,7 @@
 extern "C" void BeginAllocationCount_nid_no_patch() noexcept;
 extern "C" std::size_t EndAllocationCount_nid_no_patch() noexcept;
 extern "C" void AllocateForCount_nid_no_patch(std::size_t bytes);
+extern "C" void FailAllocationsAfter_nid_no_patch(std::size_t allocations) noexcept;
+extern "C" void StopAllocationFailures_nid_no_patch() noexcept;
 
 #endif
