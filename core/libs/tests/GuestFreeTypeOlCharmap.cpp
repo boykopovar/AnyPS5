@@ -6,7 +6,15 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <utility>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -20,6 +28,45 @@ void Require(bool value, int line) {
 }
 #define REQUIRE(value) Require((value), __LINE__)
 
+struct ProtectedSlot {
+    std::size_t pageSize = 0;
+    void* mapping = nullptr;
+
+    ProtectedSlot() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        mapping = VirtualAlloc(nullptr, pageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+        pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        mapping = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (mapping == MAP_FAILED) mapping = nullptr;
+#endif
+        REQUIRE(mapping != nullptr);
+    }
+
+    ~ProtectedSlot() {
+        if (!mapping) return;
+#ifdef _WIN32
+        VirtualFree(mapping, 0, MEM_RELEASE);
+#else
+        munmap(mapping, pageSize);
+#endif
+    }
+
+    void SetReadOnly(bool readOnly) {
+#ifdef _WIN32
+        DWORD previous = 0;
+        REQUIRE(VirtualProtect(mapping, pageSize, readOnly ? PAGE_READONLY : PAGE_READWRITE, &previous) != 0);
+#else
+        REQUIRE(mprotect(mapping, pageSize, readOnly ? PROT_READ : (PROT_READ | PROT_WRITE)) == 0);
+#endif
+    }
+
+    GuestCMap** Output() { return static_cast<GuestCMap**>(mapping); }
+};
+
 struct State {
     GuestFaceRec* face;
     int starts;
@@ -28,6 +75,7 @@ struct State {
     bool checkRemoval = false;
     GuestCMap* nested = nullptr;
     bool throwDuringDone = false;
+    ProtectedSlot* lockDuringInit = nullptr;
 };
 
 struct Map {
@@ -42,6 +90,7 @@ int APS5_VABI Init(GuestCMap* map, void* data) {
     REQUIRE(reinterpret_cast<Map*>(map)->state == nullptr);
     reinterpret_cast<Map*>(map)->state = state;
     ++state->starts;
+    if (state->lockDuringInit) state->lockDuringInit->SetReadOnly(true);
     return state->fail ? 0x42 : 0;
 }
 
@@ -231,6 +280,43 @@ int main() {
     sceFreeTypeOlCMapDone_nid_no_patch(reinterpret_cast<GuestCMap*>(original));
     REQUIRE(!face->charmap && face->num_charmaps == count && face->charmaps[count - 1] == survivor);
     sceFreeTypeOlCMapDone_nid_no_patch(nullptr);
+    auto throws = [](auto&& call) {
+        try {
+            call();
+        } catch (const std::exception&) {
+            return true;
+        }
+        return false;
+    };
+    ProtectedSlot protectedOutput;
+    *protectedOutput.Output() = sentinel;
+    protectedOutput.SetReadOnly(true);
+    auto* unmappedClass = reinterpret_cast<const GuestCMapClass*>(static_cast<std::uintptr_t>(0x10));
+    auto* unmappedDescription = reinterpret_cast<const GuestCharMapRec*>(static_cast<std::uintptr_t>(0x10));
+    auto* unmappedOutput = reinterpret_cast<GuestCMap**>(static_cast<std::uintptr_t>(0x10));
+    auto* unmappedCMap = reinterpret_cast<GuestCMap*>(static_cast<std::uintptr_t>(0x10));
+    State guardState{face, 0, 0, false};
+    REQUIRE(throws([&] { sceFreeTypeOlCMapNew_nid_no_patch(unmappedClass, &guardState, &description, &map); }));
+    REQUIRE(throws([&] { sceFreeTypeOlCMapNew_nid_no_patch(&clazz, &guardState, unmappedDescription, &map); }));
+    REQUIRE(throws([&] { sceFreeTypeOlCMapNew_nid_no_patch(&clazz, &guardState, &description, unmappedOutput); }));
+    REQUIRE(throws([&] { sceFreeTypeOlCMapNew_nid_no_patch(&clazz, &guardState, &description, protectedOutput.Output()); }));
+    REQUIRE(throws([&] { sceFreeTypeOlCMapDone_nid_no_patch(unmappedCMap); }));
+    REQUIRE(guardState.starts == 0 && guardState.finishes == 0 && *protectedOutput.Output() == sentinel);
+
+    const auto charmapCountBefore = face->num_charmaps;
+    protectedOutput.SetReadOnly(false);
+    *protectedOutput.Output() = sentinel;
+    State lockSuccessState{face, 0, 0, false, false, nullptr, false, &protectedOutput};
+    REQUIRE(throws([&] { sceFreeTypeOlCMapNew_nid_no_patch(&clazz, &lockSuccessState, &description, protectedOutput.Output()); }));
+    REQUIRE(lockSuccessState.starts == 1 && lockSuccessState.finishes == 1);
+    REQUIRE(face->num_charmaps == charmapCountBefore && *protectedOutput.Output() == sentinel);
+
+    protectedOutput.SetReadOnly(false);
+    *protectedOutput.Output() = sentinel;
+    State lockFailState{face, 0, 0, true, false, nullptr, false, &protectedOutput};
+    REQUIRE(throws([&] { sceFreeTypeOlCMapNew_nid_no_patch(&clazz, &lockFailState, &description, protectedOutput.Output()); }));
+    REQUIRE(lockFailState.starts == 1 && lockFailState.finishes == 1);
+    REQUIRE(face->num_charmaps == charmapCountBefore && *protectedOutput.Output() == sentinel);
     REQUIRE(!FT_Done_Face_nid_postfix(face));
     REQUIRE(state.starts == 3 && state.finishes == 3);
     const auto bitmap = FontFixture::BitmapFont();

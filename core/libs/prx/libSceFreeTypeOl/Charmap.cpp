@@ -1,10 +1,12 @@
 #include "prx/libSceFreeTypeOl/libSceFreeTypeOl.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "SceTypes.hpp"
 
 #include <algorithm>
 #include <cerrno>
+#include <cstddef>
 #include <cstring>
 #include <exception>
 #include <limits>
@@ -56,8 +58,22 @@ struct Initialization {
 };
 
 bool CopyIn(void* destination, const void* source, std::size_t size) {
+    if (!size) return true;
+    if (!source) return false;
     const int saved = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(destination, source, size);
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(source, size);
+    const bool copied = GuestReadable_nid_no_patch(source, size) && GuestCopyIn_nid_no_patch(destination, source, size);
+    errno = saved;
+    return copied;
+}
+
+bool CopyOut(void* destination, const void* source, std::size_t size) {
+    if (!size) return true;
+    if (!destination) return false;
+    const int saved = errno;
+    const GuestArena::HostWrite writeAccess(destination, size);
+    const bool copied = writeAccess.Open() && GuestWritable_nid_no_patch(destination, size) &&
+                        GuestCopyOut_nid_no_patch(destination, source, size);
     errno = saved;
     return copied;
 }
@@ -65,7 +81,8 @@ bool CopyIn(void* destination, const void* source, std::size_t size) {
 GuestFace* Owner(const GuestCharMapRec& info) {
     auto* face = static_cast<const GuestFaceRec*>(info.face);
     GuestFace* owner = nullptr;
-    if (!face || !CopyIn(&owner, &face->internal, sizeof(owner)) || !owner || &owner->rec != face)
+    const auto* internalField = face ? reinterpret_cast<const unsigned char*>(face) + offsetof(GuestFaceRec, internal) : nullptr;
+    if (!face || !CopyIn(&owner, internalField, sizeof(owner)) || !owner || &owner->rec != face)
         NotImplemented_nid_no_patch(__func__);
     return owner;
 }
@@ -280,7 +297,13 @@ int APS5_VABI sceFreeTypeOlCMapNew_nid_no_patch(const GuestCMapClass* clazz, voi
         owner->nativeCharmapClass = &NativeClass;
         FreeTypeSyncCharmaps_nid_no_patch(*owner);
     }
-    if (output && !GuestWritable_nid_no_patch(output, sizeof(*output))) NotImplemented_nid_no_patch(__func__);
+    if (output) {
+        const int saved = errno;
+        const GuestArena::HostWrite writeAccess(output, sizeof(*output));
+        const bool writable = writeAccess.Open() && GuestWritable_nid_no_patch(output, sizeof(*output));
+        errno = saved;
+        if (!writable) NotImplemented_nid_no_patch(__func__);
+    }
     if (methods.size > std::numeric_limits<FT_Long>::max()) NotImplemented_nid_no_patch(__func__);
     owner->rec.memory = GuestMemory(*owner, owner->host->memory);
     FT_CharMapRec nativeInfo{owner->host, static_cast<FT_Encoding>(info.encoding), info.platform_id, info.encoding_id};
@@ -288,14 +311,20 @@ int APS5_VABI sceFreeTypeOlCMapNew_nid_no_patch(const GuestCMapClass* clazz, voi
     FT_CMap created = nullptr;
     const auto error = FT_CMap_New(&CMapClass.clazz, &init, &nativeInfo, &created);
     if (error) {
-        if (output) *output = nullptr;
+        GuestCMap* cleared = nullptr;
+        if (output && !CopyOut(output, &cleared, sizeof(cleared))) NotImplemented_nid_no_patch(__func__);
         if (init.exception) std::rethrow_exception(init.exception);
         return error;
     }
     auto& bridge = *reinterpret_cast<Bridge*>(created);
     bridge.initializationException = nullptr;
     FreeTypeSyncCharmaps_nid_no_patch(*owner);
-    if (output) *output = init.guest;
+    if (output && !CopyOut(output, &init.guest, sizeof(init.guest))) {
+        CharmapRemoval removal(*owner, created);
+        FT_CMap_Done(created);
+        FreeTypeSyncCharmaps_nid_no_patch(*owner);
+        NotImplemented_nid_no_patch(__func__);
+    }
     return FT_Err_Ok;
 #endif
 }
@@ -309,7 +338,9 @@ void APS5_VABI sceFreeTypeOlCMapDone_nid_no_patch(GuestCMap* cmap) {
     GuestCharMapRec info{};
     if (!CopyIn(&info, cmap, sizeof(info))) NotImplemented_nid_no_patch(__func__);
     auto* owner = Owner(info);
-    const auto found = std::find(owner->charmapPointers.begin(), owner->charmapPointers.end(), &cmap->charmap);
+    const auto* charmapAddress = reinterpret_cast<const GuestCharMapRec*>(
+        reinterpret_cast<const unsigned char*>(cmap) + offsetof(GuestCMap, charmap));
+    const auto found = std::find(owner->charmapPointers.begin(), owner->charmapPointers.end(), charmapAddress);
     if (found == owner->charmapPointers.end()) return;
     const auto index = static_cast<std::size_t>(found - owner->charmapPointers.begin());
     auto* nativeMap = owner->host->charmaps[index];
