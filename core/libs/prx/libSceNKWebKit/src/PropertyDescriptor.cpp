@@ -143,4 +143,18 @@ void APS5_VABI _ZN3JSC18PropertyDescriptor9setSetterENS_7JSValueE(PropertyDescri
     SetAccessor(self, &PropertyDescriptor::setter, setter, __func__);
 }
 
+void APS5_VABI _ZN3JSC18PropertyDescriptor13setDescriptorENS_7JSValueEj(PropertyDescriptor* self, std::uint64_t value, std::uint32_t attributes) {
+    constexpr std::uint64_t NumberTag = 0xfffe000000000000ull;
+    constexpr std::uint64_t OtherTag = 0x2;
+    constexpr std::uint64_t NotCellMask = NumberTag | OtherTag;
+    constexpr std::uint32_t CustomValue = 1u << 6;
+    if (value == 0) throw std::invalid_argument(std::string(__func__) + ": empty value");
+    auto descriptor = Load(self, __func__);
+    if (!(value & NotCellMask)) NotImplemented_nid_no_patch(__func__);
+    descriptor.value = value;
+    descriptor.attributes = attributes & ~CustomValue;
+    descriptor.seenAttributes = NKWebKit::JscAbi::WritablePresent | NKWebKit::JscAbi::EnumerablePresent | NKWebKit::JscAbi::ConfigurablePresent;
+    Store(self, descriptor, __func__);
+}
+
 }

@@ -70,6 +70,7 @@ static bool AllFail(Descriptor* descriptor) {
         Throws([&] { _ZN3JSC18PropertyDescriptor13setEnumerableEb(descriptor, true); return 0; }) &&
         Throws([&] { _ZN3JSC18PropertyDescriptor15setConfigurableEb(descriptor, true); return 0; }) &&
         Throws([&] { _ZN3JSC18PropertyDescriptor12setUndefinedEv(descriptor); return 0; }) &&
+        Throws([&] { _ZN3JSC18PropertyDescriptor13setDescriptorENS_7JSValueEj(descriptor, 0xfffe000000001234ull, 0); return 0; }) &&
         Throws([&] { _ZN3JSC18PropertyDescriptor9setGetterENS_7JSValueE(descriptor, 1); return 0; }) &&
         Throws([&] { _ZN3JSC18PropertyDescriptor9setSetterENS_7JSValueE(descriptor, 1); return 0; });
 }
@@ -90,6 +91,7 @@ int main() {
     Require(_ZNK3JSC18PropertyDescriptor20isAccessorDescriptorEv(descriptor));
     Require(Throws([&] { _ZN3JSC18PropertyDescriptor11setWritableEb(descriptor, true); return 0; }));
     Require(Throws([&] { _ZN3JSC18PropertyDescriptor12setUndefinedEv(descriptor); return 0; }));
+    Require(Throws([&] { _ZN3JSC18PropertyDescriptor13setDescriptorENS_7JSValueEj(descriptor, 0xfffe000000001234ull, 0); return 0; }));
     Require(Throws([&] { _ZN3JSC18PropertyDescriptor9setGetterENS_7JSValueE(descriptor, 7); return 0; }));
     Require(std::memcmp(descriptor, &before, sizeof(before)) == 0);
 
