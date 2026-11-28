@@ -28,13 +28,35 @@
 
 #include <stdexcept>
 
+#include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include <cstddef>
+#include <type_traits>
+
+namespace {
+
+using NKWebKit::ProxyAbi::ProxyServerVector;
+
+static_assert(std::is_trivially_copyable_v<ProxyServerVector>);
+
+void RequireWritableGuestBytes(void* pointer, std::size_t size, const char* function) {
+    if (!size) return;
+    if (!pointer) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    const GuestArena::HostWrite guard(pointer, size);
+    if (!guard.Open() || !GuestWritable_nid_no_patch(pointer, size))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+}  // namespace
+
 extern "C" {
 
 NKWebKit::ProxyAbi::ProxyServerVector* APS5_VABI _ZN7WebCore18proxyServersForURLERKN3WTF3URLE(NKWebKit::ProxyAbi::ProxyServerVector* result, const NKWebKit::WtfAbi::URL*) {
     if (!result) throw std::invalid_argument("WebCore::proxyServersForURL: null result");
-    result->buffer = nullptr;
-    result->capacity = 0;
-    result->size = 0;
+    RequireWritableGuestBytes(result, sizeof(*result), __func__);
+    const ProxyServerVector empty{nullptr, 0, 0};
+    if (!GuestCopyOut_nid_no_patch(result, &empty, sizeof(empty)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     return result;
 }
 
