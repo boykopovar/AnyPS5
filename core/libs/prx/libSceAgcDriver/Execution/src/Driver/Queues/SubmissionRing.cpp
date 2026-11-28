@@ -33,7 +33,8 @@ namespace AgcDriver::DriverDetail {
 
 namespace {
 
-constexpr std::size_t KeptWords = 512;
+constexpr std::size_t DefaultKeptWords = 512;
+constexpr std::size_t MaximumKeptWords = 65536;
 constexpr std::size_t MaximumCapacity = 4096;
 constexpr std::size_t MaximumStallSeconds = 86400;
 constexpr std::size_t MaximumOrderHoldMicroseconds = 1000000;
@@ -77,7 +78,7 @@ struct Entry {
     std::size_t dwords = 0;
     std::size_t kept = 0;
     bool rewindTail = false;
-    std::array<std::uint32_t, KeptWords> words{};
+    std::vector<std::uint32_t> words;
 };
 
 struct Ring {
@@ -113,6 +114,14 @@ std::size_t environmentCount(const char* name, std::size_t fallback, std::size_t
     const auto [last, error] = std::from_chars(text, end, value);
     require(error == std::errc{} && last == end && value <= maximum, reason);
     return value;
+}
+
+// Leading command words kept per submission, APS5_PM4_RING_WORDS (default 512, at most 65536).
+// A dump is only readable up to the offset a queue stopped at, so a stall inside a long tail is
+// invisible at the default; the whole tail is kept when it fits (1697 dwords in one report).
+std::size_t KeptWordCount() {
+    static const std::size_t words = environmentCount("APS5_PM4_RING_WORDS", DefaultKeptWords, MaximumKeptWords, "APS5_PM4_RING_WORDS must be a number of dwords from 0 to 65536");
+    return words;
 }
 
 bool writeLine(const char* text, std::size_t length) {
@@ -320,9 +329,9 @@ void RecordSubmission(std::uint32_t queue, std::uint64_t serial, std::span<const
     entry.serial = serial;
     entry.guest = reinterpret_cast<std::uintptr_t>(guest);
     entry.dwords = commands.size();
-    entry.kept = std::min(commands.size(), KeptWords);
+    entry.kept = std::min(commands.size(), KeptWordCount());
     entry.rewindTail = rewindTail;
-    std::copy_n(commands.begin(), entry.kept, entry.words.begin());
+    entry.words.assign(commands.begin(), commands.begin() + static_cast<std::ptrdiff_t>(entry.kept));
     ring.recorded.store(recorded + 1, std::memory_order_release);
 }
 
