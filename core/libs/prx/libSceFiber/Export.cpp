@@ -670,8 +670,8 @@ extern "C" {
 
 int32_t APS5_VABI _sceFiberInitializeImpl_nid_postfix(FiberObject* object, const char* name, GuestFiberEntry entry, uint64_t arg_on_initialize, void* addr_context, uint64_t size_context, const void* opt_param, uint32_t build_version) {
     (void)opt_param;
-    (void)build_version;
-    return InitializeFiber(object, name, entry, arg_on_initialize, addr_context, size_context, 0);
+    const uint32_t flags = build_version >= 0x03500000 ? FIBER_FLAG_SET_FPU_REGISTERS : 0;
+    return InitializeFiber(object, name, entry, arg_on_initialize, addr_context, size_context, flags);
 }
 
 int32_t APS5_VABI sceFiberFinalize(FiberObject* object) {
@@ -798,7 +798,7 @@ int32_t APS5_VABI _sceFiberAttachContextAndSwitch(FiberObject* object, void* add
 
 int32_t APS5_VABI _sceFiberInitializeWithInternalOptionImpl(FiberObject* object, const char* name, GuestFiberEntry entry, uint64_t arg_on_initialize, void* addr_context, uint64_t size_context, const FiberOptParam* opt_param, uint32_t flags, uint32_t build_version) {
     (void)opt_param;
-    (void)build_version;
+    if (build_version >= 0x03500000) flags |= FIBER_FLAG_SET_FPU_REGISTERS;
     return InitializeFiber(object, name, entry, arg_on_initialize, addr_context, size_context, flags);
 }
 
