@@ -1,6 +1,7 @@
 #ifndef CODEGEN_CODEGENTYPES_HPP
 #define CODEGEN_CODEGENTYPES_HPP
 
+#include <codegen/AddressMap.hpp>
 #include <codegen/x86/Amd64OnlySubstitutionTypes.hpp>
 #include <domain/Types.hpp>
 #include <cstdint>
@@ -27,6 +28,7 @@ struct AddressAdjustment {
 struct RewriteResult {
     std::vector<std::uint8_t> Bytes;
     std::vector<AddressAdjustment> Adjustments;
+    AddressMap Mapping;
 };
 
 struct TrampolineSite {

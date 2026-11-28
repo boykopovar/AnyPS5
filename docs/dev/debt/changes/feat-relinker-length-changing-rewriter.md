@@ -1,0 +1,5 @@
+# relinker
+
+## change The length-changing path of the [instruction rewriter]
+
+- The length-changing path of the [instruction rewriter](../../../core/relinker/codegen/src/x86/X64InstructionRewriter.cpp) reports each edit as an [address map](../../../core/relinker/codegen/include/codegen/AddressMap.hpp), and the [fix-up helper](../../../core/relinker/codegen/src/x86/LengthChangingFixups.cpp) moves relocation slots and absolute addends, symbol values, `.eh_frame` FDE ranges and LSDA pointers, and relative jump-table entries with it; FDE encodings it cannot re-encode are refused. The [converter](../../../core/relinker/codegen/src/Amd64OnlyConverter.cpp) still keeps every substitution the same length, and segment and caller metadata are not resized. The rewriter still rejects length-changing edits when a surviving truncated relative branch would move relative to its target or its section-relative target wraps at 16 bits, as the runtime address base that resolves a wrapped destination is unavailable; branches that keep their distance and stay in range are accepted.
