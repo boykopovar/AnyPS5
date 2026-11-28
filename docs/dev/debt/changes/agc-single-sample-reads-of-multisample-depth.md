@@ -1,0 +1,6 @@
+# libSceAgcDriver
+
+## add Unknown function info
+
+- [Native D32 guest publication without stencil](../../../core/libs/prx/libSceAgcDriver/Graphics/src/DepthSurface.cpp) follows the D32S8 publication above for the depth plane and, with HTILE, the HTILE plane, expanded for the depth aspect only; that this is the console's expanded HTILE for a depth-only target is inferred, not measured on PS5 hardware.
+- [Single-sample reads of native multisampled depth](../../../core/libs/prx/libSceAgcDriver/Graphics/src/DepthSurface.cpp) (libSceAgcDriver) - that the published guest bytes are what the console reads through a descriptor that is not 2D MSAA over a sampling-eligible multisampled depth owner is unmeasured on PS5 hardware; such a read takes the ordinary texture path after the owner publishes its unpublished host writes, and the owner stays. Metadata there is read as DCC keys: published HTILE is all expanded and read as stored, HTILE the guest cleared after the last publication is read as keys. A 2D MSAA descriptor of another format, extent or sample count throws, since the multisampled texture path would make a second owner of the memory, and so does every read of an ineligible owner. A read in a draw that attaches the owner sees the depth before that draw, and fast revalidation declines these addresses.
