@@ -58,6 +58,13 @@ inline void SetX87Status(const std::uint16_t value) {
 inline void X87ClearExceptions() { asm volatile("fnclex"); }
 inline void X87Wait() { asm volatile("fwait"); }
 
+template<typename T>
+inline T X87Scale(const T value, const int exponent) {
+    long double result;
+    asm volatile("fscale" : "=t"(result) : "0"(value), "u"(static_cast<long double>(exponent)));
+    return static_cast<T>(result);
+}
+
 inline std::uint32_t MxcsrMask() {
     alignas(16) std::array<std::uint32_t, 128> state;
     asm volatile("fxsave %0" : "=m"(state));

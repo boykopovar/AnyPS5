@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/GuestCpu.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <bit>
 #include <cerrno>
@@ -647,6 +648,140 @@ static void CheckLdexpfErrno() {
         Require(std::bit_cast<std::uint32_t>(ldexpf_nid_postfix(std::bit_cast<float>(item.input), item.exponent)) == item.expected);
         Require(errno == 1234);
     }
+}
+
+static void CheckFloatScalingEnvironment() {
+    constexpr struct {
+        std::uint32_t input;
+        int exponent;
+        std::array<std::uint32_t, 4> bits;
+        std::array<unsigned, 4> flags;
+    } cases[] = {
+        {0x00000000u, INT_MIN, {0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u}, {0x00u, 0x00u, 0x00u, 0x00u}},
+        {0x80000000u, INT_MAX, {0x80000000u, 0x80000000u, 0x80000000u, 0x80000000u}, {0x00u, 0x00u, 0x00u, 0x00u}},
+        {0x00000001u, 0, {0x00000001u, 0x00000001u, 0x00000001u, 0x00000001u}, {0x02u, 0x02u, 0x02u, 0x02u}},
+        {0x00000001u, 128, {0x35000000u, 0x35000000u, 0x35000000u, 0x35000000u}, {0x02u, 0x02u, 0x02u, 0x02u}},
+        {0x00000001u, INT_MIN, {0x00000000u, 0x00000000u, 0x00000001u, 0x00000000u}, {0x32u, 0x32u, 0x32u, 0x32u}},
+        {0x80000001u, INT_MAX, {0xff800000u, 0xff800000u, 0xff7fffffu, 0xff7fffffu}, {0x2au, 0x2au, 0x2au, 0x2au}},
+        {0x007fffffu, -1, {0x00400000u, 0x003fffffu, 0x00400000u, 0x003fffffu}, {0x32u, 0x32u, 0x32u, 0x32u}},
+        {0x00800000u, -1, {0x00400000u, 0x00400000u, 0x00400000u, 0x00400000u}, {0x00u, 0x00u, 0x00u, 0x00u}},
+        {0x00800000u, -150, {0x00000000u, 0x00000000u, 0x00000001u, 0x00000000u}, {0x30u, 0x30u, 0x30u, 0x30u}},
+        {0x3f800000u, -149, {0x00000001u, 0x00000001u, 0x00000001u, 0x00000001u}, {0x00u, 0x00u, 0x00u, 0x00u}},
+        {0x3f800000u, -150, {0x00000000u, 0x00000000u, 0x00000001u, 0x00000000u}, {0x30u, 0x30u, 0x30u, 0x30u}},
+        {0x3f800000u, 128, {0x7f800000u, 0x7f7fffffu, 0x7f800000u, 0x7f7fffffu}, {0x28u, 0x28u, 0x28u, 0x28u}},
+        {0x3f800000u, INT_MAX, {0x7f800000u, 0x7f7fffffu, 0x7f800000u, 0x7f7fffffu}, {0x28u, 0x28u, 0x28u, 0x28u}},
+        {0xbfc00000u, -149, {0x80000002u, 0x80000002u, 0x80000001u, 0x80000001u}, {0x30u, 0x30u, 0x30u, 0x30u}},
+        {0xbfc00000u, -150, {0x80000001u, 0x80000001u, 0x80000000u, 0x80000000u}, {0x30u, 0x30u, 0x30u, 0x30u}},
+        {0xbfc00000u, 128, {0xff800000u, 0xff800000u, 0xff7fffffu, 0xff7fffffu}, {0x28u, 0x28u, 0x28u, 0x28u}},
+        {0x3f800001u, -126, {0x00800001u, 0x00800001u, 0x00800001u, 0x00800001u}, {0x00u, 0x00u, 0x00u, 0x00u}},
+        {0x7f7fffffu, 1, {0x7f800000u, 0x7f7fffffu, 0x7f800000u, 0x7f7fffffu}, {0x28u, 0x28u, 0x28u, 0x28u}},
+        {0xff7fffffu, 1, {0xff800000u, 0xff800000u, 0xff7fffffu, 0xff7fffffu}, {0x28u, 0x28u, 0x28u, 0x28u}},
+        {0x7f800000u, INT_MIN, {0x7f800000u, 0x7f800000u, 0x7f800000u, 0x7f800000u}, {0x00u, 0x00u, 0x00u, 0x00u}},
+        {0xff800000u, INT_MAX, {0xff800000u, 0xff800000u, 0xff800000u, 0xff800000u}, {0x00u, 0x00u, 0x00u, 0x00u}},
+        {0x7fc00123u, 128, {0x7fc00123u, 0x7fc00123u, 0x7fc00123u, 0x7fc00123u}, {0x00u, 0x00u, 0x00u, 0x00u}},
+        {0x7f800123u, 0, {0x7fc00123u, 0x7fc00123u, 0x7fc00123u, 0x7fc00123u}, {0x01u, 0x01u, 0x01u, 0x01u}},
+        {0xff800456u, INT_MAX, {0xffc00456u, 0xffc00456u, 0xffc00456u, 0xffc00456u}, {0x01u, 0x01u, 0x01u, 0x01u}},
+    };
+    const auto saved = GuestCpu::X87Environment();
+    const auto savedMxcsr = GuestCpu::Mxcsr();
+    for (auto scale : {ldexpf_nid_postfix, scalbnf_nid_postfix}) {
+        for (unsigned precision : {0u, 0x200u, 0x300u}) {
+            for (unsigned rounding = 0; rounding != 4; ++rounding) {
+                for (unsigned sseRounding = 0; sseRounding != 4; ++sseRounding) {
+                    for (unsigned denorm = 0; denorm != 4; ++denorm) {
+                        for (unsigned sticky : {0u, 0x25u}) {
+                            for (const auto& item : cases) {
+                                const auto control = static_cast<std::uint16_t>(0x7fu | precision | (rounding << 10));
+                                GuestCpu::X87ClearExceptions();
+                                GuestCpu::SetX87Control(control);
+                                GuestCpu::SetX87Status(static_cast<std::uint16_t>((GuestCpu::X87Status() & ~0x3fu) | sticky));
+                                const unsigned mxcsr = 0x1f80u | (sseRounding << 13) | ((denorm & 1u) ? 0x40u : 0u)
+                                    | ((denorm & 2u) ? 0x8000u : 0u) | (sticky ? 0x12u : 0u);
+                                GuestCpu::SetMxcsr(mxcsr);
+                                errno = 97;
+                                const auto bits = std::bit_cast<std::uint32_t>(scale(std::bit_cast<float>(item.input), item.exponent));
+                                const auto status = GuestCpu::X87Status();
+                                Require(bits == item.bits[rounding]);
+                                Require((status & 0x3fu) == (item.flags[rounding] | sticky));
+                                Require(GuestCpu::X87Control() == control);
+                                Require(GuestCpu::Mxcsr() == mxcsr);
+                                Require(errno == 97);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    GuestCpu::SetX87Environment(saved);
+    GuestCpu::SetMxcsr(savedMxcsr);
+}
+
+static void CheckDoubleScalingEnvironment() {
+    constexpr struct {
+        std::uint64_t input;
+        int exponent;
+        std::array<std::uint64_t, 4> bits;
+        std::array<unsigned, 4> flags;
+    } cases[] = {
+        {0x0000000000000000ull, INT_MIN, {0x0000000000000000ull, 0x0000000000000000ull, 0x0000000000000000ull, 0x0000000000000000ull}, {0x00u, 0x00u, 0x00u, 0x00u}},
+        {0x8000000000000000ull, INT_MAX, {0x8000000000000000ull, 0x8000000000000000ull, 0x8000000000000000ull, 0x8000000000000000ull}, {0x00u, 0x00u, 0x00u, 0x00u}},
+        {0x0000000000000001ull, 0, {0x0000000000000001ull, 0x0000000000000001ull, 0x0000000000000001ull, 0x0000000000000001ull}, {0x02u, 0x02u, 0x02u, 0x02u}},
+        {0x0000000000000001ull, 1024, {0x3cd0000000000000ull, 0x3cd0000000000000ull, 0x3cd0000000000000ull, 0x3cd0000000000000ull}, {0x02u, 0x02u, 0x02u, 0x02u}},
+        {0x0000000000000001ull, INT_MIN, {0x0000000000000000ull, 0x0000000000000000ull, 0x0000000000000001ull, 0x0000000000000000ull}, {0x32u, 0x32u, 0x32u, 0x32u}},
+        {0x8000000000000001ull, INT_MAX, {0xfff0000000000000ull, 0xfff0000000000000ull, 0xffefffffffffffffull, 0xffefffffffffffffull}, {0x2au, 0x2au, 0x2au, 0x2au}},
+        {0x000fffffffffffffull, -1, {0x0008000000000000ull, 0x0007ffffffffffffull, 0x0008000000000000ull, 0x0007ffffffffffffull}, {0x32u, 0x32u, 0x32u, 0x32u}},
+        {0x0010000000000000ull, -1, {0x0008000000000000ull, 0x0008000000000000ull, 0x0008000000000000ull, 0x0008000000000000ull}, {0x00u, 0x00u, 0x00u, 0x00u}},
+        {0x0010000000000000ull, -1075, {0x0000000000000000ull, 0x0000000000000000ull, 0x0000000000000001ull, 0x0000000000000000ull}, {0x30u, 0x30u, 0x30u, 0x30u}},
+        {0x3ff0000000000000ull, -1074, {0x0000000000000001ull, 0x0000000000000001ull, 0x0000000000000001ull, 0x0000000000000001ull}, {0x00u, 0x00u, 0x00u, 0x00u}},
+        {0x3ff0000000000000ull, -1075, {0x0000000000000000ull, 0x0000000000000000ull, 0x0000000000000001ull, 0x0000000000000000ull}, {0x30u, 0x30u, 0x30u, 0x30u}},
+        {0x3ff0000000000000ull, 1024, {0x7ff0000000000000ull, 0x7fefffffffffffffull, 0x7ff0000000000000ull, 0x7fefffffffffffffull}, {0x28u, 0x28u, 0x28u, 0x28u}},
+        {0x3ff0000000000000ull, INT_MAX, {0x7ff0000000000000ull, 0x7fefffffffffffffull, 0x7ff0000000000000ull, 0x7fefffffffffffffull}, {0x28u, 0x28u, 0x28u, 0x28u}},
+        {0xbff8000000000000ull, -1074, {0x8000000000000002ull, 0x8000000000000002ull, 0x8000000000000001ull, 0x8000000000000001ull}, {0x30u, 0x30u, 0x30u, 0x30u}},
+        {0xbff8000000000000ull, -1075, {0x8000000000000001ull, 0x8000000000000001ull, 0x8000000000000000ull, 0x8000000000000000ull}, {0x30u, 0x30u, 0x30u, 0x30u}},
+        {0xbff8000000000000ull, 1024, {0xfff0000000000000ull, 0xfff0000000000000ull, 0xffefffffffffffffull, 0xffefffffffffffffull}, {0x28u, 0x28u, 0x28u, 0x28u}},
+        {0x3ff0000000000001ull, -1022, {0x0010000000000001ull, 0x0010000000000001ull, 0x0010000000000001ull, 0x0010000000000001ull}, {0x00u, 0x00u, 0x00u, 0x00u}},
+        {0x7fefffffffffffffull, 1, {0x7ff0000000000000ull, 0x7fefffffffffffffull, 0x7ff0000000000000ull, 0x7fefffffffffffffull}, {0x28u, 0x28u, 0x28u, 0x28u}},
+        {0xffefffffffffffffull, 1, {0xfff0000000000000ull, 0xfff0000000000000ull, 0xffefffffffffffffull, 0xffefffffffffffffull}, {0x28u, 0x28u, 0x28u, 0x28u}},
+        {0x7ff0000000000000ull, INT_MIN, {0x7ff0000000000000ull, 0x7ff0000000000000ull, 0x7ff0000000000000ull, 0x7ff0000000000000ull}, {0x00u, 0x00u, 0x00u, 0x00u}},
+        {0xfff0000000000000ull, INT_MAX, {0xfff0000000000000ull, 0xfff0000000000000ull, 0xfff0000000000000ull, 0xfff0000000000000ull}, {0x00u, 0x00u, 0x00u, 0x00u}},
+        {0x7ff8000000000123ull, 1024, {0x7ff8000000000123ull, 0x7ff8000000000123ull, 0x7ff8000000000123ull, 0x7ff8000000000123ull}, {0x00u, 0x00u, 0x00u, 0x00u}},
+        {0x7ff0000000000123ull, 0, {0x7ff8000000000123ull, 0x7ff8000000000123ull, 0x7ff8000000000123ull, 0x7ff8000000000123ull}, {0x01u, 0x01u, 0x01u, 0x01u}},
+        {0xfff0000000000456ull, INT_MAX, {0xfff8000000000456ull, 0xfff8000000000456ull, 0xfff8000000000456ull, 0xfff8000000000456ull}, {0x01u, 0x01u, 0x01u, 0x01u}},
+    };
+    const auto saved = GuestCpu::X87Environment();
+    const auto savedMxcsr = GuestCpu::Mxcsr();
+    for (auto scale : {scalbn_nid_postfix}) {
+        for (unsigned precision : {0u, 0x200u, 0x300u}) {
+            for (unsigned rounding = 0; rounding != 4; ++rounding) {
+                for (unsigned sseRounding = 0; sseRounding != 4; ++sseRounding) {
+                    for (unsigned denorm = 0; denorm != 4; ++denorm) {
+                        for (unsigned sticky : {0u, 0x25u}) {
+                            for (const auto& item : cases) {
+                                const auto control = static_cast<std::uint16_t>(0x7fu | precision | (rounding << 10));
+                                GuestCpu::X87ClearExceptions();
+                                GuestCpu::SetX87Control(control);
+                                GuestCpu::SetX87Status(static_cast<std::uint16_t>((GuestCpu::X87Status() & ~0x3fu) | sticky));
+                                const unsigned mxcsr = 0x1f80u | (sseRounding << 13) | ((denorm & 1u) ? 0x40u : 0u)
+                                    | ((denorm & 2u) ? 0x8000u : 0u) | (sticky ? 0x12u : 0u);
+                                GuestCpu::SetMxcsr(mxcsr);
+                                errno = 97;
+                                const auto bits = std::bit_cast<std::uint64_t>(scale(std::bit_cast<double>(item.input), item.exponent));
+                                const auto status = GuestCpu::X87Status();
+                                Require(bits == item.bits[rounding]);
+                                Require((status & 0x3fu) == (item.flags[rounding] | sticky));
+                                Require(GuestCpu::X87Control() == control);
+                                Require(GuestCpu::Mxcsr() == mxcsr);
+                                Require(errno == 97);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    GuestCpu::SetX87Environment(saved);
+    GuestCpu::SetMxcsr(savedMxcsr);
 }
 
 static void CheckAtanfConsoleBits() {
@@ -5795,6 +5930,8 @@ int main() {
     CheckAtan2fConsoleBits();
     CheckFloatUnderflowErrno();
     CheckLdexpfErrno();
+    CheckFloatScalingEnvironment();
+    CheckDoubleScalingEnvironment();
     CheckFmodErrno();
     CheckFmodfErrno();
     CheckDoubleClassification();
