@@ -188,9 +188,11 @@ void testAttachments() {
 void testWriteOnly() {
     PassHazards hazards;
     hazards.BeginPass();
+    Expect(!hazards.HasWriteOnly(), "new pass has no write-only stores");
     Use feedback;
     feedback.writeOnly = {{0x1000, 0x8f80}};
     hazards.Add(feedback.View());
+    Expect(hazards.HasWriteOnly(), "write-only stores need a seal");
     Expect(hazards.Check(feedback.View(), true) == PassHazard::None, "draws only storing to the same buffer continue the pass");
     Use reader;
     reader.reads = {{0x2000, 0x2100}};
@@ -239,13 +241,16 @@ void testWriteOnly() {
     hazards.BeginPass();
     hazards.Add(feedback.View());
     hazards.SealWriteOnly();
+    Expect(!hazards.HasWriteOnly(), "sealed stores no longer need a seal");
     Expect(hazards.Check(feedback.View(), true) == PassHazard::WriteAfterWrite, "write-only stores over stores sealed by a flush");
     Use afterSeal;
     afterSeal.writeOnly = {{0x9000, 0xa000}};
     Expect(hazards.Check(afterSeal.View(), true) == PassHazard::None, "write-only stores elsewhere after a seal");
     hazards.Add(afterSeal.View());
+    Expect(hazards.HasWriteOnly(), "new write-only stores need another seal");
     Expect(hazards.Check(afterSeal.View(), true) == PassHazard::None, "write-only stores after a seal continue the pass among themselves");
     hazards.Clear();
+    Expect(!hazards.HasWriteOnly(), "cleared stores no longer need a seal");
     Expect(hazards.Check(feedback.View(), true) == PassHazard::None, "a cleared seal");
     hazards.Clear();
     hazards.Add(feedback.View());
