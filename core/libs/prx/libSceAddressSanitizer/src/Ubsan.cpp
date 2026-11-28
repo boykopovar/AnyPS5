@@ -1,4 +1,4 @@
-/* Derived from LLVM compiler-rt lib/ubsan (ubsan_handlers.cpp, ubsan_value.cpp, ubsan_diag.cpp) at llvmorg-16.0.6 (af2ed9f794c422923414d162dd1f48d986e2d6e3) */
+/* Derived from LLVM compiler-rt lib/ubsan (ubsan_handlers.cpp, ubsan_value.cpp, ubsan_diag.cpp) at llvmorg-16.0.6 (https://github.com/llvm/llvm-project/tree/af2ed9f794c422923414d162dd1f48d986e2d6e3/compiler-rt/lib/ubsan) */
 /* Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
  * See https://llvm.org/LICENSE.txt for license information.
  * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception */
@@ -94,19 +94,19 @@ TypeDescriptor ReadTypeAt(std::uintptr_t reference) {
     return ReadType(ReadGuest<std::uintptr_t>(reference));
 }
 
-double DecodeX87(const unsigned char* bytes) {
+long double DecodeX87(const unsigned char* bytes) {
     std::uint64_t mantissa = 0;
     std::memcpy(&mantissa, bytes, sizeof(mantissa));
     std::uint16_t top = 0;
     std::memcpy(&top, bytes + 8, sizeof(top));
     const bool negative = (top & 0x8000u) != 0;
     const int exponent = top & 0x7fff;
-    double value = 0;
+    long double value = 0;
     if (exponent == 0x7fff) {
-        value = (mantissa << 1) == 0 ? std::numeric_limits<double>::infinity() : std::numeric_limits<double>::quiet_NaN();
+        value = (mantissa << 1) == 0 ? std::numeric_limits<long double>::infinity() : std::numeric_limits<long double>::quiet_NaN();
     } else if (exponent != 0 || mantissa != 0) {
         const int unbiased = (exponent == 0 ? 1 : exponent) - 16383 - 63;
-        value = std::ldexp(static_cast<double>(mantissa), unbiased);
+        value = std::ldexp(static_cast<long double>(mantissa), unbiased);
     }
     return negative ? -value : value;
 }
@@ -148,7 +148,7 @@ struct Value {
     bool IsMinusOne() const { return type.IsSignedInteger() && SignedValue() == -1; }
     bool IsNegative() const { return type.IsSignedInteger() && SignedValue() < 0; }
 
-    double FloatValue() const {
+    long double FloatValue() const {
         const unsigned bits = type.FloatBitWidth();
         if (bits <= 64) {
             if (bits == 32) return std::bit_cast<float>(static_cast<std::uint32_t>(handle));
@@ -200,7 +200,7 @@ std::string RenderType(const TypeDescriptor& type) {
 std::string RenderValue(const Value& value) {
     if (value.type.IsSignedInteger()) return RenderSigned(value.SignedValue());
     if (value.type.IsUnsignedInteger()) return RenderUnsigned(value.UnsignedValue());
-    if (value.type.IsFloat()) return Format("%g", value.FloatValue());
+    if (value.type.IsFloat()) return Format("%Lg", value.FloatValue());
     return "<unknown>";
 }
 
