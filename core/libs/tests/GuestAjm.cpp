@@ -1,7 +1,9 @@
 #include "prx/libSceAjm.native/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <cmath>
 #include <cstdint>
@@ -138,6 +140,62 @@ void TestMp3(std::uint32_t context) {
         offset += static_cast<std::size_t>(sideband.inputConsumed);
     }
     Require(offset == sizeof(MP3_MONO) && peak > 3276 && peak < 4915);
+    Require(sceAjmInstanceDestroy(context, instance) == 0);
+}
+
+struct HostAccessCounter {
+    std::uintptr_t begin = 0;
+    std::uintptr_t end = 0;
+    std::atomic<int> calls{0};
+    void Watch(const void* data, std::size_t bytes) {
+        begin = reinterpret_cast<std::uintptr_t>(data);
+        end = begin + bytes;
+        calls = 0;
+    }
+    void Note(std::uintptr_t address, std::size_t bytes) {
+        if (address < end && begin < address + bytes) calls.fetch_add(1, std::memory_order_relaxed);
+    }
+};
+
+HostAccessCounter g_inputReads;
+HostAccessCounter g_pcmWrites;
+HostAccessCounter g_sidebandWrites;
+
+void CountHostRead(std::uintptr_t address, std::size_t bytes) { g_inputReads.Note(address, bytes); }
+
+void CountHostWrite(std::uintptr_t address, std::size_t bytes) {
+    g_pcmWrites.Note(address, bytes);
+    g_sidebandWrites.Note(address, bytes);
+}
+
+void TestMp3MultipleFramesCopyOnce(std::uint32_t context) {
+    std::uint32_t instance = 0;
+    Require(sceAjmInstanceCreate(context, 0, 0, &instance) == 0);
+    constexpr std::uint64_t runMultipleFrames = 1ull << 12;
+    constexpr std::uint64_t sidebandStream = 1ull << 47;
+    struct {
+        DecodeSideband stream;
+        std::uint32_t frames;
+        std::uint32_t reserved;
+    } decoded{{-1, -1, 0, 0, 0}, 0, 0};
+    std::vector<std::int16_t> pcm(6 * 1152);
+    std::vector<std::uint8_t> batch(4096);
+    AjmBatchInfo info{};
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+    Require(sceAjmBatchJobRun(&info, instance, sidebandStream | runMultipleFrames, MP3_MONO, sizeof(MP3_MONO), pcm.data(), pcm.size() * sizeof(std::int16_t), &decoded, sizeof(decoded)) == 0);
+    g_inputReads.Watch(MP3_MONO, sizeof(MP3_MONO));
+    g_pcmWrites.Watch(pcm.data(), pcm.size() * sizeof(std::int16_t));
+    g_sidebandWrites.Watch(&decoded, sizeof(decoded));
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(&CountHostRead);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(&CountHostWrite);
+    std::uint32_t id = 0;
+    AjmBatchError error{};
+    const bool ran = sceAjmBatchStart(context, &info, SCE_AJM_PRIORITY_MIN, &error, &id) == 0 && sceAjmBatchWait(context, id, 0, &error) == 0;
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
+    Require(ran);
+    Require(decoded.stream.result == 0 && static_cast<std::size_t>(decoded.stream.inputConsumed) == sizeof(MP3_MONO) && decoded.stream.outputWritten == 6 * 1152 * 2 && decoded.frames == 6);
+    Require(g_inputReads.calls == 1 && g_pcmWrites.calls == 1 && g_sidebandWrites.calls == 1);
     Require(sceAjmInstanceDestroy(context, instance) == 0);
 }
 
@@ -3187,6 +3245,7 @@ int main(int argc, char** argv) {
     TestMp3ParseOfl();
     TestMp3MetadataBounds();
     TestMp3(context);
+    TestMp3MultipleFramesCopyOnce(context);
     TestOpus(context);
     TestOpus(context, 1);
     TestOpusMonoFamily255(context);

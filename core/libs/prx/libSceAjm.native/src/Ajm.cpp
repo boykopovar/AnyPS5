@@ -580,8 +580,12 @@ public:
     bool empty() const { return bytes == 0; }
     void Copy(std::size_t offset, void* destination, std::size_t length) const {
         if (length == 0) return;
-        if (single) CopyBatchIn(destination, reinterpret_cast<const void*>(guest + offset), length, "AJM job input is unreadable");
-        else std::memcpy(destination, joined.data() + offset, length);
+        if (!single) {
+            std::memcpy(destination, joined.data() + offset, length);
+            return;
+        }
+        if (FromWindow(offset, destination, length)) return;
+        CopyBatchIn(destination, reinterpret_cast<const void*>(guest + offset), length, "AJM job input is unreadable");
     }
     bool TryCopy(std::size_t offset, void* destination, std::size_t length) const {
         if (length == 0) return true;
@@ -589,13 +593,32 @@ public:
             std::memcpy(destination, joined.data() + offset, length);
             return true;
         }
-        const int savedErrno = errno;
-        const bool copied = GuestCopyIn_nid_no_patch(destination, reinterpret_cast<const void*>(guest + offset), length);
-        errno = savedErrno;
-        return copied;
+        return FromWindow(offset, destination, length) || CopyBatchGuestIn(destination, reinterpret_cast<const void*>(guest + offset), length);
     }
 
 private:
+    static constexpr std::size_t WindowBytes = 0x4000;
+
+    bool FromWindow(std::size_t offset, void* destination, std::size_t length) const {
+        if (offset > bytes || length > bytes - offset) return false;
+        if (offset < windowStart || offset - windowStart > window.size() || length > window.size() - (offset - windowStart)) {
+            const std::size_t span = std::min(bytes - offset, std::max(length, WindowBytes));
+            if (!windowed || span <= length) return false;
+            window.resize(span);
+            if (!CopyBatchGuestIn(window.data(), reinterpret_cast<const void*>(guest + offset), span)) {
+                window.clear();
+                windowed = false;
+                return false;
+            }
+            windowStart = offset;
+        }
+        std::memcpy(destination, window.data() + (offset - windowStart), length);
+        return true;
+    }
+
+    mutable std::vector<std::uint8_t> window;
+    mutable std::size_t windowStart = 0;
+    mutable bool windowed = true;
     std::vector<std::uint8_t> joined;
     std::uintptr_t guest = 0;
     bool single = false;
@@ -643,19 +666,29 @@ struct PcmOutputs {
     }
     std::size_t Room() const { return capacity - produced; }
     void Emit(const std::uint8_t* source, std::size_t bytes) {
+        const std::size_t fits = std::min(bytes, Room());
+        staged.insert(staged.end(), source, source + fits);
+        produced += fits;
+    }
+    void Flush() {
+        const std::uint8_t* source = staged.data();
+        std::size_t bytes = staged.size();
         while (bytes > 0 && index < count) {
             const std::size_t chunk = std::min(buffers[index].size - offset, bytes);
             CopyBatchOut(static_cast<std::uint8_t*>(buffers[index].ptr) + offset, source, chunk, "AJM job output buffer is unwritable");
             source += chunk;
             bytes -= chunk;
-            produced += chunk;
             offset += chunk;
             if (offset == buffers[index].size) {
                 ++index;
                 offset = 0;
             }
         }
+        staged.clear();
     }
+
+private:
+    std::vector<std::uint8_t> staged;
 };
 
 std::uint32_t PcmEncoding(const Instance& instance) {
@@ -799,16 +832,16 @@ SidebandAt9CodecInfo At9CodecInfo(const Instance& instance) {
 
 void WriteRunSideband(const JobHeader& job, const Instance& instance, std::int32_t result, std::size_t consumed, std::size_t produced, std::uint32_t frames, const SidebandFormat& format) {
     auto* sideband = static_cast<std::uint8_t*>(job.sideband);
-    std::size_t offset = 0;
+    std::vector<std::uint8_t> staged;
     bool stopped = false;
     const auto write = [&](const void* value, std::size_t size) {
         if (stopped || !sideband) return;
-        if (offset + size > job.sidebandSize) {
+        if (staged.size() + size > job.sidebandSize) {
             stopped = true;
             return;
         }
-        CopyBatchOut(sideband + offset, value, size, "AJM job sideband is unwritable");
-        offset += size;
+        const auto* bytes = static_cast<const std::uint8_t*>(value);
+        staged.insert(staged.end(), bytes, bytes + size);
     };
     const SidebandResult status{result, 0};
     write(&status, sizeof(status));
@@ -829,6 +862,7 @@ void WriteRunSideband(const JobHeader& job, const Instance& instance, std::int32
         const SidebandMultipleFrames multiple{frames, 0};
         write(&multiple, sizeof(multiple));
     }
+    if (!staged.empty()) CopyBatchOut(sideband, staged.data(), staged.size(), "AJM job sideband is unwritable");
 }
 
 void RunAt9(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, const AjmBuffer* outputs) {
@@ -917,6 +951,7 @@ void RunAt9(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
         for (std::size_t i = 0; i < shown; ++i) std::fprintf(stderr, " %02x", first[i]);
         std::fprintf(stderr, "\n");
     }
+    pcmOutputs.Flush();
     WriteRunSideband(job, instance, result, consumed, pcmOutputs.produced, frames, CurrentFormat(instance));
 }
 
@@ -1185,6 +1220,7 @@ void RunMp3(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
 
     AJM_TRACE("[ajm] instance %u mp3 run flags 0x%llx: %zu input bytes, %zu output bytes -> result 0x%x, %u frames, consumed %zu, produced %zu, %u channels, %u Hz, %u bps, total samples %llu\n", job.instance, static_cast<unsigned long long>(job.flags), input.size(), pcmOutputs.capacity, static_cast<unsigned>(result), frames, consumed, pcmOutputs.produced,
               instance.mp3Channels, instance.mp3SampleRate, instance.mp3Bitrate, static_cast<unsigned long long>(instance.totalDecodedSamples));
+    pcmOutputs.Flush();
     WriteRunSideband(job, instance, result, consumed, pcmOutputs.produced, frames, CurrentFormat(instance));
 }
 void OpenOpus(Instance& instance) {
@@ -1367,6 +1403,7 @@ void RunPcm(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
     if (ratio != 1.0) instance.pcmResampled = true;
     instance.totalDecodedSamples += frames;
     AJM_TRACE("[ajm] instance %u pcm run flags 0x%llx: %zu input bytes consumed, %zu output bytes, ratio %f -> produced %zu, %zu channels, total samples %llu\n", job.instance, static_cast<unsigned long long>(job.flags), input.size(), pcmOutputs.capacity, ratio, pcmOutputs.produced, channels, static_cast<unsigned long long>(instance.totalDecodedSamples));
+    pcmOutputs.Flush();
     WriteRunSideband(job, instance, 0, input.size(), pcmOutputs.produced, 1, CurrentFormat(instance));
 }
 
@@ -1488,6 +1525,7 @@ void RunOpus(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, 
     if (consumed == input.size() && frames == 0 && pcmOutputs.produced == 0 && result == 0) result |= AJM_RESULT_PARTIAL_INPUT;
 
     AJM_TRACE("[ajm] instance %u opus run flags 0x%llx: %zu input bytes, %zu output bytes -> result 0x%x, %u frames, consumed %zu, produced %zu, total samples %llu\n", job.instance, static_cast<unsigned long long>(job.flags), input.size(), pcmOutputs.capacity, static_cast<unsigned>(result), frames, consumed, pcmOutputs.produced, static_cast<unsigned long long>(instance.totalDecodedSamples));
+    pcmOutputs.Flush();
     WriteRunSideband(job, instance, result, consumed, pcmOutputs.produced, frames, CurrentFormat(instance));
 }
 
@@ -1692,6 +1730,7 @@ void RunAac(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
 
     AJM_TRACE("[ajm] instance %u m4aac run flags 0x%llx: %zu input bytes, %zu output bytes -> result 0x%x, %u frames, consumed %zu, produced %zu, %u channels, %u Hz, %u bps, heaac %d, total samples %llu\n", job.instance, static_cast<unsigned long long>(job.flags), input.size(), pcmOutputs.capacity, static_cast<unsigned>(result), frames, consumed, pcmOutputs.produced,
               instance.aacChannels, instance.aacSampleRate, instance.aacBitrate, instance.aacHeaac ? 1 : 0, static_cast<unsigned long long>(instance.totalDecodedSamples));
+    pcmOutputs.Flush();
     WriteRunSideband(job, instance, result, consumed, pcmOutputs.produced, frames, (job.flags & SIDEBAND_FORMAT) ? CurrentFormat(instance) : SidebandFormat{});
 }
 
