@@ -14,6 +14,7 @@ import tempfile
 from fractions import Fraction
 from pathlib import Path
 
+import title_run_provenance
 
 TOOLS_DIR = Path(__file__).resolve().parent
 PLACEHOLDER = re.compile(r"\{(worktree|build_dir|result_dir|commit)\}")
@@ -122,6 +123,9 @@ def sample_summary(path, title_id, commit):
     fps = run.get("fps")
     if run.get("outcome") != "rendering" or type(fps) not in (int, float) or not 0 < fps <= sys.float_info.max:
         raise ValueError(f"{path}: title did not render with a finite positive FPS measurement")
+    native = title_run_provenance.qualification(run, {"commit": commit, "dirty": False})
+    if native["status"] != "matched":
+        raise ValueError(f"{path}: native runtime provenance is {native['status']}; expected clean commit {commit}")
     identity = {key: machine.get(key, "") for key in ("os", "gpu", "driver", "cpu")}
     identity.update(title_id=title_id, title=title.get("name", ""), content_version=title.get("version", ""))
     invalid = [key for key in ("os", "gpu", "driver", "cpu", "title")
