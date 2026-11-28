@@ -62,6 +62,16 @@ if(BUILD_TESTING AND WIN32)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
 endif()
 
+if(BUILD_TESTING)
+    add_test_executable(agc_gpu_debug_tests tests/GpuDebug.cpp)
+    target_include_directories(agc_gpu_debug_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(agc_gpu_debug_tests PRIVATE libSceAgcDriver)
+    configure_windows_unwind(agc_gpu_debug_tests)
+    add_test(NAME agc_gpu_debug COMMAND agc_gpu_debug_tests)
+    set_tests_properties(agc_gpu_debug PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAgcDriver>")
+endif()
+
 set(agcTextureDetileShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/TextureDetile.comp)
 set(agcTextureDetileGeneratedRoot ${CMAKE_CURRENT_BINARY_DIR}/generated)
 set(agcTextureDetileGeneratedDir ${agcTextureDetileGeneratedRoot}/prx/libSceAgcDriver/Graphics/shaders)
@@ -429,6 +439,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Draw/DrawTiming.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Draw/IndirectDraw.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/EntryPoints.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/GpuDebug.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Lifecycle.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Memory/BufferCopy.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Memory/BufferFill.cpp

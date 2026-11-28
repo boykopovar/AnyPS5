@@ -86,7 +86,7 @@ int APS5_VABI sceAgcDriverReleaseRazorACQ();
 int APS5_VABI sceAgcDriverSdmaCopyLinearBlocking();
 int APS5_VABI sceAgcDriverRegisterCaptureInterface();
 int APS5_VABI sceAgcDriverDeregisterCaptureInterface();
-int APS5_VABI sceAgdSetApplicationGpuDebug();
+int APS5_VABI sceAgdSetApplicationGpuDebug(std::uint32_t value);
 int APS5_VABI sceAgdGetApplicationGpuDebug();
 int APS5_VABI sceAgdGetSystemGpuDebug();
 int APS5_VABI sceAgcDriverAcquireHDRScopesACQ();

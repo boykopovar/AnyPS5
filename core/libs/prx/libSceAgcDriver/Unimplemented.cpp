@@ -200,18 +200,6 @@ int APS5_VABI sceAgcDriverDeregisterCaptureInterface() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceAgdSetApplicationGpuDebug() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceAgdGetApplicationGpuDebug() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceAgdGetSystemGpuDebug() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 }
 extern "C" {
 
@@ -230,11 +218,6 @@ int APS5_VABI sceAgcDriverHp3dLockEnd() {
 }
 
 int APS5_VABI sceAgcDriverHp3dLockStart() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceAgcDriverIsEsvmProcess() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
