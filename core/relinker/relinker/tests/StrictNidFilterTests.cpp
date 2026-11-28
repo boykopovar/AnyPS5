@@ -311,6 +311,17 @@ void relativeTableAndWholeFunction() {
     input.Data.push_back(data);
     require(AnalyzeStrictReachability(input).ImportSlots == std::set<std::uint64_t>{0x2000}, "Relative jump-table target was removed");
     input = fixture();
+    ripOperand(input, 0, {0x48, 0x8D, 0x05}, 0x1060);
+    emit(input, 7, {0xFF, 0xE0});
+    importThunk(input, 32, 0x2000);
+    importThunk(input, 64, 0x2008);
+    write<std::int32_t>(input.Text, 96, 0x1020 - 0x1060);
+    write<std::int32_t>(input.Text, 100, 0);
+    write<std::int32_t>(input.Text, 104, 0x1040 - 0x1060);
+    const auto codeTable = AnalyzeStrictReachability(input).ImportSlots;
+    require(codeTable.contains(0x2000), "Relative jump-table target in the code segment was removed");
+    require(!codeTable.contains(0x2008), "Relative jump table in the code segment was read past an entry pointing into itself");
+    input = fixture();
     emit(input, 0, {0xFF, 0xE0});
     importThunk(input, 32, 0x2000);
     input.Functions = {{0x1000, 0x1026, {}}};
@@ -726,6 +737,21 @@ void relativeTableTargetsBounds() {
     const auto modularWrap = ReadRelativeTableTargets(wrapData, std::numeric_limits<std::uint64_t>::max() - 0x7F, 0x1000, 0x200);
     require(modularWrap == std::vector<std::uint64_t>{0x1000},
             "Modular two's-complement displacement wrapping across the address boundary was lost");
+
+    std::vector<std::uint8_t> code(0x20, 0xCC);
+    write<std::int32_t>(code, 0x10, -0x10);
+    write<std::int32_t>(code, 0x14, 0);
+    write<std::int32_t>(code, 0x18, -0x8);
+    require(ReadRelativeTableTargets(code, 0x1010, 0x1000) == std::vector<std::uint64_t>{0x1000},
+            "Relative table reading in the code did not terminate at an entry pointing into the table");
+
+    requireFailure([&] {
+        ReadRelativeTableTargets(std::vector<std::uint8_t>{}, 0x1000, 0x1000);
+    }, "Empty code was accepted by relative table reader");
+
+    requireFailure([&] {
+        ReadRelativeTableTargets(code, std::numeric_limits<std::uint64_t>::max() - 0x10, std::numeric_limits<std::uint64_t>::max() - 0x10);
+    }, "Wrapping code range was accepted by relative table reader");
 }
 
 void pltCompactorBounds() {
@@ -1557,6 +1583,32 @@ void gnuHashSymbolBounds() {
     const std::vector<Relinker::NidReference> references = {{"dead", {}, 6, 0x900, 0x2000, 0}};
     require(Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, bytes, input.Text, input.TextVaddr).size() == 1,
             "Valid GNU hash table was rejected by strict filter");
+
+    auto emptyHash = bytes;
+    write<std::uint32_t>(emptyHash, 0x378, 0);
+    write<std::uint64_t>(emptyHash, 40, 0x800);
+    write<std::uint16_t>(emptyHash, 58, 64);
+    write<std::uint16_t>(emptyHash, 60, 4);
+    write<std::uint32_t>(emptyHash, 0x844, 1);
+    write<std::uint64_t>(emptyHash, 0x858, 0x200);
+    write<std::uint64_t>(emptyHash, 0x860, input.Text.size());
+    write<std::uint32_t>(emptyHash, 0x884, 11);
+    write<std::uint64_t>(emptyHash, 0x898, 0x600);
+    write<std::uint64_t>(emptyHash, 0x8A0, 48);
+    write<std::uint32_t>(emptyHash, 0x8A8, 3);
+    write<std::uint32_t>(emptyHash, 0x8AC, 1);
+    write<std::uint64_t>(emptyHash, 0x8B8, 24);
+    write<std::uint32_t>(emptyHash, 0x8C4, 3);
+    write<std::uint64_t>(emptyHash, 0x8D8, 0x630);
+    write<std::uint64_t>(emptyHash, 0x8E0, 1);
+    const auto filter = Relinker::MakeStrictUnusedNidFilter(testProgress);
+    require(filter->Filter(references, emptyHash, input.Text, input.TextVaddr).size() == 1,
+            "Empty GNU hash lost the import reached through a dynamic symbol");
+
+    write<std::uint64_t>(emptyHash, 40, emptyHash.size());
+    requireFailureMessage([&] {
+        filter->Filter(references, emptyHash, input.Text, input.TextVaddr);
+    }, "Section header table out of bounds", "Empty GNU hash accepted a truncated section table");
 
     auto badHeader = bytes;
     write<std::uint32_t>(badHeader, 0x360, 0);

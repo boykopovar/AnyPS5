@@ -1,12 +1,25 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "unicode/ucnv.h"
 #include <array>
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
+#include <string_view>
+#include <type_traits>
+
+#undef ucnv_setFromUCallBack
+#undef ucnv_setToUCallBack
 
 namespace {
+
+static_assert(std::is_same_v<decltype(&ucnv_setFromUCallBack),
+                             void (APS5_VABI*)(UConverter*, Icu::ConverterFromUCallback, const void*,
+                                               Icu::ConverterFromUCallback*, const void**, std::int32_t*)>);
+static_assert(std::is_same_v<decltype(&ucnv_setToUCallBack),
+                             void (APS5_VABI*)(UConverter*, Icu::ConverterToUCallback, const void*,
+                                               Icu::ConverterToUCallback*, const void**, std::int32_t*)>);
 
 void Require(bool condition, const char* message) {
     if (condition) return;
@@ -191,6 +204,72 @@ void ReplacementCallbacks() {
     Require(status == 10, "invalid replacement reasons preserve the error");
 }
 
+void SetterArguments() {
+    std::int32_t error = 0;
+    const void* context = reinterpret_cast<const void*>(std::uintptr_t{0x1234});
+    auto fromAction = UCNV_FROM_U_CALLBACK_SKIP_nid_postfix;
+    auto toAction = UCNV_TO_U_CALLBACK_SKIP_nid_postfix;
+    ucnv_setFromUCallBack(nullptr, UCNV_FROM_U_CALLBACK_STOP_nid_postfix, context, &fromAction, &context, &error);
+    Require(error == 1, "FROM setter rejects a null converter");
+    Require(fromAction == UCNV_FROM_U_CALLBACK_SKIP_nid_postfix, "FROM setter leaves old action untouched on error");
+    Require(context == reinterpret_cast<const void*>(std::uintptr_t{0x1234}), "FROM setter leaves old context untouched on error");
+
+    error = 4;
+    ucnv_setToUCallBack(nullptr, UCNV_TO_U_CALLBACK_STOP_nid_postfix, context, &toAction, &context, &error);
+    Require(error == 4, "TO setter honors a pre-failed status");
+    Require(toAction == UCNV_TO_U_CALLBACK_SKIP_nid_postfix, "TO setter leaves old action untouched on pre-failed status");
+    Require(context == reinterpret_cast<const void*>(std::uintptr_t{0x1234}), "TO setter leaves old context untouched on pre-failed status");
+}
+
+int fromCalls = 0;
+
+void APS5_VABI CountingSkip(const void* context, Icu::ConverterFromUnicodeArgs*, const char16_t*, std::int32_t,
+                            std::int32_t codePoint, std::int32_t reason, std::int32_t* error) {
+    if (context != &fromCalls || reason > 2) return;
+    Require(codePoint == 0xd800 && reason == 1, "guest FROM callback sees the lone surrogate");
+    ++fromCalls;
+    *error = 0;
+}
+
+void SetterRoundTrip() {
+    std::int32_t error = 0;
+    UConverter* converter = u_getDefaultConverter_nid_postfix(&error);
+    Require(error == 0 && converter, "default converter opens");
+    Icu::ConverterFromUCallback fromAction = nullptr;
+    Icu::ConverterToUCallback toAction = nullptr;
+    const void* context = &error;
+    const char* first = "first";
+    const void* reset = &toAction;
+
+    ucnv_setFromUCallBack(converter, UCNV_FROM_U_CALLBACK_SKIP_nid_postfix, first, &fromAction, &context, &error);
+    Require(error == 0 && fromAction && !context, "FROM default pair");
+    ucnv_setFromUCallBack(converter, CountingSkip, &fromCalls, &fromAction, &context, &error);
+    Require(error == 0 && fromAction == UCNV_FROM_U_CALLBACK_SKIP_nid_postfix && context == first, "FROM replaced pair");
+    char output[8]{};
+    UErrorCode converted = U_ZERO_ERROR;
+    constexpr char16_t input[]{u'a', 0xd800, u'b'};
+    Require(ucnv_fromUChars(converter, output, sizeof(output), input, 3, &converted) == 2 && U_SUCCESS(converted),
+            "guest FROM callback skips");
+    Require(fromCalls == 1 && std::string_view(output) == "ab", "guest FROM callback runs once");
+    ucnv_setFromUCallBack(converter, UCNV_FROM_U_CALLBACK_STOP_nid_postfix, nullptr, &fromAction, &context, &error);
+    Require(error == 0 && fromAction == CountingSkip && context == &fromCalls, "FROM guest pair");
+    ucnv_setFromUCallBack(converter, nullptr, reset, &fromAction, &context, &error);
+    Require(error == 0 && fromAction == UCNV_FROM_U_CALLBACK_STOP_nid_postfix && !context, "FROM reset pair");
+    ucnv_setFromUCallBack(converter, UCNV_FROM_U_CALLBACK_SUBSTITUTE_nid_postfix, nullptr, &fromAction, &context, &error);
+    Require(error == 0 && !fromAction && context == reset, "FROM reset context");
+
+    ucnv_setToUCallBack(converter, UCNV_TO_U_CALLBACK_SKIP_nid_postfix, first, &toAction, &context, &error);
+    Require(error == 0 && toAction && !context, "TO default pair");
+    ucnv_setToUCallBack(converter, UCNV_TO_U_CALLBACK_STOP_nid_postfix, nullptr, &toAction, &context, &error);
+    Require(error == 0 && toAction == UCNV_TO_U_CALLBACK_SKIP_nid_postfix && context == first, "TO replaced pair");
+    ucnv_setToUCallBack(converter, nullptr, reset, &toAction, &context, &error);
+    Require(error == 0 && toAction == UCNV_TO_U_CALLBACK_STOP_nid_postfix && !context, "TO reset pair");
+    ucnv_setToUCallBack(converter, UCNV_TO_U_CALLBACK_SUBSTITUTE_nid_postfix, nullptr, &toAction, &context, &error);
+    Require(error == 0 && !toAction && context == reset, "TO reset context");
+
+    u_releaseDefaultConverter_nid_postfix(converter);
+}
+
 }
 
 int main() {
@@ -198,4 +277,6 @@ int main() {
     IgnoredPointers();
     InvalidReasons();
     ReplacementCallbacks();
+    SetterArguments();
+    SetterRoundTrip();
 }
