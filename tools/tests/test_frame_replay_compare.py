@@ -401,11 +401,13 @@ class RunnerTests(ReplayFixture):
         report = self.run_comparison(self.root / "devices")
         self.assertEqual(len(report["runs"]), 4)
         self.assertTrue(any("context differs" in issue for issue in report["issues"]))
+        self.assertEqual(runner._offline_report(self.root / "devices")["issues"], report["issues"])
         self.device_mismatch = False
         self.workload_mismatch = True
         report = self.run_comparison(self.root / "workloads")
         self.assertEqual(len(report["runs"]), 4)
         self.assertTrue(any("counts differ" in issue for issue in report["issues"]))
+        self.assertEqual(runner._offline_report(self.root / "workloads")["issues"], report["issues"])
 
     def test_incomplete_capture_metadata_and_low_disk_stop_before_native_launch(self):
         path = self.root / "capture" / "capture.json"
