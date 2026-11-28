@@ -1,9 +1,11 @@
 #include "prx/libSceSocialScreenDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <atomic>
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <thread>
 
 namespace {
 
@@ -18,6 +20,28 @@ constexpr int kErrNotFinished = static_cast<int>(0x80B80005);
 constexpr int kErrArgNull = static_cast<int>(0x80B8000D);
 constexpr int kResultUserCanceled = 1;
 constexpr std::int32_t kSentinel = static_cast<std::int32_t>(0x5a5a5a5a);
+constexpr int kRaceRounds = 200000;
+
+template <typename Finish>
+void RequireTerminateWins(Finish finish) {
+    std::atomic<int> round{0};
+    std::atomic<int> done{0};
+    std::thread terminator([&] {
+        for (int i = 1; i <= kRaceRounds; ++i) {
+            while (round.load() != i) std::this_thread::yield();
+            sceSocialScreenDialogTerminate();
+            done.fetch_add(1);
+        }
+    });
+    for (int i = 1; i <= kRaceRounds; ++i) {
+        Require(sceSocialScreenDialogInitialize() == 0);
+        round.store(i);
+        finish();
+        while (done.load() != i) std::this_thread::yield();
+        Require(sceSocialScreenDialogGetStatus() == kStatusNone);
+    }
+    terminator.join();
+}
 
 }
 
@@ -92,4 +116,7 @@ int main() {
     Require(sceSocialScreenDialogGetResult(result) == kErrNotInitialized);
     Require(sceSocialScreenDialogGetStatus() == kStatusNone);
     Require(sceSocialScreenDialogUpdateStatus() == kStatusNone);
+
+    RequireTerminateWins([&] { sceSocialScreenDialogOpen(&param); });
+    RequireTerminateWins([] { sceSocialScreenDialogClose(); });
 }
