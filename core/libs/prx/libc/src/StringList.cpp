@@ -76,6 +76,7 @@ extern "C" void APS5_VABI sl_free_nid_postfix(StringList* list, int all) {
 }
 
 extern "C" char* APS5_VABI sl_find_nid_postfix(StringList* list, const char* name) {
+    if (list == nullptr) return nullptr;
     for (std::size_t i = 0; i < list->sl_cur; ++i) {
         if (std::strcmp(list->sl_str[i], name) == 0) return list->sl_str[i];
     }

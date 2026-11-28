@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -12,6 +13,7 @@ static void Require(bool condition) {
 }
 
 int main() {
+    ApplicationHeapInitialize_nid_no_patch(ApplicationEmptyProcessParameters_nid_no_patch());
     StringList* list = sl_init_nid_postfix();
     Require(list != nullptr);
     Require(list->sl_cur == 0 && list->sl_max == 20);
@@ -31,6 +33,7 @@ int main() {
         Require(sl_find_nid_postfix(list, text.c_str()) == stored[i]);
     }
     Require(sl_find_nid_postfix(list, "entry45") == nullptr);
+    Require(sl_find_nid_postfix(nullptr, "entry0") == nullptr);
     sl_free_nid_postfix(list, 1);
     sl_free_nid_postfix(nullptr, 1);
 
