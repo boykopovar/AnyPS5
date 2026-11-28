@@ -72,6 +72,10 @@ buffer did not, so the export still throws. A silent stub is allowed only when i
 
 1. Unwrap the title's decrypted `eboot.bin` with `tools/unwrap_self.py`
    ([GAME_TESTING](GAME_TESTING.md)).
+   With `--verbose` it first prints the container size, the offset of the inner ELF and the numbers of program headers
+   and SELF records, then one line per program header with its type, virtual address, file size and new file offset,
+   adding the old offset when the segment moved. A refused container, or an error reading the input or writing the
+   output, exits with status 2.
 2. Relink it with `--registry` ([USAGE](../user/USAGE.md)). `app.registry.json` lists every import of the executable
    with its `nid`, `relocationType`, `targetOffset` (the GOT slot) and `callSites` (virtual addresses). Bundled modules'
    registries have no `callSites`. `tools/nid_names.py --name sceXxx` gives the NID of a name, and `--nid` the name of a
