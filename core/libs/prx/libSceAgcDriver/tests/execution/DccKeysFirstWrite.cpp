@@ -95,11 +95,16 @@ std::uint64_t AddressOf(const void* data) {
 
 class GuestBlock {
 public:
-    explicit GuestBlock(bool watch, bool shared = false, std::size_t bytes = BlockBytes) : watched(watch), bytes(bytes) {
+    explicit GuestBlock(bool watch, bool shared = false, std::size_t bytes = BlockBytes, bool resident = false) : watched(watch), bytes(bytes) {
 #ifdef _WIN32
         if (watched) {
             block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, 65536));
-            if (shared) {
+            if (resident) {
+                Require(block != nullptr, "cannot reserve resident test memory");
+                residentSection = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, bytes, nullptr);
+                Require(residentSection != nullptr, "cannot create resident test memory");
+                GuestArena::GuestArenaMapDirect_nid_postfix(block, bytes, residentSection, 0, PAGE_READWRITE);
+            } else if (shared) {
                 Require(block != nullptr, "cannot reserve shared test memory");
                 const auto section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, bytes, nullptr);
                 Require(section != nullptr, "cannot create shared test memory");
@@ -144,6 +149,10 @@ public:
         if (watched) {
             GuestArena::GuestArenaReset_nid_postfix(block, bytes);
             GuestArena::GuestArenaRelease_nid_postfix(block, bytes);
+            if (residentSection != nullptr) {
+                GuestArena::GuestArenaForgetSection_nid_postfix(residentSection);
+                CloseHandle(residentSection);
+            }
         } else {
             VirtualFree(block, 0, MEM_RELEASE);
         }
@@ -167,11 +176,14 @@ private:
     std::size_t bytes;
     std::uint8_t* block = nullptr;
     std::uint8_t* twin = nullptr;
+#ifdef _WIN32
+    HANDLE residentSection = nullptr;
+#endif
 };
 
 std::array<std::uint32_t, 8> TextureDescriptor(const std::uint8_t* texels, const std::uint8_t* keys) {
     const auto address = AddressOf(texels);
-    const auto meta = AddressOf(keys) >> 8u;
+    const auto meta = keys != nullptr ? AddressOf(keys) >> 8u : 0u;
     return {
         static_cast<std::uint32_t>(address >> 8u),
         static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (Format8888Unorm << 20u) | (((Side - 1u) & 3u) << 30u),
@@ -179,7 +191,7 @@ std::array<std::uint32_t, 8> TextureDescriptor(const std::uint8_t* texels, const
         0xfacu | (TileRenderTarget64KB << 20u) | (Type2D << 28u),
         0u,
         0u,
-        (1u << 20u) | (1u << 21u) | (static_cast<std::uint32_t>(meta & 0xffu) << 24u),
+        keys != nullptr ? (1u << 20u) | (1u << 21u) | (static_cast<std::uint32_t>(meta & 0xffu) << 24u) : 0u,
         static_cast<std::uint32_t>(meta >> 8u),
     };
 }
@@ -574,6 +586,57 @@ void RunUniformSingleClear(AgcDriver::VulkanDevice& device, std::uint8_t* block)
     }
     char message[256];
     std::snprintf(message, sizeof(message), "uniform single-key clear: %zu of %u written-back texels are neither the kernel's write nor the proved clear color 0x%08x", wrong, Side * Side, color);
+    Require(wrong == 0, message);
+}
+
+void RunUniformFillClear(AgcDriver::VulkanDevice& device, std::uint8_t* block, bool uniform, bool residentFixture = false) {
+    auto* texels = block;
+    const auto surface = AddressOf(texels);
+    const std::uint32_t color = 0x11223344u;
+    const std::uint32_t other = 0x55667788u;
+    for (std::size_t offset = 0; offset < SurfaceBytes; offset += 4) std::memcpy(texels + offset, &color, 4);
+    if (!uniform) std::memcpy(texels + SurfaceBytes - 4, &other, 4);
+    static_cast<void>(AgcDriver::Graphics::HostImportFor(device.graphicsContext(), surface, SurfaceBytes));
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto texture = TextureDescriptor(texels, nullptr);
+    std::vector<std::uint32_t> writeData(16, 0u);
+    std::copy(texture.begin(), texture.end(), writeData.begin() + 4);
+    const auto uploads = AgcDriver::Graphics::ThreadLookupOutcomes().counts;
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    Dispatch(device, WriteCode, writeData);
+    const auto image = StorageTexture::FindPending(surface, SurfaceBytes);
+    const std::string what = uniform ? "uniform fill" : "fill with one other texel";
+    Require(image != nullptr, what + ": the write left no pending storage image");
+    const auto& uploaded = AgcDriver::Graphics::ThreadLookupOutcomes().counts;
+#ifdef _WIN32
+    std::uintptr_t residentBegin = 0;
+    std::uintptr_t residentEnd = 0;
+    const bool resident = GuestArena::GuestArenaResidentSpan_nid_postfix(static_cast<std::uintptr_t>(surface), SurfaceBytes, &residentBegin, &residentEnd) && residentBegin <= surface && residentEnd >= surface + SurfaceBytes;
+#else
+    const bool resident = false;
+#endif
+    Require(resident || !residentFixture, what + ": the resident fixture is not a resident run of guest memory");
+    const bool clearable = uniform && resident;
+    const bool cleared = uploaded[LookupOutcomes::UploadClear] == uploads[LookupOutcomes::UploadClear] + 1;
+    Require(cleared == clearable, clearable ? what + ": the first write read the surface and uploaded it instead of clearing it on the GPU" : what + ": the surface was cleared on the GPU although it is not uniform resident guest memory");
+    const auto fromMemory = [](const auto& counts) { return counts[LookupOutcomes::UploadDirect] + counts[LookupOutcomes::UploadCpu]; };
+    Require(clearable || fromMemory(uploaded) == fromMemory(uploads) + 1, what + ": the first write did not upload the surface from guest memory");
+    std::printf("%s: %s guest memory, %s\n", what.c_str(), resident ? "resident" : "not resident", cleared ? "cleared on the GPU" : "uploaded");
+    StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test uniform fill");
+    device.WaitIdle();
+    const AgcDriver::Graphics::ColorTargetLayout layout(Side, Side, AgcDriver::Graphics::ColorTileMode::RenderTarget, 4);
+    std::size_t wrong = 0;
+    for (std::uint32_t y = 0; y < Side; ++y) {
+        for (std::uint32_t x = 0; x < Side; ++x) {
+            const auto offset = layout.Offset(x, y);
+            std::uint32_t texel = 0;
+            std::memcpy(&texel, texels + offset, 4);
+            const auto expected = y == 0 && x < Threads ? 0xffffffffu : !uniform && offset == SurfaceBytes - 4 ? other : color;
+            if (texel != expected) ++wrong;
+        }
+    }
+    char message[256];
+    std::snprintf(message, sizeof(message), "%s: %zu of %u written-back texels are neither the kernel's write nor the filled texel", what.c_str(), wrong, Side * Side);
     Require(wrong == 0, message);
 }
 
@@ -1352,6 +1415,12 @@ int main(int argc, char** argv) {
         std::optional<GuestBlock> uniformClear;
         uniformClear.emplace(false);
         RunUniformSingleClear(*device, uniformClear->Data());
+        std::optional<GuestBlock> uniformFill;
+        uniformFill.emplace(false);
+        RunUniformFillClear(*device, uniformFill->Data(), true);
+        std::optional<GuestBlock> otherFill;
+        otherFill.emplace(false);
+        RunUniformFillClear(*device, otherFill->Data(), false);
         std::optional<GuestBlock> sampled;
         sampled.emplace(false);
         std::optional<GuestBlock> sampledOutput;
@@ -1392,7 +1461,19 @@ int main(int argc, char** argv) {
             std::optional<GuestBlock> uniformClearWatched;
             uniformClearWatched.emplace(true);
             RunUniformSingleClear(*device, uniformClearWatched->Data());
+            std::optional<GuestBlock> uniformFillWatched;
+            uniformFillWatched.emplace(true);
+            RunUniformFillClear(*device, uniformFillWatched->Data(), true);
+            std::optional<GuestBlock> otherFillWatched;
+            otherFillWatched.emplace(true);
+            RunUniformFillClear(*device, otherFillWatched->Data(), false);
 #ifdef _WIN32
+            std::optional<GuestBlock> uniformFillResident;
+            uniformFillResident.emplace(true, false, BlockBytes, true);
+            RunUniformFillClear(*device, uniformFillResident->Data(), true, true);
+            std::optional<GuestBlock> otherFillResident;
+            otherFillResident.emplace(true, false, BlockBytes, true);
+            RunUniformFillClear(*device, otherFillResident->Data(), false, true);
             pendingSingle.emplace(true, true);
 #else
             pendingSingle.emplace(true);
