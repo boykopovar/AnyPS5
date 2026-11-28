@@ -34,19 +34,29 @@ int CompareExchange(volatile TValue* target, TValue* expected, TValue desired) {
 }
 
 void LockFlag(volatile unsigned char* flag) {
+    if (flag == nullptr) APS5_INVALID_ARG_EX;
     while (__atomic_exchange_n(flag, static_cast<unsigned char>(1), __ATOMIC_ACQUIRE) != 0) {
     }
 }
 
 void UnlockFlag(volatile unsigned char* flag) {
+    if (flag == nullptr) APS5_INVALID_ARG_EX;
     __atomic_store_n(flag, static_cast<unsigned char>(0), __ATOMIC_SEQ_CST);
 }
 
 void CopyBytes(volatile void* destination, const volatile void* source, std::size_t size) {
-    std::memcpy(const_cast<void*>(destination), const_cast<const void*>(source), size);
+    if (size == 0) return;
+    std::memmove(const_cast<void*>(destination), const_cast<const void*>(source), size);
 }
 
 int LockedCompareExchange(volatile unsigned char* flag, std::size_t size, volatile void* target, void* expected, const void* desired) {
+    if (flag == nullptr) APS5_INVALID_ARG_EX;
+    if (size == 0) {
+        LockFlag(flag);
+        UnlockFlag(flag);
+        return 1;
+    }
+    if (target == nullptr || expected == nullptr || desired == nullptr) APS5_INVALID_ARG_EX;
     LockFlag(flag);
     void* object = const_cast<void*>(target);
     const bool equal = std::memcmp(object, expected, size) == 0;
@@ -171,12 +181,26 @@ void APS5_VABI _Lock_shared_ptr_spin_lock_nid_postfix() { LockFlag(&SharedPtrSpi
 void APS5_VABI _Unlock_shared_ptr_spin_lock_nid_postfix() { UnlockFlag(&SharedPtrSpinLock); }
 
 void APS5_VABI _Atomic_copy_nid_postfix(volatile unsigned char* flag, std::size_t size, volatile void* target, const volatile void* source, int) {
+    if (flag == nullptr) APS5_INVALID_ARG_EX;
+    if (size == 0) {
+        LockFlag(flag);
+        UnlockFlag(flag);
+        return;
+    }
+    if (target == nullptr || source == nullptr) APS5_INVALID_ARG_EX;
     LockFlag(flag);
     CopyBytes(target, source, size);
     UnlockFlag(flag);
 }
 
 void APS5_VABI _Atomic_exchange_nid_postfix(volatile unsigned char* flag, std::size_t size, volatile void* target, volatile void* value, int) {
+    if (flag == nullptr) APS5_INVALID_ARG_EX;
+    if (size == 0) {
+        LockFlag(flag);
+        UnlockFlag(flag);
+        return;
+    }
+    if (target == nullptr || value == nullptr) APS5_INVALID_ARG_EX;
     LockFlag(flag);
     auto* object = static_cast<unsigned char*>(const_cast<void*>(target));
     auto* other = static_cast<unsigned char*>(const_cast<void*>(value));
