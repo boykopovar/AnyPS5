@@ -8565,10 +8565,6 @@ int APS5_VABI WKFrameGetPage() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKFrameGetResourceData() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKFrameGetWebArchive() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8758,10 +8754,6 @@ int APS5_VABI WKPageGetSessionHistoryURLValueType() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageGetSourceForFrame() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageHandleImeEvent() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -8859,10 +8851,6 @@ int APS5_VABI WKPageLoadWebArchiveDataWithUserData() {
 }
 
 int APS5_VABI WKPageLoadedSubresourceDomains() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageLookUpFrameFromHandle() {
     NotImplemented_nid_no_patch(__func__);
 }
 
