@@ -1,0 +1,17 @@
+include(${CMAKE_SOURCE_DIR}/cmake/LibPng.cmake)
+
+add_library(libpng16 SHARED EXCLUDE_FROM_ALL Export.cpp IntegerReaders.cpp)
+target_include_directories(libpng16 PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libpng16 PRIVATE png_backend)
+configure_windows_unwind(libpng16)
+if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_options(libpng16 PRIVATE "LINKER:--exclude-libs,$<TARGET_FILE_NAME:png_backend>")
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_libpng16_integers_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibPng16Integers.cpp)
+    target_include_directories(guest_libpng16_integers_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libpng16_integers_tests PRIVATE libpng16)
+    configure_windows_unwind(guest_libpng16_integers_tests)
+    add_test(NAME guest_libpng16_integers COMMAND guest_libpng16_integers_tests)
+endif()
