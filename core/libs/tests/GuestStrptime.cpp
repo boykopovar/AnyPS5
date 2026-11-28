@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/GuestTime.hpp"
 
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -274,18 +275,306 @@ static void TestCompactDate() {
     Require(tm.tm_mday == 24);
 }
 
-static void TestUnimplementedSpecifiers() {
+static void TestSpacePaddedHours() {
     GuestTm tm{};
-    const char* const formats[] = {"%U", "%W", "%s", "%G", "%g", "%V", "%k", "%l"};
-    for (const char* fmt : formats) {
-        bool threw = false;
-        try {
-            strptime_nid_postfix("123", fmt, &tm);
-        } catch (const std::exception&) {
-            threw = true;
-        }
-        Require(threw);
+    const char* rem = strptime_nid_postfix(" 5:07", "%k:%M", &tm);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tm.tm_hour == 5);
+    Require(tm.tm_min == 7);
+
+    rem = strptime_nid_postfix("00:15", "%k:%M", &tm);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tm.tm_hour == 0);
+    Require(tm.tm_min == 15);
+
+    rem = strptime_nid_postfix("23", "%k", &tm);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tm.tm_hour == 23);
+
+    GuestTm tm12{};
+    rem = strptime_nid_postfix(" 7:30 PM", "%l:%M %p", &tm12);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tm12.tm_hour == 19);
+    Require(tm12.tm_min == 30);
+
+    rem = strptime_nid_postfix("12:05 AM", "%l:%M %p", &tm12);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tm12.tm_hour == 0);
+    Require(tm12.tm_min == 5);
+
+    Require(strptime_nid_postfix("24", "%k", &tm) == nullptr);
+    Require(strptime_nid_postfix("0", "%l", &tm) == nullptr);
+    Require(strptime_nid_postfix("13", "%l", &tm) == nullptr);
+}
+
+static void TestWeekNumbers() {
+    GuestTm tmU{};
+    const char* rem = strptime_nid_postfix("2026-01-3", "%Y-%U-%w", &tmU);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmU.tm_year == 126);
+    Require(tmU.tm_mon == 0);
+    Require(tmU.tm_mday == 7);
+    Require(tmU.tm_yday == 6);
+    Require(tmU.tm_wday == 3);
+
+    GuestTm tmU0{};
+    rem = strptime_nid_postfix("2026-00-5", "%Y-%U-%w", &tmU0);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmU0.tm_year == 126);
+    Require(tmU0.tm_mon == 0);
+    Require(tmU0.tm_mday == 2);
+    Require(tmU0.tm_yday == 1);
+    Require(tmU0.tm_wday == 5);
+
+    GuestTm tmW{};
+    rem = strptime_nid_postfix("2026-01-1", "%Y-%W-%u", &tmW);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmW.tm_year == 126);
+    Require(tmW.tm_mon == 0);
+    Require(tmW.tm_mday == 5);
+    Require(tmW.tm_yday == 4);
+    Require(tmW.tm_wday == 1);
+
+    GuestTm tmW0{};
+    rem = strptime_nid_postfix("2026-00-4", "%Y-%W-%u", &tmW0);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmW0.tm_year == 126);
+    Require(tmW0.tm_mon == 0);
+    Require(tmW0.tm_mday == 1);
+    Require(tmW0.tm_yday == 0);
+    Require(tmW0.tm_wday == 4);
+
+    GuestTm tmStandalone{};
+    rem = strptime_nid_postfix("53", "%U", &tmStandalone);
+    Require(rem != nullptr && *rem == '\0');
+    rem = strptime_nid_postfix("53", "%W", &tmStandalone);
+    Require(rem != nullptr && *rem == '\0');
+
+    GuestTm tmYearZero{};
+    rem = strptime_nid_postfix("0000-01-0", "%Y-%U-%w", &tmYearZero);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmYearZero.tm_year == -1900);
+    Require(tmYearZero.tm_mon == 0);
+    Require(tmYearZero.tm_mday == 2);
+    Require(tmYearZero.tm_yday == 1);
+    Require(tmYearZero.tm_wday == 0);
+
+    GuestTm tmYearZeroWeek0{};
+    rem = strptime_nid_postfix("0000-00-6", "%Y-%U-%w", &tmYearZeroWeek0);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmYearZeroWeek0.tm_year == -1900);
+    Require(tmYearZeroWeek0.tm_mon == 0);
+    Require(tmYearZeroWeek0.tm_mday == 1);
+    Require(tmYearZeroWeek0.tm_yday == 0);
+    Require(tmYearZeroWeek0.tm_wday == 6);
+
+    GuestTm tmU53Valid{};
+    rem = strptime_nid_postfix("2023-53-0", "%Y-%U-%w", &tmU53Valid);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmU53Valid.tm_year == 123);
+    Require(tmU53Valid.tm_mon == 11);
+    Require(tmU53Valid.tm_mday == 31);
+    Require(tmU53Valid.tm_yday == 364);
+    Require(tmU53Valid.tm_wday == 0);
+
+    GuestTm tmUWeek0NoWday{};
+    rem = strptime_nid_postfix("2024-00", "%Y-%U", &tmUWeek0NoWday);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmUWeek0NoWday.tm_year == 124);
+    Require(tmUWeek0NoWday.tm_mon == 0);
+    Require(tmUWeek0NoWday.tm_mday == 1);
+    Require(tmUWeek0NoWday.tm_yday == 0);
+    Require(tmUWeek0NoWday.tm_wday == 1);
+
+    Require(strptime_nid_postfix("2023-00-0", "%Y-%U-%w", &tmU) == nullptr);
+    Require(strptime_nid_postfix("2023-00", "%Y-%U", &tmU) == nullptr);
+    Require(strptime_nid_postfix("2023-53-1", "%Y-%U-%w", &tmU) == nullptr);
+    Require(strptime_nid_postfix("2026-53", "%Y-%U", &tmU) == nullptr);
+    Require(strptime_nid_postfix("2026-53-0", "%Y-%U-%w", &tmU) == nullptr);
+    Require(strptime_nid_postfix("2024-53-3", "%Y-%W-%u", &tmW) == nullptr);
+    Require(strptime_nid_postfix("2026-00-1", "%Y-%U-%w", &tmU) == nullptr);
+    Require(strptime_nid_postfix("2024-00-1", "%Y-%W-%u", &tmW) == nullptr);
+    Require(strptime_nid_postfix("54", "%U", &tmU) == nullptr);
+    Require(strptime_nid_postfix("54", "%W", &tmW) == nullptr);
+}
+
+static void TestIsoWeekDate() {
+    GuestTm tmPrevYear{};
+    const char* rem = strptime_nid_postfix("2026-W01-1", "%G-W%V-%u", &tmPrevYear);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmPrevYear.tm_year == 125);
+    Require(tmPrevYear.tm_mon == 11);
+    Require(tmPrevYear.tm_mday == 29);
+    Require(tmPrevYear.tm_yday == 362);
+    Require(tmPrevYear.tm_wday == 1);
+
+    GuestTm tmSameYear{};
+    rem = strptime_nid_postfix("26-W01-4", "%g-W%V-%u", &tmSameYear);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmSameYear.tm_year == 126);
+    Require(tmSameYear.tm_mon == 0);
+    Require(tmSameYear.tm_mday == 1);
+    Require(tmSameYear.tm_yday == 0);
+    Require(tmSameYear.tm_wday == 4);
+
+    GuestTm tmNextYear{};
+    rem = strptime_nid_postfix("2020-W53-5", "%G-W%V-%u", &tmNextYear);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmNextYear.tm_year == 121);
+    Require(tmNextYear.tm_mon == 0);
+    Require(tmNextYear.tm_mday == 1);
+    Require(tmNextYear.tm_yday == 0);
+    Require(tmNextYear.tm_wday == 5);
+
+    GuestTm tmCentury{};
+    rem = strptime_nid_postfix("19 85-W01-1", "%C %g-W%V-%u", &tmCentury);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmCentury.tm_year == 84);
+    Require(tmCentury.tm_mon == 11);
+    Require(tmCentury.tm_mday == 31);
+    Require(tmCentury.tm_wday == 1);
+
+    GuestTm tmDefaultWday{};
+    rem = strptime_nid_postfix("2026-W02", "%G-W%V", &tmDefaultWday);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmDefaultWday.tm_year == 126);
+    Require(tmDefaultWday.tm_mon == 0);
+    Require(tmDefaultWday.tm_mday == 5);
+    Require(tmDefaultWday.tm_wday == 1);
+
+    GuestTm tmStandalone{};
+    rem = strptime_nid_postfix("2026 99 12", "%G %g %V", &tmStandalone);
+    Require(rem != nullptr && *rem == '\0');
+
+    GuestTm tmYearZeroIso{};
+    rem = strptime_nid_postfix("0000-W01-1", "%G-W%V-%u", &tmYearZeroIso);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmYearZeroIso.tm_year == -1900);
+    Require(tmYearZeroIso.tm_mon == 0);
+    Require(tmYearZeroIso.tm_mday == 3);
+    Require(tmYearZeroIso.tm_yday == 2);
+    Require(tmYearZeroIso.tm_wday == 1);
+
+    rem = strptime_nid_postfix("0000-W01", "%G-W%V", &tmYearZeroIso);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmYearZeroIso.tm_year == -1900);
+    Require(tmYearZeroIso.tm_mon == 0);
+    Require(tmYearZeroIso.tm_mday == 3);
+    Require(tmYearZeroIso.tm_yday == 2);
+    Require(tmYearZeroIso.tm_wday == 1);
+
+    GuestTm tmPriorCalendarYearIso{};
+    rem = strptime_nid_postfix("2019-W01", "%G-W%V", &tmPriorCalendarYearIso);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmPriorCalendarYearIso.tm_year == 118);
+    Require(tmPriorCalendarYearIso.tm_mon == 11);
+    Require(tmPriorCalendarYearIso.tm_mday == 31);
+    Require(tmPriorCalendarYearIso.tm_yday == 364);
+    Require(tmPriorCalendarYearIso.tm_wday == 1);
+
+    GuestTm tmIsoWeek53Valid{};
+    rem = strptime_nid_postfix("2026-W53-4", "%G-W%V-%u", &tmIsoWeek53Valid);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmIsoWeek53Valid.tm_year == 126);
+    Require(tmIsoWeek53Valid.tm_mon == 11);
+    Require(tmIsoWeek53Valid.tm_mday == 31);
+    Require(tmIsoWeek53Valid.tm_yday == 364);
+    Require(tmIsoWeek53Valid.tm_wday == 4);
+
+    Require(strptime_nid_postfix("2021-W53-1", "%G-W%V-%u", &tmPrevYear) == nullptr);
+    Require(strptime_nid_postfix("2019-W53", "%G-W%V", &tmPrevYear) == nullptr);
+    Require(strptime_nid_postfix("0000-W53-1", "%G-W%V-%u", &tmPrevYear) == nullptr);
+    Require(strptime_nid_postfix("2026-W00-1", "%G-W%V-%u", &tmPrevYear) == nullptr);
+    Require(strptime_nid_postfix("2026-W54-1", "%G-W%V-%u", &tmPrevYear) == nullptr);
+}
+
+static void TestEpochSeconds() {
+    const std::int64_t samples[] = {0, 1700000000, -86400};
+    for (std::int64_t epoch : samples) {
+        GuestTm expected{};
+        Require(localtime_r_nid_postfix(&epoch, &expected) != nullptr);
+
+        char input[32]{};
+        std::snprintf(input, sizeof(input), "%lld", static_cast<long long>(epoch));
+
+        GuestTm tm{};
+        const char* rem = strptime_nid_postfix(input, "%s", &tm);
+        Require(rem != nullptr && *rem == '\0');
+        Require(tm.tm_year == expected.tm_year);
+        Require(tm.tm_mon == expected.tm_mon);
+        Require(tm.tm_mday == expected.tm_mday);
+        Require(tm.tm_hour == expected.tm_hour);
+        Require(tm.tm_min == expected.tm_min);
+        Require(tm.tm_sec == expected.tm_sec);
+        Require(tm.tm_wday == expected.tm_wday);
+        Require(tm.tm_yday == expected.tm_yday);
+        Require(tm.tm_isdst == expected.tm_isdst);
+        Require(tm.tm_gmtoff == expected.tm_gmtoff);
     }
+
+    GuestTm tmOverride{};
+    const char* rem = strptime_nid_postfix("1700000000 04", "%s %H", &tmOverride);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmOverride.tm_hour == 4);
+
+    GuestTm tmEpochDate{};
+    rem = strptime_nid_postfix("0 2024-06-15", "%s %F", &tmEpochDate);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmEpochDate.tm_year == 124);
+    Require(tmEpochDate.tm_mon == 5);
+    Require(tmEpochDate.tm_mday == 15);
+    Require(tmEpochDate.tm_wday == 6);
+    Require(tmEpochDate.tm_yday == 166);
+
+    GuestTm tmEpochExplicitWday{};
+    rem = strptime_nid_postfix("0 2024-01-01 3", "%s %F %w", &tmEpochExplicitWday);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmEpochExplicitWday.tm_year == 124);
+    Require(tmEpochExplicitWday.tm_wday == 3);
+    Require(tmEpochExplicitWday.tm_yday == 0);
+
+    GuestTm tmEpochExplicitYday{};
+    rem = strptime_nid_postfix("0 2024-06-15 100", "%s %F %j", &tmEpochExplicitYday);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmEpochExplicitYday.tm_year == 124);
+    Require(tmEpochExplicitYday.tm_wday == 6);
+    Require(tmEpochExplicitYday.tm_yday == 99);
+
+    GuestTm tmEpochIsoWeek{};
+    rem = strptime_nid_postfix("0 2024-W02-1", "%s %G-W%V-%u", &tmEpochIsoWeek);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmEpochIsoWeek.tm_year == 124);
+    Require(tmEpochIsoWeek.tm_mon == 0);
+    Require(tmEpochIsoWeek.tm_mday == 8);
+    Require(tmEpochIsoWeek.tm_wday == 1);
+    Require(tmEpochIsoWeek.tm_yday == 7);
+
+    GuestTm tmNegEpochIsoWeekNoon{};
+    rem = strptime_nid_postfix("-62198712000 01", "%s %V", &tmNegEpochIsoWeekNoon);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmNegEpochIsoWeekNoon.tm_year == -1901);
+    Require(tmNegEpochIsoWeekNoon.tm_mon == 0);
+    Require(tmNegEpochIsoWeekNoon.tm_mday == 4);
+    Require(tmNegEpochIsoWeekNoon.tm_wday == 1);
+    Require(tmNegEpochIsoWeekNoon.tm_yday == 3);
+
+    const std::int64_t negEpochMidnight = -62198755200;
+    GuestTm negEpochBase{};
+    Require(localtime_r_nid_postfix(&negEpochMidnight, &negEpochBase) != nullptr);
+    GuestTm tmNegEpochIsoWeek{};
+    rem = strptime_nid_postfix("-62198755200 01", "%s %V", &tmNegEpochIsoWeek);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmNegEpochIsoWeek.tm_year == negEpochBase.tm_year);
+    Require(tmNegEpochIsoWeek.tm_mon == 0);
+    Require(tmNegEpochIsoWeek.tm_wday == 1);
+    if (negEpochBase.tm_year == -1901) {
+        Require(tmNegEpochIsoWeek.tm_mday == 4);
+        Require(tmNegEpochIsoWeek.tm_yday == 3);
+    }
+
+    GuestTm tmBad{};
+    Require(strptime_nid_postfix("99999999999999999999", "%s", &tmBad) == nullptr);
+    Require(strptime_nid_postfix("abc", "%s", &tmBad) == nullptr);
 }
 
 int main() {
@@ -298,7 +587,10 @@ int main() {
     TestWhitespaceAndRemainder();
     TestModifiersAndEscapes();
     TestCompactDate();
-    TestUnimplementedSpecifiers();
+    TestSpacePaddedHours();
+    TestWeekNumbers();
+    TestIsoWeekDate();
+    TestEpochSeconds();
     TestInvalidAndNullInputs();
     return 0;
 }
