@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/include/AgcDriver.hpp"
 #include "SceTypes.hpp"
 #include "tests/ExportLookup.hpp"
+#include "tests/CommandLineArgument.hpp"
 
 int main(int argc, char** argv) {
     if (sceAgcDriverGetCoredumpAddress() != nullptr) return 1;
@@ -43,6 +44,6 @@ int main(int argc, char** argv) {
         {sceAgcDriverSysIsGameClosed, "sceAgcDriverSysIsGameClosed"},
         {sceAgcDriverTmpInitIdhs, "sceAgcDriverTmpInitIdhs"},
     };
-    if (!ExportsResolveByName(argc > 1 ? argv[1] : nullptr, exports, "sceAgcDriverNotExported")) return 11;
+    if (!ExportsResolveByName(argc > 1 ? ArgumentPath(argv, 1) : std::filesystem::path(), exports, "sceAgcDriverNotExported")) return 11;
     return 0;
 }

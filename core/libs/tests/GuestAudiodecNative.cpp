@@ -7,6 +7,7 @@
 #include <array>
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "tests/ExportLookup.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -90,7 +91,7 @@ int main(int argc, char** argv) {
             {"sceAudiodecTerminate"},
         };
 #ifdef _WIN32
-        void* library = LoadLibraryA(libraryPath);
+        void* library = LoadLibraryW(ArgumentPath(argv, 1).c_str());
 #else
         void* library = dlopen(libraryPath, RTLD_NOW | RTLD_LOCAL);
 #endif
