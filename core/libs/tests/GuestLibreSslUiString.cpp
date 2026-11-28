@@ -1,7 +1,18 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 #include <cerrno>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
@@ -85,10 +96,59 @@ static void TestInputFlags() {
 }
 
 static void TestGuestPointers() {
+    struct GuardedPages {
+        unsigned char* base = nullptr;
+        std::size_t pageSize = 4096;
+
+        GuardedPages() {
+#ifdef _WIN32
+            SYSTEM_INFO info{};
+            GetSystemInfo(&info);
+            pageSize = info.dwPageSize ? static_cast<std::size_t>(info.dwPageSize) : 4096;
+            base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+            Require(base != nullptr);
+            DWORD oldProtect = 0;
+            Require(VirtualProtect(base + pageSize, pageSize, PAGE_NOACCESS, &oldProtect) != 0);
+#else
+            const long size = sysconf(_SC_PAGESIZE);
+            pageSize = size > 0 ? static_cast<std::size_t>(size) : 4096;
+            void* mapped = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            Require(mapped != MAP_FAILED);
+            base = static_cast<unsigned char*>(mapped);
+            Require(mprotect(base + pageSize, pageSize, PROT_NONE) == 0);
+#endif
+        }
+
+        ~GuardedPages() {
+            if (!base) return;
+#ifdef _WIN32
+            VirtualFree(base, 0, MEM_RELEASE);
+#else
+            munmap(base, pageSize * 2);
+#endif
+        }
+
+        unsigned char* Guard() const { return base + pageSize; }
+    };
+
+    GuardedPages pages;
     errno = 71;
     RequireThrows([] { UI_get0_user_data_nid_postfix(reinterpret_cast<const LibreSslUi*>(0x10)); });
+    RequireThrows([&] { UI_get0_user_data_nid_postfix(reinterpret_cast<const LibreSslUi*>(pages.Guard())); });
+    RequireThrows([&] { UI_get0_user_data_nid_postfix(reinterpret_cast<const LibreSslUi*>(pages.Guard() - offsetof(TestUi, userData))); });
+    RequireThrows([&] { UI_get0_user_data_nid_postfix(reinterpret_cast<const LibreSslUi*>(pages.Guard() - offsetof(TestUi, userData) - 4)); });
+    RequireThrows([] { UI_get0_user_data_nid_postfix(reinterpret_cast<const LibreSslUi*>(~std::uintptr_t{0} - 8)); });
+
     const auto* const unmapped = reinterpret_cast<const LibreSslUiString*>(0x10);
+    const auto* const guarded = reinterpret_cast<const LibreSslUiString*>(pages.Guard());
+    const auto* const straddleType = reinterpret_cast<const LibreSslUiString*>(pages.Guard() - 2);
+    const auto* const straddleFlags = reinterpret_cast<const LibreSslUiString*>(pages.Guard() - offsetof(TestUiString, inputFlags) - 2);
+    const auto* const wrap = reinterpret_cast<const LibreSslUiString*>(~std::uintptr_t{0} - 8);
     Require(UI_get_string_type_nid_postfix(unmapped) == 0 && UI_get_input_flags_nid_postfix(unmapped) == 0);
+    Require(UI_get_string_type_nid_postfix(guarded) == 0 && UI_get_input_flags_nid_postfix(guarded) == 0);
+    Require(UI_get_string_type_nid_postfix(straddleType) == 0);
+    Require(UI_get_input_flags_nid_postfix(straddleFlags) == 0);
+    Require(UI_get_string_type_nid_postfix(wrap) == 0 && UI_get_input_flags_nid_postfix(wrap) == 0);
     Require(errno == 71);
 }
 
