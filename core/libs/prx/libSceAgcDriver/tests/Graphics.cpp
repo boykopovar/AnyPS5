@@ -2805,6 +2805,8 @@ void DepthStencilTests() {
         // 260, AMD PAL), so a fill of the words a linear layout would hold covers nothing.
         Require(!HtileFillCovers(0x10000, {16, 16}, 0x10000, 16) && !HtileFillCovers(0x10000, {16, 16}, 0x10000, 264), "a fill of the linear HTILE size of a 16x16 surface misses its pipe-aligned words");
         Require(AgcDriver::Graphics::HtileMetadataBytes({1024, 512}) == 0x8000u && AgcDriver::Graphics::HtileMetadataBytes({1025, 512}) == 0x10000u && AgcDriver::Graphics::HtileMetadataBytes({3840, 2160}) == 20u * 0x8000u, "the HTILE metadata is 32 KiB per 1024x512 block");
+        Require(AgcDriver::Graphics::HtileMetadataBytes({256, 256}, false) == 0x1000u && AgcDriver::Graphics::HtileMetadataBytes({257, 256}, false) == 0x2000u && AgcDriver::Graphics::HtileMetadataBytes({1920, 1080}, false) == 40u * 0x1000u && AgcDriver::Graphics::HtileMetadataBytes({1920, 1080}) == 6u * 0x8000u, "HTILE that is not pipe-aligned is 4 KiB per 256x256 block");
+        Require(HtileFillCovers(0x10000, {1920, 1080}, 0x10000, 40u * 0x1000u, false) && !HtileFillCovers(0x10000, {1920, 1080}, 0x10000, 40u * 0x1000u - 4u, false) && !HtileFillCovers(0x10000, {1920, 1080}, 0x10000, 40u * 0x1000u), "a fill covers HTILE that is not pipe-aligned over its own metadata size");
         ShaderRecompiler::SetGcnGuestShaders(true);
         Require(AgcDriver::Graphics::HtileMetadataBytes({512, 512}) == 0x4000u && AgcDriver::Graphics::HtileMetadataBytes({256, 256}) == 0x4000u && AgcDriver::Graphics::HtileMetadataBytes({2048, 1152}) == 0x30000u && AgcDriver::Graphics::HtileMetadataBytes({4096, 4096}) == 0x100000u, "a PS4 HTILE is 16 KiB per 512x512 block");
         Require(HtileFillCovers(0x10000, {512, 512}, 0x10000, 0x4000) && !HtileFillCovers(0x10000, {512, 512}, 0x10000, 0x3ffc), "a 16 KiB fill covers the HTILE of a 512x512 PS4 depth target");
@@ -2829,6 +2831,18 @@ void DepthStencilTests() {
         const auto slice = AgcDriver::Graphics::DecodeState(queue);
         Require(slice.depth->htileAddress == (0x30000ull | (1ull << 40u)) + 2u * AgcDriver::Graphics::HtileMetadataBytes(slice.depth->extent), "slice 2 of a depth array must use the third slice of its HTILE");
         queue.context[0x002] = view;
+    }
+    {
+        auto sliced = queue;
+        sliced.context[0x002] = 2u | (2u << 13u);
+        sliced.context[0x007] = (1920u - 1u) | ((1080u - 1u) << 16u);
+        sliced.context[0x010] = (sliced.context[0x010] & ~(3u << 2u)) | (1u << 2u);
+        sliced.context[0x2af] &= ~(1u << 18u);
+        const auto unaligned = AgcDriver::Graphics::DecodeState(sliced);
+        Require(unaligned.depth && unaligned.depth->samples == 2u && !unaligned.depth->htilePipeAligned && unaligned.depth->htileAddress == (0x30000ull | (1ull << 40u)) + 2u * 0x28000u, "slice 2 of non-pipe-aligned multisample depth must step by its 160 KiB HTILE planes");
+        sliced.context[0x2af] |= 1u << 18u;
+        const auto aligned = AgcDriver::Graphics::DecodeState(sliced);
+        Require(aligned.depth && aligned.depth->htilePipeAligned && aligned.depth->htileAddress == (0x30000ull | (1ull << 40u)) + 2u * 0x30000u, "slice 2 of pipe-aligned multisample depth must retain its 192 KiB HTILE stride");
     }
     queue.context[0x010] &= ~0x20000000u;
     state = AgcDriver::Graphics::DecodeState(queue);

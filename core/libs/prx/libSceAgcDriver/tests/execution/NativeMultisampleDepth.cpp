@@ -2401,7 +2401,7 @@ void CheckStencilTarget(Context context, std::uint32_t fragments, bool one, bool
     std::printf("Native depth-stencil samples=%u clear=%u fill=%u: imported, stencil-tested, sampled%s\n", fragments, one, filling, filling ? " and refilled three times" : "");
 }
 
-enum class PlaneFault { None, StencilByte, StencilWrite, UnwatchedStencil, HtileWord, PartialStencilFill, UnmappedPartialStencilFill, StencilFillPattern, StencilFillUnstored, StencilFillCpuWrite, StencilFillStoredFirst, StencilSameValueStore, StencilOtherValueStore, UnmappedPartialHtileFill };
+enum class PlaneFault { None, StencilByte, StencilWrite, UnwatchedStencil, HtileWord, HtileTail, PartialStencilFill, UnmappedPartialStencilFill, StencilFillPattern, StencilFillUnstored, StencilFillCpuWrite, StencilFillStoredFirst, StencilSameValueStore, StencilOtherValueStore, UnmappedPartialHtileFill };
 enum class PlaneFill { None, Htile, Stencil, Both };
 
 void CheckSeparateStencilTarget(Context context, std::uint32_t fragments, bool one, PlaneFill fill, PlaneFault fault = PlaneFault::None, bool pipeAligned = true) {
@@ -2409,11 +2409,12 @@ void CheckSeparateStencilTarget(Context context, std::uint32_t fragments, bool o
     const auto bytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, fragments));
     const auto stencilBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 1u, fragments));
     TargetMemory memory(bytes), stencil(stencilBytes), metadata(65536u);
-    const auto metadataBytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    const auto metadataBytes = static_cast<std::size_t>(HtileMetadataBytes(extent, pipeAligned));
     const std::uint32_t clearWord = one ? 0xfffffff0u : 0u;
     const auto setWords = [&] { for (std::size_t offset = 0u; offset + 4u <= metadataBytes; offset += 4u) std::memcpy(metadata.Data() + offset, &clearWord, 4u); };
     setWords();
     if (fault == PlaneFault::HtileWord) metadata.Data()[metadataBytes - 4u] ^= std::byte{0x10};
+    if (fault == PlaneFault::HtileTail) metadata.Data()[metadataBytes] ^= std::byte{0x10};
     const std::uint8_t clearStencil = one ? 0x5au : 0u;
     std::memset(stencil.Data(), clearStencil, stencilBytes);
     if (fault == PlaneFault::StencilByte) stencil.Data()[stencilBytes / 2u] ^= std::byte{0x01};
@@ -2443,6 +2444,8 @@ void CheckSeparateStencilTarget(Context context, std::uint32_t fragments, bool o
     const auto words = DepthSampleWords(target);
     auto texture = CachedSampledTexture(context, words);
     Require(texture != nullptr && CachedSampledTexture(context, words) == texture, "native depth with a separate stencil plane: sampled view was not reused");
+    const auto paddingRetired = RetireReplacedDepth_nid_no_patch(target.htileAddress + metadataBytes, 1u);
+    Require(paddingRetired.surfaces == 0u && DepthSurfaceAt(target.address), "replacing memory beyond the target HTILE retired its native depth surface");
     if (fault == PlaneFault::StencilWrite) {
         stencil.Data()[stencilBytes - 1u] ^= std::byte{0x01};
         CachedSampledTexture(context, words);
@@ -2551,7 +2554,7 @@ void CheckGhostSequence(Context context, std::uint32_t fragments, GhostFill path
     const auto bytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, fragments));
     const auto stencilBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 1u, fragments));
     TargetMemory memory(bytes), stencil(stencilBytes), metadata(65536u);
-    const auto metadataBytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    const auto metadataBytes = static_cast<std::size_t>(HtileMetadataBytes(extent, false));
     std::memset(memory.Data(), 0x5c, bytes);
     std::memset(metadata.Data(), 0, metadataBytes);
     if (fault == GhostFault::CreationRefused) metadata.Data()[metadataBytes - 4u] = std::byte{0x10};
@@ -3266,15 +3269,15 @@ void CheckEligibility(Context context) {
     std::puts("Native depth eligibility, guest writes, queued writes, metadata transitions and held views checked");
 }
 
-void CheckClearSupersedesPlaneWrites(Context context, std::uint32_t fragments, bool queued) {
+void CheckClearSupersedesPlaneWrites(Context context, std::uint32_t fragments, bool queued, bool pipeAligned) {
     const VkExtent2D extent{5u, 3u};
     const auto bytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, fragments));
     TargetMemory memory(bytes), metadata(65536u);
-    const auto metadataBytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    const auto metadataBytes = static_cast<std::size_t>(HtileMetadataBytes(extent, pipeAligned));
     std::memset(metadata.Data(), 0, metadataBytes);
     DepthTarget target{memory.Address(), 0u, extent, VK_FORMAT_D32_SFLOAT, 0.0f, 0u, metadata.Address(), false, fragments};
     target.depthSwizzle = 24u;
-    target.iterate256 = target.htilePipeAligned = true;
+    target.iterate256 = target.htilePipeAligned = pipeAligned;
     target.htileDepthOnly = true;
     Recorder recorder(context);
     recorder.Activate();
@@ -3294,7 +3297,7 @@ void CheckClearSupersedesPlaneWrites(Context context, std::uint32_t fragments, b
     QueueTargetByteWrite(context, recorder, target.address + 4u, std::byte{0x40});
     recorder.Sync();
     TargetRefuses([&] { CachedSampledTexture(context, words); }, "writes over native multisample depth are not implemented");
-    std::printf("Native depth samples=%u: a %s write to the depth plane before a full HTILE clear is superseded by it, and one after it still refuses\n", fragments, queued ? "queued" : "landed");
+    std::printf("Native depth samples=%u pipeAligned=%u: a %s write to the depth plane before a full HTILE clear is superseded by it, and one after it still refuses\n", fragments, pipeAligned, queued ? "queued" : "landed");
 }
 
 void CheckInitialOwner(Context context, VkFormat format, std::uint32_t samples, bool one, bool depthOnly) {
@@ -6047,6 +6050,9 @@ int main(int argc, char** argv) {
                 TargetRefuses([&] { CheckSeparateStencilTarget(context, 4u, false, PlaneFill::None, fault, false); }, expected);
                 std::printf("Native depth with a separate stencil plane fault=%u refused: %s\n", static_cast<std::uint32_t>(fault), expected);
             }
+            CheckSeparateStencilTarget(context, 4u, false, PlaneFill::None, PlaneFault::HtileTail, false);
+            ++checked;
+            std::printf("Native depth with HTILE that is not pipe-aligned and other bytes after its 4 KiB metadata block: imported\n");
             for (const auto& [fault, expected] : std::array{
                      std::pair{PlaneFault::PartialStencilFill, "native multisample stencil plane partial fill transition is not implemented"},
                      std::pair{PlaneFault::StencilFillPattern, "native multisample stencil plane fill of more than one byte value is not implemented"},
@@ -6177,7 +6183,9 @@ int main(int argc, char** argv) {
             std::uint32_t checked = 0u;
             for (const auto samples : {2u, 4u, 8u}) {
                 if (!DepthSupported(context, VK_FORMAT_D32_SFLOAT, samples)) continue;
-                for (const bool queued : {true, false}) CheckClearSupersedesPlaneWrites(context, samples, queued);
+                for (const bool queued : {true, false}) {
+                    for (const bool pipeAligned : {true, false}) CheckClearSupersedesPlaneWrites(context, samples, queued, pipeAligned);
+                }
                 ++checked;
             }
             Require(checked != 0u, "no sampled multisampled D32 depth for the superseded plane write check");
