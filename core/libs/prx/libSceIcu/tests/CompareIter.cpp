@@ -1,5 +1,6 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -106,6 +107,17 @@ void Arguments() {
     Require(text.text.calls.empty());
 }
 
+void GuestIterators() {
+    auto* unmapped = reinterpret_cast<UCharIterator*>(std::uintptr_t{0x10});
+    Iterator text({u'a'});
+    errno = 71;
+    RequireInvalidArgument([&] { u_strCompareIter_nid_postfix(unmapped, &text.iterator, 1); });
+    RequireInvalidArgument([&] { u_strCompareIter_nid_postfix(&text.iterator, unmapped, 0); });
+    Require(errno == 71);
+    Require(u_strCompareIter_nid_postfix(unmapped, unmapped, 1) == 0);
+    Require(errno == 71);
+}
+
 void Units() {
     Expect({}, {}, 0, 0, "mn", "mn");
     Expect({u'a', u'b'}, {u'a', u'b'}, 1, 0, "mnnn", "mnnn");
@@ -186,6 +198,7 @@ void UnicodeVersion() {
 
 int main() {
     Arguments();
+    GuestIterators();
     Units();
     CodePoints();
     Wrapping();

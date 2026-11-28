@@ -1,4 +1,6 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "prx/libc/include/General.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <stdexcept>
 
@@ -20,19 +22,33 @@ TCallback Require(TCallback callback) {
     return callback;
 }
 
-std::int32_t Next(UCharIterator* iterator) {
-    return Require(iterator->next)(iterator);
+struct Iterator {
+    UCharIterator* guest;
+    UCharIterator callbacks;
+};
+
+Iterator Load(UCharIterator* guest) {
+    Iterator iterator{guest, {}};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&iterator.callbacks, guest, sizeof(iterator.callbacks));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument("u_strCompareIter: unreadable iterator");
+    return iterator;
 }
 
-bool InPair(UCharIterator* iterator, std::int32_t unit) {
-    if (unit <= 0xdbff) return IsTrail(Require(iterator->current)(iterator));
+std::int32_t Next(Iterator& iterator) {
+    return Require(iterator.callbacks.next)(iterator.guest);
+}
+
+bool InPair(Iterator& iterator, std::int32_t unit) {
+    if (unit <= 0xdbff) return IsTrail(Require(iterator.callbacks.current)(iterator.guest));
     if (!IsTrail(unit)) return false;
-    const auto previous = Require(iterator->previous);
-    previous(iterator);
-    return IsLead(Require(iterator->previous)(iterator));
+    const auto previous = Require(iterator.callbacks.previous);
+    previous(iterator.guest);
+    return IsLead(Require(iterator.callbacks.previous)(iterator.guest));
 }
 
-std::int32_t Order(UCharIterator* iterator, std::int32_t unit) {
+std::int32_t Order(Iterator& iterator, std::int32_t unit) {
     return InPair(iterator, unit) ? unit : unit - 0x2800;
 }
 
@@ -40,10 +56,12 @@ std::int32_t Order(UCharIterator* iterator, std::int32_t unit) {
 
 extern "C" {
 
-std::int32_t APS5_VABI u_strCompareIter_nid_postfix(UCharIterator* first, UCharIterator* second, std::uint8_t codePointOrder) {
-    if (!first || !second || first == second) return 0;
-    Require(first->move)(first, 0, UITER_START);
-    Require(second->move)(second, 0, UITER_START);
+std::int32_t APS5_VABI u_strCompareIter_nid_postfix(UCharIterator* guestFirst, UCharIterator* guestSecond, std::uint8_t codePointOrder) {
+    if (!guestFirst || !guestSecond || guestFirst == guestSecond) return 0;
+    auto first = Load(guestFirst);
+    auto second = Load(guestSecond);
+    Require(first.callbacks.move)(guestFirst, 0, UITER_START);
+    Require(second.callbacks.move)(guestSecond, 0, UITER_START);
     std::int32_t left;
     std::int32_t right;
     for (;;) {
