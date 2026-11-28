@@ -17,6 +17,7 @@
 #include FT_TRUETYPE_TABLES_H
 #include FT_TYPE1_TABLES_H
 #include FT_SYNTHESIS_H
+#include FT_PFR_H
 #include "prx/libc/include/general/AsmMacros.hpp"
 #include <algorithm>
 #include <array>
@@ -652,6 +653,41 @@ void FontFormat(decltype(&FT_Get_Font_Format_nid_postfix) getFormat) {
     Require(forwarded.doneFace(face) == 0 && forwarded.finish(library) == 0, "release font format face and library");
 }
 
+void PfrQueries(decltype(&FT_Get_PFR_Advance_nid_postfix) getAdvance,
+                decltype(&FT_Get_PFR_Kerning_nid_postfix) getKerning,
+                decltype(&FT_Get_PFR_Metrics_nid_postfix) getMetrics) {
+    std::int64_t advance = 7;
+    GuestVector kerning{11, 13};
+    std::uint32_t outlineRes = 1;
+    std::uint32_t metricsRes = 2;
+    std::int64_t xScale = 3;
+    std::int64_t yScale = 4;
+    FT_Pos nativeAdvance = 7;
+    FT_Vector nativeKerning{11, 13};
+    FT_UInt nativeOutline = 1;
+    FT_UInt nativeMetrics = 2;
+    FT_Fixed nativeX = 3;
+    FT_Fixed nativeY = 4;
+    Require(getAdvance(nullptr, 0, &advance) == FT_Get_PFR_Advance(nullptr, 0, &nativeAdvance), "pfr advance null face");
+    Require(getKerning(nullptr, 0, 0, &kerning) == FT_Get_PFR_Kerning(nullptr, 0, 0, &nativeKerning), "pfr kerning null face");
+    Require(getMetrics(nullptr, &outlineRes, &metricsRes, &xScale, &yScale) ==
+            FT_Get_PFR_Metrics(nullptr, &nativeOutline, &nativeMetrics, &nativeX, &nativeY), "pfr metrics null face");
+    FreeType::GuestLibrary* guestLibrary = nullptr;
+    FT_Library nativeLibrary = nullptr;
+    Require(forwarded.init(&guestLibrary) == 0 && FT_Init_FreeType(&nativeLibrary) == 0, "init pfr libraries");
+    const auto font = SquareGlyphFont('A', 800);
+    FreeType::GuestFaceRec* guestFace = nullptr;
+    FT_Face nativeFace = nullptr;
+    Require(forwarded.newMemoryFace(guestLibrary, font.data(), font.size(), 0, &guestFace) == 0 &&
+            FT_New_Memory_Face(nativeLibrary, font.data(), font.size(), 0, &nativeFace) == 0, "open pfr test faces");
+    Require(getAdvance(guestFace, 0, &advance) == FT_Get_PFR_Advance(nativeFace, 0, &nativeAdvance), "pfr advance non-pfr face");
+    Require(getKerning(guestFace, 0, 0, &kerning) == FT_Get_PFR_Kerning(nativeFace, 0, 0, &nativeKerning), "pfr kerning non-pfr face");
+    Require(getMetrics(guestFace, &outlineRes, &metricsRes, &xScale, &yScale) ==
+            FT_Get_PFR_Metrics(nativeFace, &nativeOutline, &nativeMetrics, &nativeX, &nativeY), "pfr metrics non-pfr face");
+    Require(forwarded.doneFace(guestFace) == 0 && FT_Done_Face(nativeFace) == 0, "release pfr faces");
+    Require(forwarded.finish(guestLibrary) == 0 && FT_Done_FreeType(nativeLibrary) == 0, "release pfr libraries");
+}
+
 void Outlines() {
     std::vector<GuestVector> points{{0, 0}, {640, 0}, {640, 640}, {0, 640}, {64, 64}, {320, 576}, {576, 64}, {320, 32}, {200, 100}};
     std::vector<unsigned char> tags{FT_CURVE_TAG_ON, FT_CURVE_TAG_ON, FT_CURVE_TAG_CONIC, FT_CURVE_TAG_ON,
@@ -1006,6 +1042,19 @@ int main(int argc, char** argv) {
     Resolve(fontFormat, library, patched, "N1S26TrBLLk", "FT_Get_Font_Format_nid_postfix");
 #endif
     FontFormat(fontFormat);
+    decltype(&FT_Get_PFR_Advance_nid_postfix) pfrAdvance = nullptr;
+    decltype(&FT_Get_PFR_Kerning_nid_postfix) pfrKerning = nullptr;
+    decltype(&FT_Get_PFR_Metrics_nid_postfix) pfrMetrics = nullptr;
+#ifdef _WIN32
+    Resolve(pfrAdvance, library, patched, "NVuvsPgTXto", "FT_Get_PFR_AdvanceForward_nid_no_patch");
+    Resolve(pfrKerning, library, patched, "qBohKqdkAqE", "FT_Get_PFR_KerningForward_nid_no_patch");
+    Resolve(pfrMetrics, library, patched, "OqaxEkRhr+8", "FT_Get_PFR_MetricsForward_nid_no_patch");
+#else
+    Resolve(pfrAdvance, library, patched, "NVuvsPgTXto", "FT_Get_PFR_Advance_nid_postfix");
+    Resolve(pfrKerning, library, patched, "qBohKqdkAqE", "FT_Get_PFR_Kerning_nid_postfix");
+    Resolve(pfrMetrics, library, patched, "OqaxEkRhr+8", "FT_Get_PFR_Metrics_nid_postfix");
+#endif
+    PfrQueries(pfrAdvance, pfrKerning, pfrMetrics);
     Resolve(ot.decompose, library, patched, "++lgV9pRsO4", "FT_Outline_Decompose_nid_postfix");
     decltype(&FT_Face_GetCharVariantIsDefault_nid_postfix) charVariantIsDefault = nullptr;
 #ifdef _WIN32
