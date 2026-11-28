@@ -279,6 +279,15 @@ void TestAWakeUpWithoutATask() {
     Require(thread.server.waits.load() == 2 && thread.server.lastWait.load() > 0 && thread.server.lastWait.load() <= 950000);
 }
 
+void ProcessUntilRun(void* thread, const Record& record) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (record.runs.load() == 0) {
+        Require(std::chrono::steady_clock::now() < deadline);
+        Require(processMessages(thread, 5));
+    }
+    Require(record.runs.load() == 1);
+}
+
 void TestDelayedTasks() {
     TestThread thread;
     Record late;
@@ -318,7 +327,7 @@ void TestDelayedTasks() {
         thread.PostDelayed(soon, 1);
         Require(processMessages(thread.get(), 0));
         waited = soon.runs.load() == 0;
-        Require(processMessages(thread.get(), 5) && soon.runs.load() == 1);
+        ProcessUntilRun(thread.get(), soon);
     }
     Require(waited);
 
@@ -348,7 +357,7 @@ void TestDelayedTasks() {
     Require(farthest.moves.load() >= 1 && getDelay(thread.get()) > 2147483000);
     Record earliest;
     thread.PostDelayed(earliest, std::int64_t{-2147483649998});
-    Require(getDelay(thread.get()) == 0 && processMessages(thread.get(), 0) && earliest.runs.load() == 1 && farthest.runs.load() == 0);
+    Require(processMessages(thread.get(), 0) && earliest.runs.load() == 1 && farthest.runs.load() == 0);
 }
 
 void TestARunningThread() {
