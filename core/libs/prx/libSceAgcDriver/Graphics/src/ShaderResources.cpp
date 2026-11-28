@@ -5727,15 +5727,24 @@ std::uint64_t ShaderResources::BytesUpToTarget(std::uint64_t address, std::uint6
     return target->MemoryAddress() - address;
 }
 
+static std::uint64_t ReadBoundBytes(std::uint64_t declared, bool written, bool atomic, std::uint32_t readBound) {
+    static const bool boundReads = std::getenv("APS5_NO_BUFFER_READ_BOUND") == nullptr;
+    if (!boundReads || written || atomic || readBound == 0u) return declared;
+    return std::min(declared, (static_cast<std::uint64_t>(readBound) + 3u) & ~std::uint64_t{3});
+}
+
+static std::uint64_t ReadBoundBytes(const ShaderRecompiler::DescriptorBinding& binding, std::uint32_t element, std::uint64_t declared, bool written) {
+    const bool atomic = element < binding.bufferAtomic.size() && binding.bufferAtomic[element];
+    return ReadBoundBytes(declared, written, atomic, element < binding.bufferReadBound.size() ? binding.bufferReadBound[element] : 0u);
+}
+
 std::size_t ShaderResources::addGuestBuffer(std::span<const std::uint32_t> words, const ColorTarget* target, std::uint64_t indexAddress, std::size_t indexBytes, bool written, bool atomic, bool read, std::uint32_t extent, std::uint32_t readBound) {
     Require(words.size() == 4, "buffer descriptor must contain four DWORDs");
     const ShaderRecompiler::ShaderBufferResource descriptor{{words[0], words[1] & ~0x40000000u, words[2], words[3]}};
     Require(descriptor.Type() == 0u, "buffer descriptor uses an unsupported type");
     const auto address = descriptor.Base48();
-    static const bool boundReads = std::getenv("APS5_NO_BUFFER_READ_BOUND") == nullptr;
     const auto declaredBytes = guestBufferBytes(words);
-    const auto boundBytes = (static_cast<std::uint64_t>(readBound) + 3u) & ~std::uint64_t{3};
-    const auto byteSize = boundReads && !written && !atomic && readBound != 0u && boundBytes < declaredBytes ? boundBytes : declaredBytes;
+    const auto byteSize = ReadBoundBytes(declaredBytes, written, atomic, readBound);
     if (byteSize == 0 || address == 0) {
         allocations.push_back({0, EmptyBufferBytes, false, nullptr, ShaderRecompiler::DescriptorRole::GuestBuffers, false});
         allocations.back().oversized = address != 0 && descriptor.GetSize() != 0;
@@ -5743,7 +5752,7 @@ std::size_t ShaderResources::addGuestBuffer(std::span<const std::uint32_t> words
     }
     Require(byteSize <= context.limits.maxStorageBufferRange, "shader buffer exceeds descriptor range limit");
     Require(byteSize <= std::numeric_limits<std::size_t>::max(), "shader buffer size exceeds host address space");
-    const auto size = static_cast<std::size_t>(BytesUpToTarget(address, byteSize, descriptor.Stride(), written ? nullptr : target));
+    const auto size = static_cast<std::size_t>(BytesUpToTarget(address, byteSize, descriptor.Stride(), written || byteSize < declaredBytes ? nullptr : target));
     Require(target == nullptr || !overlap(address, size, target->MemoryAddress(), target->bytes), "shader buffer aliases the render target");
     // APS5_ALL_BUFFERS_WRITTEN=1: every element is noted as written, as before bufferWritten existed.
     static const bool allWritten = std::getenv("APS5_ALL_BUFFERS_WRITTEN") != nullptr;
@@ -7229,7 +7238,8 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedR
                 const ShaderRecompiler::ShaderBufferResource descriptor{{words[0], words[1], words[2], words[3]}};
                 const auto address = descriptor.Base48();
                 const bool written = element >= binding.bufferWritten.size() || binding.bufferWritten[element];
-                const auto size = BytesUpToTarget(address, descriptor.GetSize(), descriptor.Stride(), written ? nullptr : target);
+                const auto bounded = ReadBoundBytes(binding, element, descriptor.GetSize(), written);
+                const auto size = BytesUpToTarget(address, bounded, descriptor.Stride(), written || bounded < descriptor.GetSize() ? nullptr : target);
                 const auto index = kept->allocations[element];
                 const auto& item = allocations[index];
                 const bool empty = size == 0 || address == 0;
@@ -7322,7 +7332,8 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedD
             const auto* words = binding.guestDescriptor.data() + static_cast<std::size_t>(element) * 4u;
             const ShaderRecompiler::ShaderBufferResource descriptor{{words[0], words[1], words[2], words[3]}};
             const auto address = descriptor.Base48();
-            const auto size = guestBufferBytes(std::span<const std::uint32_t>(words, 4));
+            const bool written = element >= binding.bufferWritten.size() || binding.bufferWritten[element];
+            const auto size = ReadBoundBytes(binding, element, guestBufferBytes(std::span<const std::uint32_t>(words, 4)), written);
             const auto& item = allocations[kept->allocations[element]];
             const bool empty = size == 0 || address == 0;
             if (!item.guest) {
@@ -7330,7 +7341,6 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedD
                 return refuse(MoveRefusal::NotGuest);
             }
             if (item.address == address && item.size == size) continue;
-            const bool written = element >= binding.bufferWritten.size() || binding.bufferWritten[element];
             if (written || empty || item.written) return refuse(MoveRefusal::Written);
             if (size > context.limits.maxStorageBufferRange) return refuse(MoveRefusal::Limit);
             MovedBuffer entry{kept->allocations[element], address, static_cast<std::size_t>(size)};

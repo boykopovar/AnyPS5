@@ -5226,6 +5226,7 @@ bool readWrittenStagingTests(const Device& device, Recorder& recorder) {
         recorder.Sync();
         return direct;
     };
+    static const bool boundReads = std::getenv("APS5_NO_BUFFER_READ_BOUND") == nullptr;
     const auto readOnlyBytes = [&](std::uint32_t readBound) {
         const auto element = address + 4096;
         ShaderRecompiler::RecompileResult program;
@@ -5245,12 +5246,26 @@ bool readWrittenStagingTests(const Device& device, Recorder& recorder) {
         ShaderResources resources(context, compute, {}, false, 0);
         std::uint64_t bytes = resources.CopiedBytes();
         for (const auto& [begin, end] : resources.InPlaceReads()) bytes += end - begin;
+        if (readBound == 66u && boundReads) {
+            constexpr std::uint64_t expected = 68u;
+            ShaderResources::MoveProof proof;
+            const auto same = resources.MovedDispatchBuffers(compute, &recorder, 0, proof);
+            Require(same.has_value() && same->empty(), "a read-bounded element at its own address was taken as moved by a dispatch");
+            const auto sameDraw = resources.MovedReadOnlyBuffers(std::span<const CompiledShader>(&compute, 1), recorder, nullptr);
+            Require(sameDraw.has_value() && sameDraw->empty(), "a read-bounded element at its own address was taken as moved by a draw");
+            auto relocated = program;
+            relocated.bindings[0].guestDescriptor[0] += 256u;
+            const CompiledShader elsewhere{ShaderRecompiler::ShaderStage::Compute, &relocated, 0};
+            const auto moved = resources.MovedDispatchBuffers(elsewhere, &recorder, 0, proof);
+            Require(moved.has_value() && moved->size() == 1 && moved->front().size == expected, "a moved read-bounded element was not moved at the size it is bound with by a dispatch");
+            const auto movedDraw = resources.MovedReadOnlyBuffers(std::span<const CompiledShader>(&elsewhere, 1), recorder, nullptr);
+            Require(movedDraw.has_value() && movedDraw->size() == 1 && movedDraw->front().size == expected, "a moved read-bounded element was not moved at the size it is bound with by a draw");
+        }
         recorder.Sync();
         return bytes;
     };
-    static const bool boundReads = std::getenv("APS5_NO_BUFFER_READ_BOUND") == nullptr;
     Require(readOnlyBytes(0) >= (12u << 20u), "a read-only 12 MiB element without a read bound was not bound whole");
-    Require((readOnlyBytes(66) == 68u) == boundReads, boundReads ? "a read-only 12 MiB element the shader reads 66 bytes of was not bound for 68 bytes" : "a read-only element was bound by its read bound with the bound turned off");
+    Require(boundReads ? readOnlyBytes(66) == 68u : readOnlyBytes(66) >= (12u << 20u), boundReads ? "a read-only 12 MiB element the shader reads 66 bytes of was not bound for 68 bytes" : "a read-only element was not bound whole with the read bound turned off");
     Require(readOnlyBytes(16u << 20u) >= (12u << 20u), "a read bound past the end of a read-only element changed what is bound");
     Require(!buildInPlace((12u << 20u) / 16u, true, 16, 0), "a dispatch sweeping a read and written 12 MiB element bound it in place");
     Require(buildInPlace(1024, true, 16, 0), "a dispatch touching 16 KiB of a read and written 12 MiB element staged all of it");
