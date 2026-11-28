@@ -10,6 +10,7 @@
 #include "prx/libkernel/File/include/RandomDevice.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <bit>
 #include <cerrno>
 #include <chrono>
@@ -798,6 +799,10 @@ int APS5_VABI sceKernelWaitEqueue(KernelEqueue eq, KernelEvent* ev, int num, int
     KernelEvent stackEvents[STACK_EVENTS];
     std::unique_ptr<KernelEvent[]> heapEvents;
     const int capacity = std::min(num, MAX_WAIT_EVENTS);
+    static const bool trace = std::getenv("APS5_TRACE_EQUEUE") != nullptr;
+    static std::atomic<std::uint64_t> cappedWaits{0};
+    if (trace && capacity != num && std::has_single_bit(++cappedWaits))
+        std::fprintf(stderr, "[equeue] %s: wait for %d events capped at %d; events past the cap stay pending for the next wait (capped wait %llu)\n", owner->GetName().c_str(), num, MAX_WAIT_EVENTS, static_cast<unsigned long long>(cappedWaits.load()));
     KernelEvent* target = stackEvents;
     if (capacity > STACK_EVENTS) {
         heapEvents = std::make_unique<KernelEvent[]>(static_cast<std::size_t>(capacity));

@@ -24,6 +24,9 @@ int APS5_VABI sceAudioOut2InitializeEx(std::uint32_t param) {
 int APS5_VABI sceAudioOut2Set3DLatency(int userId, std::uint32_t output) {
     if (output > MAX_SUPPORTED_3D_OUTPUT) return SCE_AUDIO_OUT2_ERROR_INVALID_PARAM;
     if (userId != 0 && (userId != 0xFF || output == 0)) return SCE_AUDIO_OUT2_ERROR_INVALID_PARAM;
+    static std::atomic<std::uint64_t> calls{0};
+    if (AudioOut2TraceOccurrence(calls))
+        AUDIOOUT2_TRACE("t=%.3f Set3DLatency user %d output %u accepted; the host output latency is unchanged (call %llu)\n", AudioOut2TraceSeconds(), userId, output, static_cast<unsigned long long>(calls.load()));
     return 0;
 }
 
@@ -33,7 +36,11 @@ int APS5_VABI sceAudioOut2GetSystemState(AudioOut2SystemState* state) {
     const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(state, &loudness, sizeof(loudness));
     errno = savedErrno;
-    return copied ? 0 : static_cast<int>(0x80260502);
+    if (!copied) return static_cast<int>(0x80260502);
+    static std::atomic<std::uint64_t> queries{0};
+    if (AudioOut2TraceOccurrence(queries))
+        AUDIOOUT2_TRACE("t=%.3f GetSystemState: reported loudness 0; the host mix is not measured (query %llu)\n", AudioOut2TraceSeconds(), static_cast<unsigned long long>(queries.load()));
+    return 0;
 }
 
 int APS5_VABI sceAudioOut2GetSystemStateEx(void* state) {

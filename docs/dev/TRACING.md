@@ -8,14 +8,15 @@ Set a switch before starting the emulator. Unless noted, any value enables it. M
 | --- | --- |
 | `APS5_TRACE_AFFINITY` | Thread role, host thread ID, requested CPU mask and whether pinning succeeded. |
 | `APS5_TRACE_AJM` | Submitted audio jobs, decoded output and unimplemented AJM calls. |
-| `APS5_TRACE_APR` | APR file reads, including path, offset, size and destination. |
-| `APS5_TRACE_AUDIOOUT` | Audio output port parameters when a port is opened. |
-| `APS5_TRACE_AUDIOOUT2` | AudioOut2 context and port parameters, attributes, pushes, queue polls and periodic queue summaries. |
+| `APS5_TRACE_APR` | APR file reads, including path, offset, size and destination, and the entries a for-each path resolution reports as not found. |
+| `APS5_TRACE_AUDIOOUT` | Audio output port parameters when a port is opened; queued audio discarded after a stalled drain, host devices that do not reopen, and the fixed values port state, system state, monitor info, output configuration and mastering calls return, at the first occurrence and each power of two. |
+| `APS5_TRACE_AUDIOOUT2` | AudioOut2 context and port parameters, attributes, pushes, queue polls and periodic queue summaries; the fixed values system state, speaker info, mastering and 3D latency calls return, at the first occurrence and each power of two. |
 | `APS5_TRACE_CALLS` | On Windows, Linux and macOS, records calls to the imports selected by this comma-separated library list (or `all`); crash and abort reports include the last 64 calls and most-called imports. The executable must be converted with `--trace-imports`; see [Usage](../user/USAGE.md#tracing-system-library-calls). |
 | `APS5_TRACE_CALLS_FILE` | With `APS5_TRACE_CALLS`, a file rewritten every 10 seconds with every traced import called so far, most called first: number of calls, library and import name. |
+| `APS5_TRACE_EQUEUE` | Pending events an equeue drops past its 64-event cap, and waits whose event count is capped at 1024, at the first occurrence and each power of two. |
 | `APS5_TRACE_EXIT` | Guest `exit` and `_Exit` calls and process-exit backtraces. |
 | `APS5_TRACE_FIBER` | Fiber initialization, switches and returns. |
-| `APS5_TRACE_MEMORY` | Direct-memory allocation, mapping and protection operations. |
+| `APS5_TRACE_MEMORY` | Direct-memory allocation, mapping and protection operations, and direct-memory and virtual queries whose `info_size` truncates the result. |
 | `APS5_TRACE_PREPARATION_WAIT` | Shader preparation tasks moved to the front of the queue to satisfy a waiting caller. |
 | `APS5_TRACE_SSE4A` | Each emulated SSE4A instruction once per guest instruction address (Windows). |
 | `APS5_TRACE_SYNC` | Event-flag and semaphore operations and their wait and wake results. |

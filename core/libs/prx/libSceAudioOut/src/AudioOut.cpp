@@ -4,10 +4,12 @@
 #include <cstdlib>
 #include <array>
 #include <atomic>
+#include <bit>
 #include <cerrno>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <mutex>
@@ -148,6 +150,19 @@ static bool g_sdlInitialized = false;
 static std::uint64_t g_portGenerations = 0;
 static std::condition_variable g_deviceOpened;
 
+static bool traceEnabled() {
+    static const bool enabled = std::getenv("APS5_TRACE_AUDIOOUT") != nullptr;
+    return enabled;
+}
+
+bool AudioOutTraceOccurrence(std::atomic<std::uint64_t>& occurrences) {
+    return traceEnabled() && std::has_single_bit(++occurrences);
+}
+
+static int portHandle(const Port& port) {
+    return static_cast<int>(&port - g_ports) + 1;
+}
+
 static bool ensureSdlAudio() {
     if (g_sdlInitialized) {
         return true;
@@ -258,6 +273,9 @@ static void replaceDeviceInBackground(std::size_t index, std::uint64_t generatio
             port.spec = device != 0 ? obtained : SDL_AudioSpec{};
             port.nextDeviceRetry = device == 0 ? sceKernelGetProcessTime() + DEVICE_RETRY_US : 0;
             installed = true;
+            static std::atomic<std::uint64_t> failures{0};
+            if (device == 0 && AudioOutTraceOccurrence(failures))
+                std::fprintf(stderr, "[audioout] port %zu: the host device did not reopen (%s); output is paced and discarded until the retry in %llu ms (failure %llu)\n", index + 1, SDL_GetError(), static_cast<unsigned long long>(DEVICE_RETRY_US / 1000), static_cast<unsigned long long>(failures.load()));
         }
     }
     g_deviceOpened.notify_all();
@@ -282,15 +300,21 @@ static void reopenStoppedDevice(Port& port, std::unique_lock<std::mutex>& lock, 
     if (port.type == PORT_TYPE_VIBRATION) {
         try {
             openVibrationDevice(port);
-        } catch (const std::runtime_error&) {
+        } catch (const std::runtime_error& error) {
             port.device = 0;
             port.spec = {};
+            static std::atomic<std::uint64_t> failures{0};
+            if (AudioOutTraceOccurrence(failures))
+                std::fprintf(stderr, "[audioout] port %d: the controller sound card did not reopen (%s); the port runs without a device (failure %llu)\n", portHandle(port), error.what(), static_cast<unsigned long long>(failures.load()));
         }
         return;
     }
     if (!ensureSdlAudio()) {
         port.nextDeviceRetry = sceKernelGetProcessTime() + DEVICE_RETRY_US;
         closeHostDevice(stopped);
+        static std::atomic<std::uint64_t> failures{0};
+        if (AudioOutTraceOccurrence(failures))
+            std::fprintf(stderr, "[audioout] port %d: SDL audio is unavailable (%s); output is paced and discarded until the retry in %llu ms (failure %llu)\n", portHandle(port), SDL_GetError(), static_cast<unsigned long long>(DEVICE_RETRY_US / 1000), static_cast<unsigned long long>(failures.load()));
         return;
     }
     port.opening = true;
@@ -386,12 +410,19 @@ static void sleepUs(std::unique_lock<std::mutex>& lock, std::uint64_t us) {
     lock.lock();
 }
 
+static void clearStalledQueue(const Port& port) {
+    static std::atomic<std::uint64_t> stalls{0};
+    if (AudioOutTraceOccurrence(stalls))
+        std::fprintf(stderr, "[audioout] port %d: device %u did not drain in %llu ms; discarded %u queued bytes (stall %llu)\n", portHandle(port), static_cast<unsigned>(port.device), static_cast<unsigned long long>(DRAIN_TIMEOUT_US / 1000), static_cast<unsigned>(SDL_GetQueuedAudioSize(port.device)), static_cast<unsigned long long>(stalls.load()));
+    SDL_ClearQueuedAudio(port.device);
+}
+
 static void queueAudio(Port& port, const void* data, std::unique_lock<std::mutex>& lock) {
     if (data == nullptr) {
         const std::uint64_t waitStart = sceKernelGetProcessTime();
         while (SDL_GetQueuedAudioSize(port.device) > 0) {
             if (sceKernelGetProcessTime() - waitStart > DRAIN_TIMEOUT_US) {
-                SDL_ClearQueuedAudio(port.device);
+                clearStalledQueue(port);
                 break;
             }
             sleepUs(lock, DRAIN_SLEEP_US);
@@ -426,7 +457,7 @@ static void queueAudio(Port& port, const void* data, std::unique_lock<std::mutex
 
     while (SDL_GetQueuedAudioSize(port.device) > minQueued) {
         if (sceKernelGetProcessTime() - waitStart > DRAIN_TIMEOUT_US) {
-            SDL_ClearQueuedAudio(port.device);
+            clearStalledQueue(port);
             break;
         }
         sleepUs(lock, DRAIN_SLEEP_US);
@@ -456,7 +487,7 @@ static void outputVirtualPort(Port& port, const void* data, std::unique_lock<std
     }
     const auto pad = port.type == PORT_TYPE_VIBRATION && data != nullptr ? prepareVibration(port, data) : std::vector<float>{};
     paceVirtualPort(port, data != nullptr, lock);
-    const auto source = static_cast<int>(&port - g_ports) + 1;
+    const auto source = portHandle(port);
     if (port.type == PORT_TYPE_VIBRATION && data == nullptr) PadClearLegacyAudioHaptics_nid_postfix(source);
     if (!pad.empty() && PadHapticStreamOpen_nid_postfix()) {
         PadSubmitHapticFrames_nid_postfix(pad.data() + AUDIO_OUT2_PAD_VIBRATION_LEFT, pad.data() + AUDIO_OUT2_PAD_VIBRATION_RIGHT, AUDIO_OUT2_PAD_CHANNELS, port.samplesNum, port.freq);
@@ -520,8 +551,7 @@ static int allocatePort(int type, std::uint32_t len, std::uint32_t freq, Format 
             if (type != PORT_TYPE_VIBRATION && type != PORT_TYPE_EX && type != PORT_TYPE_SYS) {
                 if (!openDevice(port)) port.nextDeviceRetry = sceKernelGetProcessTime() + DEVICE_RETRY_US;
             }
-            static const bool trace = std::getenv("APS5_TRACE_AUDIOOUT") != nullptr;
-            if (trace) std::fprintf(stderr, "[audioout] port %d: type %d, %u samples at %u Hz, format %d, device %u\n", i + 1, type, len, freq, static_cast<int>(format), static_cast<unsigned>(port.device));
+            if (traceEnabled()) std::fprintf(stderr, "[audioout] port %d: type %d, %u samples at %u Hz, format %d, device %u\n", i + 1, type, len, freq, static_cast<int>(format), static_cast<unsigned>(port.device));
             return i + 1;
         }
     }
@@ -756,6 +786,9 @@ int APS5_VABI sceAudioOutGetPortState(int handle, AudioOutPortState* state) {
         default:
             throw std::runtime_error("sceAudioOutGetPortState: unknown port type");
     }
+    static std::atomic<std::uint64_t> queries{0};
+    if (AudioOutTraceOccurrence(queries))
+        std::fprintf(stderr, "[audioout] GetPortState port %d: fixed state output 0x%x, channel %u, volume %u, reroute counter 0, flag 0 (query %llu)\n", handle, static_cast<unsigned>(localState.output), static_cast<unsigned>(localState.channel), static_cast<unsigned>(localState.volume), static_cast<unsigned long long>(queries.load()));
     const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(state, &localState, sizeof(localState));
     errno = savedErrno;
@@ -797,6 +830,9 @@ int APS5_VABI sceAudioOutSysConfigureOutput(int type, std::uint64_t flags, std::
     if (target != SYS_CONFIGURE_TARGET_HDMI) {
         throw std::runtime_error("sceAudioOutSysConfigureOutput: target " + std::to_string(target) + " not supported");
     }
+    static std::atomic<std::uint64_t> calls{0};
+    if (AudioOutTraceOccurrence(calls))
+        std::fprintf(stderr, "[audioout] SysConfigureOutput: HDMI TrueHD output accepted; the host output is not reconfigured (call %llu)\n", static_cast<unsigned long long>(calls.load()));
     return 0;
 }
 
@@ -864,6 +900,9 @@ int APS5_VABI sceAudioOutExConfigureOutput(int control, std::uint64_t flags, std
     if ((target < 1 || target > 3) && target != EX_CONFIGURE_TARGET_DEFAULT) {
         throw std::runtime_error("sceAudioOutExConfigureOutput: target " + std::to_string(target) + " not supported");
     }
+    static std::atomic<std::uint64_t> calls{0};
+    if (AudioOutTraceOccurrence(calls))
+        std::fprintf(stderr, "[audioout] ExConfigureOutput: mode 0x%x, target 0x%x accepted; the host output is not reconfigured (call %llu)\n", mode, target, static_cast<unsigned long long>(calls.load()));
     return 0;
 }
 
@@ -876,6 +915,9 @@ int APS5_VABI sceAudioOutExGetMonitorInfo(int type, int index, void* info, std::
     const bool copied = GuestCopyOut_nid_no_patch(info, empty.data(), empty.size());
     errno = savedErrno;
     if (!copied) return static_cast<int>(0x80260004);
+    static std::atomic<std::uint64_t> queries{0};
+    if (AudioOutTraceOccurrence(queries))
+        std::fprintf(stderr, "[audioout] ExGetMonitorInfo index %d: returned 0x%x zero bytes; no monitor capabilities are read from the host (query %llu)\n", index, EX_MONITOR_INFO_SIZE, static_cast<unsigned long long>(queries.load()));
     return 0;
 }
 
@@ -900,6 +942,9 @@ int APS5_VABI sceAudioOutGetSystemState(AudioOutSystemState* state) {
     if (!copied) {
         return -2144993276;
     }
+    static std::atomic<std::uint64_t> queries{0};
+    if (AudioOutTraceOccurrence(queries))
+        std::fprintf(stderr, "[audioout] GetSystemState: reported loudness 0; the host mix is not measured (query %llu)\n", static_cast<unsigned long long>(queries.load()));
     return 0;
 }
 

@@ -290,6 +290,11 @@ int _resolveForEach(const char* prefix, const char** paths, uint32_t count, uint
         }
         if (!_store(&ids[index], id) || (sizes && !_store(&sizes[index], size))) return _fail(GUEST_EFAULT);
         if (resolved) ++resolvedCount;
+        static const bool trace = std::getenv("APS5_TRACE_APR") != nullptr;
+        if (!resolved && trace) {
+            if (path.empty()) std::fprintf(stderr, "[apr] resolve entry %u of %u: null or over-long path, reported as not found\n", index, count);
+            else std::fprintf(stderr, "[apr] resolve entry %u of %u: %s not found\n", index, count, path.c_str());
+        }
         if (results && !_store(&results[index], resolved ? 0 : SCE_KERNEL_ERROR_ENOENT)) return _fail(GUEST_EFAULT);
     }
     return static_cast<int>(resolvedCount);

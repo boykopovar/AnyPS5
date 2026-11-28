@@ -1,5 +1,7 @@
 #include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include <algorithm>
+#include <atomic>
+#include <bit>
 #include <cerrno>
 #include <chrono>
 #include <cmath>
@@ -61,6 +63,10 @@ bool AudioOut2TraceEnabled() {
 double AudioOut2TraceSeconds() {
     static const auto start = Clock::now();
     return std::chrono::duration<double>(Clock::now() - start).count();
+}
+
+bool AudioOut2TraceOccurrence(std::atomic<std::uint64_t>& occurrences) {
+    return AudioOut2TraceEnabled() && std::has_single_bit(++occurrences);
 }
 
 static Clock::time_point Now(const AudioOut2Context& context) {
