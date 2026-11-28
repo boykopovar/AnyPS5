@@ -235,7 +235,11 @@ int APS5_VABI rtprio_thread_nid_postfix(int function, int lwpid, GuestRtPrio* pr
         NotImplemented_nid_no_patch("rtprio_thread: a normal-class set with the FIFO bit");
     }
     if (requestedClass != Realtime || value < 256 || value > 767) return fail(GuestEinval);
-    NotImplemented_nid_no_patch("rtprio_thread: a real-time priority change");
+    const int newPolicy = requested.type == Fifo ? GuestSchedFifo : GuestSchedRr;
+    const int newPriority = static_cast<int>(value);
+    const std::int64_t targetTid = other ? static_cast<std::int64_t>(lwpid) : static_cast<std::int64_t>(self->tid);
+    if (!SetLiveGuestThreadSched_nid_no_patch(targetTid, newPolicy, newPriority)) return fail(GuestEsrch);
+    return 0;
 }
 
 int APS5_VABI pthread_setconcurrency_nid_postfix(int newLevel) {
