@@ -20,7 +20,7 @@ import vulkan_validation_gate as processes
 ARMS = ("baseline", "candidate")
 FORCED = {"ANYPS5_REQUIRE_VULKAN": "1", "ANYPS5_HOST_REPORT": "1"}
 LIMITS = {"trials": (1, 20, 3), "warmups": (0, 5, 1), "timeout": (0.1, 3600, 120),
-          "log_mib": (1, 128, 16)}
+          "log_mib": (1, evidence.MAX_LOG_BYTES // (1024 * 1024), 16)}
 NOTES = [
     "These are observations of captured driver work, not live-title FPS or proof of capture fidelity.",
     "Each trial is a fresh process with --strict --no-synthesize --repeat 1; in-process caches start fresh.",

@@ -544,6 +544,16 @@ class ProcessTests(unittest.TestCase):
         self.assertTrue(missing["io_errors"])
         self.assertTrue((self.root / "missing" / "process.json").is_file())
 
+    def test_assessment_reads_a_log_up_to_the_largest_recipe_bound(self):
+        commit = "a" * 40
+        limit = runner.LIMITS["log_mib"][1] * 1024 * 1024
+        report = host_report(commit).encode("utf-8")
+        filler = b"validation layer output\n"
+        (self.root / "stdout.txt").write_text(json.dumps(native_result()), encoding="utf-8")
+        (self.root / "stderr.txt").write_bytes(report + filler * ((limit - len(report)) // len(filler)))
+        self.assertGreater((self.root / "stderr.txt").stat().st_size, limit - len(filler))
+        self.assertEqual(runner._assess_replay(self.root, commit, False)["issues"], [])
+
     def test_log_limit_stops_running_child_after_partial_block(self):
         limit = 1024 * 1024
         for fd, name in ((1, "stdout.txt"), (2, "stderr.txt")):
