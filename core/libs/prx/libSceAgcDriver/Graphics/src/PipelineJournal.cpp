@@ -1470,6 +1470,10 @@ private:
         return result;
     }
 
+    bool servesHeap(const ShaderRecompiler::RecompileResult& result) const {
+        return !result.bindlessHeap || context.bindlessTable != nullptr;
+    }
+
     struct Held {
         explicit Held(std::uint64_t bytes) : bytes(bytes) {
             auto& counters = replayCounters();
@@ -1497,7 +1501,7 @@ private:
             }
             const Held held(module->second.moduleBytes);
             const auto result = readModule(module->first, module->second);
-            if (result == nullptr) {
+            if (result == nullptr || !servesHeap(*result)) {
                 counters.rejected.fetch_add(1, std::memory_order_relaxed);
                 return;
             }
@@ -1529,7 +1533,7 @@ private:
         std::vector<CompiledShader> shaders;
         for (std::size_t index = 0; index < modules.size(); ++index) {
             auto result = readModule(modules[index]->first, modules[index]->second);
-            if (result == nullptr) {
+            if (result == nullptr || !servesHeap(*result)) {
                 counters.rejected.fetch_add(1, std::memory_order_relaxed);
                 return;
             }

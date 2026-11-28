@@ -26,6 +26,7 @@ namespace AgcDriver {
 
 namespace Graphics {
 class StorageTexture;
+class TextureService;
 struct HtileMaskClear;
 }
 
@@ -87,6 +88,11 @@ public:
     VulkanDevice(const VulkanDevice&) = delete;
     VulkanDevice& operator=(const VulkanDevice&) = delete;
     std::string DeviceName() const;
+    bool BindlessImagesEnabled() const;
+    bool TextureServiceRunning() const;
+    const Graphics::TextureService* BindlessService() const;
+    void BindlessPresentWait();
+    void PrimeBindlessDraw(std::span<const std::shared_ptr<const ShaderRecompiler::RecompileResult>> programs) const;
     std::string DriverInfo() const;
     VkDriverId DriverId() const;
     bool SupportsImageFormat(VkFormat format, VkImageUsageFlags usage) const;

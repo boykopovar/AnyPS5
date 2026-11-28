@@ -55,6 +55,7 @@ struct SpirvTargetOptions {
     bool spannedShuffleThroughMemory = false;
     bool spannedUnreachableStays = false;
     bool spannedUnreachableVerify = false;
+    bool bindlessImages = false;
 };
 
 struct SpirvEmitInfo {

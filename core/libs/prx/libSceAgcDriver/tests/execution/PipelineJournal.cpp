@@ -157,7 +157,7 @@ AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block) {
     return color;
 }
 
-void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, std::span<const std::uint32_t> pixelCode, bool blended = false) {
+void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, std::span<const std::uint32_t> pixelCode, bool blended = false, bool heap = false) {
     const auto target = device.Target();
     constexpr std::uint32_t waveSize = 64;
     std::vector<std::uint32_t> vertexUserData(4, 0u);
@@ -219,9 +219,11 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarge
     const ShaderRecompiler::SrtRuntime runtime{};
     const auto invocation = AgcDriver::DriverDetail::InvocationFor(snapshot, 0, fragment);
     const auto pixelResult = invocation.Materialize(*invocation.Capture(runtime));
+    auto drawnPixel = *pixelResult;
+    drawnPixel.bindlessHeap = heap;
     const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{
         {ShaderStage::Vertex, &vertexResult, 0},
-        {ShaderStage::Fragment, pixelResult.get(), PixelPushOffset(vertexPush, target)}
+        {ShaderStage::Fragment, &drawnPixel, PixelPushOffset(vertexPush, target)}
     }};
     const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(Triangle.size()), 0, 1, 0, false};
     device.Draw(state, draw, shaders);
@@ -543,6 +545,51 @@ std::vector<ShaderRecompiler::PipelineIdentity> ReadJournalComputeIdentities(con
         while (cursor % 8u != 0) ++cursor;
     }
     return identities;
+}
+
+int BindlessSwitchTests() {
+    using namespace NarrowConstantStoreFixture;
+    Block compute(BlockBytes);
+    Block target(ColorTargetLayout(Width, Height, ColorTileMode::Linear, 2).Bytes());
+    const auto code = ComputeCode(0);
+    SetEnvironment("APS5_BINDLESS_IMAGES", "1");
+    {
+        const auto device = OpenVulkanTestDevice();
+        Require(device != nullptr, "the device recording heap pipelines could not be opened");
+        if (device->BindlessService() == nullptr) {
+            std::puts("pipeline journal bindless switch skipped, the device lacks the bindless image heap");
+            return VulkanTestSkipped;
+        }
+        device->WaitForPipelineJournalReplay();
+        std::memset(compute.data, Fill, compute.bytes);
+        auto result = CompileCompute(*device, code, AddressWords(compute), 32);
+        result.bindlessHeap = true;
+        device->Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+        device->WaitIdle();
+        ExpectConstantStore(compute, "heap on: the recorded dispatch");
+        std::memset(target.data, 0, target.bytes);
+        Draw(*device, DecodeTarget(target), Program(std::array<float, 4>{1.0f, 0.0f, 0.0f, 1.0f}), false, true);
+        device->WaitIdle();
+        AgcDriver::Graphics::FlushPipelineJournal();
+        const auto recorded = Snapshot();
+        Require(recorded.journal.recordedCompute == 1 && recorded.journal.recordedGraphics == 1, "the heap pipelines were not recorded");
+    }
+    const auto replay = [](const char* heap, std::uint64_t built, std::uint64_t rejected) {
+        SetEnvironment("APS5_BINDLESS_IMAGES", heap);
+        const auto before = Snapshot();
+        const auto device = OpenVulkanTestDevice();
+        Require(device != nullptr, "the device replaying heap pipelines could not be opened");
+        device->WaitForPipelineJournalReplay();
+        const auto after = Snapshot();
+        const auto what = "a replay of heap pipelines with APS5_BINDLESS_IMAGES=" + std::string(heap);
+        Require(after.journal.replayFailed == before.journal.replayFailed, what + " failed " + std::to_string(after.journal.replayFailed - before.journal.replayFailed) + " pipelines");
+        Require(after.journal.replayRejected - before.journal.replayRejected == rejected, what + " did not reject " + std::to_string(rejected) + " pipelines");
+        Require(after.journal.replayedCompute - before.journal.replayedCompute == built && after.journal.replayedGraphics - before.journal.replayedGraphics == built, what + " did not build " + std::to_string(built) + " compute and graphics pipelines");
+    };
+    replay("0", 0, 2);
+    replay("1", 1, 0);
+    std::puts("pipeline journal bindless switch passed");
+    return 0;
 }
 
 void ReplayRacesDispatchTests() {
@@ -914,6 +961,7 @@ int main(int argc, char** argv) {
             Benchmark(argc >= 3 ? static_cast<std::uint32_t>(std::strtoul(argv[2], nullptr, 10)) : 24u);
             return 0;
         }
+        if (argc >= 2 && std::string(argv[1]) == "--bindless-switch") return BindlessSwitchTests();
         if (argc >= 2 && std::string(argv[1]) == "--undecodable-module") {
             UndecodableModuleIsNotExpanded();
             std::puts("pipeline journal undecodable module passed");

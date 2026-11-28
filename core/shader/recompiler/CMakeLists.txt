@@ -293,6 +293,7 @@ function(add_shader_recompiler target runtimeTarget)
             PipelineSpecialization::WorkgroupOffsetBase
             PipelineSpecialization::WorkgroupOffsetWords
             PixelInput
+            PointFilteredSamplerWord
             PixelInputBit
             RayTracingStrict
             RayTracingMiss
@@ -313,6 +314,7 @@ function(add_shader_recompiler target runtimeTarget)
             RegistrationResult
             ResolveSource
             ResourceMaterializer::EvaluateNanoseconds
+            ResourceMaterializer::FindBindlessInterface
             ResourceMaterializer::MaterializeNanoseconds
             ReleaseUndrawnResourcePlan
             ResourceMaterializer::SpecializationNanoseconds
