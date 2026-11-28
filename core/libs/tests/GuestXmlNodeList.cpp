@@ -2,6 +2,7 @@
 #include "prx/libSceXml/include/InventoryExports.hpp"
 #include "prx/libc/include/General.hpp"
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -34,6 +35,14 @@ struct TestAllocator {
     std::size_t calls = 0;
     std::size_t failAt = SIZE_MAX;
 };
+
+std::size_t CountLiveBlocks(const TestAllocator& allocator) {
+    std::size_t live = 0;
+    for (void* block : allocator.blocks) {
+        if (block != nullptr) ++live;
+    }
+    return live;
+}
 
 void* APS5_VABI TestAllocate(XmlMemAllocator* self, std::size_t size, void* userData) {
     auto* allocator = reinterpret_cast<TestAllocator*>(self);
@@ -280,8 +289,60 @@ public:
     }
     GuardedPage(const GuardedPage&) = delete;
     GuardedPage& operator=(const GuardedPage&) = delete;
+    char* Start() { return allocation; }
     char* End() { return allocation + size; }
+    void ProtectReadOnly() {
+#ifdef _WIN32
+        DWORD previous;
+        Require(VirtualProtect(allocation, size, PAGE_READONLY, &previous) != 0, "protect page read-only");
+#else
+        Require(mprotect(allocation, size, PROT_READ) == 0, "protect page read-only");
+#endif
+        char value = 0;
+        Require(GuestCopyIn_nid_no_patch(&value, allocation, 1), "the read-only page is readable");
+        Require(!GuestWritable_nid_no_patch(allocation, 1), "the read-only page is not writable");
+    }
+    void ProtectReadWrite() {
+#ifdef _WIN32
+        DWORD previous;
+        Require(VirtualProtect(allocation, size, PAGE_READWRITE, &previous) != 0, "protect page read-write");
+#else
+        Require(mprotect(allocation, size, PROT_READ | PROT_WRITE) == 0, "protect page read-write");
+#endif
+        Require(GuestWritable_nid_no_patch(allocation, 1), "the read-write page is writable");
+    }
 };
+
+template <typename Fn>
+void ExpectLogicError(Fn&& fn, const char* what) {
+    bool threw = false;
+    errno = EINVAL;
+    try {
+        fn();
+    } catch (const std::logic_error&) {
+        threw = true;
+    }
+    Require(errno == EINVAL, what);
+    Require(threw, what);
+}
+
+struct ReadOnlyBlockAllocator {
+    XmlMemAllocator base;
+    void* block = nullptr;
+    bool deallocated = false;
+};
+
+void* APS5_VABI ReadOnlyBlockAllocate(XmlMemAllocator* self, std::size_t, void*) {
+    return reinterpret_cast<ReadOnlyBlockAllocator*>(self)->block;
+}
+
+void APS5_VABI ReadOnlyBlockDeallocate(XmlMemAllocator* self, void* pointer, void*) {
+    auto* allocator = reinterpret_cast<ReadOnlyBlockAllocator*>(self);
+    Require(pointer == allocator->block, "rollback deallocates the allocated block");
+    allocator->deallocated = true;
+}
+
+const XmlMemAllocatorVtable g_readOnlyBlockVtable{TestDestroy, TestDestroy, ReadOnlyBlockAllocate, ReadOnlyBlockDeallocate};
 
 bool Same(XmlNodeId left, XmlNodeId right) {
     return left.first == right.first && left.second == right.second && left.flag == right.flag;
@@ -396,6 +457,102 @@ void TestRemoveFirstDuplicate() {
     _ZN3sce3Xml3Dom8Document9terminateEv(&document);
 }
 
+void TestGuestHandleSafety() {
+    Fixture f;
+    GuardedPage guarded;
+    auto* unreadableHandle = reinterpret_cast<XmlHandle*>(guarded.End());
+    auto* straddlingHandle = reinterpret_cast<XmlHandle*>(guarded.End() - sizeof(XmlHandle) / 2);
+    XmlHandle writableList{nullptr};
+    const XmlHandle badParamInit{guarded.End()};
+    const XmlNodeId sampleNode{reinterpret_cast<void*>(0x1111), reinterpret_cast<void*>(0x2222), 1};
+
+    ExpectLogicError([&] { _ZN3sce3Xml3Dom8NodeList10initializeEPKNS0_11InitializerE(unreadableHandle, &f.initializer); }, "initialize rejects unreadable self");
+    ExpectLogicError([&] { _ZN3sce3Xml3Dom8NodeList10initializeEPKNS0_11InitializerE(straddlingHandle, &f.initializer); }, "initialize rejects straddling self");
+    ExpectLogicError([&] { _ZN3sce3Xml3Dom8NodeList10initializeEPKNS0_11InitializerE(&writableList, unreadableHandle); }, "initialize rejects unreadable initializer");
+    ExpectLogicError([&] { _ZN3sce3Xml3Dom8NodeList10initializeEPKNS0_11InitializerE(&writableList, &badParamInit); }, "initialize rejects unreadable XmlInitParameter");
+    ExpectLogicError([&] { _ZN3sce3Xml3Dom8NodeListC1ERKS2_(unreadableHandle, &writableList); }, "copy rejects unreadable self");
+    ExpectLogicError([&] { _ZN3sce3Xml3Dom8NodeListC1ERKS2_(&writableList, unreadableHandle); }, "copy rejects unreadable other");
+    ExpectLogicError([&] { _ZN3sce3Xml3Dom8NodeList9terminateEv(unreadableHandle); }, "terminate rejects unreadable self");
+    ExpectLogicError([&] { _ZN3sce3Xml3Dom8NodeListD1Ev(unreadableHandle); }, "destroy rejects unreadable self");
+    ExpectLogicError([&] { _ZNK3sce3Xml3Dom8NodeList11isAvailableEv(unreadableHandle); }, "isAvailable rejects unreadable self");
+    ExpectLogicError([&] { _ZNK3sce3Xml3Dom8NodeList9getLengthEv(unreadableHandle); }, "getLength rejects unreadable self");
+    ExpectLogicError([&] { _ZNK3sce3Xml3Dom8NodeList4itemEj(unreadableHandle, 0); }, "item rejects unreadable self");
+    ExpectLogicError([&] { _ZNK3sce3Xml3Dom8NodeListixEj(unreadableHandle, 0); }, "operator[] rejects unreadable self");
+    ExpectLogicError([&] { _ZN3sce3Xml3Dom8NodeList5clearEv(unreadableHandle); }, "clear rejects unreadable self");
+    ExpectLogicError([&] { _ZN3sce3Xml3Dom8NodeList11insertFirstENS1_6NodeIdE(unreadableHandle, sampleNode); }, "insertFirst rejects unreadable self");
+    ExpectLogicError([&] { _ZN3sce3Xml3Dom8NodeList10insertLastENS1_6NodeIdE(unreadableHandle, sampleNode); }, "insertLast rejects unreadable self");
+    ExpectLogicError([&] { _ZN3sce3Xml3Dom8NodeList10removeItemENS1_6NodeIdE(unreadableHandle, sampleNode); }, "removeItem rejects unreadable self");
+
+    Require(Start(&writableList, &f.initializer) == 0, "writable list starts");
+    Require(_ZN3sce3Xml3Dom8NodeList10insertLastENS1_6NodeIdE(&writableList, sampleNode) == 0, "insert item before self-copy");
+    void* const selfCopyImpl = writableList.impl;
+    const std::size_t liveBeforeSelfCopy = CountLiveBlocks(f.allocator);
+    _ZN3sce3Xml3Dom8NodeListC1ERKS2_(&writableList, &writableList);
+    Require(writableList.impl == selfCopyImpl, "self-copy preserves impl");
+    Require(CountLiveBlocks(f.allocator) == liveBeforeSelfCopy, "self-copy allocates no extra block");
+    Require(_ZNK3sce3Xml3Dom8NodeList11isAvailableEv(&writableList), "self-copy keeps list available");
+    Require(_ZNK3sce3Xml3Dom8NodeList9getLengthEv(&writableList) == 1, "self-copy preserves item count");
+    Require(Same(_ZNK3sce3Xml3Dom8NodeList4itemEj(&writableList, 0), sampleNode), "self-copy preserves stored item");
+
+    const XmlHandle unreadableBlockHandle{guarded.End()};
+    ExpectLogicError([&] { _ZN3sce3Xml3Dom8NodeList5clearEv(const_cast<XmlHandle*>(&unreadableBlockHandle)); }, "clear rejects unreadable block pointer");
+
+    GuardedPage readOnlyPage;
+    auto* guestList = reinterpret_cast<XmlHandle*>(readOnlyPage.Start());
+    *guestList = XmlHandle{nullptr};
+    readOnlyPage.ProtectReadOnly();
+
+    const std::size_t baselineLive = CountLiveBlocks(f.allocator);
+    ExpectLogicError([&] { _ZN3sce3Xml3Dom8NodeList10initializeEPKNS0_11InitializerE(guestList, &f.initializer); }, "initialize on read-only self throws");
+    Require(CountLiveBlocks(f.allocator) == baselineLive, "initialize on read-only self leaks zero blocks");
+    ExpectLogicError([&] { _ZN3sce3Xml3Dom8NodeListC1ERKS2_(guestList, &writableList); }, "copy to read-only self throws");
+    Require(CountLiveBlocks(f.allocator) == baselineLive, "copy to read-only self leaks zero blocks");
+
+    GuardedPage blockPage;
+    blockPage.ProtectReadOnly();
+    ReadOnlyBlockAllocator roBlockAlloc{};
+    roBlockAlloc.base.vtable = &g_readOnlyBlockVtable;
+    roBlockAlloc.block = blockPage.Start();
+    XmlInitParameter roBlockParam{&roBlockAlloc.base, nullptr, {0, 0}};
+    XmlHandle roBlockInit{&roBlockParam};
+    XmlHandle targetList{nullptr};
+    ExpectLogicError([&] { _ZN3sce3Xml3Dom8NodeList10initializeEPKNS0_11InitializerE(&targetList, &roBlockInit); }, "initialize rolls back unwritable 72-byte block");
+    Require(roBlockAlloc.deallocated, "unwritable 72-byte block is deallocated on rollback");
+    Require(targetList.impl == nullptr, "target handle remains null after block rollback");
+
+    readOnlyPage.ProtectReadWrite();
+    Require(_ZN3sce3Xml3Dom8NodeList10initializeEPKNS0_11InitializerE(guestList, &f.initializer) == 0, "initialize succeeds once writable");
+    Require(_ZN3sce3Xml3Dom8NodeList10insertLastENS1_6NodeIdE(guestList, sampleNode) == 0, "insert item into guest handle");
+    void* const liveImpl = guestList->impl;
+    const std::size_t liveWithGuestList = CountLiveBlocks(f.allocator);
+    Require(liveWithGuestList == baselineLive + 1, "one new live block allocated");
+    readOnlyPage.ProtectReadOnly();
+
+    ExpectLogicError([&] { _ZN3sce3Xml3Dom8NodeListC1ERKS2_(guestList, guestList); }, "self-copy on read-only live self throws");
+    Require(CountLiveBlocks(f.allocator) == liveWithGuestList, "self-copy on read-only live self leaks zero blocks");
+    Require(guestList->impl == liveImpl, "self-copy on read-only live self leaves impl intact");
+    ExpectLogicError([&] { _ZN3sce3Xml3Dom8NodeList9terminateEv(guestList); }, "terminate on read-only self throws");
+    Require(CountLiveBlocks(f.allocator) == liveWithGuestList, "terminate on read-only self does not free live state");
+    Require(guestList->impl == liveImpl, "terminate on read-only self leaves impl intact");
+    ExpectLogicError([&] { _ZN3sce3Xml3Dom8NodeListD1Ev(guestList); }, "destroy on read-only self throws");
+    Require(CountLiveBlocks(f.allocator) == liveWithGuestList, "destroy on read-only self does not free live state");
+    Require(guestList->impl == liveImpl, "destroy on read-only self leaves impl intact");
+
+    readOnlyPage.ProtectReadWrite();
+    errno = EINVAL;
+    Require(_ZNK3sce3Xml3Dom8NodeList11isAvailableEv(guestList), "live handle remains valid after failed read-only terminate/destroy");
+    Require(errno == EINVAL, "errno preserved on isAvailable");
+    Require(_ZNK3sce3Xml3Dom8NodeList9getLengthEv(guestList) == 1, "live items remain intact");
+    Require(Same(_ZNK3sce3Xml3Dom8NodeList4itemEj(guestList, 0), sampleNode), "stored item remains readable");
+    Require(errno == EINVAL, "errno preserved on getLength and item");
+    Require(_ZN3sce3Xml3Dom8NodeList9terminateEv(guestList) == 0, "terminate succeeds once writable again");
+    Require(errno == EINVAL, "errno preserved on terminate");
+    Require(guestList->impl == nullptr, "terminate clears impl");
+    Require(CountLiveBlocks(f.allocator) == baselineLive, "block is freed cleanly once writable");
+
+    _ZN3sce3Xml3Dom8NodeListD1Ev(&writableList);
+}
+
 }
 
 int main() {
@@ -404,5 +561,6 @@ int main() {
     TestDocumentLists();
     TestFindByName();
     TestRemoveFirstDuplicate();
+    TestGuestHandleSafety();
     return 0;
 }
