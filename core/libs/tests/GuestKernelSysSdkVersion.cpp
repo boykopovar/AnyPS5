@@ -25,7 +25,9 @@ void Require(bool condition, const char* message) {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
+    const bool configured = argc == 2 && std::strcmp(argv[1], "configured") == 0;
+    Require(argc == 1 || configured, "unexpected fixture argument");
     const std::uint64_t size = process.size();
     const std::uint32_t magic = 0x4942524f;
     const std::uint32_t ps4SdkVersion = 0x07008001;
@@ -124,8 +126,8 @@ int main() {
     genuineVersion.size = sizeof(genuineVersion);
     Require(sceKernelGetGenuineProsperoSystemSwVersion(&genuineVersion) == 0, "genuine prospero query failed");
     Require(genuineVersion.size == sizeof(genuineVersion), "genuine prospero size mutated");
-    Require(std::strcmp(genuineVersion.versionString, "01.000.000") == 0, "genuine prospero version string mismatch");
-    Require(genuineVersion.version == 0x01000000, "genuine prospero version code mismatch");
+    Require(std::strcmp(genuineVersion.versionString, configured ? "13.600.007" : "01.000.000") == 0, "genuine prospero version string mismatch");
+    Require(genuineVersion.version == (configured ? 0x13600007u : 0x01000000u), "genuine prospero version code mismatch");
 
     std::puts("KERNEL SYS SDK VERSION tests passed");
     return 0;
