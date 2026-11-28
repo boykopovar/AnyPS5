@@ -79,8 +79,8 @@ int APS5_VABI sceHttp2WebSocketSetPingInterval(std::int32_t requestId, std::uint
 int APS5_VABI sceHttp2WebSocketSetPingTimeout(std::int32_t requestId, std::uint32_t timeoutMicroseconds);
 int APS5_VABI sceHttp2AddCookie(int cookieBoxId, const char* url, const char* cookie, std::size_t cookieLength);
 int APS5_VABI sceHttp2AuthCacheFlush(int libHttp2CtxId);
-int APS5_VABI sceHttp2CookieExport(void);
-int APS5_VABI sceHttp2CookieImport(void);
+int APS5_VABI sceHttp2CookieExport(int cookieBoxId, void* buffer, std::size_t size, std::size_t* requiredSize);
+int APS5_VABI sceHttp2CookieImport(int cookieBoxId, const void* buffer, std::size_t size);
 int APS5_VABI sceHttp2GetAuthEnabled(int id, int* isEnable);
 int APS5_VABI sceHttp2GetAutoRedirect(int id, int* enable);
 int APS5_VABI sceHttp2GetCookie(int cookieBoxId, const char* url, char* cookie, std::size_t* required, std::size_t prepared);
