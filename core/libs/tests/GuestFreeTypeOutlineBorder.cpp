@@ -1,4 +1,5 @@
 #include "prx/libSceFreeType/include/Api.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include FT_STROKER_H
@@ -244,7 +245,7 @@ int main(int argc, char** argv) {
     const char* symbol = patched ? (inside ? "Pz262plj20w" : "sKneJjUXWkQ") :
         (inside ? "FT_Outline_GetInsideBorder_nid_postfix" : "FT_Outline_GetOutsideBorder_nid_postfix");
 #ifdef _WIN32
-    const auto library = LoadLibraryA(argv[1]);
+    const auto library = LoadLibraryW(ArgumentPath(argv, 1).c_str());
     Require(library != nullptr, "load requested library");
     const auto checkPath = [](HMODULE module, const std::filesystem::path& expected) {
         Require(module != nullptr, "load matching runtime module");
@@ -253,7 +254,7 @@ int main(int argc, char** argv) {
         Require(length != 0 && length < path.size(), "read loaded module path");
         Require(std::filesystem::equivalent(expected, std::filesystem::path(path.data())), "loaded module variant path");
     };
-    const auto requested = std::filesystem::absolute(argv[1]);
+    const auto requested = std::filesystem::absolute(ArgumentPath(argv, 1));
     checkPath(library, requested);
     checkPath(GetModuleHandleW(L"libc.prx"), requested.parent_path() / "libc.prx");
     auto query = reinterpret_cast<Query>(GetProcAddress(library, symbol));

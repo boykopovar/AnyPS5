@@ -1,6 +1,7 @@
 #include "FreeTypeFontFixture.hpp"
 #include "FreeTypeQueryOutputFixture.hpp"
 #include "prx/libSceFreeType/include/Api.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <nid/NidCompute.hpp>
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -295,7 +296,7 @@ int main(int argc, char** argv) {
     Reference(pfrFont);
     if (argc == 2 && std::string(argv[1]) == "reference") return 0;
     Require(argc == 4);
-    const auto directory = std::filesystem::absolute(argv[1]);
+    const auto directory = std::filesystem::absolute(ArgumentPath(argv, 1));
     const bool patched = std::string(argv[2]) == "patched";
     const std::string operation = argv[3];
     Require(operation == "metrics" || operation == "advance" || operation == "kerning");

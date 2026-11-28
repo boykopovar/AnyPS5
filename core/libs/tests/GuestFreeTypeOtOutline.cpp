@@ -1,5 +1,6 @@
 #include "prx/libSceFreeType/include/MemoryRecord.hpp"
 #include "prx/libSceFreeTypeOt/include/Outline.hpp"
+#include "tests/CommandLineArgument.hpp"
 
 #include <bit>
 #include <cstdint>
@@ -207,11 +208,11 @@ void Resolve(T& target, void* module, const char* symbol) {
     Require(target != nullptr, "every entry resolves");
 }
 
-void* Open(const char* path) {
+void* Open(const std::filesystem::path& path) {
 #ifdef _WIN32
-    void* module = LoadLibraryW(std::filesystem::path(path).c_str());
+    void* module = LoadLibraryW(path.c_str());
 #else
-    void* module = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+    void* module = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!module) std::fprintf(stderr, "%s\n", dlerror());
 #endif
     Require(module != nullptr, "the module loads");
@@ -224,7 +225,7 @@ int main(int count, char** arguments) {
     Require(count == 3, "usage: <libSceFreeTypeOt> raw|patched");
     const bool patched = std::strcmp(arguments[2], "patched") == 0;
     Require(patched || std::strcmp(arguments[2], "raw") == 0, "the mode is raw or patched");
-    void* ot = Open(arguments[1]);
+    void* ot = Open(ArgumentPath(arguments, 1));
     Api api{};
     Resolve(api.newOutline, ot, patched ? "NG7OgYsgcF8" : "FT_Outline_New_Internal_nid_postfix");
     Resolve(api.doneOutline, ot, patched ? "umIqupy8UU0" : "FT_Outline_Done_Internal_nid_postfix");

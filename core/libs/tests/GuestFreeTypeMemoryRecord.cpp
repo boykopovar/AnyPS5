@@ -1,4 +1,5 @@
 #include "prx/libSceFreeType/include/MemoryRecord.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <bit>
 #include <cstdio>
 #include <cstdlib>
@@ -25,7 +26,7 @@ int main(int count, char** arguments) {
     const char* const newSymbol = patched ? "tCMhTh7h8D4" : "FT_New_Memory_nid_postfix";
     const char* const doneSymbol = patched ? "UTumVjeIQtg" : "FT_Done_Memory_nid_postfix";
 #ifdef _WIN32
-    const auto module = LoadLibraryW(std::filesystem::path(arguments[1]).c_str());
+    const auto module = LoadLibraryW(ArgumentPath(arguments, 1).c_str());
     Check(module != nullptr);
     const auto newAddress = GetProcAddress(module, newSymbol);
     const auto doneAddress = GetProcAddress(module, doneSymbol);

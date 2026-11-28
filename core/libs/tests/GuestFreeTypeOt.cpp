@@ -5,6 +5,7 @@
 #include "FontFixture.hpp"
 #include "Type1Fixture.hpp"
 #include "prx/libSceFreeTypeOt/libSceFreeTypeOt.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include FT_MULTIPLE_MASTERS_H
@@ -882,7 +883,7 @@ int main(int argc, char** argv) {
     const bool patched = std::strcmp(argv[2], "patched") == 0;
 #ifdef _WIN32
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
-    void* library = LoadLibraryA(argv[1]);
+    void* library = LoadLibraryW(ArgumentPath(argv, 1).c_str());
 #else
     void* library = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
     if (!library) std::fprintf(stderr, "%s\n", dlerror());

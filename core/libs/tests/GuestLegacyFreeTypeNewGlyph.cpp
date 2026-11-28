@@ -2,6 +2,7 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libkernel/libkernel.hpp"
+#include "tests/CommandLineArgument.hpp"
 
 #include FT_GLYPH_H
 #include FT_MODULE_H
@@ -37,13 +38,13 @@ void Require(bool condition, const char* message, std::source_location location 
 
 class Module {
 public:
-    explicit Module(const char* path) {
+    explicit Module(const std::filesystem::path& path) {
 #ifdef _WIN32
-        handle = LoadLibraryW(std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(path))).c_str());
-        if (!handle) std::fprintf(stderr, "LoadLibraryW failed for %s: %lu\n", path, GetLastError());
+        handle = LoadLibraryW(path.c_str());
+        if (!handle) std::fprintf(stderr, "LoadLibraryW failed for %s: %lu\n", path.string().c_str(), GetLastError());
 #else
-        handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
-        if (!handle) std::fprintf(stderr, "dlopen failed for %s: %s\n", path, dlerror());
+        handle = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
+        if (!handle) std::fprintf(stderr, "dlopen failed for %s: %s\n", path.c_str(), dlerror());
 #endif
         Require(handle != nullptr, "load legacy module");
     }
@@ -326,7 +327,7 @@ int main(int argc, char** argv) {
     Require(argc == 3, "module and variant arguments");
     const std::string_view variant = argv[2];
     Require(variant == "unpatched" || variant == "nid", "known variant");
-    Module module(argv[1]);
+    Module module(ArgumentPath(argv, 1));
     const auto call = module.Import(variant == "nid" ? "sZq9oSwMGSs" : "sZq9oSwMGSs_nid_no_patch_cut");
     GuestLibrary* library = nullptr;
     FT_Library host = nullptr;
