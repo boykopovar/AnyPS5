@@ -3,6 +3,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "Optimization/ResourceMaterializer.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
@@ -363,8 +365,38 @@ void CheckContendedUMax(AgcDriver::VulkanDevice& device, std::uint8_t* texels, c
 
 }
 
+void CheckNarrowModesSingleSampled() {
+    using namespace ShaderRecompiler;
+    ImageResource image;
+    image.resourceClass = ImageResourceClass::Storage;
+    image.dimension = RdnaImageDimension::Dim2D;
+    image.read = true;
+    image.written = true;
+    image.atomic = true;
+    image.fmaskCompatible = true;
+    image.cubeFaceCompatible = true;
+    image.narrowAtomicCompatible = true;
+    SetGcnGuestShaders(true);
+    const auto modes = ResourceMaterializer::RuntimeImageModes(image);
+    SetGcnGuestShaders(false);
+    std::set<RdnaImageDimension> narrow;
+    bool multisampledWide = false;
+    for (const auto& mode : modes) {
+        const bool multisampled = mode.dimension == RdnaImageDimension::Dim2DMsaa || mode.dimension == RdnaImageDimension::Dim2DMsaaArray;
+        if (NarrowImageAtomicBits(mode) == 0u) {
+            multisampledWide = multisampledWide || multisampled;
+            continue;
+        }
+        Require(!multisampled, "an 8- or 16-bit atomic image mode is multisampled, which the texel-locked atomic cannot emit");
+        narrow.insert(mode.dimension);
+    }
+    Require(multisampledWide, "the 32-bit modes of a read and atomically updated 2D image lost their multisampled alternative");
+    for (const auto dimension : {RdnaImageDimension::Dim2D, RdnaImageDimension::Dim1D, RdnaImageDimension::Dim3D, RdnaImageDimension::Dim2DArray}) Require(narrow.contains(dimension), "an 8- or 16-bit atomic image lost a single-sampled alternative");
+}
+
 int main() {
     try {
+        CheckNarrowModesSingleSampled();
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         if (!TargetHasCapability(device->Target(), spv::CapabilityStorageImageReadWithoutFormat) || !TargetHasCapability(device->Target(), spv::CapabilityStorageImageWriteWithoutFormat)) {
