@@ -56,7 +56,7 @@ public:
     void Enqueue(CommitKind kind, Commit commit, std::vector<Range> writes, std::uint64_t labelAddress = 0, std::vector<std::byte> labelBytes = {}, std::vector<Range> reads = {}, bool draw = false);
     void EnqueueStore(Commit commit, std::uint64_t address, std::vector<std::byte> bytes);
     static void NoteDrawKey(std::uint64_t key, std::uint64_t shape);
-    void Drain(DrainReason reason, std::uint32_t opcode = 0x100);
+    void Drain(DrainReason reason, std::uint32_t opcode = 0x100, const char* site = nullptr);
     void Stop();
     void ReleaseRetired();
     static std::uint64_t DrainRequestsByOpcode(std::uint32_t opcode);
