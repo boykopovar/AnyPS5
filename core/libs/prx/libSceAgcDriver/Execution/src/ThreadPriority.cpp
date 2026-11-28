@@ -42,7 +42,7 @@ int EnvInt(const char* name, int fallback) {
 
 void LogOnce(const char* role, const std::string& text) {
     static std::mutex mutex;
-    static std::set<std::string> seen;
+    static auto& seen = *new std::set<std::string>;
     std::lock_guard lock(mutex);
     if (!seen.insert(std::string(role) + "|" + text).second) return;
     std::fprintf(stderr, "[thread-priority] %s: %s\n", role, text.c_str());
