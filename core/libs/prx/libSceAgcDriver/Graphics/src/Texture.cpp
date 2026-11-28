@@ -1910,7 +1910,7 @@ StorageTexture::StorageTexture(const Context& context, TextureDetiler& detiler, 
         const auto elementBytes = BytesPerElement(descriptor.format);
         guestBytes = geometry.guestBytes;
         // Storage images in heaps the guest commits on demand only read and store committed pages.
-        Require(!GuestMemory::CommittedRanges(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), true).empty(), "storage texture has no committed guest pages");
+        Require(!GuestMemory::CommittedRanges(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), true).empty() || GuestMemory::CommittedRanges(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), false).empty(), "storage texture has no writable guest pages");
         // Write stamps are per 64 KiB block, so only 64 KiB-aligned layer slices can be told apart.
         const bool layered = geometry.layers >= 2 && !geometry.thick && !geometry.levelMajor && geometry.imageDepth == 1 && geometry.layers == geometry.imageLayers && geometry.layerBytes * geometry.layers == guestBytes && geometry.layerBytes % 65536 == 0 && descriptor.baseAddress % 65536 == 0;
         // Tile blocks divide the stamp blocks, so at an aligned base every unit is whole tile blocks
