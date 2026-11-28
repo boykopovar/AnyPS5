@@ -1,5 +1,11 @@
 target_sources(jxr_metadata_native PRIVATE src/NativeWmp.c)
 target_include_directories(jxr_metadata_native PRIVATE ${LIBS_INCLUDE_DIR})
+set_source_files_properties(src/NativeWmp.c TARGET_DIRECTORY jxr_metadata_native
+    PROPERTIES COMPILE_OPTIONS "-fexceptions")
+if(MINGW)
+    set_source_files_properties(${JXR_SOURCE_DIR}/jxrgluelib/JXRGlueJxr.c TARGET_DIRECTORY jxr_metadata_native
+        PROPERTIES COMPILE_OPTIONS "-fexceptions")
+endif()
 target_sources(libSceJxr PRIVATE src/Wmp.cpp)
 
 if(BUILD_TESTING)
