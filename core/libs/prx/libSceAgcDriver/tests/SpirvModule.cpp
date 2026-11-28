@@ -974,6 +974,21 @@ void testTruncatedNamesAreRejected() {
     check(rejected, "an OpName without a target was normalized");
 }
 
+void testUntypedResultsAtTheBoundAreRejected() {
+    auto module = computeModule(20u, {}, {spirvOp(3, spv::OpStore), 9u, 9u});
+    const auto at = static_cast<std::size_t>(std::distance(module.begin(), std::find(module.begin() + 5, module.end(), spirvOp(2, spv::OpTypeVoid))));
+    bool rejected = false;
+    try {
+        module[at + 1u] = 20u;
+        static_cast<void>(NormalizeSpirvConstants(module));
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    check(rejected, "an OpTypeVoid whose result reaches the bound was normalized");
+    module[at + 1u] = 19u;
+    check(!normalizedOrEmpty(module, "an OpTypeVoid at bound - 1 was not normalized").empty(), "an OpTypeVoid at bound - 1 was rejected");
+}
+
 int main() {
     testNormalizedConstantsIgnoreDeadValuesAndDeclarationOrder();
     testNormalizedIdsStayBelowTheInputBound();
@@ -987,6 +1002,7 @@ int main() {
     testNormalizationDecodesEmittedExtensionOpcodes();
     testNormalizationReadsSixtyFourBitSwitchLiterals();
     testTruncatedNamesAreRejected();
+    testUntypedResultsAtTheBoundAreRejected();
     testFoldedBitcastsAndNanTests();
     testFoldingLeavesNoDeadBlocksOrConstants();
     testIdsBeyondTheBoundAreRejected();

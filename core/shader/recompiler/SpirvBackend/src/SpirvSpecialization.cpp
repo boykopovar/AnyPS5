@@ -1019,7 +1019,8 @@ std::vector<std::uint32_t> NormalizeSpirvConstants(std::span<const std::uint32_t
         if (result != 0u && result >= count) throw std::runtime_error("truncated specialized SPIR-V instruction");
         if ((op == spv::OpName || op == spv::OpMemberName || op == spv::OpDecorate || op == spv::OpDecorateId || op == spv::OpDecorateString) && count < 2u) throw std::runtime_error("truncated specialized SPIR-V instruction");
         lines.push_back({cursor, count, op, function, true, result});
-        if (hasResult && hasType) resultTypes[checkId(words[cursor + 2u])] = words[cursor + 1u];
+        if (result != 0u) checkId(words[cursor + result]);
+        if (hasResult && hasType) resultTypes[words[cursor + 2u]] = words[cursor + 1u];
         if (op == spv::OpTypeInt && count >= 3u) intWidths[checkId(words[cursor + 1u])] = words[cursor + 2u];
         if (op == spv::OpDecorate || op == spv::OpDecorateId || op == spv::OpDecorateString) decorated[checkId(words[cursor + 1u])] = true;
         if (op == spv::OpGroupDecorate) for (std::uint32_t index = 2u; index < count; ++index) decorated[checkId(words[cursor + index])] = true;
