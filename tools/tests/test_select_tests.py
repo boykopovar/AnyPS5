@@ -1067,6 +1067,7 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(count, 1)
         build.tests.assert_called_once_with()
 
+    @unittest.skipUnless(shutil.which("ctest"), "needs ctest")
     def test_selection_of_only_disabled_tests_runs_nothing_and_succeeds(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
