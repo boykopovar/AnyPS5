@@ -1030,7 +1030,7 @@ int APS5_VABI X509_get_pubkey_nid_postfix(void);
 void* APS5_VABI X509_get_serialNumber_nid_postfix(const LibreSslX509* certificate);
 void* APS5_VABI X509_get_subject_name_nid_postfix(const LibreSslX509* certificate);
 int APS5_VABI X509_load_crl_file_nid_postfix(void);
-int APS5_VABI X509_print_ex_nid_postfix(void);
+int APS5_VABI X509_print_ex_nid_postfix(LibreSsl::Bio* bio, const LibreSslX509* certificate, std::uint64_t nameFlags, std::uint64_t certFlags);
 int APS5_VABI X509_verify_cert_nid_postfix(void);
 const char* APS5_VABI X509_verify_cert_error_string_nid_postfix(std::int64_t error);
 LibreSslOcspResponse* APS5_VABI d2i_OCSP_RESPONSE_nid_postfix(LibreSslOcspResponse** response, const unsigned char** input, std::int64_t length);
