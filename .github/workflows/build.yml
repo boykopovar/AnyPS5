@@ -124,7 +124,8 @@ jobs:
                 workflowJobs.add('*');
               }
             };
-            const select = (paths, all) => {
+            const select = (changedPaths, all) => {
+              const paths = changedPaths.filter((path) => !path.startsWith('tools/input-mapper/'));
               const touches = (...prefixes) => all ||
                 paths.some((path) => prefixes.some((prefix) => prefix.endsWith('/') ? path.startsWith(prefix) : path === prefix));
               const edits = (job) => ['*', '', 'eligibility', job].some((name) => workflowJobs.has(name));
