@@ -40,18 +40,58 @@
 #include "prx/libc/include/WindowsDescriptor.hpp"
 #include "prx/libc/include/WindowsVerbatimPath.hpp"
 #include "prx/libkernel/File/include/WindowsSymbolicLink.hpp"
+#include "prx/libkernel/File/include/WindowsPermissions.hpp"
+#include "prx/libc/include/CreationMask.hpp"
+static HANDLE OpenNativeHandle(const std::filesystem::path& p, int nativeFlags, DWORD desired, SECURITY_ATTRIBUTES& security,
+    DWORD attributes, bool& created) {
+    constexpr DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+    const DWORD existing = (nativeFlags & _O_TRUNC) ? TRUNCATE_EXISTING : OPEN_EXISTING;
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        if (nativeFlags & _O_CREAT) {
+            const auto handle = CreateFileW(p.c_str(), desired, share, &security, CREATE_NEW, attributes, nullptr);
+            if (handle != INVALID_HANDLE_VALUE) {
+                created = true;
+                return handle;
+            }
+            if (GetLastError() != ERROR_FILE_EXISTS || (nativeFlags & _O_EXCL)) return INVALID_HANDLE_VALUE;
+        }
+        const auto handle = CreateFileW(p.c_str(), desired, share, &security, existing, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (handle != INVALID_HANDLE_VALUE || !(nativeFlags & _O_CREAT) || GetLastError() != ERROR_FILE_NOT_FOUND) return handle;
+    }
+    return INVALID_HANDLE_VALUE;
+}
+static void DeleteCreatedFile(HANDLE handle) {
+    const HANDLE deleter = File::WindowsPermissions::Reopen(handle, DELETE | FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES);
+    if (deleter == INVALID_HANDLE_VALUE) return;
+    FILE_BASIC_INFO basic{};
+    if (GetFileInformationByHandleEx(deleter, FileBasicInfo, &basic, sizeof(basic)) && (basic.FileAttributes & FILE_ATTRIBUTE_READONLY) != 0) {
+        basic.FileAttributes &= ~static_cast<DWORD>(FILE_ATTRIBUTE_READONLY);
+        if (basic.FileAttributes == 0) basic.FileAttributes = FILE_ATTRIBUTE_NORMAL;
+        SetFileInformationByHandle(deleter, FileBasicInfo, &basic, sizeof(basic));
+    }
+    FILE_DISPOSITION_INFO disposition{TRUE};
+    SetFileInformationByHandle(deleter, FileDispositionInfo, &disposition, sizeof(disposition));
+    CloseHandle(deleter);
+}
 static int NativeOpen(const std::filesystem::path& p, int nativeFlags, std::uint16_t mode) {
     const int access = nativeFlags & (_O_RDONLY | _O_WRONLY | _O_RDWR);
     const DWORD desired = access == _O_RDONLY ? GENERIC_READ : access == _O_WRONLY ? GENERIC_WRITE : GENERIC_READ | GENERIC_WRITE;
-    DWORD disposition = OPEN_EXISTING;
-    if (nativeFlags & _O_CREAT) disposition = (nativeFlags & _O_EXCL) ? CREATE_NEW : (nativeFlags & _O_TRUNC) ? CREATE_ALWAYS : OPEN_ALWAYS;
-    else if (nativeFlags & _O_TRUNC) disposition = TRUNCATE_EXISTING;
-    const DWORD attributes = (nativeFlags & _O_CREAT) && !(mode & _S_IWRITE) ? FILE_ATTRIBUTE_READONLY : FILE_ATTRIBUTE_NORMAL;
+    const auto requested = static_cast<std::uint16_t>((mode & ~File::GetCreationMask_nid_no_patch()) & 06777);
+    const DWORD attributes = (requested & _S_IWRITE) ? FILE_ATTRIBUTE_NORMAL : FILE_ATTRIBUTE_READONLY;
     SECURITY_ATTRIBUTES security{sizeof(SECURITY_ATTRIBUTES), nullptr, (nativeFlags & _O_NOINHERIT) == 0};
-    const auto handle = CreateFileW(p.c_str(), desired, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, &security, disposition, attributes, nullptr);
+    bool created = false;
+    const auto handle = OpenNativeHandle(p, nativeFlags, desired, security, attributes, created);
     if (handle == INVALID_HANDLE_VALUE) {
         errno = WindowsOpenError_nid_no_patch(GetLastError());
         return -1;
+    }
+    if (created) {
+        if (const DWORD error = File::WindowsPermissions::Store(handle, requested); error != ERROR_SUCCESS) {
+            DeleteCreatedFile(handle);
+            CloseHandle(handle);
+            errno = WindowsOpenError_nid_no_patch(error);
+            return -1;
+        }
     }
     const int descriptor = ::_open_osfhandle(reinterpret_cast<std::intptr_t>(handle), nativeFlags & (_O_APPEND | _O_RDONLY | _O_BINARY | _O_NOINHERIT));
     if (descriptor < 0) CloseHandle(handle);

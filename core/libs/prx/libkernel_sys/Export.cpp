@@ -50,6 +50,7 @@
 #include <io.h>
 #include <sys/stat.h>
 #include "prx/libkernel/File/include/WindowsSymbolicLink.hpp"
+#include "prx/libkernel/File/include/WindowsPermissions.hpp"
 #ifndef SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE
 #define SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE 0x2
 #endif
@@ -1054,6 +1055,11 @@ int APS5_VABI mkdirat_nid_postfix(int fd, const char* path, std::uint16_t mode) 
             return static_cast<int>(Fail(GuestEnoent));
         }
         return static_cast<int>(Fail(GuestEio));
+    }
+    const auto permissions = static_cast<std::uint16_t>((mode & 0777) & ~File::GetCreationMask_nid_no_patch());
+    if (const DWORD code = File::WindowsPermissions::Store(host, permissions); code != ERROR_SUCCESS) {
+        RemoveDirectoryW(host.wstring().c_str());
+        return static_cast<int>(Fail(GuestError(std::error_code(static_cast<int>(code), std::system_category()))));
     }
 #else
     if (::mkdir(native.c_str(), static_cast<mode_t>(mode & 0777)) != 0) {

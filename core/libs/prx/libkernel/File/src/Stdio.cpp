@@ -95,6 +95,8 @@ std::optional<File::PositionedTransferLock> File::LockAppendingTransfer(int desc
 #include <direct.h>
 #include <sys/stat.h>
 #include "prx/libkernel/File/include/WindowsFileTime.hpp"
+#include "prx/libkernel/File/include/WindowsPermissions.hpp"
+#include "prx/libc/include/CreationMask.hpp"
 #include "prx/libc/include/WindowsDescriptor.hpp"
 extern "C" _invalid_parameter_handler _set_thread_local_invalid_parameter_handler(_invalid_parameter_handler);
 static void IgnoreDescriptorParameter(const wchar_t*, const wchar_t*, const wchar_t*, unsigned int, std::uintptr_t) {}
@@ -140,14 +142,26 @@ static bool RemoveEmptyDirectory(const std::filesystem::path& path) {
     if (!removed && unlocked) ::SetFileAttributesW(target.c_str(), attributes);
     return removed;
 }
+static int StoreCreatedDirectoryMode(const std::filesystem::path& target, std::uint16_t mode) {
+    const auto permissions = static_cast<std::uint16_t>((mode & 0777) & ~File::GetCreationMask_nid_no_patch());
+    const DWORD error = File::WindowsPermissions::Store(target, permissions);
+    if (error == ERROR_SUCCESS) return 0;
+    ::RemoveDirectoryW(target.c_str());
+    return WindowsOpenError_nid_no_patch(error);
+}
 static int NativeMkdir(const std::filesystem::path& path, std::uint16_t mode) {
-    (void)mode;
     std::error_code error;
     const auto verbatim = NativeVerbatimPath_nid_no_patch(path, error, WindowsMaxDirectoryPathLength);
     const auto& target = error ? path : verbatim;
-    if (::CreateDirectoryW(target.c_str(), nullptr)) return 0;
-    errno = WindowsOpenError_nid_no_patch(GetLastError());
-    return -1;
+    if (!::CreateDirectoryW(target.c_str(), nullptr)) {
+        errno = WindowsOpenError_nid_no_patch(GetLastError());
+        return -1;
+    }
+    if (const int failure = StoreCreatedDirectoryMode(target, mode)) {
+        errno = failure;
+        return -1;
+    }
+    return 0;
 }
 static std::optional<std::filesystem::path> HandlePath(HANDLE handle) {
     std::wstring path(MAX_PATH, L'\0');
@@ -177,6 +191,13 @@ std::optional<std::filesystem::path> File::WindowsDescriptorPath_nid_no_patch(in
     }
     return HandlePath(handle);
 }
+static int ChangeWindowsMode(const std::filesystem::path& target, int mode) {
+    if (::_wchmod(target.wstring().c_str(), mode) != 0) return -1;
+    const DWORD error = File::WindowsPermissions::Store(target, static_cast<std::uint16_t>(mode & 07777));
+    if (error == ERROR_SUCCESS) return 0;
+    errno = WindowsOpenError_nid_no_patch(error);
+    return -1;
+}
 static int NativeChmod(const std::filesystem::path& path, int mode) {
     std::error_code pathError;
     const auto verbatim = NativeVerbatimPath_nid_no_patch(path, pathError);
@@ -184,7 +205,7 @@ static int NativeChmod(const std::filesystem::path& path, int mode) {
     const DWORD attributes = GetFileAttributesW(checkPath.c_str());
     if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0) {
         RecordWrittenPath_nid_no_patch(path);
-        return ::_wchmod(checkPath.wstring().c_str(), mode);
+        return ChangeWindowsMode(checkPath, mode);
     }
     const HANDLE handle = CreateFileW(checkPath.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
         OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
@@ -198,11 +219,36 @@ static int NativeChmod(const std::filesystem::path& path, int mode) {
     RecordWrittenPath_nid_no_patch(*target);
     const auto verbatimTarget = NativeVerbatimPath_nid_no_patch(*target, pathError);
     const auto& finalTarget = pathError ? *target : verbatimTarget;
-    return ::_wchmod(finalTarget.wstring().c_str(), mode);
+    return ChangeWindowsMode(finalTarget, mode);
+}
+static DWORD SetReadOnlyAttribute(HANDLE handle, bool readOnly) {
+    FILE_BASIC_INFO basic{};
+    if (!GetFileInformationByHandleEx(handle, FileBasicInfo, &basic, sizeof(basic))) return GetLastError();
+    DWORD attributes = readOnly ? basic.FileAttributes | FILE_ATTRIBUTE_READONLY : basic.FileAttributes & ~FILE_ATTRIBUTE_READONLY;
+    if (attributes == basic.FileAttributes) return ERROR_SUCCESS;
+    FILE_BASIC_INFO change{};
+    change.FileAttributes = attributes == 0 ? FILE_ATTRIBUTE_NORMAL : attributes;
+    const HANDLE writer = File::WindowsPermissions::Reopen(handle, FILE_WRITE_ATTRIBUTES);
+    if (writer == INVALID_HANDLE_VALUE) return GetLastError();
+    const bool changed = SetFileInformationByHandle(writer, FileBasicInfo, &change, sizeof(change));
+    const DWORD error = changed ? ERROR_SUCCESS : GetLastError();
+    CloseHandle(writer);
+    return error;
 }
 static int NativeFchmod(int descriptor, int mode) {
-    const auto path = File::WindowsDescriptorPath_nid_no_patch(descriptor);
-    return path ? NativeChmod(*path, mode) : -1;
+    const auto handle = WindowsDescriptorHandle_nid_no_patch(descriptor);
+    if (handle == INVALID_HANDLE_VALUE) {
+        errno = EBADF;
+        return -1;
+    }
+    DWORD error = SetReadOnlyAttribute(handle, (mode & _S_IWRITE) == 0);
+    if (error == ERROR_SUCCESS) error = File::WindowsPermissions::Store(handle, static_cast<std::uint16_t>(mode & 07777));
+    if (error != ERROR_SUCCESS) {
+        errno = WindowsOpenError_nid_no_patch(error);
+        return -1;
+    }
+    if (const auto path = HandlePath(handle)) RecordWrittenPath_nid_no_patch(*path);
+    return 0;
 }
 static bool PrepareSparseExtension(HANDLE handle, std::int64_t length) {
     LARGE_INTEGER size{};
@@ -1832,6 +1878,9 @@ static int KernelMkdir(const char* path, uint16_t mode) {
         return SceErrorFromErrno(HasNonDirectoryPrefix(targetNative) ? GUEST_ENOTDIR : GUEST_ENOENT);
     }
     if (!std::filesystem::create_directory(targetNative, error)) return SceErrorFromErrno(error.value() ? error.value() : GUEST_EIO);
+#ifdef _WIN32
+    if (const int failure = StoreCreatedDirectoryMode(targetNative, mode)) return SceErrorFromErrno(failure);
+#endif
     RecordWrittenPath_nid_no_patch(native);
     return 0;
 }
