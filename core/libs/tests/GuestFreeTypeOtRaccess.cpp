@@ -1,10 +1,24 @@
 #include "prx/libSceFreeTypeOt/include/Memory.hpp"
 #include "prx/libSceFreeTypeOt/include/Raccess.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
+#include <array>
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
+#include <new>
+#include <string_view>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -173,13 +187,305 @@ void TruncatedReferences() {
     Require(session.recorder.allocs == 1 && session.recorder.frees == 1, "the reference array is freed on a read error");
 }
 
+template <class F>
+bool RejectsKeepingErrno(F call) {
+    errno = 71;
+    try {
+        call();
+    } catch (const std::exception&) {
+        return errno == 71;
+    }
+    return false;
 }
 
-int main() {
+std::size_t PageSize() {
+#ifdef _WIN32
+    SYSTEM_INFO info;
+    GetSystemInfo(&info);
+    return info.dwPageSize;
+#else
+    const long size = sysconf(_SC_PAGESIZE);
+    return size > 0 ? static_cast<std::size_t>(size) : 4096;
+#endif
+}
+
+char* MapPages(std::size_t bytes) {
+#ifdef _WIN32
+    void* pages = VirtualAlloc(nullptr, bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(pages != nullptr, "pages are mapped");
+#else
+    void* pages = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(pages != MAP_FAILED, "pages are mapped");
+#endif
+    return static_cast<char*>(pages);
+}
+
+void Protect(char* page, std::size_t bytes, bool readable) {
+#ifdef _WIN32
+    DWORD previous = 0;
+    Require(VirtualProtect(page, bytes, readable ? PAGE_READONLY : PAGE_NOACCESS, &previous) != 0, "a page is protected");
+#else
+    Require(mprotect(page, bytes, readable ? PROT_READ : PROT_NONE) == 0, "a page is protected");
+#endif
+}
+
+void UnmapPages(char* pages, std::size_t bytes) {
+#ifdef _WIN32
+    (void)bytes;
+    VirtualFree(pages, 0, MEM_RELEASE);
+#else
+    munmap(pages, bytes);
+#endif
+}
+
+void GuessValidAndPageEnd() {
+    const std::size_t pageSize = PageSize();
+    char* pages = MapPages(2 * pageSize);
+    char* guard = pages + pageSize;
+    constexpr char baseLiteral[] = "dir/font";
+    char* baseAtEnd = guard - sizeof(baseLiteral);
+    std::memcpy(baseAtEnd, baseLiteral, sizeof(baseLiteral));
+    Protect(guard, pageSize, false);
+
+    const Fork fork = MakeFork(0, false);
+    Session session(fork.bytes);
+    std::array<char*, 9> newNames{};
+    std::array<std::int64_t, 9> offsets{};
+    offsets.fill(-1);
+    std::array<std::int32_t, 9> errors{};
+    errors.fill(-1);
+    FT_Raccess_Guess_nid_postfix(&session.library, nullptr, baseAtEnd, newNames.data(), offsets.data(), errors.data());
+
+    Require(errors[0] == 0x51 && !newNames[0] && offsets[0] == -1, "rule 0 with null stream leaves offset untouched");
+    Require(errors[1] == 0x51 && !newNames[1] && offsets[1] == -1, "rule 1 with null stream leaves offset untouched");
+    Require(errors[2] != 0 && !newNames[2] && offsets[2] == -1, "rule 2 cleans up failed apple double guess");
+    Require(errors[3] == 0 && newNames[3] && std::strcmp(newNames[3], "dir/font/..namedfork/rsrc") == 0 && offsets[3] == 0, "rule 3 appends namedfork suffix");
+    Require(errors[4] == 0 && newNames[4] && std::strcmp(newNames[4], "dir/font/rsrc") == 0 && offsets[4] == 0, "rule 4 appends rsrc suffix");
+    Require(errors[5] == 0 && newNames[5] && std::strcmp(newNames[5], "dir/resource.frk/font") == 0 && offsets[5] == 0, "rule 5 inserts resource.frk");
+    Require(errors[6] == 0 && newNames[6] && std::strcmp(newNames[6], "dir/.resource/font") == 0 && offsets[6] == 0, "rule 6 inserts .resource");
+    Require(errors[7] != 0 && !newNames[7] && offsets[7] == -1, "rule 7 cleans up failed apple double guess");
+    Require(errors[8] != 0 && !newNames[8] && offsets[8] == -1, "rule 8 cleans up failed apple double guess");
+
+    for (char* name : newNames) {
+        if (name) ft_mem_free_nid_postfix(&session.recorder.memory, name);
+    }
+    Require(session.recorder.allocs == session.recorder.frees, "all allocated names in guess are freed");
+    UnmapPages(pages, 2 * pageSize);
+}
+
+void GuestPointers() {
+    const std::size_t pageSize = PageSize();
+    char* pages = MapPages(3 * pageSize);
+    char* readOnly = pages + pageSize;
+    char* guard = pages + 2 * pageSize;
+    std::memset(readOnly, 0x5A, pageSize);
+    char* unterminatedTail = guard - 4;
+    std::memcpy(unterminatedTail, "font", 4);
+    Protect(readOnly, pageSize, true);
+    Protect(guard, pageSize, false);
+
+    auto* unmappedLong = reinterpret_cast<std::int64_t*>(std::uintptr_t{0x10});
+    auto* readOnlyLong = reinterpret_cast<std::int64_t*>(readOnly);
+    const std::int64_t readOnlySentinel = *readOnlyLong;
+
+    const Fork fork = MakeFork(0, false);
+    {
+        Session session(fork.bytes);
+        std::int64_t mapOffset = -1;
+        Require(RejectsKeepingErrno([&] { FT_Raccess_Get_HeaderInfo_nid_postfix(&session.library, &session.stream, 0, &mapOffset, unmappedLong); }),
+                "header info refuses an unmapped rdataPos");
+        Require(mapOffset == -1, "unmapped rdataPos fails before writing mapOffset");
+    }
+    {
+        Session session(fork.bytes);
+        std::int64_t mapOffset = -1;
+        Require(RejectsKeepingErrno([&] { FT_Raccess_Get_HeaderInfo_nid_postfix(&session.library, &session.stream, 0, &mapOffset, readOnlyLong); }),
+                "header info refuses a read-only rdataPos");
+        Require(*readOnlyLong == readOnlySentinel, "read-only rdataPos is untouched");
+    }
+    {
+        Session session(fork.bytes);
+        std::int64_t rdataPos = -1;
+        Require(RejectsKeepingErrno([&] { FT_Raccess_Get_HeaderInfo_nid_postfix(&session.library, &session.stream, 0, unmappedLong, &rdataPos); }),
+                "header info refuses an unmapped mapOffset");
+    }
+    {
+        Session session(fork.bytes);
+        std::int64_t rdataPos = -1;
+        Require(RejectsKeepingErrno([&] { FT_Raccess_Get_HeaderInfo_nid_postfix(&session.library, &session.stream, 0, readOnlyLong, &rdataPos); }),
+                "header info refuses a read-only mapOffset");
+        Require(*readOnlyLong == readOnlySentinel, "read-only mapOffset is untouched");
+    }
+
+    Session session(fork.bytes);
+    auto* unmappedLibrary = reinterpret_cast<GuestRaccessLibrary*>(std::uintptr_t{0x10});
+    GuestRaccessLibrary unmappedMemoryLibrary{};
+    unmappedMemoryLibrary.memory = reinterpret_cast<GuestMemoryRec*>(std::uintptr_t{0x10});
+    GuestRaccessLibrary nullMemoryLibrary{};
+    auto* unmappedName = reinterpret_cast<char*>(std::uintptr_t{0x10});
+    char mutableBase[] = "demo";
+    std::array<char*, 9> newNames{};
+    std::array<std::int64_t, 9> offsets{};
+    std::array<std::int32_t, 9> errors{};
+
+    Require(RejectsKeepingErrno([&] {
+                FT_Raccess_Guess_nid_postfix(unmappedLibrary, nullptr, mutableBase, newNames.data(), offsets.data(), errors.data());
+            }),
+            "guess refuses an unmapped library");
+    Require(RejectsKeepingErrno([&] {
+                FT_Raccess_Guess_nid_postfix(&nullMemoryLibrary, nullptr, mutableBase, newNames.data(), offsets.data(), errors.data());
+            }),
+            "guess refuses a null library memory");
+    Require(RejectsKeepingErrno([&] {
+                FT_Raccess_Guess_nid_postfix(&unmappedMemoryLibrary, nullptr, mutableBase, newNames.data(), offsets.data(), errors.data());
+            }),
+            "guess refuses an unmapped library memory");
+    Require(RejectsKeepingErrno([&] {
+                FT_Raccess_Guess_nid_postfix(&session.library, nullptr, unmappedName, newNames.data(), offsets.data(), errors.data());
+            }),
+            "guess refuses an unmapped baseName");
+    Require(RejectsKeepingErrno([&] {
+                FT_Raccess_Guess_nid_postfix(&session.library, nullptr, unterminatedTail, newNames.data(), offsets.data(), errors.data());
+            }),
+            "guess refuses an unterminated baseName hitting a guard page");
+    Require(RejectsKeepingErrno([&] {
+                FT_Raccess_Guess_nid_postfix(&session.library, nullptr, mutableBase, reinterpret_cast<char**>(readOnly), offsets.data(), errors.data());
+            }),
+            "guess refuses a read-only newNames array");
+    Require(RejectsKeepingErrno([&] {
+                FT_Raccess_Guess_nid_postfix(&session.library, nullptr, mutableBase, reinterpret_cast<char**>(std::uintptr_t{0x10}), offsets.data(), errors.data());
+            }),
+            "guess refuses an unmapped newNames array");
+    Require(RejectsKeepingErrno([&] {
+                FT_Raccess_Guess_nid_postfix(&session.library, nullptr, mutableBase, newNames.data(), readOnlyLong, errors.data());
+            }),
+            "guess refuses a read-only offsets array");
+    Require(RejectsKeepingErrno([&] {
+                FT_Raccess_Guess_nid_postfix(&session.library, nullptr, mutableBase, newNames.data(), unmappedLong, errors.data());
+            }),
+            "guess refuses an unmapped offsets array");
+    Require(RejectsKeepingErrno([&] {
+                FT_Raccess_Guess_nid_postfix(&session.library, nullptr, mutableBase, newNames.data(), offsets.data(), reinterpret_cast<std::int32_t*>(readOnly));
+            }),
+            "guess refuses a read-only errors array");
+    Require(RejectsKeepingErrno([&] {
+                FT_Raccess_Guess_nid_postfix(&session.library, nullptr, mutableBase, newNames.data(), offsets.data(), reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10}));
+            }),
+            "guess refuses an unmapped errors array");
+    std::vector<char> oversizedBase(65538, 'a');
+    oversizedBase.back() = '\0';
+    Require(RejectsKeepingErrno([&] {
+                FT_Raccess_Guess_nid_postfix(&session.library, nullptr, oversizedBase.data(), newNames.data(), offsets.data(), errors.data());
+            }),
+            "guess refuses an oversized baseName");
+    Require(session.recorder.allocs == 0 && *readOnlyLong == readOnlySentinel, "rejected guess calls allocate nothing and keep read-only memory untouched");
+
+    UnmapPages(pages, 3 * pageSize);
+}
+
+int CheckWatched() {
+    using namespace GuestArena;
+    constexpr std::size_t bytes = 65536;
+#ifndef _WIN32
+    if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) {
+#ifdef __APPLE__
+        std::abort();
+#else
+        std::puts("Page write watch is unavailable");
+        return 77;
+#endif
+    }
+#else
+    Require(GuestArenaWriteWatched_nid_postfix(), "guest arena supports write watch");
+#endif
+    auto* pages = static_cast<std::byte*>(GuestArenaAllocate_nid_postfix(bytes, bytes));
+    Require(pages != nullptr, "watched guest arena pages are allocated");
+#ifdef _WIN32
+    const auto section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, bytes, nullptr);
+    Require(section != nullptr, "section for watched pages is created");
+    GuestArenaMap_nid_postfix(pages, bytes, section, 0, PAGE_READWRITE);
+    CloseHandle(section);
+#else
+    GuestArenaCommit_nid_postfix(pages, bytes, 0x04, bytes);
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(pages, bytes);
+#endif
+    const auto arm = [&] {
+#ifdef _WIN32
+        std::array<void*, 32> written{};
+        auto count = written.size();
+        Require(GuestArenaCollectWrites_nid_postfix(reinterpret_cast<std::uintptr_t>(pages), bytes, written.data(), &count, true),
+                "watched writes are collected");
+        for (const std::size_t offset : {0u, 16384u, 32768u, 49152u}) {
+            MEMORY_BASIC_INFORMATION info{};
+            Require(VirtualQuery(pages + offset, &info, sizeof(info)) == sizeof(info) && info.Protect == PAGE_READONLY,
+                    "armed watched page has PAGE_READONLY protection");
+        }
+#else
+        bool written = false;
+        Require(GuestWriteWatch::GuestWriteWatchCollect_nid_postfix(reinterpret_cast<std::uintptr_t>(pages), bytes,
+                    [](void* context, std::uintptr_t, std::uintptr_t) { *static_cast<bool*>(context) = true; }, &written),
+                "watched writes are collected");
+#endif
+    };
+    auto* const newNames = new (pages) char*[9]();
+    auto* const offsets = new (pages + 16384) std::int64_t[9]();
+    auto* const errors = new (pages + 32768) std::int32_t[9]();
+    auto* const mapOffset = new (pages + 49152) std::int64_t(-1);
+    auto* const rdataPos = new (pages + 49152 + sizeof(std::int64_t)) std::int64_t(-1);
+
+    const Fork fork = MakeFork(0, false);
+    Session session(fork.bytes);
+    arm();
+    Require(FT_Raccess_Get_HeaderInfo_nid_postfix(&session.library, &session.stream, 0, mapOffset, rdataPos) == 0,
+            "header info writes outputs on watched guest pages");
+    Require(*rdataPos == 0x100 && *mapOffset == 0x140 + 28, "header info writes expected values on watched guest pages");
+
+    for (int i = 0; i < 9; ++i) {
+        newNames[i] = nullptr;
+        offsets[i] = -1;
+        errors[i] = -1;
+    }
+    char baseMutable[] = "dir/font";
+    arm();
+    FT_Raccess_Guess_nid_postfix(&session.library, nullptr, baseMutable, newNames, offsets, errors);
+    Require(errors[0] == 0x51 && !newNames[0] && offsets[0] == -1, "watched rule 0 preserves offset on error");
+    Require(errors[1] == 0x51 && !newNames[1] && offsets[1] == -1, "watched rule 1 preserves offset on error");
+    Require(errors[2] != 0 && !newNames[2] && offsets[2] == -1, "watched rule 2 preserves offset on error");
+    Require(errors[3] == 0 && newNames[3] && std::strcmp(newNames[3], "dir/font/..namedfork/rsrc") == 0 && offsets[3] == 0,
+            "watched rule 3 succeeds");
+    Require(errors[4] == 0 && newNames[4] && std::strcmp(newNames[4], "dir/font/rsrc") == 0 && offsets[4] == 0,
+            "watched rule 4 succeeds");
+    Require(errors[5] == 0 && newNames[5] && std::strcmp(newNames[5], "dir/resource.frk/font") == 0 && offsets[5] == 0,
+            "watched rule 5 succeeds");
+    Require(errors[6] == 0 && newNames[6] && std::strcmp(newNames[6], "dir/.resource/font") == 0 && offsets[6] == 0,
+            "watched rule 6 succeeds");
+    Require(errors[7] != 0 && !newNames[7] && offsets[7] == -1, "watched rule 7 preserves offset on error");
+    Require(errors[8] != 0 && !newNames[8] && offsets[8] == -1, "watched rule 8 preserves offset on error");
+
+    for (int i = 0; i < 9; ++i) {
+        if (newNames[i]) ft_mem_free_nid_postfix(&session.recorder.memory, newNames[i]);
+    }
+    Require(session.recorder.allocs == session.recorder.frees, "all allocated names on watched pages are freed");
+#ifndef _WIN32
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(pages, bytes);
+#endif
+    GuestArenaReset_nid_postfix(pages, bytes);
+    GuestArenaRelease_nid_postfix(pages, bytes);
+    std::puts("Guest FreeType Ot raccess watched tests passed");
+    return 0;
+}
+
+}
+
+int main(int argc, char** argv) {
+    if (argc == 2 && std::string_view(argv[1]) == "--watched") return CheckWatched();
+    if (argc != 1) return 1;
     HeaderAndOffsets(0, false);
     HeaderAndOffsets(0x80, true);
     RejectedHeaders();
     TruncatedReferences();
+    GuessValidAndPageEnd();
+    GuestPointers();
     std::puts("Guest FreeType Ot raccess tests passed");
     return 0;
 }

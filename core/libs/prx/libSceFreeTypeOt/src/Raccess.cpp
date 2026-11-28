@@ -8,12 +8,16 @@
 #include "prx/libSceFreeTypeOt/include/Memory.hpp"
 #include "prx/libSceFreeTypeOt/include/System.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 #include <algorithm>
+#include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <string>
 
 using namespace FreeType;
 
@@ -30,6 +34,66 @@ constexpr std::int64_t IntMax = 0x7FFFFFFF;
 constexpr std::int64_t RefSize = 16;
 constexpr std::int64_t LongMax = std::numeric_limits<std::int64_t>::max();
 constexpr std::int64_t LongMin = std::numeric_limits<std::int64_t>::min();
+constexpr std::size_t Chunk = 4096;
+constexpr std::size_t MaxBaseNameLength = 65536;
+
+void CopyIn(void* destination, const void* source, std::size_t bytes, const char* function) {
+    const int savedErrno = errno;
+    const bool copied = source && GuestCopyIn_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    if (!copied) NotImplemented_nid_no_patch(function);
+}
+
+void CopyOut(void* destination, const void* source, std::size_t bytes, const char* function) {
+    const int savedErrno = errno;
+    const bool copied = destination && GuestCopyOut_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    if (!copied) NotImplemented_nid_no_patch(function);
+}
+
+void RequireWritable(void* destination, std::size_t bytes, const char* function) {
+    const int savedErrno = errno;
+    bool writable = false;
+    if (destination) {
+        const GuestArena::HostWrite guard(destination, bytes);
+        writable = guard.Open() && GuestWritable_nid_no_patch(destination, bytes);
+    }
+    errno = savedErrno;
+    if (!writable) NotImplemented_nid_no_patch(function);
+}
+
+template <class T>
+T Read(const T* source, const char* function) {
+    T value{};
+    CopyIn(&value, source, sizeof(value), function);
+    return value;
+}
+
+template <class T>
+void Write(T* destination, const T& value, const char* function) {
+    CopyOut(destination, &value, sizeof(value), function);
+}
+
+std::string ReadText(const char* source, const char* function) {
+    if (!source) NotImplemented_nid_no_patch(function);
+    const std::size_t limit = MaxBaseNameLength + 1;
+    std::string text;
+    std::array<char, Chunk> buffer;
+    auto address = reinterpret_cast<std::uintptr_t>(source);
+    while (text.size() < limit) {
+        const std::size_t count = std::min(Chunk - address % Chunk, limit - text.size());
+        if (address > std::numeric_limits<std::uintptr_t>::max() - count + 1) NotImplemented_nid_no_patch(function);
+        CopyIn(buffer.data(), reinterpret_cast<const void*>(address), count, function);
+        const auto* end = static_cast<const char*>(std::memchr(buffer.data(), 0, count));
+        if (end) {
+            text.append(buffer.data(), static_cast<std::size_t>(end - buffer.data()));
+            return text;
+        }
+        text.append(buffer.data(), count);
+        address += count;
+    }
+    NotImplemented_nid_no_patch(function);
+}
 
 struct GuestRForkRef {
     std::uint16_t resId;
@@ -84,23 +148,30 @@ int GuessApple(GuestStreamRec* stream, std::int32_t magic, char** resultName, st
     return GuessAppleGeneric(stream, magic, resultOffset);
 }
 
-char* MakeFileName(GuestMemoryRec* memory, const char* original, const char* insertion) {
+char* MakeFileName(GuestMemoryRec* memory, const std::string& original, const char* insertion, const char* function) {
     int error = 0;
-    const std::size_t length = std::strlen(original) + std::strlen(insertion);
-    auto* name = static_cast<char*>(OtMemAlloc(memory, static_cast<std::int64_t>(length + 1), &error));
-    if (error) return nullptr;
-    const char* slash = std::strrchr(original, '/');
-    const char* tail = original;
-    if (slash) {
-        const std::size_t prefix = static_cast<std::size_t>(slash - original) + 1;
-        std::memcpy(name, original, prefix);
-        name[prefix] = '\0';
-        tail = slash + 1;
+    const std::size_t slash = original.rfind('/');
+    std::string built;
+    if (slash != std::string::npos) {
+        built.reserve(original.size() + std::strlen(insertion));
+        built.append(original, 0, slash + 1);
+        built.append(insertion);
+        built.append(original, slash + 1);
     } else {
-        name[0] = '\0';
+        built.reserve(original.size() + std::strlen(insertion));
+        built.append(insertion);
+        built.append(original);
     }
-    std::strcat(name, insertion);
-    std::strcat(name, tail);
+    if (built.size() >= static_cast<std::size_t>(IntMax)) return nullptr;
+    auto* name = static_cast<char*>(OtMemAlloc(memory, static_cast<std::int64_t>(built.size() + 1), &error));
+    if (error || !name) return nullptr;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(name, built.c_str(), built.size() + 1);
+    errno = savedErrno;
+    if (!copied) {
+        OtMemFree(memory, name);
+        NotImplemented_nid_no_patch(function);
+    }
     return name;
 }
 
@@ -122,9 +193,9 @@ int GuessDoubleFromFileName(GuestRaccessLibrary* library, char* fileName, std::i
     return error;
 }
 
-int GuessInsertedDouble(GuestRaccessLibrary* library, const char* base, const char* insertion, char** resultName, std::int64_t* resultOffset) {
-    GuestMemoryRec* memory = library->memory;
-    char* name = MakeFileName(memory, base, insertion);
+int GuessInsertedDouble(GuestRaccessLibrary* library, GuestMemoryRec* memory, const std::string& base, const char* insertion,
+                        char** resultName, std::int64_t* resultOffset, const char* function) {
+    char* name = MakeFileName(memory, base, insertion, function);
     if (!name) return OutOfMemory;
     int error;
     try {
@@ -141,39 +212,51 @@ int GuessInsertedDouble(GuestRaccessLibrary* library, const char* base, const ch
     return error;
 }
 
-int GuessInserted(GuestRaccessLibrary* library, const char* base, const char* insertion, char** resultName, std::int64_t* resultOffset) {
-    char* name = MakeFileName(library->memory, base, insertion);
+int GuessInserted(GuestMemoryRec* memory, const std::string& base, const char* insertion, char** resultName, std::int64_t* resultOffset,
+                  const char* function) {
+    char* name = MakeFileName(memory, base, insertion, function);
     if (!name) return OutOfMemory;
     *resultName = name;
     *resultOffset = 0;
     return 0;
 }
 
-int GuessAppended(GuestRaccessLibrary* library, const char* base, const char* suffix, char** resultName, std::int64_t* resultOffset) {
-    const auto length = static_cast<std::int64_t>(std::strlen(base));
-    const auto suffixLength = static_cast<std::int64_t>(std::strlen(suffix)) + 1;
-    if (length + suffixLength > IntMax) return ArrayTooLarge;
+int GuessAppended(GuestMemoryRec* memory, const std::string& base, const char* suffix, char** resultName, std::int64_t* resultOffset,
+                  const char* function) {
+    const std::size_t suffixLength = std::strlen(suffix) + 1;
+    if (base.size() > static_cast<std::size_t>(IntMax) || suffixLength > static_cast<std::size_t>(IntMax) - base.size()) return ArrayTooLarge;
+    const std::size_t total = base.size() + suffixLength;
+    std::string built;
+    built.reserve(total - 1);
+    built.append(base);
+    built.append(suffix);
     int error = 0;
-    auto* name = static_cast<char*>(OtMemAlloc(library->memory, length + suffixLength, &error));
-    if (error) return error;
-    std::memcpy(name, base, static_cast<std::size_t>(length));
-    std::memcpy(name + length, suffix, static_cast<std::size_t>(suffixLength));
+    auto* name = static_cast<char*>(OtMemAlloc(memory, static_cast<std::int64_t>(total), &error));
+    if (error || !name) return error ? error : OutOfMemory;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(name, built.c_str(), total);
+    errno = savedErrno;
+    if (!copied) {
+        OtMemFree(memory, name);
+        NotImplemented_nid_no_patch(function);
+    }
     *resultName = name;
     *resultOffset = 0;
     return 0;
 }
 
-int GuessRule(int rule, GuestRaccessLibrary* library, GuestStreamRec* stream, const char* base, char** resultName, std::int64_t* resultOffset) {
+int GuessRule(int rule, GuestRaccessLibrary* library, GuestMemoryRec* memory, GuestStreamRec* stream, const std::string& base,
+              char** resultName, std::int64_t* resultOffset, const char* function) {
     switch (rule) {
     case 0: return GuessApple(stream, 0x00051607, resultName, resultOffset);
     case 1: return GuessApple(stream, 0x00051600, resultName, resultOffset);
-    case 2: return GuessInsertedDouble(library, base, "._", resultName, resultOffset);
-    case 3: return GuessAppended(library, base, "/..namedfork/rsrc", resultName, resultOffset);
-    case 4: return GuessAppended(library, base, "/rsrc", resultName, resultOffset);
-    case 5: return GuessInserted(library, base, "resource.frk/", resultName, resultOffset);
-    case 6: return GuessInserted(library, base, ".resource/", resultName, resultOffset);
-    case 7: return GuessInsertedDouble(library, base, "%", resultName, resultOffset);
-    default: return GuessInsertedDouble(library, base, ".AppleDouble/", resultName, resultOffset);
+    case 2: return GuessInsertedDouble(library, memory, base, "._", resultName, resultOffset, function);
+    case 3: return GuessAppended(memory, base, "/..namedfork/rsrc", resultName, resultOffset, function);
+    case 4: return GuessAppended(memory, base, "/rsrc", resultName, resultOffset, function);
+    case 5: return GuessInserted(memory, base, "resource.frk/", resultName, resultOffset, function);
+    case 6: return GuessInserted(memory, base, ".resource/", resultName, resultOffset, function);
+    case 7: return GuessInsertedDouble(library, memory, base, "%", resultName, resultOffset, function);
+    default: return GuessInsertedDouble(library, memory, base, ".AppleDouble/", resultName, resultOffset, function);
     }
 }
 
@@ -193,8 +276,7 @@ int APS5_VABI FT_Raccess_Get_HeaderInfo_nid_postfix(GuestRaccessLibrary*, GuestS
     const std::int64_t dataStart = Add(rforkOffset, Field(head, 0, function), function);
     const std::int64_t mapPos = Add(rforkOffset, Field(head, 4, function), function);
     const std::int64_t dataLength = Field(head, 8, function);
-    if (!rdataPos) NotImplemented_nid_no_patch(function);
-    *rdataPos = dataStart;
+    Write(rdataPos, dataStart, function);
     if (Add(dataStart, dataLength, function) != mapPos || mapPos == rforkOffset) return UnknownFileFormat;
     error = FT_Stream_Seek_nid_postfix(stream, static_cast<std::uint64_t>(mapPos));
     if (error) return error;
@@ -213,8 +295,7 @@ int APS5_VABI FT_Raccess_Get_HeaderInfo_nid_postfix(GuestRaccessLibrary*, GuestS
     if (error) return error;
     error = FT_Stream_Seek_nid_postfix(stream, static_cast<std::uint64_t>(Add(mapPos, typeList, function)));
     if (error) return error;
-    if (!mapOffset) NotImplemented_nid_no_patch(function);
-    *mapOffset = mapPos + typeList;
+    Write(mapOffset, mapPos + typeList, function);
     return 0;
 }
 
@@ -278,12 +359,30 @@ int APS5_VABI FT_Raccess_Get_DataOffsets_nid_postfix(GuestRaccessLibrary* librar
 
 void APS5_VABI FT_Raccess_Guess_nid_postfix(GuestRaccessLibrary* library, GuestStreamRec* stream, char* baseName, char** newNames,
                                            std::int64_t* offsets, std::int32_t* errors) {
-    if (!library || !library->memory || !baseName || !newNames || !offsets || !errors) NotImplemented_nid_no_patch(__func__);
+    const char* function = __func__;
+    const GuestRaccessLibrary guestLibrary = Read(library, function);
+    if (!guestLibrary.memory) NotImplemented_nid_no_patch(function);
+    Read(guestLibrary.memory, function);
+    RequireWritable(newNames, RuleCount * sizeof(*newNames), function);
+    RequireWritable(offsets, RuleCount * sizeof(*offsets), function);
+    RequireWritable(errors, RuleCount * sizeof(*errors), function);
+    const std::string base = ReadText(baseName, function);
     for (int rule = 0; rule < RuleCount; ++rule) {
-        newNames[rule] = nullptr;
-        errors[rule] = stream ? FT_Stream_Seek_nid_postfix(stream, 0) : 0;
-        if (errors[rule]) continue;
-        errors[rule] = GuessRule(rule, library, stream, baseName, &newNames[rule], &offsets[rule]);
+        Write(newNames + rule, static_cast<char*>(nullptr), function);
+        const std::int32_t seekError = stream ? FT_Stream_Seek_nid_postfix(stream, 0) : 0;
+        Write(errors + rule, seekError, function);
+        if (seekError) continue;
+        char* guessedName = nullptr;
+        std::int64_t guessedOffset = 0;
+        const std::int32_t ruleError = GuessRule(rule, library, guestLibrary.memory, stream, base, &guessedName, &guessedOffset, function);
+        try {
+            if (!ruleError) Write(offsets + rule, guessedOffset, function);
+            Write(errors + rule, ruleError, function);
+            if (guessedName) Write(newNames + rule, guessedName, function);
+        } catch (...) {
+            if (guessedName) OtMemFree(guestLibrary.memory, guessedName);
+            throw;
+        }
     }
 }
 
