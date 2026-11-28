@@ -124,6 +124,14 @@ void testPatches() {
         check(storage.words == expected, "the source patch did not replace only words 2 and 3");
         check(sceAgcDmaDataPatchSetSrcAddressOrOffsetOrImmediate(packet, 0xfedcba9876543210ull) == 0 && packet[2] == 0x76543210u && packet[3] == 0xfedcba98u, "the source patch did not keep a 64-bit immediate whole");
     }
+    const auto unmapped = reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10});
+    expectFailure([&] { sceAgcDmaDataPatchSetDstAddressOrOffset(unmapped, PatchedDestination); });
+    expectFailure([&] { sceAgcDmaDataPatchSetSrcAddressOrOffsetOrImmediate(unmapped, PatchedSource); });
+    static const std::uint32_t readOnly[7] = {0xc0055000u, 0, 0, 0, 0, 0, 0};
+    auto* readOnlyPacket = const_cast<std::uint32_t*>(readOnly);
+    expectFailure([&] { sceAgcDmaDataPatchSetDstAddressOrOffset(readOnlyPacket, PatchedDestination); });
+    expectFailure([&] { sceAgcDmaDataPatchSetSrcAddressOrOffsetOrImmediate(readOnlyPacket, PatchedSource); });
+    check(readOnly[2] == 0 && readOnly[3] == 0 && readOnly[4] == 0 && readOnly[5] == 0, "a patch of a read-only packet changed it");
 
 }
 
