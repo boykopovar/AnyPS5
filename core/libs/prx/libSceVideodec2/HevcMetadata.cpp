@@ -378,13 +378,50 @@ Metadata Parse_nid_no_patch(State& state, std::span<const std::uint8_t> annexB) 
     std::vector<std::uint8_t> timing;
     bool transferAmbiguous = false;
     std::optional<std::size_t> lastSliceIndex;
+    bool seenSlice = false;
+    bool seenEos = false;
+    bool seenEob = false;
+    std::string orderingError;
     for (std::size_t index = 0; index < starts.size(); ++index) {
         const auto start = starts[index];
         auto end = index + 1 == starts.size() ? annexB.size() : starts[index + 1] - 3;
         while (end > start && annexB[end - 1] == 0) --end;
         if (end - start < 2) continue;
         const unsigned nalType = (annexB[start] >> 1) & 63;
-        if (nalType <= 9 || (nalType >= 16 && nalType <= 21)) lastSliceIndex = index;
+        const bool isSlice = nalType <= 9 || (nalType >= 16 && nalType <= 21);
+        if (seenEob) {
+            orderingError = "HEVC NAL unit after end of bitstream is unsupported";
+            break;
+        }
+        if (seenEos && nalType != 37) {
+            orderingError = "HEVC NAL unit other than end of bitstream after end of sequence is unsupported";
+            break;
+        }
+        if (nalType == 35) {
+            if (index != 0) {
+                orderingError = "HEVC access unit delimiter must be first and unique";
+                break;
+            }
+        } else if (nalType >= 32 && nalType <= 34) {
+            if (seenSlice) {
+                orderingError = "HEVC parameter set after slices of an access unit is unsupported";
+                break;
+            }
+        } else if (nalType == 36) {
+            seenEos = true;
+        } else if (nalType == 37) {
+            seenEob = true;
+        } else if (isSlice) {
+            seenSlice = true;
+            lastSliceIndex = index;
+        }
+    }
+    if ((seenEos || seenEob) && !lastSliceIndex && orderingError.empty()) {
+        orderingError = "HEVC end of sequence or bitstream without a slice is unsupported";
+    }
+    if (!orderingError.empty()) {
+        if (metadata.unsupported.empty()) metadata.unsupported = std::move(orderingError);
+        return metadata;
     }
     for (std::size_t index = 0; index < starts.size(); ++index) {
         const auto start = starts[index];

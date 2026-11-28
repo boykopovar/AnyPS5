@@ -450,7 +450,7 @@ void GuestMetadataWrites() {
     }
 }
 
-void CheckProjectionWrites(Decoder& decoder);
+void CheckProjectionWrites(Decoder& decoder, bool expectUnsupported = false);
 
 void CheckCommon(const Videodec2Hevc::PictureInfo& info, unsigned bitDepth) {
     Require(info.width == 64 && info.height == 40, "coded luma dimensions");
@@ -641,7 +641,7 @@ std::vector<std::uint8_t> Replacement(unsigned wanted) {
     return {};
 }
 
-void CheckProjectionWrites(Decoder& decoder) {
+void CheckProjectionWrites(Decoder& decoder, bool expectUnsupported) {
     Videodec2Hevc::PictureInfo info;
     std::memset(&info, 0x6b, sizeof(info));
     info.thisSize = sizeof(info);
@@ -649,6 +649,7 @@ void CheckProjectionWrites(Decoder& decoder) {
     std::memcpy(before.data(), &info, sizeof(info));
     std::memset(before.data() + 8, 0, 4);
     const bool completed = TryProjection([&] { sceVideodec2GetHevcPictureInfo_nid_postfix(&decoder.output, &info); });
+    if (expectUnsupported) Require(!completed, "expected unsupported metadata projection");
     if (!completed) Require(std::memcmp(before.data(), &info, sizeof(info)) == 0, "ambiguous replacement query changed more than validity word");
 }
 
@@ -743,19 +744,21 @@ void MalformedParameterHistory() {
     decoder.Decode(original, 70);
     Require(sceVideodec2Flush_nid_postfix(decoder.handle, &decoder.frame, &decoder.output) == 0 && decoder.output.isValid, "initial malformed-history picture");
     Require(decoder.Query().attachedData == 3070, "initial malformed-history metadata");
-    std::vector<std::uint8_t> malformed{0, 0, 1, 0x44, 1, 0x80};
-    malformed.insert(malformed.end(), original.begin(), original.end());
+    Require(original.size() >= 7 && ((original[4] >> 1) & 63) == 35, "HevcMain10Stream must start with AUD");
+    const std::array<std::uint8_t, 6> truncatedPps{0, 0, 1, 0x44, 1, 0x80};
+    std::vector<std::uint8_t> malformed = original;
+    malformed.insert(malformed.begin() + 7, truncatedPps.begin(), truncatedPps.end());
     bool failed = false;
     try { decoder.Decode(malformed, 71); }
     catch (const std::runtime_error&) { failed = true; }
     if (!failed) {
         Require(sceVideodec2Flush_nid_postfix(decoder.handle, &decoder.frame, &decoder.output) == 0 && decoder.output.isValid, "malformed parameter output");
-        CheckProjectionWrites(decoder);
+        CheckProjectionWrites(decoder, true);
     }
     Require(sceVideodec2Reset_nid_postfix(decoder.handle) == 0, "reset malformed parameter state");
     decoder.Decode(original, 72);
     Require(sceVideodec2Flush_nid_postfix(decoder.handle, &decoder.frame, &decoder.output) == 0 && decoder.output.isValid, "clean decode after malformed parameter reset");
-    CheckProjectionWrites(decoder);
+    CheckProjectionWrites(decoder, true);
 }
 
 void TransferAssociation() {
@@ -934,6 +937,103 @@ void InvalidSeiAndSliceSyntax() {
     }
 }
 
+void InvalidNalOrder() {
+    const auto splitUnits = [](std::span<const std::uint8_t> stream) {
+        std::vector<std::size_t> starts;
+        for (std::size_t index = 0; index + 2 < stream.size(); ++index) {
+            if (stream[index] == 0 && stream[index + 1] == 0 && stream[index + 2] == 1) {
+                starts.push_back(index + 3);
+                index += 2;
+            }
+        }
+        std::vector<std::vector<std::uint8_t>> units;
+        for (std::size_t index = 0; index < starts.size(); ++index) {
+            const auto start = starts[index];
+            auto end = index + 1 == starts.size() ? stream.size() : starts[index + 1] - 3;
+            while (end > start && stream[end - 1] == 0) --end;
+            std::vector<std::uint8_t> unit{0, 0, 1};
+            unit.insert(unit.end(), stream.begin() + static_cast<std::ptrdiff_t>(start), stream.begin() + static_cast<std::ptrdiff_t>(end));
+            units.push_back(std::move(unit));
+        }
+        return units;
+    };
+    const auto joinUnits = [](const std::vector<std::span<const std::uint8_t>>& parts) {
+        std::vector<std::uint8_t> combined;
+        for (const auto part : parts) combined.insert(combined.end(), part.begin(), part.end());
+        return combined;
+    };
+    const auto rich = splitUnits(HevcMetadataFixture::Rich);
+    const auto main10 = splitUnits(HevcFixture::HevcMain10Stream);
+    Require(rich.size() == 5 && main10.size() == 5, "fixture NAL unit split");
+    auto secondSlice = rich[4];
+    Require(secondSlice.size() >= 6, "rich second slice payload");
+    secondSlice[5] &= 0x7fu;
+    const std::array<std::uint8_t, 6> aud{0, 0, 1, 0x46, 0x01, 0x10};
+    const std::array<std::uint8_t, 5> eos{0, 0, 1, 0x48, 0x01};
+    const std::array<std::uint8_t, 5> eob{0, 0, 1, 0x4a, 0x01};
+    const std::array<std::uint8_t, 6> filler{0, 0, 1, 0x4c, 0x01, 0x80};
+    const std::array<std::uint8_t, 6> trailSlice{0, 0, 1, 0x02, 0x01, 0xc0};
+    const auto expectRejectedPreservesState = [&](std::span<const std::uint8_t> invalidUnit, const char* message) {
+        Videodec2Hevc::State state;
+        const auto baseline = Videodec2Hevc::Parse_nid_no_patch(state, HevcMetadataFixture::Rich);
+        Require(baseline.unsupported.empty() && state.vps[0] && state.sps[0] && state.pps[0], "baseline rich picture");
+        const auto vpsBefore = state.vps[0]->bytes;
+        const auto spsBefore = state.sps[0]->bytes;
+        const auto ppsBefore = state.pps[0]->bytes;
+        const auto rejected = Videodec2Hevc::Parse_nid_no_patch(state, invalidUnit);
+        Require(!rejected.unsupported.empty(), message);
+        Require(state.vps[0] && state.vps[0]->bytes == vpsBefore && state.vps[0]->unsupported.empty(), "rejected access unit corrupted VPS state");
+        Require(state.sps[0] && state.sps[0]->bytes == spsBefore && state.sps[0]->unsupported.empty(), "rejected access unit corrupted SPS state");
+        Require(state.pps[0] && state.pps[0]->bytes == ppsBefore && state.pps[0]->unsupported.empty(), "rejected access unit corrupted PPS state");
+        Require(!state.afterEnd && state.hadPicture && state.unsupported.empty(), "rejected access unit corrupted sequence state");
+        const auto followUp = Videodec2Hevc::Parse_nid_no_patch(state, trailSlice);
+        Require(followUp.unsupported.empty() && !followUp.info.irap && followUp.info.width == 64 && followUp.info.height == 48, "valid non-IRAP picture failed after rejected out-of-order access unit");
+    };
+    for (const std::size_t paramIndex : {std::size_t{1}, std::size_t{2}, std::size_t{3}}) {
+        const auto afterSlice = joinUnits({rich[0], rich[1], rich[2], rich[3], rich[4], main10[paramIndex]});
+        expectRejectedPreservesState(afterSlice, "parameter set after slice was accepted");
+        const auto betweenSlices = joinUnits({rich[0], rich[1], rich[2], rich[3], rich[4], main10[paramIndex], secondSlice});
+        expectRejectedPreservesState(betweenSlices, "parameter set between slices was accepted");
+    }
+    expectRejectedPreservesState(joinUnits({aud, aud, main10[1], main10[2], main10[3], main10[4]}), "duplicate AUD was accepted");
+    expectRejectedPreservesState(joinUnits({main10[1], aud, main10[2], main10[3], main10[4]}), "non-leading AUD was accepted");
+    expectRejectedPreservesState(joinUnits({main10[0], main10[1], main10[2], main10[3], main10[4], aud}), "trailing AUD after slice was accepted");
+    expectRejectedPreservesState(joinUnits({main10[0], main10[1], main10[2], main10[3], eos, main10[4]}), "EOS before slice was accepted");
+    expectRejectedPreservesState(joinUnits({rich[0], rich[1], rich[2], rich[3], rich[4], eos, secondSlice}), "EOS before last slice was accepted");
+    expectRejectedPreservesState(joinUnits({main10[0], main10[1], main10[2], main10[3], eob, main10[4]}), "EOB before slice was accepted");
+    expectRejectedPreservesState(joinUnits({rich[0], rich[1], rich[2], rich[3], rich[4], eob, secondSlice}), "EOB before last slice was accepted");
+    expectRejectedPreservesState(joinUnits({main10[0], main10[1], main10[2], main10[3], main10[4], eob, eos}), "EOB before EOS was accepted");
+    expectRejectedPreservesState(joinUnits({main10[0], main10[1], main10[2], main10[3], main10[4], eos, eos}), "duplicate EOS was accepted");
+    expectRejectedPreservesState(joinUnits({main10[0], main10[1], main10[2], main10[3], main10[4], eob, eob}), "duplicate EOB was accepted");
+    expectRejectedPreservesState(joinUnits({main10[0], main10[1], main10[2], main10[3], main10[4], eos, filler}), "NAL unit after EOS other than EOB was accepted");
+    expectRejectedPreservesState(eos, "pictureless EOS was accepted");
+    expectRejectedPreservesState(eob, "pictureless EOB was accepted");
+    {
+        Videodec2Hevc::State state;
+        const auto withEos = joinUnits({rich[0], rich[1], rich[2], rich[3], rich[4], eos});
+        const auto metaEos = Videodec2Hevc::Parse_nid_no_patch(state, withEos);
+        Require(metaEos.unsupported.empty() && metaEos.info.endSequencePresent == 1 && metaEos.info.endStreamPresent == 0 && state.afterEnd, "valid trailing EOS positive control");
+        Require(!Videodec2Hevc::Parse_nid_no_patch(state, trailSlice).unsupported.empty(), "non-IRAP after valid EOS must be rejected");
+        const auto withBoth = joinUnits({rich[0], rich[1], rich[2], rich[3], rich[4], eos, eob});
+        const auto metaBoth = Videodec2Hevc::Parse_nid_no_patch(state, withBoth);
+        Require(metaBoth.unsupported.empty() && metaBoth.info.endSequencePresent == 1 && metaBoth.info.endStreamPresent == 1 && state.afterEnd, "valid trailing EOS+EOB positive control");
+        const auto withEob = joinUnits({rich[0], rich[1], rich[2], rich[3], rich[4], eob});
+        const auto metaEob = Videodec2Hevc::Parse_nid_no_patch(state, withEob);
+        Require(metaEob.unsupported.empty() && metaEob.info.endSequencePresent == 0 && metaEob.info.endStreamPresent == 1 && state.afterEnd, "valid trailing EOB positive control");
+    }
+    const std::array<std::uint8_t, 6> pps1RefSps1{0, 0, 1, 0x44, 0x01, 0x4a};
+    const std::array<std::uint8_t, 6> sliceRefPps1{0, 0, 1, 0x02, 0x01, 0xa8};
+    for (const auto& endNal : {eos, eob}) {
+        Videodec2Hevc::State state;
+        const auto baseline = Videodec2Hevc::Parse_nid_no_patch(state, HevcMetadataFixture::Rich);
+        Require(baseline.unsupported.empty() && !state.afterEnd, "baseline picture before unavailable-SPS end unit");
+        const auto missingSpsWithEnd = Videodec2Hevc::Parse_nid_no_patch(state, joinUnits({pps1RefSps1, sliceRefPps1, endNal}));
+        Require(!missingSpsWithEnd.unsupported.empty() && state.afterEnd, "slice with unavailable SPS and EOS/EOB must advance afterEnd");
+        const auto followUp = Videodec2Hevc::Parse_nid_no_patch(state, trailSlice);
+        Require(!followUp.unsupported.empty(), "non-IRAP after unavailable-SPS slice with EOS/EOB must be rejected");
+    }
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -955,4 +1055,5 @@ int main(int argc, char** argv) {
     MalformedParameterHistory();
     TransferAssociation();
     InvalidSeiAndSliceSyntax();
+    InvalidNalOrder();
 }
