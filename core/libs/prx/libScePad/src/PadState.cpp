@@ -855,6 +855,7 @@ extern "C" void PadSubmitHapticFrames_nid_postfix(const float* left, const float
     if (left == nullptr || right == nullptr || !hapticStreamOpen.load()) return;
     {
         std::lock_guard lock(hapticMutex);
+        if (!hapticStreamOpen.load()) return;
         haptics.Push(left, right, stride, frames, rate, Pad::RumblePercent());
     }
     hapticReady.notify_all();
@@ -864,7 +865,7 @@ extern "C" bool PadWaitTakeHapticBlock_nid_postfix(std::int8_t* block, std::uint
     if (block == nullptr) return false;
     std::unique_lock lock(hapticMutex);
     hapticReady.wait_for(lock, std::chrono::milliseconds(timeoutMs), [] {
-        return !hapticStreamOpen.load() || haptics.Frames() >= PadHapticBuffer::BlockFrames * 2;
+        return !hapticStreamOpen.load() || haptics.Frames() >= PadHapticBuffer::BlockFrames;
     });
     if (!hapticStreamOpen.load()) return false;
     return haptics.Take(std::span<std::int8_t, PadHapticBuffer::BlockFrames * 2>(block, PadHapticBuffer::BlockFrames * 2));
