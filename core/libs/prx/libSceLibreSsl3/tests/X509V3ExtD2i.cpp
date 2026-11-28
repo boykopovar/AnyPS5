@@ -190,6 +190,12 @@ void TestOctetStrings() {
     Require(value != nullptr && value->length == 0 && value->type == 4);
     Require(value->data != nullptr && value->data[0] == 0);
     FreeOctetString(value);
+    Fixture longPadded(82, {0x04, 0x89, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x01, 0x02, 0x03});
+    value = static_cast<Asn1String*>(X509V3_EXT_d2i_nid_postfix(&longPadded.extension));
+    Require(value != nullptr && value->length == 3 && value->type == 4 && value->flags == 0);
+    Require(value->data[0] == 1 && value->data[1] == 2 && value->data[2] == 3 && value->data[3] == 0);
+    FreeOctetString(value);
+    RequireQueue({});
 }
 
 void TestIntegers() {
@@ -349,7 +355,7 @@ void TestAuthorityKeyIssuer() {
     Require(id && id->keyId && id->serial && id->issuer);
     Require(ASN1_INTEGER_get_nid_postfix(id->serial) == 42);
     Require(sk_num_nid_postfix(id->issuer) == 6);
-    const auto issuerName = [id](int index, int type) {
+    const auto issuerName = [&id](int index, int type) {
         auto* name = static_cast<LibreSslGeneralName*>(sk_value_nid_postfix(id->issuer, index));
         Require(name && name->type == type && name->value);
         return name->value;
@@ -375,6 +381,41 @@ void TestAuthorityKeyIssuer() {
     FreeAuthorityKeyId(id);
     Require(allocations.empty());
     RequireQueue({});
+
+    Fixture constructedEmptyDns(90, {0x30, 0x04, 0xa1, 0x02, 0xa2, 0x00});
+    id = static_cast<AuthorityKeyId*>(X509V3_EXT_d2i_nid_postfix(&constructedEmptyDns.extension));
+    Require(id != nullptr && id->keyId == nullptr && id->serial == nullptr && id->issuer != nullptr);
+    Require(sk_num_nid_postfix(id->issuer) == 1);
+    const auto* emptyDns = static_cast<const Asn1String*>(issuerName(0, 2));
+    Require(emptyDns->type == 22 && emptyDns->length == 0 && emptyDns->data[0] == 0);
+    FreeAuthorityKeyId(id);
+    Require(allocations.empty());
+    RequireQueue({});
+
+    for (const auto bytes : std::initializer_list<std::initializer_list<unsigned char>>{
+             {0x30, 0x09, 0xa1, 0x07, 0xa2, 0x05, 0x04, 0x03, 'a', '.', 'b'},
+             {0x30, 0x0b, 0xa1, 0x09, 0xa2, 0x80, 0x04, 0x03, 'a', '.', 'b', 0x00, 0x00}}) {
+        Fixture constructedDns(90, bytes);
+        id = static_cast<AuthorityKeyId*>(X509V3_EXT_d2i_nid_postfix(&constructedDns.extension));
+        Require(id != nullptr && id->issuer != nullptr && sk_num_nid_postfix(id->issuer) == 1);
+        const auto* constructedValue = static_cast<const Asn1String*>(issuerName(0, 2));
+        Require(constructedValue->type == 22 && constructedValue->length == 3 &&
+            std::memcmp(constructedValue->data, "a.b", 3) == 0 && constructedValue->data[3] == 0);
+        FreeAuthorityKeyId(id);
+        Require(allocations.empty());
+        RequireQueue({});
+    }
+
+    for (const auto& [bytes, queue] : {
+             std::pair<std::initializer_list<unsigned char>, std::initializer_list<int>>{
+                 {0x30, 0x06, 0xa1, 0x04, 0xa2, 0x02, 0x00, 0x00}, {159, 58, 58, 58}},
+             std::pair<std::initializer_list<unsigned char>, std::initializer_list<int>>{
+                 {0x30, 0x04, 0xa1, 0x02, 0xa2, 0x80}, {137, 58, 58, 58}}}) {
+        Fixture malformedConstructed(90, bytes);
+        Require(X509V3_EXT_d2i_nid_postfix(&malformedConstructed.extension) == nullptr);
+        Require(allocations.empty());
+        RequireQueue(queue);
+    }
 
     for (const auto bytes : std::initializer_list<std::initializer_list<unsigned char>>{
              {0x30, 0x02, 0x81, 0x00},
@@ -977,8 +1018,52 @@ void TestGeneralNames() {
     FreeGeneralNames(names);
     Require(allocations.empty());
 
+    names = DecodeGeneralNames(85, FromHex("3002a200"));
+    Require(sk_num_nid_postfix(names) == 1);
+    RequireString(GeneralNameAt(names, 0, 2)->value, 22, {});
+    FreeGeneralNames(names);
+    for (const std::string_view hex : {"3007a2050403612e62", "300ba20924040402612e040162",
+             "3009a2800403612e620000"}) {
+        names = DecodeGeneralNames(85, FromHex(hex));
+        Require(sk_num_nid_postfix(names) == 1);
+        RequireString(GeneralNameAt(names, 0, 2)->value, 22, {'a', '.', 'b'});
+        FreeGeneralNames(names);
+    }
+    names = DecodeGeneralNames(85, FromHex("3007a2800000820178"));
+    Require(sk_num_nid_postfix(names) == 2);
+    RequireString(GeneralNameAt(names, 0, 2)->value, 22, {});
+    RequireString(GeneralNameAt(names, 1, 2)->value, 22, {'x'});
+    FreeGeneralNames(names);
+    names = DecodeGeneralNames(85, FromHex("3008a203040161820162"));
+    Require(sk_num_nid_postfix(names) == 2);
+    RequireString(GeneralNameAt(names, 0, 2)->value, 22, {'a'});
+    RequireString(GeneralNameAt(names, 1, 2)->value, 22, {'b'});
+    FreeGeneralNames(names);
+    names = DecodeGeneralNames(85, FromHex("300da2802404040261620401630000"));
+    Require(sk_num_nid_postfix(names) == 1);
+    RequireString(GeneralNameAt(names, 0, 2)->value, 22, {'a', 'b', 'c'});
+    FreeGeneralNames(names);
+    names = DecodeGeneralNames(85, FromHex("3004a1028000"));
+    Require(sk_num_nid_postfix(names) == 1);
+    RequireString(GeneralNameAt(names, 0, 1)->value, 22, {});
+    FreeGeneralNames(names);
+    names = DecodeGeneralNames(85, FromHex("3004a7028000"));
+    Require(sk_num_nid_postfix(names) == 1);
+    RequireString(GeneralNameAt(names, 0, 7)->value, 4, {});
+    FreeGeneralNames(names);
+    names = DecodeGeneralNames(85, FromHex("300ea20c240a24082406240424020400"));
+    Require(sk_num_nid_postfix(names) == 1);
+    RequireString(GeneralNameAt(names, 0, 2)->value, 22, {});
+    FreeGeneralNames(names);
+    names = DecodeGeneralNames(85, FromHex("3089000000000000000003820161"));
+    Require(sk_num_nid_postfix(names) == 1);
+    RequireString(GeneralNameAt(names, 0, 2)->value, 22, {'a'});
+    FreeGeneralNames(names);
+    Require(allocations.empty());
+
     RequireMalformed(85, {
         {{}, {102, 58}},
+        {FromHex("30ff"), {102, 58}},
         {FromHex("3100"), {168, 58}},
         {FromHex("0000"), {168, 58}},
         {FromHex("30020000"), {159}},
@@ -994,6 +1079,12 @@ void TestGeneralNames() {
         {FromHex("300281ff"), {102, 58, 58, 58, 58}},
         {FromHex("30028180"), {102, 58, 58, 58, 58}},
         {FromHex("30028201"), {155, 58, 58, 58, 58}},
+        {FromHex("3004a2020000"), {159, 58, 58, 58}},
+        {FromHex("3002a280"), {137, 58, 58, 58}},
+        {FromHex("3005a203040561"), {155, 58, 58, 58, 58}},
+        {FromHex("3008a206240304026162"), {155, 58, 58, 58, 58}},
+        {FromHex("3003a2011f"), {102, 58, 58, 58, 58}},
+        {FromHex("3010a20e240c240a24082406240424020400"), {197, 58, 58, 58}},
         {FromHex("3003830161"), {156, 58, 58, 58}},
         {FromHex("30028800"), {216, 58, 58, 58}},
         {FromHex("300488028001"), {216, 58, 58, 58}},
@@ -1022,8 +1113,6 @@ void TestGeneralNames() {
     RequireUnmodelled(85, {
         FromHex("300f810178a00a06032a0304a003160178"),
         FromHex("3008a506a1040c026162"),
-        FromHex("3004a1028000"),
-        FromHex("3004a7028000"),
         FromHex("3004a3800000"),
         FromHex("3004a4800000"),
         FromHex("30800000"),
@@ -1137,6 +1226,37 @@ void TestAuthorityInfoAccess() {
     FreeAuthorityInfoAccess(info);
     Require(allocations.empty());
 
+    for (const int nid : {177, 398}) {
+        info = DecodeAuthorityInfoAccess(nid, FromHex("300a300806022a03a1028000"));
+        Require(sk_num_nid_postfix(info) == 1);
+        RequireString(AccessDescriptionAt(info, 0, privateMethod, 0, 1)->location->value, 22, {});
+        FreeAuthorityInfoAccess(info);
+        Require(allocations.empty());
+    }
+
+    info = DecodeAuthorityInfoAccess(177, FromHex("301a300e06082b0601050507300186026162300806022a03a1028000"));
+    Require(sk_num_nid_postfix(info) == 2);
+    RequireString(AccessDescriptionAt(info, 0, ocspMethod, 178, 6)->location->value, 22, {'a', 'b'});
+    RequireString(AccessDescriptionAt(info, 1, privateMethod, 0, 1)->location->value, 22, {});
+    FreeAuthorityInfoAccess(info);
+    Require(allocations.empty());
+
+    for (const std::string_view hex : {
+             "3017301506082b06010505073001a609240404026162040163",
+             "3017301506082b06010505073001a680040261620401630000"}) {
+        info = DecodeAuthorityInfoAccess(177, FromHex(hex));
+        Require(sk_num_nid_postfix(info) == 1);
+        RequireString(AccessDescriptionAt(info, 0, ocspMethod, 178, 6)->location->value, 22, {'a', 'b', 'c'});
+        FreeAuthorityInfoAccess(info);
+        Require(allocations.empty());
+    }
+
+    info = DecodeAuthorityInfoAccess(177, FromHex("3089000000000000000010300e06082b0601050507300186026162"));
+    Require(sk_num_nid_postfix(info) == 1);
+    RequireString(AccessDescriptionAt(info, 0, ocspMethod, 178, 6)->location->value, 22, {'a', 'b'});
+    FreeAuthorityInfoAccess(info);
+    Require(allocations.empty());
+
     static unsigned char aiaOid[] = {0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x01, 0x01};
     Fixture resolvedAia(0, aiaOid, sizeof(aiaOid), {0x30, 0x10, 0x30, 0x0e, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07,
         0x30, 0x01, 0x86, 0x02, 'a', 'b'});
@@ -1230,9 +1350,7 @@ void TestAuthorityInfoAccess() {
         FromHex("300430800000"),
         FromHex("3012301006022a03a00a06032a0304a003160178"),
         FromHex("300e300c06022a03a506a1040c026162"),
-        FromHex("300a300806022a03a1028000"),
         FromHex("300a300806022a03a3800000"),
-        FromHex("301a300e06082b0601050507300186026162300806022a03a1028000"),
     };
     RequireUnmodelled(177, unmodelled);
     RequireUnmodelled(398, unmodelled);
@@ -1853,6 +1971,12 @@ void TestMalformed() {
     RequireQueue({220});
     Fixture badLength(83, {0x03, 0xff});
     Require(X509V3_EXT_d2i_nid_postfix(&badLength.extension) == nullptr);
+    RequireQueue({102, 58});
+    Fixture reservedLength(82, {0x04, 0xff, 0x01});
+    Require(X509V3_EXT_d2i_nid_postfix(&reservedLength.extension) == nullptr);
+    RequireQueue({102, 58});
+    Fixture overflowLength(82, {0x04, 0x89, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01});
+    Require(X509V3_EXT_d2i_nid_postfix(&overflowLength.extension) == nullptr);
     RequireQueue({102, 58});
     Fixture shortIdentifier(83, {0x1f});
     Require(X509V3_EXT_d2i_nid_postfix(&shortIdentifier.extension) == nullptr);
