@@ -378,6 +378,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     const auto codeOffset = static_cast<std::size_t>((address - snapshot.codeAddress) / sizeof(std::uint32_t));
     std::array<std::uint32_t, 5> resolved{};
     ResolvedDispatch ahead;
+    std::uint64_t pipelinePrebuild = 0;
     bool fromAhead = false;
     auto& groupStats = groupCaptureStats();
     if (!resolving) {
@@ -652,6 +653,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         captured = std::move(ahead.captured);
         liveWords = std::move(ahead.liveWords);
         capture = std::move(ahead.capture);
+        pipelinePrebuild = ahead.pipelinePrebuild;
         dataHit = ahead.dataHit;
         cached = ahead.cached;
         validated = ahead.validated;
@@ -694,7 +696,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         static const bool dumpShaders = std::getenv("APS5_DUMP_SHADERS") != nullptr;
         try {
             const BackgroundWaitScope backgroundWait;
-            auto invocation = InvocationFor(snapshot, codeOffset, request, AsyncDrawCompile(), &linking);
+            auto invocation = InvocationFor(snapshot, codeOffset, request, false, &linking);
             timing.Mark("prepared_invocation");
 
             const auto waitedBefore = traceCapSync() ? Graphics::Recorder::ThreadWaitedMs() : 0.0;
@@ -713,7 +715,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
 
 
             timing.Mark("capture_resources");
-            compiledResult = MaterializeInBackground(invocation, capture, request.context.memory, address);
+            compiledResult = MaterializeInBackground(invocation, capture, request.context.memory, address, true);
             timing.Mark("materialize");
             if (AsyncDrawCompile()) NoteDispatchRecorded(address);
             if (profile && compiledResult->cacheHit) cacheHits.fetch_add(1, std::memory_order_relaxed);
@@ -782,7 +784,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         ++groupStats.resolved;
         if (cached) ++groupStats.resolvedHits;
         if (!cached && compiledResult != nullptr && !localDevice->HasComputePipeline(*compiledResult)) {
-            SubmitComputePrebuild([localDevice, compiledResult, address] {
+            parked.pipelinePrebuild = SubmitComputePrebuild([localDevice, compiledResult, address] {
                 try { localDevice->PrebuildComputePipeline(*compiledResult, address); } catch (const std::exception&) {}
             });
         }
@@ -793,7 +795,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         const auto ahead = localDevice->ComputePipelineAhead(*compiledResult);
         if (ahead == VulkanDevice::PipelineAhead::Start) {
             try {
-                SubmitComputePrebuild([localDevice, compiledResult, address] {
+                pipelinePrebuild = SubmitComputePrebuild([localDevice, compiledResult, address] {
                     try { localDevice->PrebuildComputePipeline(*compiledResult, address); } catch (...) {}
                 });
             } catch (...) {
@@ -802,10 +804,12 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
             }
         }
         if (ahead == VulkanDevice::PipelineAhead::Start || ahead == VulkanDevice::PipelineAhead::Building) {
-            if (profile) NotePipelineSkip(address, compiledResult->spirv.size());
-            return;
+            if (pipelinePrebuild != 0) AwaitComputePrebuild(pipelinePrebuild);
+            else AwaitLibraryPrebuilds();
+            if (profile && localDevice->HasComputePipeline(*compiledResult)) NotePipelineReady(address);
+        } else if (profile) {
+            NotePipelineReady(address);
         }
-        if (profile) NotePipelineReady(address);
     }
 
     if (recordQueuedLabelsAfterCapture(submission.queue, captured)) {

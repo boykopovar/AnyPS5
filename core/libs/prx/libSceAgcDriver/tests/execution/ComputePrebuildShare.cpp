@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
@@ -80,12 +81,52 @@ void CheckLibraryPrebuildRunsBesideBlockedComputePrebuilds() {
     Require(gate->most == limit, std::to_string(gate->most) + " compute prebuilds ran at once, more than " + std::to_string(limit));
 }
 
+void CheckAwaitComputePrebuildLeavesOtherPrebuildsRunning() {
+    const auto gate = std::make_shared<Gate>();
+    const OpenOnExit release{gate};
+    const auto blockerStarted = std::make_shared<std::atomic<bool>>(false);
+    AgcDriver::DriverDetail::SubmitComputePrebuild([gate, blockerStarted] {
+        {
+            std::lock_guard lock(gate->mutex);
+            blockerStarted->store(true);
+        }
+        gate->changed.notify_all();
+        std::unique_lock lock(gate->mutex);
+        gate->changed.wait(lock, [&] { return gate->open; });
+    });
+    {
+        std::unique_lock lock(gate->mutex);
+        Require(gate->changed.wait_for(lock, std::chrono::seconds(10), [&] { return blockerStarted->load(); }), "the blocking prebuild did not start");
+    }
+    const auto targetRan = std::make_shared<std::atomic<bool>>(false);
+    const auto token = AgcDriver::DriverDetail::SubmitComputePrebuild([targetRan] { targetRan->store(true); });
+    const auto awaited = std::make_shared<std::atomic<bool>>(false);
+    std::thread waiter([token, awaited] {
+        AgcDriver::DriverDetail::AwaitComputePrebuild(token);
+        awaited->store(true);
+    });
+    bool done = false;
+    for (int attempt = 0; attempt < 500 && !done; ++attempt) {
+        done = awaited->load();
+        if (!done) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    {
+        std::lock_guard lock(gate->mutex);
+        gate->open = true;
+    }
+    gate->changed.notify_all();
+    waiter.join();
+    Require(targetRan->load(), "the awaited compute prebuild did not run");
+    Require(done, "AwaitComputePrebuild waited for an unrelated prebuild");
+}
+
 }
 
 int main() {
     try {
         AgcDriver::DriverDetail::Driver::Get();
         CheckLibraryPrebuildRunsBesideBlockedComputePrebuilds();
+        CheckAwaitComputePrebuildLeavesOtherPrebuildsRunning();
         AgcDriver::DriverDetail::CloseRegistrationPreparation();
         std::puts("compute prebuild share tests passed");
         return 0;
