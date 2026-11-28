@@ -759,7 +759,11 @@ private:
             while (resIt != residentRuns.end() && resIt->second.end <= cursor) ++resIt;
             if (resIt != residentRuns.end() && resIt->first <= cursor) {
                 flushClean();
-                if (!watchResident) return false;
+                if (!watchResident) {
+                    if (!skipRefused) return false;
+                    cursor = std::min(end, resIt->second.end);
+                    continue;
+                }
                 const auto available = capacity - *count;
                 if (available == 0) return true;
                 const auto stop = std::min({cleanLimit, resIt->second.end, (cursor & ~std::uintptr_t{4095}) + available * 4096});
@@ -886,7 +890,11 @@ private:
                 const bool committed = !verifyDirect() || committedPrivate(cursor, stop);
                 if (collectOwnedWrites(clear ? WRITE_WATCH_FLAG_RESET : 0, reinterpret_cast<void*>(cursor), stop - cursor, pages + *count, &available, &granularity) != 0) {
                     const auto memory = query(cursor);
-                    if (memory.State != MEM_COMMIT || memory.Type != MEM_PRIVATE) return false;
+                    if (memory.State != MEM_COMMIT || memory.Type != MEM_PRIVATE) {
+                        if (!skipRefused) return false;
+                        cursor = std::min(stop, reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize);
+                        continue;
+                    }
                     fail("collect private guest writes");
                 }
                 if (!committed) staleProof(cursor, stop);

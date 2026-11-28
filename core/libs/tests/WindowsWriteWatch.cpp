@@ -246,6 +246,55 @@ void CheckHostStoresKeepCollectedPages() {
     VirtualFree(memory, 0, MEM_RELEASE);
 }
 
+void CheckRefusedCollectPassesReleasedAllocations() {
+    auto& mappings = Mappings::Get();
+    auto* memory = static_cast<unsigned char*>(mappings.Reserve(nullptr, 2 * Bytes));
+    Require(memory != nullptr, "private reservation failed");
+    mappings.Commit(memory, 2 * Bytes, PAGE_READWRITE, Bytes, true);
+    const auto address = reinterpret_cast<std::uintptr_t>(memory);
+    CollectPages(address, 2 * Bytes / Small, {.capacity = 32});
+    static_cast<volatile unsigned char*>(memory)[Bytes + 4 * Small] = 4;
+    static_cast<volatile unsigned char*>(memory)[Bytes + 5 * Small] = 5;
+    Require(VirtualFree(memory, 0, MEM_RELEASE) != 0, "cannot release the first private allocation behind the mappings");
+    std::array<void*, 32> found{};
+    std::size_t count = found.size();
+    Require(!mappings.Collect(address, 2 * Bytes, found.data(), &count, true), "a collect over a private allocation released behind the mappings succeeded");
+    count = found.size();
+    Require(mappings.Collect(address, 2 * Bytes, found.data(), &count, true, Collection::All, true), "a collect that skips refused pieces failed at a private allocation released behind the mappings");
+    Require(count == 2 && found[0] == memory + Bytes + 4 * Small && found[1] == memory + Bytes + 5 * Small, "a collect that skips refused pieces stopped at a private allocation released behind the mappings");
+    mappings.Reset(memory + Bytes, Bytes);
+    VirtualFree(memory + Bytes, 0, MEM_RELEASE);
+}
+
+void CheckRefusedCollectPassesUnwatchedResidentRuns() {
+    auto& mappings = Mappings::Get();
+    const auto pages = Bytes / Small;
+    HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, Bytes, nullptr);
+    HANDLE shared = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, Bytes, nullptr);
+    auto* memory = static_cast<unsigned char*>(mappings.Reserve(nullptr, 2 * Bytes));
+    Require(section && shared && memory, "cannot allocate unwatched resident test memory");
+    mappings.ForgetSection(section);
+    mappings.ForgetSection(shared);
+    mappings.Map(memory, Bytes, section, 0, PAGE_READWRITE, false, true);
+    mappings.Map(memory + Bytes, Bytes, shared, 0, PAGE_READWRITE);
+    const auto address = reinterpret_cast<std::uintptr_t>(memory);
+    std::array<void*, 32> buffer{};
+    std::size_t count = buffer.size();
+    Require(!mappings.Collect(address, 2 * Bytes, buffer.data(), &count, true), "a collect over an unwatched resident run was not refused");
+    count = buffer.size();
+    Require(mappings.Collect(address, 2 * Bytes, buffer.data(), &count, true, Collection::All, true), "a collect that skips refused pieces failed at an unwatched resident run");
+    Require(count == pages && buffer[0] == memory + Bytes && buffer[pages - 1] == memory + 2 * Bytes - Small, "a collect that skips refused pieces stopped at an unwatched resident run");
+    Require(CollectPages(address, 2 * pages, {.capacity = 32, .skipRefused = true}).empty(), "a collect that skips refused pieces reported a view twice");
+    mappings.Reset(memory + Bytes, Bytes);
+    mappings.Reset(memory, Bytes);
+    VirtualFree(memory, 2 * Bytes, MEM_RELEASE | MEM_COALESCE_PLACEHOLDERS);
+    VirtualFree(memory, 0, MEM_RELEASE);
+    mappings.ForgetSection(section);
+    mappings.ForgetSection(shared);
+    CloseHandle(section);
+    CloseHandle(shared);
+}
+
 void CheckHostStoreBesideComparedView() {
     HANDLE section = nullptr;
     {
@@ -1269,6 +1318,8 @@ int main(int argc, char** argv) {
         CheckKnownZeroFirstReads();
         CheckKnownZeroMarks();
         CheckResidentRunNoAccessTransitions();
+        CheckRefusedCollectPassesReleasedAllocations();
+        CheckRefusedCollectPassesUnwatchedResidentRuns();
         std::cout << "Windows deferred write-watch tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
