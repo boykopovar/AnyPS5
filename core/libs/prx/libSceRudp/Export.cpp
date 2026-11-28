@@ -173,6 +173,17 @@ struct RudpPollWaitRegistration {
     }
 };
 
+struct RudpAcceptWaitRegistration {
+    std::unique_lock<std::mutex>& lock;
+
+    ~RudpAcceptWaitRegistration() {
+        if (!lock.owns_lock()) {
+            lock.lock();
+        }
+        if (--g_accept_waiters == 0) g_accept_changed.NotifyAll();
+    }
+};
+
 bool valid_ctx(int ctx) {
     return g_ctx.count(ctx) != 0;
 }
@@ -708,8 +719,8 @@ int APS5_VABI sceRudpAccept(int ctxId, GuestRudpEventHandler handler, void* hand
         return RUDP_ERROR_WOULDBLOCK;
     }
     ++g_accept_waiters;
+    const RudpAcceptWaitRegistration registration{lk};
     g_accept_changed.Wait(lk, [ctxId] { return !g_inited || !valid_ctx(ctxId); });
-    if (--g_accept_waiters == 0) g_accept_changed.NotifyAll();
     return RUDP_ERROR_CANCELLED;
 }
 
