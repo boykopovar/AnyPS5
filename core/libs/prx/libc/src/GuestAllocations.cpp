@@ -750,6 +750,11 @@ Range GuestAllocationsFind_nid_postfix(void*, const void* pointer) {
     throw std::runtime_error("guest allocation is not registered");
 }
 
+std::size_t GuestAllocationsUsableSize_nid_no_patch(const void* pointer) {
+    std::lock_guard lock(registry().mutex);
+    return GuestAllocationsFind_nid_postfix(nullptr, pointer).bytes;
+}
+
 void GuestAllocationsRemove_nid_postfix(void* mutation, const void* pointer) {
     const auto range = GuestAllocationsFind_nid_postfix(mutation, pointer);
     GuestAllocationsRequireUnpinned_nid_postfix(mutation, pointer, range.bytes);

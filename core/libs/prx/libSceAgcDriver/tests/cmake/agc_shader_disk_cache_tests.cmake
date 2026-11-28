@@ -22,4 +22,21 @@ if(BUILD_TESTING)
         set_tests_properties(agc_shader_disk_cache_long_paths PROPERTIES TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+
+    if(Python3_Interpreter_FOUND)
+        set(housekeepingModes plain plain-long)
+        if(WIN32)
+            list(APPEND housekeepingModes extended extended-long device device-long)
+        endif()
+        foreach(housekeepingMode IN LISTS housekeepingModes)
+            set(housekeepingTest agc_shader_cache_housekeeping_${housekeepingMode})
+            add_test(NAME ${housekeepingTest} COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_shader_cache_housekeeping.py
+                $<TARGET_FILE:agc_shader_disk_cache_tests> ${housekeepingMode})
+            set_tests_properties(${housekeepingTest} PROPERTIES TIMEOUT 20)
+            if(WIN32)
+                set_tests_properties(${housekeepingTest} PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+            endif()
+        endforeach()
+    endif()
 endif()

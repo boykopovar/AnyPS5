@@ -126,7 +126,38 @@ test('Spanish diagnostics keep action, setting and type tokens', () => {
     assert.equal(diagnostic('es', 'Unexpected diagnostic'), 'Unexpected diagnostic');
 });
 
-test('every diagnostic of an invalid INI reads in Spanish', () => {
+test('German diagnostics keep action, setting and type tokens', () => {
+    assert.equal(diagnostic('de', 'Cross: Unknown or empty KEY value.'), 'Cross: Unbekannter oder leerer KEY-Wert.');
+    assert.equal(diagnostic('de', 'Cross: duplicate KEY:F will be omitted.'), 'Cross: die doppelte Eingabe KEY:F wird weggelassen.');
+    assert.equal(diagnostic('de', 'Cross cannot use WHEEL.'), 'Cross kann WHEEL nicht verwenden.');
+    assert.equal(diagnostic('de', 'MouseSensitivity must be a number greater than 0 and at most 10.'), 'MouseSensitivity muss eine Zahl größer als 0 und höchstens 10 sein.');
+    assert.equal(diagnostic('de', 'StickModifierScale must be a number from 0.05 to 1.'), 'StickModifierScale muss eine Zahl von 0.05 bis 1 sein.');
+    assert.equal(diagnostic('de', 'LeftStickDeadzone must be a whole percentage from 0 to 90.'), 'LeftStickDeadzone muss ein ganzzahliger Prozentwert von 0 bis 90 sein.');
+    assert.equal(diagnostic('de', 'MouseStickTarget must be LEFT or RIGHT.'), 'MouseStickTarget muss LEFT oder RIGHT sein.');
+    assert.equal(diagnostic('de', 'MadeUp: unknown input setting.'), 'MadeUp: unbekannte Eingabeeinstellung.');
+    assert.equal(diagnostic('de', 'SDLButton:a: expected a PlayStation button or None.'), 'SDLButton:a: PlayStation-Taste oder None erwartet.');
+    assert.equal(diagnostic('de', 'SDLButton:a is set more than once.'), 'SDLButton:a ist mehrfach gesetzt.');
+    assert.equal(diagnostic('de', "Unknown SDL controller button 'leftx'."), "Unbekannte SDL-Controllertaste 'leftx'.");
+    assert.equal(diagnostic('de', 'Binding: Unknown or empty action.'), 'Eingabe: Unbekannte oder leere Aktion.');
+    assert.equal(diagnostic('de', 'KEY:C controls TogglePerformanceOverlay and Circle (built-in).'), 'KEY:C steuert TogglePerformanceOverlay und Circle (Standard).');
+    assert.equal(diagnostic('de', 'Expected Action = TYPE:VALUE.'), 'Erwartetes Format: Action = TYPE:VALUE.');
+    assert.equal(diagnostic('de', 'Duplicate binding ignored.'), 'Doppelte Eingabe ignoriert.');
+    assert.equal(diagnostic('de', 'ToggleActions has an empty action name.'), 'ToggleActions enthält einen leeren Aktionsnamen.');
+    assert.equal(diagnostic('de', "ToggleActions: unknown action 'Jump'."), "ToggleActions: unbekannte Aktion 'Jump'.");
+    assert.equal(diagnostic('de', "ToggleActions only lists pad buttons, not 'LeftStickUp'."), "ToggleActions erlaubt nur Controller-Tasten, nicht 'LeftStickUp'.");
+    assert.equal(diagnostic('de', captureKey({key: 'Dead', code: 'BracketRight'}).error), 'Tottasten und Kompositionstasten sind nicht eindeutig. Wähle eine SDL-Taste aus der Liste.');
+    assert.equal(diagnostic('de', 'Unexpected diagnostic'), 'Unexpected diagnostic');
+});
+
+test('German supplies every interface message', () => {
+    for (const key of Object.keys(messages.en)) {
+        assert.equal(typeof messages.de[key], 'string', key);
+        assert.notEqual(messages.de[key].trim(), '', key);
+    }
+    for (const key of Object.keys(messages.de)) assert.ok(Object.hasOwn(messages.en, key), key);
+});
+
+test('every diagnostic of an invalid INI reads in Spanish and German', () => {
     const source = [
         'Cross = KEY:NotAKey', 'Jump = KEY:A', 'Cross = KEY:F', 'Cross = KEY:F', 'Circle = KEY:Q', 'Square = KEY:Q',
         'garbage line', 'Square = BOGUS:1', 'MouseSensitivity = 50', 'MouseCurve = 2', 'MouseCurve = 3',
@@ -137,10 +168,12 @@ test('every diagnostic of an invalid INI reads in Spanish', () => {
     const reported = [...errors, ...warnings].map(item => item.message);
     assert.ok(reported.length >= 14);
     const english = /\b(must|Unknown|unknown|cannot|duplicate|Duplicate|expected|Expected|controls|built-in|more than once|only lists|has an empty)\b/u;
-    for (const message of reported) {
-        const translated = diagnostic('es', message);
-        assert.notEqual(translated, message, message);
-        assert.doesNotMatch(translated, english, `${message} -> ${translated}`);
+    for (const code of ['es', 'de']) {
+        for (const message of reported) {
+            const translated = diagnostic(code, message);
+            assert.notEqual(translated, message, `${code}: ${message}`);
+            assert.doesNotMatch(translated, english, `${code}: ${message} -> ${translated}`);
+        }
     }
 });
 
@@ -150,8 +183,8 @@ test('inherited property names fall back to the original message', () => {
     }
 });
 
-test('Spanish and Portuguese translate the per-game profile field', () => {
-    for (const code of ['es', 'pt-BR']) {
+test('Spanish, Portuguese and German translate the per-game profile field', () => {
+    for (const code of ['es', 'pt-BR', 'de']) {
         for (const key of ['profileTitleId', 'profileTitleIdHelp', 'profileTitleIdError']) {
             assert.equal(typeof messages[code][key], 'string', `${code}: ${key}`);
             assert.notEqual(messages[code][key], messages.en[key], `${code}: ${key}`);

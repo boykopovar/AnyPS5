@@ -196,7 +196,7 @@ void TestCreate() {
     Require(PKCreateCodecFactory_nid_postfix(&factory, 0x0101) == 0);
     auto* codecs = static_cast<Jxr::CodecFactory*>(factory);
     void* created = nullptr;
-    Require(codecs->createCodec(&JxrGuest_IID_PKImageWmpEncode_nid_no_patch, &created) == 0 && created != nullptr);
+    Require(codecs->createCodec(&IID_PKImageWmpEncode_nid_no_patch, &created) == 0 && created != nullptr);
     auto* fromFactory = static_cast<Jxr::ImageEncode*>(created);
     Require(fromFactory->initialize == encoder->initialize && fromFactory->release == encoder->release);
     Require(fromFactory->transcode == encoder->transcode && fromFactory->wmp == 1);
@@ -212,7 +212,7 @@ void TestCreate() {
     Require(decoder->copy != base->copy && decoder->getColorContext != base->getColorContext);
     Require(decoder->getDescriptiveMetadata != base->getDescriptiveMetadata && decoder->release != base->release);
     void* decoded = nullptr;
-    Require(codecs->createCodec(&JxrGuest_IID_PKImageWmpDecode_nid_no_patch, &decoded) == 0 && decoded != nullptr);
+    Require(codecs->createCodec(&IID_PKImageWmpDecode_nid_no_patch, &decoded) == 0 && decoded != nullptr);
     Require(static_cast<Decoder*>(decoded)->copy == decoder->copy);
 
     Require(decoder->release(reinterpret_cast<Decoder**>(&decoded)) == 0 && decoded == nullptr);
@@ -261,7 +261,7 @@ std::vector<std::uint8_t> Encode(std::int32_t alpha, std::int32_t banded, bool m
     auto* encoder = CreateEncoder();
     Require(encoder->initialize(encoder, stream, parameters.data(), parameters.size()) == 0);
     Require(encoder->stream == stream);
-    const auto format = alpha ? JxrGuest_GUID_PKPixelFormat32bppBGRA_nid_no_patch : JxrGuest_GUID_PKPixelFormat24bppBGR_nid_no_patch;
+    const auto format = alpha ? GUID_PKPixelFormat32bppBGRA_nid_no_patch : GUID_PKPixelFormat24bppBGR_nid_no_patch;
     Require(encoder->setPixelFormat(encoder, format) == 0);
     Require(encoder->setSize(encoder, Width, Height) == 0);
     if (metadata) {
@@ -315,8 +315,8 @@ void TestDecode(std::vector<std::uint8_t> encoded, std::uint32_t bytesPerPixel, 
     Require(decoder->initialize(decoder, stream) == 0 && decoder->stream == stream);
     JxrGuestGuid format{};
     Require(decoder->getPixelFormat(decoder, &format) == 0);
-    const auto& expectedFormat = bytesPerPixel == 4 ? JxrGuest_GUID_PKPixelFormat32bppBGRA_nid_no_patch
-                                                    : JxrGuest_GUID_PKPixelFormat24bppBGR_nid_no_patch;
+    const auto& expectedFormat = bytesPerPixel == 4 ? GUID_PKPixelFormat32bppBGRA_nid_no_patch
+                                                    : GUID_PKPixelFormat24bppBGR_nid_no_patch;
     Require(std::memcmp(&format, &expectedFormat, sizeof(format)) == 0);
     std::int32_t width = 0;
     std::int32_t height = 0;
@@ -382,7 +382,7 @@ void TestCaption(std::vector<std::uint16_t> caption, bool banded, bool shortOnly
     auto* stream = MemoryStream(output, output.size());
     auto* encoder = CreateEncoder();
     Require(encoder->initialize(encoder, stream, parameters.data(), parameters.size()) == 0);
-    Require(encoder->setPixelFormat(encoder, JxrGuest_GUID_PKPixelFormat24bppBGR_nid_no_patch) == 0);
+    Require(encoder->setPixelFormat(encoder, GUID_PKPixelFormat24bppBGR_nid_no_patch) == 0);
     Require(encoder->setSize(encoder, Width, Height) == 0);
     Require(encoder->setDescriptiveMetadata(encoder, description.data()) == 0);
     const auto blocksWithCaption = liveBlocks;
@@ -489,7 +489,7 @@ void TestTranscode(std::vector<std::uint8_t> encoded, std::uint8_t alphaMode) {
 
     void* generic = nullptr;
     Require(PKImageDecode_Create_nid_postfix(&generic) == 0);
-    std::memcpy(static_cast<std::byte*>(generic) + 112, &JxrGuest_GUID_PKPixelFormat24bppBGR_nid_no_patch,
+    std::memcpy(static_cast<std::byte*>(generic) + 112, &GUID_PKPixelFormat24bppBGR_nid_no_patch,
                 sizeof(JxrGuestGuid));
     std::vector<std::uint8_t> unused(Capacity);
     auto* other = MemoryStream(unused, unused.size());
@@ -530,7 +530,7 @@ void TestRefusals() {
     auto* sequenceStream = MemoryStream(sequenceBuffer, sequenceBuffer.size());
     encoder = CreateEncoder();
     Require(encoder->initialize(encoder, sequenceStream, parameters.data(), parameters.size()) == 0);
-    Require(encoder->setPixelFormat(encoder, JxrGuest_GUID_PKPixelFormat24bppBGR_nid_no_patch) == 0);
+    Require(encoder->setPixelFormat(encoder, GUID_PKPixelFormat24bppBGR_nid_no_patch) == 0);
     Require(encoder->setSize(encoder, Width, Height) == 0);
     Require(encoder->writePixelsBandedBegin(encoder, nullptr) == 0);
     RequireThrow(std::logic_error, [&] { encoder->writePixelsBandedBegin(encoder, nullptr); });
@@ -571,7 +571,7 @@ void TestColorContextReplacementOom() {
     auto* stream = MemoryStream(output, output.size());
     auto* encoder = CreateEncoder();
     Require(encoder->initialize(encoder, stream, parameters.data(), parameters.size()) == 0);
-    Require(encoder->setPixelFormat(encoder, JxrGuest_GUID_PKPixelFormat24bppBGR_nid_no_patch) == 0);
+    Require(encoder->setPixelFormat(encoder, GUID_PKPixelFormat24bppBGR_nid_no_patch) == 0);
     Require(encoder->setSize(encoder, Width, Height) == 0);
 
     const auto blocksBeforeContext = liveBlocks;
