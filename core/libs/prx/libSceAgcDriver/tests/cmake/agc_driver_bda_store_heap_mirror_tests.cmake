@@ -17,6 +17,12 @@ if(BUILD_TESTING)
         set_tests_properties(agc_driver_bda_store_heap_mirror_store_pages PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test(NAME agc_driver_bda_store_heap_mirror_store_pages_outside_mutex COMMAND agc_driver_bda_store_heap_mirror_tests --store-pages-outside-mutex)
+    set_tests_properties(agc_driver_bda_store_heap_mirror_store_pages_outside_mutex PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
+    if(WIN32)
+        set_tests_properties(agc_driver_bda_store_heap_mirror_store_pages_outside_mutex PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test(NAME agc_driver_bda_store_heap_mirror_store_pages_default COMMAND agc_driver_bda_store_heap_mirror_tests --store-pages-default)
     set_tests_properties(agc_driver_bda_store_heap_mirror_store_pages_default PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
     if(WIN32)
