@@ -38,6 +38,13 @@ alignas(256) constexpr std::array<std::uint32_t, 9> BiasPixelCode{
     0x10040010, 0x06060300, 0x10060611, 0xf0940f08, 0x00610401, 0xbf8c3f70, 0xf800180f, 0x07060504, 0xbf810000,
 };
 
+constexpr std::array<std::uint32_t, 2> BiasSample{0xf0940f08u, 0x00610401u};
+constexpr std::array<std::uint32_t, 2> LevelZeroSample{0xf09c0f08u, 0x00610402u};
+constexpr std::array<std::uint32_t, 2> ImplicitSample{0xf0800f08u, 0x00610402u};
+constexpr std::array<std::uint32_t, 2> LodSample{0xf0900f08u, 0x00610402u};
+constexpr std::uint32_t MoveBiasToV1 = 0x7e020212u;
+constexpr std::uint32_t MoveLodToV4 = 0x7e080212u;
+
 constexpr std::array<std::array<float, 4>, 3> Triangle{{{-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}}};
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t stride, std::uint32_t count) {
@@ -63,6 +70,19 @@ std::array<std::uint32_t, 4> SamplerDescriptor() {
     return {0u, 0xfffu << 12u, 1u << 26u, 0u};
 }
 
+std::array<std::uint32_t, 4> BilinearSampler(std::uint32_t clampZ) {
+    auto sampler = SamplerDescriptor();
+    sampler[0] |= (2u << 0u) | (2u << 3u) | (clampZ << 6u);
+    sampler[2] |= (1u << 20u) | (1u << 22u) | (2u << 24u);
+    return sampler;
+}
+
+std::array<std::uint32_t, 8> PlaneDescriptor() {
+    auto plane = VolumeDescriptor();
+    plane[3] = (plane[3] & ~(0xfu << 28u)) | (Type2D << 28u);
+    return plane;
+}
+
 void FillTexture() {
     const auto geometry = AgcDriver::Graphics::DescribeSurface(AgcDriver::Graphics::DecodeTextureResource(VolumeDescriptor()));
     Require(geometry.guestBytes <= Volume.size(), "single-level volume does not fit the texel storage");
@@ -80,12 +100,13 @@ void FillTexture() {
     }
 }
 
-std::uint64_t Draw(AgcDriver::VulkanDevice& device, std::array<std::uint32_t, 8> texture, std::array<std::uint32_t, 4> sampler, float bias, bool mixedSamplers = false) {
+std::uint64_t Draw(AgcDriver::VulkanDevice& device, std::array<std::uint32_t, 8> texture, std::array<std::uint32_t, 4> sampler, float bias, bool mixedSamplers = false, std::array<std::uint32_t, 2> sample = BiasSample, std::uint32_t move = MoveBiasToV1) {
     const auto& target = device.Target();
     alignas(256) std::array<std::uint32_t, 13> code{};
     std::copy_n(BiasPixelCode.begin(), 3u, code.begin());
-    code[3] = 0x7e020212u;
+    code[3] = move;
     std::copy(BiasPixelCode.begin() + 3, BiasPixelCode.end(), code.begin() + 4);
+    std::copy(sample.begin(), sample.end(), code.begin() + 4);
     if (mixedSamplers) {
         code[6] = 0xf0940f08u;
         code[7] = 0x00a10801u;
@@ -182,10 +203,10 @@ void Check(bool degamma = false) {
     }
 }
 
-void RequireRefused(AgcDriver::VulkanDevice& device, std::array<std::uint32_t, 8> texture, std::array<std::uint32_t, 4> sampler, const char* expected) {
+void RequireRefused(AgcDriver::VulkanDevice& device, std::array<std::uint32_t, 8> texture, std::array<std::uint32_t, 4> sampler, const char* expected, std::array<std::uint32_t, 2> sample = BiasSample) {
     std::string refusal;
     try {
-        Draw(device, texture, sampler, 0.0f);
+        Draw(device, texture, sampler, 0.0f, false, sample);
     } catch (const std::exception& error) {
         refusal = error.what();
     }
@@ -204,6 +225,27 @@ int main() {
             ordinaryArtifact = Draw(*device, VolumeDescriptor(), SamplerDescriptor(), bias);
             Check();
         }
+        for (const auto sample : {BiasSample, LevelZeroSample, ImplicitSample}) {
+            Draw(*device, PlaneDescriptor(), BilinearSampler(2u), 0.0f, false, sample);
+            const auto plane = Pixels;
+            Draw(*device, VolumeDescriptor(), BilinearSampler(2u), 0.0f, false, sample);
+            Require(Pixels == plane, "single-level volume: a bilinear clamp-to-last-texel sample differs from the same sample of the plane");
+        }
+        for (const float lod : {0.0f, 2.0f}) {
+            Draw(*device, PlaneDescriptor(), BilinearSampler(2u), lod, false, LodSample, MoveLodToV4);
+            const auto plane = Pixels;
+            Draw(*device, VolumeDescriptor(), BilinearSampler(2u), lod, false, LodSample, MoveLodToV4);
+            Require(Pixels == plane, "single-level volume: an explicit-LOD bilinear sample at LOD " + std::to_string(lod) + " differs from the same sample of the plane");
+            Draw(*device, VolumeDescriptor(), SamplerDescriptor(), lod, false, LodSample, MoveLodToV4);
+            Check();
+        }
+        for (const auto sample : {LevelZeroSample, ImplicitSample}) {
+            Draw(*device, VolumeDescriptor(), SamplerDescriptor(), 0.0f, false, sample);
+            Check();
+            auto twoSlices = VolumeDescriptor();
+            twoSlices[4] = 1u;
+            RequireRefused(*device, twoSlices, SamplerDescriptor(), "one slice and mip level zero only", sample);
+        }
         if (!device->SamplerFilterMinmax()) {
             std::puts("the device has no min/max sampler reduction with component mapping: the reduction cases are skipped");
         } else {
@@ -214,9 +256,7 @@ int main() {
                 Check();
             }
         }
-        auto plane = VolumeDescriptor();
-        plane[3] = (plane[3] & ~(0xfu << 28u)) | (Type2D << 28u);
-        Require(Draw(*device, plane, SamplerDescriptor(), 0.0f) == ordinaryArtifact, "single-level volume and plane modes did not share their cached artifact");
+        Require(Draw(*device, PlaneDescriptor(), SamplerDescriptor(), 0.0f) == ordinaryArtifact, "single-level volume and plane modes did not share their cached artifact");
         Check();
         auto integerTexture = VolumeDescriptor();
         integerTexture[1] = (integerTexture[1] & ~(0x1ffu << 20u)) | (60u << 20u);
@@ -242,12 +282,13 @@ int main() {
         texture[3] |= 1u << 16u;
         texture[5] |= 1u << 4u;
         RequireRefused(*device, texture, SamplerDescriptor(), "one slice and mip level zero only");
-        auto sampler = SamplerDescriptor();
-        sampler[2] |= (1u << 20u) | (1u << 22u);
-        RequireRefused(*device, VolumeDescriptor(), sampler, "normalized point sampler");
+        RequireRefused(*device, VolumeDescriptor(), BilinearSampler(6u), "does not read the border");
+        auto sampler = BilinearSampler(2u);
+        sampler[0] |= 1u << 29u;
+        RequireRefused(*device, VolumeDescriptor(), sampler, "normalized point or bilinear sampler");
         sampler = SamplerDescriptor();
         sampler[0] |= 1u << 15u;
-        RequireRefused(*device, VolumeDescriptor(), sampler, "normalized point sampler");
+        RequireRefused(*device, VolumeDescriptor(), sampler, "normalized point or bilinear sampler");
         std::puts("image plane bias on single-level volume tests passed");
         return 0;
     } catch (const std::exception& error) {

@@ -1,0 +1,5 @@
+# shader
+
+## change [2D biased sampling through a one-slice, single-level 3D T#]
+
+- [2D sampling through a one-slice, single-level 3D T#](../../../core/shader/recompiler/Optimization/src/DescriptorBindingBuilder.cpp) throws for extra slices, a nonzero mip range, anisotropic or mip-interpolated filtering, unnormalized coordinates, a filtering sampler with border Z addressing or min/max reduction, gradients, offsets, comparison, derivative adjustment, and FORCE_DEGAMMA outside the bias form; gfx1013 is unmeasured. Pixel-stage, direct, unpacked 32-bit samples with implicit LOD, LOD zero, explicit LOD or bias supply a zero third coordinate. On RDNA2, `image_sample_b` through 16x16x1 3D images reads the (u,v) texel of slice zero (gfx1036, OpenCL, wave32 and wave64), and six DIM 2D sample and load forms through a 64x64x1 3D T# match the 2D T# in every row with point and bilinear XY, point and linear Z (RX 6650 XT, `tools/hw-oracle`, wave32). Vulkan readback: NVIDIA RTX 5070, AMD integrated graphics, RX 6650 XT (RADV).
