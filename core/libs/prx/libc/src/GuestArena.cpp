@@ -1057,6 +1057,17 @@ void GuestArenaPrepareHostRead_nid_no_patch(const void* pointer, std::size_t byt
 
 bool GuestArenaBeginHostWrite_nid_postfix(void* pointer, std::size_t bytes) {
     if (const auto hook = hostWriteHook.load(std::memory_order_acquire); hook != nullptr && bytes != 0) hook(reinterpret_cast<std::uintptr_t>(pointer), bytes);
+#ifdef __APPLE__
+    const auto first = reinterpret_cast<std::uintptr_t>(pointer);
+    if (bytes != 0 && bytes <= UINTPTR_MAX - first) {
+        for (auto cursor = first; cursor < first + bytes;) {
+            std::uintptr_t runEnd = first + bytes;
+            const int protection = GuestWriteWatch::GuestWriteWatchProtection_nid_postfix(cursor, first + bytes, &runEnd);
+            if (protection >= 0 && (protection & PROT_WRITE) == 0) return false;
+            cursor = runEnd;
+        }
+    }
+#endif
     GuestWriteWatch::GuestWriteWatchBeginHostWrite_nid_postfix(pointer, bytes);
 #ifdef _WIN32
     if (WindowsMappings::Get().BeginHostWrite(reinterpret_cast<std::uintptr_t>(pointer), bytes)) return true;
