@@ -1,4 +1,6 @@
 #include "prx/libc/include/Api.hpp"
+#include <array>
+#include <cerrno>
 #include <climits>
 #include <cstddef>
 #include <cstdint>
@@ -9,6 +11,7 @@
 
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
 
@@ -39,6 +42,31 @@ bool convertFailed(std::size_t length) {
 int violation(const char* message, int error) {
     SonyInvokeConstraintHandler(message, nullptr, error);
     return error;
+}
+
+bool CopyGuestInBytes(void* destination, const void* source, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return ok;
+}
+
+bool CopyGuestOutBytes(void* destination, const void* source, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return ok;
+}
+
+bool GuestMemoryWritable(void* address, std::size_t bytes) {
+    const int savedErrno = errno;
+    bool ok = false;
+    {
+        const GuestArena::HostWrite guard(address, bytes);
+        ok = guard.Open() && GuestWritable_nid_no_patch(address, bytes);
+    }
+    errno = savedErrno;
+    return ok;
 }
 
 }  // namespace
@@ -80,23 +108,37 @@ void* APS5_VABI bsearch_s_nid_postfix(const void* key, const void* base, std::si
 }
 
 std::uint16_t* APS5_VABI wcstok_s_nid_postfix(std::uint16_t* str, std::size_t* remaining, const std::uint16_t* delimiters, std::uint16_t** context) {
-    if (!remaining || !context || !delimiters || *remaining > rsizeMax || (!str && !*context)) {
+    const auto badArgument = [&]() -> std::uint16_t* {
         violation("wcstok_s: bad argument", guestEinval);
         return nullptr;
-    }
-    if (!str) str = *context;
-    const auto isDelimiter = [delimiters](std::uint16_t value) {
-        for (const auto* delimiter = delimiters; *delimiter != 0; ++delimiter)
-            if (*delimiter == value) return true;
-        return false;
     };
-    const std::size_t available = *remaining;
-    std::size_t skipped = 0;
+    if (!remaining || !context || !delimiters) return badArgument();
+    std::size_t available = 0;
+    if (!CopyGuestInBytes(&available, remaining, sizeof(available)) || available > rsizeMax) return badArgument();
+    if (!str) {
+        std::uint16_t* saved = nullptr;
+        if (!CopyGuestInBytes(&saved, context, sizeof(saved)) || !saved) return badArgument();
+        str = saved;
+    }
     if (available == 0) {
         violation("wcstok_s: missing token", guestEinval);
         return nullptr;
     }
-    while (str[skipped] != 0 && isDelimiter(str[skipped])) {
+    std::array<std::uint64_t, 1024> delimiterBits{};
+    for (std::size_t index = 0;; ++index) {
+        std::uint16_t ch = 0;
+        if (!CopyGuestInBytes(&ch, delimiters + index, sizeof(ch))) return badArgument();
+        if (ch == 0) break;
+        delimiterBits[ch >> 6] |= std::uint64_t{1} << (ch & 63);
+    }
+    const auto isDelimiter = [&](std::uint16_t value) {
+        return (delimiterBits[value >> 6] & (std::uint64_t{1} << (value & 63))) != 0;
+    };
+    std::size_t skipped = 0;
+    std::uint16_t current = 0;
+    for (;;) {
+        if (!CopyGuestInBytes(&current, str + skipped, sizeof(current))) return badArgument();
+        if (current == 0 || !isDelimiter(current)) break;
         if (++skipped == available) {
             violation("wcstok_s: missing token", guestEinval);
             return nullptr;
@@ -104,25 +146,35 @@ std::uint16_t* APS5_VABI wcstok_s_nid_postfix(std::uint16_t* str, std::size_t* r
     }
     std::uint16_t* const token = str + skipped;
     const std::size_t left = available - skipped;
-    *remaining = left;
-    if (*token == 0) {
-        *context = token;
+    if (current == 0) {
+        if (!GuestMemoryWritable(remaining, sizeof(*remaining)) || !GuestMemoryWritable(context, sizeof(*context))) return badArgument();
+        if (!CopyGuestOutBytes(remaining, &left, sizeof(left)) || !CopyGuestOutBytes(context, &token, sizeof(token))) return badArgument();
         return nullptr;
     }
     std::size_t length = 0;
-    while (token[length] != 0 && !isDelimiter(token[length])) {
+    while (current != 0 && !isDelimiter(current)) {
         if (++length == left) {
+            if (!GuestMemoryWritable(remaining, sizeof(*remaining))) return badArgument();
+            if (!CopyGuestOutBytes(remaining, &left, sizeof(left))) return badArgument();
             violation("wcstok_s: missing delimiter", guestEinval);
             return nullptr;
         }
+        if (!CopyGuestInBytes(&current, token + length, sizeof(current))) return badArgument();
     }
     std::uint16_t* next = token + length;
-    *remaining = left - length;
-    if (*next != 0) {
-        *next++ = 0;
-        if (left != length) *remaining = left - length - 1;
+    std::size_t nextRemaining = left - length;
+    const bool writeTerminator = current != 0;
+    if (writeTerminator) {
+        ++next;
+        if (left != length) nextRemaining = left - length - 1;
     }
-    *context = next;
+    if (!GuestMemoryWritable(remaining, sizeof(*remaining)) || !GuestMemoryWritable(context, sizeof(*context))) return badArgument();
+    if (writeTerminator && !GuestMemoryWritable(token + length, sizeof(*token))) return badArgument();
+    if (writeTerminator) {
+        constexpr std::uint16_t zero = 0;
+        if (!CopyGuestOutBytes(token + length, &zero, sizeof(zero))) return badArgument();
+    }
+    if (!CopyGuestOutBytes(remaining, &nextRemaining, sizeof(nextRemaining)) || !CopyGuestOutBytes(context, &next, sizeof(next))) return badArgument();
     return token;
 }
 
