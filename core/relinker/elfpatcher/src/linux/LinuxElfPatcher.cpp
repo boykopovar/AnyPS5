@@ -252,14 +252,18 @@ std::vector<TracedImport> TracedImports(const Domain::SysVDynamicSection& dynSec
             const auto type = static_cast<std::uint32_t>(info);
             const auto symbol = info >> 32;
             const auto target = Io::ReadU64(table, entry);
-            if ((type != R_X86_64_GLOB_DAT && type != R_X86_64_JUMP_SLOT) || symbol == 0)
+            if ((type != R_X86_64_GLOB_DAT && type != R_X86_64_JUMP_SLOT && type != R_X86_64_64) || symbol == 0)
                 continue;
-            if (type == R_X86_64_GLOB_DAT && !dynSection.FunctionImports.contains(target))
+            if (type != R_X86_64_JUMP_SLOT && !dynSection.FunctionImports.contains(target))
+                continue;
+            if (type == R_X86_64_64 && Io::ReadU64(table, entry + 16) != 0)
                 continue;
             if (symbol >= dynSection.DynSymData.size() / kSymEntrySize)
                 throw Domain::RelinkerException("Invalid import symbol index", target);
             const auto symbolOffset = static_cast<std::size_t>(symbol * kSymEntrySize);
-            if (Io::ReadU16(dynSection.DynSymData, symbolOffset + 6) != SHN_UNDEF || dynSection.DynSymData[symbolOffset + 4] >> 4 == STB_WEAK)
+            if (Io::ReadU16(dynSection.DynSymData, symbolOffset + 6) != SHN_UNDEF)
+                continue;
+            if ((dynSection.DynSymData[symbolOffset + 4] & 15) == STT_OBJECT)
                 continue;
             auto name = ReadDynamicString(dynSection.DynStrData, Io::ReadU32(dynSection.DynSymData, symbolOffset));
             if (name.empty())
@@ -334,9 +338,13 @@ std::vector<std::uint8_t> TracePrologue(const std::uint64_t vaddr, const std::ui
     const auto loop = code.size();
     code.insert(code.end(), {0x4c, 0x39, 0xe3, 0x73, 0x00});
     const auto exit = code.size();
-    code.insert(code.end(), {0x48, 0x8b, 0x03, 0x48, 0x8b, 0x3c, 0x03, 0x48, 0x8b, 0x73, 0x08, 0x48, 0x01, 0xde, 0x48, 0x8b, 0x53, 0x10, 0x48, 0x01, 0xda});
+    code.insert(code.end(), {0x48, 0x8b, 0x03, 0x48, 0x8b, 0x3c, 0x03, 0x48, 0x85, 0xff, 0x74, 0x00});
+    const auto nullSlot = code.size() - 1;
+    code.insert(code.end(), {0x48, 0x8b, 0x73, 0x08, 0x48, 0x01, 0xde, 0x48, 0x8b, 0x53, 0x10, 0x48, 0x01, 0xda});
     rip({0xff, 0x15}, function);
-    code.insert(code.end(), {0x48, 0x8b, 0x0b, 0x48, 0x89, 0x04, 0x0b, 0x48, 0x83, 0xc3, 0x18, 0xeb});
+    code.insert(code.end(), {0x48, 0x8b, 0x0b, 0x48, 0x89, 0x04, 0x0b});
+    code[nullSlot] = static_cast<std::uint8_t>(code.size() - (nullSlot + 1));
+    code.insert(code.end(), {0x48, 0x83, 0xc3, 0x18, 0xeb});
     code.push_back(static_cast<std::uint8_t>(static_cast<std::int8_t>(static_cast<std::int64_t>(loop) - static_cast<std::int64_t>(code.size() + 1))));
     code[exit - 1] = static_cast<std::uint8_t>(code.size() - exit);
     code.insert(code.end(), {0x48, 0x83, 0xc4, 0x08, 0x41, 0x5c, 0x5b, 0x5a});

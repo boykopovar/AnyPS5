@@ -1,0 +1,5 @@
+# relinker
+
+## change `--trace-imports`
+
+- `--trace-imports` ([Windows entry stub](../../../core/relinker/elfpatcher/src/windows/WindowsEntryStubBuilder.cpp), [Linux entry stub](../../../core/relinker/elfpatcher/src/linux/LinuxElfPatcher.cpp), [macOS entry](../../../core/relinker/elfpatcher/src/macos/MacOsImage.cpp)) passes each function import of an executable through `libc.prx`'s `TraceImport_nid_no_patch`: PLT slots, function `GLOB_DAT` slots, and zero-addend `R_X86_64_64` `STT_FUNC` slots, weak ones included. An unresolved weak import stays null without a hook call; data and object imports and nonzero addends are never wrapped in a code thunk. Imports reached through `sceKernelDlsym` and modules loaded at run time stay untraced. On Linux the entry stub mprotects each traced slot's page before storing the thunk, so a slot inside `PT_GNU_RELRO` can be replaced; those pages stay writable while tracing. On macOS the stub stores the thunk in the bound slot without changing its protection, because that slot stays writable.
