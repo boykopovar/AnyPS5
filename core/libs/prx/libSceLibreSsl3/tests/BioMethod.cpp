@@ -1,4 +1,14 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -31,6 +41,7 @@ void RequireInvalidArgument(TAction action, std::source_location location = std:
 const char Name[] = "test method";
 int liveBlocks = 0;
 int zeroedCallsBeforeFailure = -1;
+void* nextZeroedBlock = nullptr;
 int written = 0;
 int destroyed = 0;
 int createFailed = 0;
@@ -43,11 +54,20 @@ void* APS5_VABI Allocate(std::size_t bytes) {
 }
 
 void APS5_VABI Release(void* block) {
-    if (block) --liveBlocks;
+    if (!block) return;
+    --liveBlocks;
+    if (block == nextZeroedBlock) {
+        nextZeroedBlock = nullptr;
+        return;
+    }
     std::free(block);
 }
 
 void* APS5_VABI AllocateZeroed(std::size_t count, std::size_t bytes) {
+    if (nextZeroedBlock) {
+        ++liveBlocks;
+        return nextZeroedBlock;
+    }
     if (zeroedCallsBeforeFailure == 0) {
         zeroedCallsBeforeFailure = -1;
         return nullptr;
@@ -180,6 +200,63 @@ int main() {
         Require(BIO_free_nid_postfix(bio) == 1 && destroyed == 1 && liveBlocks == 1);
         BIO_meth_free_nid_postfix(method);
         Require(liveBlocks == 0);
+    }
+    {
+        struct GuardedPages {
+            unsigned char* base = nullptr;
+            std::size_t pageSize = 4096;
+
+            GuardedPages() {
+#ifdef _WIN32
+                SYSTEM_INFO info{};
+                GetSystemInfo(&info);
+                pageSize = info.dwPageSize ? static_cast<std::size_t>(info.dwPageSize) : 4096;
+                base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+                Require(base != nullptr);
+                DWORD oldProtect = 0;
+                Require(VirtualProtect(base + pageSize, pageSize, PAGE_READONLY, &oldProtect) != 0);
+                Require(VirtualProtect(base + pageSize * 2, pageSize, PAGE_NOACCESS, &oldProtect) != 0);
+#else
+                const long size = sysconf(_SC_PAGESIZE);
+                pageSize = size > 0 ? static_cast<std::size_t>(size) : 4096;
+                void* mapped = mmap(nullptr, pageSize * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+                Require(mapped != MAP_FAILED);
+                base = static_cast<unsigned char*>(mapped);
+                Require(mprotect(base + pageSize, pageSize, PROT_READ) == 0);
+                Require(mprotect(base + pageSize * 2, pageSize, PROT_NONE) == 0);
+#endif
+            }
+
+            ~GuardedPages() {
+                if (!base) return;
+#ifdef _WIN32
+                VirtualFree(base, 0, MEM_RELEASE);
+#else
+                munmap(base, pageSize * 3);
+#endif
+            }
+
+            unsigned char* ReadOnly() const { return base + pageSize; }
+            unsigned char* Guard() const { return base + pageSize * 2; }
+        } pages;
+        errno = 71;
+        auto* const readOnlyMethod = reinterpret_cast<LibreSsl::BioMethod*>(pages.ReadOnly());
+        auto* const guardMethod = reinterpret_cast<LibreSsl::BioMethod*>(pages.Guard());
+        RequireInvalidArgument([&] { BIO_meth_set_write_nid_postfix(readOnlyMethod, &Write); });
+        RequireInvalidArgument([&] { BIO_meth_set_read_nid_postfix(readOnlyMethod, &Read); });
+        RequireInvalidArgument([&] { BIO_meth_set_ctrl_nid_postfix(readOnlyMethod, &Control); });
+        RequireInvalidArgument([&] { BIO_meth_set_create_nid_postfix(readOnlyMethod, &Create); });
+        RequireInvalidArgument([&] { BIO_meth_set_destroy_nid_postfix(readOnlyMethod, &Destroy); });
+        RequireInvalidArgument([&] { BIO_meth_set_write_nid_postfix(guardMethod, &Write); });
+        RequireInvalidArgument([&] { BIO_meth_set_read_nid_postfix(guardMethod, &Read); });
+        RequireInvalidArgument([&] { BIO_meth_set_ctrl_nid_postfix(guardMethod, &Control); });
+        RequireInvalidArgument([&] { BIO_meth_set_create_nid_postfix(guardMethod, &Create); });
+        RequireInvalidArgument([&] { BIO_meth_set_destroy_nid_postfix(guardMethod, &Destroy); });
+
+        nextZeroedBlock = pages.ReadOnly();
+        RequireInvalidArgument([&] { BIO_meth_new_nid_postfix(9, Name); });
+        Require(nextZeroedBlock == nullptr && liveBlocks == 0);
+        Require(errno == 71);
     }
     {
         errno = 71;
