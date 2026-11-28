@@ -2473,6 +2473,12 @@ void SetObservationHookForTest(void (*hook)(int point)) {
     observationHook.store(hook, std::memory_order_release);
 }
 
+std::atomic<void (*)(std::uint64_t, std::size_t)> writeChangedIfHeldHook{nullptr};
+
+void SetWriteChangedIfHeldHookForTest(void (*hook)(std::uint64_t, std::size_t)) {
+    writeChangedIfHeldHook.store(hook, std::memory_order_release);
+}
+
 std::uint64_t WriteGeneration() {
     return Tracker().generation.load(std::memory_order_acquire);
 }
@@ -3305,10 +3311,28 @@ std::uint64_t StoreOwnBytes(std::uint64_t address, std::size_t bytes, const std:
     });
 }
 
-static void copyOwnBytes(std::uint64_t address, std::span<const std::byte> source) {
+static bool writeOwnBytesAlias(std::uint64_t address, std::span<const std::byte> source) {
 #ifndef _WIN32
-    if (GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix() && GuestArena::GuestArenaWriteSharedBacking_nid_no_patch(address, source.data(), source.size())) return;
+    if (GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix() && GuestArena::GuestArenaWriteSharedBacking_nid_no_patch(address, source.data(), source.size())) return true;
 #endif
+    static_cast<void>(address);
+    static_cast<void>(source);
+    return false;
+}
+
+struct PublicationWrite {
+    bool written = false;
+    std::vector<std::pair<std::uintptr_t, std::uintptr_t>> runs;
+};
+
+static void MarkPublicationWrite(void* context, std::uintptr_t begin, std::uintptr_t end) {
+    auto& state = *static_cast<PublicationWrite*>(context);
+    state.written = true;
+    state.runs.emplace_back(begin, end);
+}
+
+static void copyOwnBytes(std::uint64_t address, std::span<const std::byte> source) {
+    if (writeOwnBytesAlias(address, source)) return;
     std::memcpy(reinterpret_cast<void*>(address), source.data(), source.size());
 }
 
@@ -4495,23 +4519,60 @@ std::size_t WriteChangedIfHeld(std::uint64_t address, std::span<const std::byte>
     require(current.size() == original.size(), "write-back snapshot sizes differ");
     BreakProofs();
     if (current.empty()) return 0;
+#if defined(__linux__)
+    if (std::memcmp(current.data(), original.data(), current.size()) == 0) return 0;
+#endif
     const ReadSiteScope site(ReadSite::Store);
     FlushGpuWrites(address, current.size());
     const TimedAccess timed(CounterChangedWrite, current.size());
     auto* destination = reinterpret_cast<std::uint8_t*>(address);
     const auto size = current.size();
+    bool publication = false;
+    struct PublicationEnd {
+        bool& active;
+        std::uint64_t address;
+        std::size_t size;
+        ~PublicationEnd() {
+            if (!active) return;
+            GuestWriteWatch::GuestWriteWatchEndPublication_nid_no_patch();
+            Pages().accessSerial.fetch_add(1, std::memory_order_acq_rel);
+            Pages().forget(address, size);
+        }
+    } publicationEnd{publication, address, size};
+    PublicationWrite publicationWrite;
     std::size_t lost = 0;
     storeOwn(address, size, false, [&](std::span<std::byte>) {
         CheckRange(destination, size, 1, true);
         if (unchangedSince != 0u) {
+            publication = GuestWriteWatch::GuestWriteWatchBeginPublication_nid_no_patch(address, size);
+            if (publication) {
+                if (!GuestWriteWatch::GuestWriteWatchCollect_nid_postfix(address, size, &MarkPublicationWrite, &publicationWrite) || publicationWrite.written) {
+                    lost = size;
+                    return std::pair<std::uint64_t, std::uint64_t>{0, 0};
+                }
+            }
             auto& tracker = Tracker();
             if (!tracker.cpuUnchanged(address, size, unchangedSince) || tracker.refusedSince(address, address + size, unchangedSince)) {
                 lost = size;
                 return std::pair<std::uint64_t, std::uint64_t>{0, 0};
             }
         }
+        if (const auto hook = writeChangedIfHeldHook.load(std::memory_order_acquire)) hook(address, size);
         std::size_t firstChanged = size;
         std::size_t lastChanged = 0;
+        if (publication) {
+            if (std::memcmp(destination, original.data(), size) != 0) {
+                lost = size;
+                return std::pair<std::uint64_t, std::uint64_t>{0, 0};
+            }
+            for (std::size_t index = 0; index < size; ++index) {
+                if (current[index] == original[index]) continue;
+                firstChanged = std::min(firstChanged, index);
+                lastChanged = std::max(lastChanged, index + 1);
+            }
+            if (firstChanged < lastChanged && !writeOwnBytesAlias(address, current)) lost = size;
+            return firstChanged < lastChanged ? std::pair<std::uint64_t, std::uint64_t>{address + firstChanged, address + lastChanged} : std::pair<std::uint64_t, std::uint64_t>{0, 0};
+        }
         const auto exchange = [&](std::size_t index) {
             if (current[index] == original[index]) return;
             auto expected = std::to_integer<std::uint8_t>(original[index]);
@@ -4534,6 +4595,10 @@ std::size_t WriteChangedIfHeld(std::uint64_t address, std::span<const std::byte>
         for (; at < size && lost == 0; ++at) exchange(at);
         return firstChanged < lastChanged ? std::pair<std::uint64_t, std::uint64_t>{address + firstChanged, address + lastChanged} : std::pair<std::uint64_t, std::uint64_t>{0, 0};
     }, false);
+    if (publicationWrite.written) {
+        StampRuns runs{Tracker(), StampKind::Cpu};
+        for (const auto& [begin, end] : publicationWrite.runs) stampWrittenRun(&runs, begin, end);
+    }
     return lost;
 }
 
