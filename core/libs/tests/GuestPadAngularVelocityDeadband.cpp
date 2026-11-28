@@ -1,6 +1,8 @@
 #include "SceTypes.hpp"
 #include "prx/libScePad/include/Pad.hpp"
+#include "prx/libScePad/include/PadRumbleIntensity.hpp"
 #include "prx/libScePad/include/PadState.hpp"
+#include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
 
@@ -83,6 +85,51 @@ int main() {
 
     PadPublishInput_nid_postfix(PadInputState{});
     Require(scePadClose_nid_postfix(handle) == PAD_OK);
+
+    const Pad::RumbleCommand fullZeroDuration = Pad::MakeRumbleCommand(255, 128, 100, 0);
+    Require(fullZeroDuration == Pad::RumbleCommand{0, 0, 0});
+    Require(!fullZeroDuration.Active());
+
+    const Pad::RumbleCommand scaledZeroDuration = Pad::MakeRumbleCommand(255, 128, 50, 0);
+    Require(scaledZeroDuration == Pad::RumbleCommand{0, 0, 0});
+    Require(!scaledZeroDuration.Active());
+
+    std::uint16_t sinkLow = 0xA5A5;
+    std::uint16_t sinkHigh = 0xA5A5;
+    std::uint32_t sinkDuration = 0xA5A5A5A5u;
+    auto sink = [&](std::uint16_t low, std::uint16_t high, std::uint32_t durationMs) {
+        sinkLow = low;
+        sinkHigh = high;
+        sinkDuration = durationMs;
+    };
+
+    Require(!Pad::SendRumble(sink, 255, 128, 100, 0));
+    Require(sinkLow == 0 && sinkHigh == 0 && sinkDuration == 0);
+
+    sinkLow = 0xA5A5;
+    sinkHigh = 0xA5A5;
+    sinkDuration = 0xA5A5A5A5u;
+    Require(!Pad::SendRumble(sink, 255, 128, 50, 0));
+    Require(sinkLow == 0 && sinkHigh == 0 && sinkDuration == 0);
+
+    const Pad::RumbleCommand fullActive = Pad::MakeRumbleCommand(255, 128, 100, 500);
+    Require(fullActive == Pad::RumbleCommand{65535, 32896, 500});
+    Require(fullActive.Active());
+
+    const Pad::RumbleCommand scaledActive = Pad::MakeRumbleCommand(255, 128, 50, 500);
+    Require(scaledActive == Pad::RumbleCommand{32768, 16448, 500});
+    Require(scaledActive.Active());
+
+    const Pad::RumbleCommand zeroPercent = Pad::MakeRumbleCommand(255, 128, 0, 500);
+    Require(zeroPercent == Pad::RumbleCommand{0, 0, 0});
+    Require(!zeroPercent.Active());
+
+    const Pad::RumbleCommand zeroMotors = Pad::MakeRumbleCommand(0, 0, 100, 500);
+    Require(zeroMotors == Pad::RumbleCommand{0, 0, 0});
+    Require(!zeroMotors.Active());
+
+    Require(Pad::SendRumble(sink, 255, 128, 50, 500));
+    Require(sinkLow == 32768 && sinkHigh == 16448 && sinkDuration == 500);
 
     return 0;
 }
