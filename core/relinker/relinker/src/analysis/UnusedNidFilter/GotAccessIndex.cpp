@@ -16,7 +16,7 @@ public:
         if (unknownSegmentAccess || _accessed.count(gotSlotVaddr) > 0) return true;
         if (!tlsAccessed) return false;
         for (const auto& image : tlsImages)
-            if (gotSlotVaddr >= image.Begin && gotSlotVaddr < image.End) return true;
+            if (gotSlotVaddr < image.End && (image.Begin < gotSlotVaddr || image.Begin - gotSlotVaddr < 8)) return true;
         return false;
     }
 

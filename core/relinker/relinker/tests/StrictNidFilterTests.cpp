@@ -574,7 +574,7 @@ void filterSegmentRelativeImports() {
     }
 }
 
-std::vector<std::uint8_t> elfFixtureWithTls(const StrictReachabilityInput& input, std::uint64_t tlsVaddr, std::uint64_t tlsSize) {
+std::vector<std::uint8_t> elfFixtureWithTls(const StrictReachabilityInput& input, std::uint64_t tlsVaddr, std::uint64_t tlsSize, std::uint64_t tlsMemSize = 0) {
     auto bytes = elfFixture(input);
     write<std::uint16_t>(bytes, 56, 3);
     constexpr std::size_t tlsHeader = 64 + 2 * 56;
@@ -584,7 +584,7 @@ std::vector<std::uint8_t> elfFixtureWithTls(const StrictReachabilityInput& input
     write<std::uint64_t>(bytes, tlsHeader + 16, tlsVaddr);
     write<std::uint64_t>(bytes, tlsHeader + 24, tlsVaddr);
     write<std::uint64_t>(bytes, tlsHeader + 32, tlsSize);
-    write<std::uint64_t>(bytes, tlsHeader + 40, tlsSize);
+    write<std::uint64_t>(bytes, tlsHeader + 40, tlsMemSize == 0 ? tlsSize : tlsMemSize);
     write<std::uint64_t>(bytes, tlsHeader + 48, 8);
     return bytes;
 }
@@ -673,6 +673,63 @@ void filterResidentImportsThroughElf() {
         for (const auto& reference : kept) keptSlots.insert(reference.RelocationAddress);
         require(keptSlots == std::set<std::uint64_t>{0x2000, 0x2008},
                 "ELF filter mishandled imports resident in the TLS image");
+    }
+}
+
+void tlsRangeOverflowThrows() {
+    auto input = fixture();
+    emit(input, 0, {0x64, 0x48, 0x8B, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00});
+    emit(input, 9, {0xC3});
+    const std::vector<Relinker::NidReference> references = {{"resident", {}, 6, 0x300, 0x2000, 0}};
+    const auto bytes = elfFixtureWithTls(input, 0x2000, 0x20, std::numeric_limits<std::uint64_t>::max() - 0x2000 + 1);
+    requireFailureMessage([&] {
+        Relinker::MakeUnusedNidFilter()->Filter(references, bytes, input.Text, input.TextVaddr);
+    }, "segment address overflow", "Default filter accepted a wrapping PT_TLS range");
+    requireFailureMessage([&] {
+        Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, bytes, input.Text, input.TextVaddr);
+    }, "segment address overflow", "Strict filter accepted a wrapping PT_TLS range");
+}
+
+void tlsZeroFillTailRetained() {
+    auto input = fixture();
+    emit(input, 0, {0x64, 0x48, 0x8B, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00});
+    emit(input, 9, {0xC3});
+    const std::vector<Relinker::NidReference> references = {
+        {"init", {}, 6, 0x300, 0x2000, 0}, {"tail", {}, 6, 0x318, 0x2018, 0}, {"outside", {}, 6, 0x330, 0x2040, 0}};
+    const auto bytes = elfFixtureWithTls(input, 0x2000, 0x10, 0x30);
+    for (const auto filter : {Relinker::MakeUnusedNidFilter(), Relinker::MakeStrictUnusedNidFilter(testProgress)}) {
+        const auto kept = filter->Filter(references, bytes, input.Text, input.TextVaddr);
+        std::set<std::uint64_t> keptSlots;
+        for (const auto& reference : kept) keptSlots.insert(reference.RelocationAddress);
+        require(keptSlots == std::set<std::uint64_t>{0x2000, 0x2018},
+                "FS TLS read dropped an import in the zero-filled TLS tail");
+    }
+}
+
+void tlsSlotStraddlingImageRetained() {
+    auto input = fixture();
+    input.ImportSlots = {0x1ffc, 0x2000, 0x2020};
+    input.TlsModeled = true;
+    input.TlsImages = {{0x2000, 0x2010}};
+    emit(input, 0, {0x64, 0x48, 0x8B, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00});
+    emit(input, 9, {0xC3});
+    require(AnalyzeStrictReachability(input).ImportSlots == std::set<std::uint64_t>{0x1ffc, 0x2000},
+            "FS TLS read dropped an import whose slot straddles the TLS image start");
+}
+
+void tlsSlotOverlapThroughElf() {
+    auto input = fixture();
+    emit(input, 0, {0x64, 0x48, 0x8B, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00});
+    emit(input, 9, {0xC3});
+    const std::vector<Relinker::NidReference> references = {
+        {"straddle", {}, 6, 0x300, 0x2004, 0}, {"resident", {}, 6, 0x318, 0x2008, 0}, {"outside", {}, 6, 0x330, 0x2020, 0}};
+    const auto bytes = elfFixtureWithTls(input, 0x2008, 0x10);
+    for (const auto filter : {Relinker::MakeUnusedNidFilter(), Relinker::MakeStrictUnusedNidFilter(testProgress)}) {
+        const auto kept = filter->Filter(references, bytes, input.Text, input.TextVaddr);
+        std::set<std::uint64_t> keptSlots;
+        for (const auto& reference : kept) keptSlots.insert(reference.RelocationAddress);
+        require(keptSlots == std::set<std::uint64_t>{0x2004, 0x2008},
+                "ELF filter dropped an import whose slot straddles the TLS image start");
     }
 }
 
@@ -1851,6 +1908,10 @@ int main() {
         fsOperandKeepsReferencedGotImport();
         filterTlsImagesThroughElf();
         filterResidentImportsThroughElf();
+        tlsRangeOverflowThrows();
+        tlsZeroFillTailRetained();
+        tlsSlotStraddlingImageRetained();
+        tlsSlotOverlapThroughElf();
         std::cout << "Strict NID filter tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

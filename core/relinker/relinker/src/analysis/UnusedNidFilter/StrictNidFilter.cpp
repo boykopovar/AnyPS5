@@ -76,6 +76,8 @@ public:
         input.TlsModeled = true;
         for (const auto& segment : headers) {
             if (segment.Type != Elfpatcher::PT_TLS) continue;
+            if (segment.MemorySize > std::numeric_limits<VirtualAddress>::max() - segment.MappedAddress)
+                throw RelinkerException("Strict filter: PT_TLS segment address overflow", segment.MappedAddress);
             input.TlsImages.push_back({segment.MappedAddress, segment.MappedAddress + segment.MemorySize});
         }
 

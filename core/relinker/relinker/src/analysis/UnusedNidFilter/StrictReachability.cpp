@@ -77,7 +77,7 @@ public:
         if (input.TlsModeled) {
             for (const auto slot : input.ImportSlots)
                 for (const auto& image : input.TlsImages)
-                    if (slot >= image.Begin && slot < image.End) {
+                    if (slot < image.End && (image.Begin < slot || image.Begin - slot < 8)) {
                         tlsImports.insert(slot);
                         break;
                     }
