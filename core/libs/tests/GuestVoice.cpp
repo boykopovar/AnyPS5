@@ -96,6 +96,9 @@ int main() {
     Require(sceVoiceSetThreadsParams(&threads) == notInitialized);
     VoiceInitParam init{};
     Require(sceVoiceInit(nullptr, 100) == invalidArgument);
+    errno = EBUSY;
+    Require(sceVoiceInit(reinterpret_cast<const VoiceInitParam*>(std::uintptr_t{0x10}), 100) == invalidArgument);
+    Require(errno == EBUSY);
     for (const auto mode : {-1, 0, 1, 3, 5, 0x07ffffff, 0x08000001, 0x10000001, 0x20000001, INT32_MAX}) {
         init.app_type = mode;
         Require(sceVoiceInit(&init, 100) == invalidArgument);
