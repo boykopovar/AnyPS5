@@ -1557,7 +1557,7 @@ int APS5_VABI sceKernelFstat(int d, FileStat* sb) {
 static int KernelFsync(int fd) {
     if (File::IsVirtualDirectoryDescriptor(fd)) return SceErrorFromErrno(GUEST_EISDIR);
     if (GuestSockets::IsOpen(fd) || IsKqueueDescriptor_nid_no_patch(fd) || IsKsemDescriptor(fd)) return SceErrorFromErrno(GUEST_EINVAL);
-    File::RefuseArchivedFile(fd, "fsync");
+    if (File::IsArchivedFile(fd) || AppArchiveMaterializedDescriptor_nid_no_patch(fd, nullptr)) return 0;
 #ifdef _WIN32
     if (NativeSync(fd) != 0) return SceErrorFromErrno(errno);
 #else
@@ -1573,7 +1573,7 @@ int APS5_VABI sceKernelFsync(int fd) {
 static int KernelFdatasync(int fd) {
     if (File::IsVirtualDirectoryDescriptor(fd)) return SceErrorFromErrno(GUEST_EISDIR);
     if (GuestSockets::IsOpen(fd) || IsKqueueDescriptor_nid_no_patch(fd) || IsKsemDescriptor(fd)) return SceErrorFromErrno(GUEST_EINVAL);
-    File::RefuseArchivedFile(fd, "fdatasync");
+    if (File::IsArchivedFile(fd) || AppArchiveMaterializedDescriptor_nid_no_patch(fd, nullptr)) return 0;
 #ifdef _WIN32
     if (NativeSync(fd) != 0) return SceErrorFromErrno(errno);
 #elif defined(__APPLE__)
