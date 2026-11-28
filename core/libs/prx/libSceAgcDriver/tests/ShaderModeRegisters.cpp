@@ -90,6 +90,18 @@ std::vector<std::uint32_t> opcodeSequence(const IrProgram& program) {
     return sequence;
 }
 
+std::vector<std::uint32_t> interpolationModes(const IrProgram& program) {
+    std::vector<std::uint32_t> modes;
+    for (const auto& block : program.Blocks()) {
+        for (const auto* instruction : block->Instructions()) {
+            if (instruction->Opcode() != IrOpcode::FPInterpolateF32) continue;
+            const auto* mode = instruction->Argument(3)->Resolve();
+            if (mode->HasImmediate()) modes.push_back(mode->ImmediateU32());
+        }
+    }
+    return modes;
+}
+
 constexpr std::uint32_t endProgram = 0xbf810000;
 constexpr std::uint32_t getregMode = 0xb9141801;
 constexpr std::uint32_t vAddF32 = 0x06000300;
@@ -364,21 +376,35 @@ void verifyUnmodelledDirectedRounding() {
 
 void verifyDirectedF32Arithmetic() {
     for (const auto instruction : {vAddF32, vMulF32}) {
+        std::vector<std::vector<std::uint32_t>> modesByRounding;
         for (std::uint32_t rounding = 1; rounding < 4; ++rounding) {
             const std::array<std::uint32_t, 3> runtime{roundMode(rounding), instruction, endProgram};
             const std::array<std::uint32_t, 2> declared{instruction, endProgram};
-            const auto lowered = opcodeSequence(translate(runtime, ShaderFloatMode{0xc0}));
-            require(lowered == opcodeSequence(translate(declared, ShaderFloatMode{0xc0u | rounding})), "runtime f32 rounding does not match the declared rounding");
-            require(lowered != opcodeSequence(translate(declared, ShaderFloatMode{0xc0})), "runtime f32 rounding did not change the arithmetic");
+            const auto lowered = translate(runtime, ShaderFloatMode{0xc0});
+            const auto directed = translate(declared, ShaderFloatMode{0xc0u | rounding});
+            require(opcodeSequence(lowered) == opcodeSequence(directed), "runtime f32 rounding does not match the declared rounding");
+            require(interpolationModes(lowered) == interpolationModes(directed), "runtime f32 rounding emits different interpolation mode constants than the declared rounding");
+            require(opcodeSequence(lowered) != opcodeSequence(translate(declared, ShaderFloatMode{0xc0})), "runtime f32 rounding did not change the arithmetic");
+            require(!interpolationModes(directed).empty(), "declared directed f32 rounding emits no interpolation mode constant");
+            modesByRounding.push_back(interpolationModes(directed));
         }
+        require(modesByRounding[0] != modesByRounding[1] && modesByRounding[1] != modesByRounding[2] && modesByRounding[0] != modesByRounding[2],
+                "the interpolation mode constants do not follow the declared f32 rounding");
     }
+    std::vector<std::vector<std::uint32_t>> fmaModesByRounding;
     for (std::uint32_t rounding = 1; rounding < 4; ++rounding) {
         const std::array<std::uint32_t, 4> runtime{roundMode(rounding), 0xd54b000eu, 0x041a0b04u, endProgram};
         const std::array<std::uint32_t, 3> declared{0xd54b000eu, 0x041a0b04u, endProgram};
-        const auto lowered = opcodeSequence(translate(runtime, ShaderFloatMode{0xc0}));
-        require(lowered == opcodeSequence(translate(declared, ShaderFloatMode{0xc0u | rounding})), "runtime f32 fma rounding does not match the declared rounding");
-        require(lowered != opcodeSequence(translate(declared, ShaderFloatMode{0xc0})), "runtime f32 fma rounding did not change the arithmetic");
+        const auto lowered = translate(runtime, ShaderFloatMode{0xc0});
+        const auto directed = translate(declared, ShaderFloatMode{0xc0u | rounding});
+        require(opcodeSequence(lowered) == opcodeSequence(directed), "runtime f32 fma rounding does not match the declared rounding");
+        require(interpolationModes(lowered) == interpolationModes(directed), "runtime f32 fma rounding emits different interpolation mode constants than the declared rounding");
+        require(opcodeSequence(lowered) != opcodeSequence(translate(declared, ShaderFloatMode{0xc0})), "runtime f32 fma rounding did not change the arithmetic");
+        require(!interpolationModes(directed).empty(), "declared directed f32 fma rounding emits no interpolation mode constant");
+        fmaModesByRounding.push_back(interpolationModes(directed));
     }
+    require(fmaModesByRounding[0] != fmaModesByRounding[1] && fmaModesByRounding[1] != fmaModesByRounding[2] && fmaModesByRounding[0] != fmaModesByRounding[2],
+            "the fma interpolation mode constants do not follow the declared f32 rounding");
 }
 
 void verifyDirectedF16Conversion() {
