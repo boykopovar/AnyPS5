@@ -60,7 +60,7 @@ int main() {
         run(std::string(order) + "-alignment", [&] {
             auto bytes = Fixture(0, first);
             Write<std::uint64_t>(bytes, empty + 48, 3);
-            Reject(bytes, "Invalid load segment alignment");
+            Reject(bytes, "PT_LOAD alignment is not a power of two");
         });
         run(std::string(order) + "-alignment-congruence", [&] {
             auto bytes = Fixture(1, first);
