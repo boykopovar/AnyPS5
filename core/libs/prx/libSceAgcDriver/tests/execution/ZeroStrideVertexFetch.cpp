@@ -40,6 +40,7 @@ alignas(256) constexpr std::array<std::uint32_t, 4> PixelCode{
 };
 
 alignas(256) constexpr std::array<float, 4> Element{0.25f, -2.0f, 7.5f, 1.0f};
+alignas(256) std::array<std::uint16_t, 16> Indices{};
 
 struct Case {
     std::uint32_t select;
@@ -54,6 +55,10 @@ struct Case {
     bool indirect = false;
     std::uint32_t fetchIndex = 0;
     bool unalignedBase = false;
+    bool quadList = false;
+    VkPrimitiveTopology topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    const std::uint32_t* indices = nullptr;
+    std::uint32_t indexCount = 0u;
 };
 
 std::array<std::uint32_t, 4> VertexBufferDescriptor(const Case& value) {
@@ -124,7 +129,8 @@ void Draw(const std::shared_ptr<AgcDriver::VulkanDevice>& device, const Case& va
     state.colors = {state.color};
     state.hasColorTarget = true;
     state.renderExtent = {Width, Height};
-    state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    state.quadList = value.quadList;
+    state.topology = value.topology;
     state.viewport = {0, static_cast<float>(Height), static_cast<float>(Width), -static_cast<float>(Height), 0, 1};
     state.negativeOneToOne = false;
     state.scissor = {{0, 0}, {Width, Height}};
@@ -134,6 +140,10 @@ void Draw(const std::shared_ptr<AgcDriver::VulkanDevice>& device, const Case& va
     state.blends = {state.blend};
     state.blendConstants = {};
     AgcDriver::Pm4::DrawParameters draw{0, Vertices, 0, 1, 0, false, value.firstVertex, value.fetchIndex == 0 ? 0u : 17u};
+    if (value.indices != nullptr) {
+        for (std::uint32_t slot = 0u; slot < value.indexCount; ++slot) Indices[slot] = static_cast<std::uint16_t>(value.indices[slot]);
+        draw = {reinterpret_cast<std::uintptr_t>(Indices.data()), value.indexCount, 2u, 1u, 0u, true, value.firstVertex, value.fetchIndex == 0 ? 0u : 17u};
+    }
     if (value.indirect) {
         Arguments[0] = Vertices;
         Arguments[1] = 1;
@@ -259,7 +269,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         constexpr std::uint32_t Wzyx = 7u | (6u << 3u) | (1u << 6u) | (0u << 9u);
-        constexpr std::array<Case, 20> cases{{
+        constexpr std::array<Case, 22> cases{{
             {0u, 0u, false, "OOB_SELECT 0, no records"},
             {0u, 1u, false, "OOB_SELECT 0, one record"},
             {0u, 16u, false, "OOB_SELECT 0, records cover the element's bytes"},
@@ -270,6 +280,8 @@ int main(int argc, char** argv) {
             {1u, 4u, true, "OOB_SELECT 1, NUM_RECORDS past the vertices"},
             {1u, 0xffffffffu, true, "OOB_SELECT 1, NUM_RECORDS 0xffffffff"},
             {1u, 3u, true, "OOB_SELECT 1, NUM_RECORDS 3, selectors W Z 1 0", Wzyx},
+            {1u, 16u, false, "OOB_SELECT 1, every index past NUM_RECORDS", 0xfacu, 0u, 77u, 17u},
+            {1u, 17u, false, "OOB_SELECT 1, every index at or past NUM_RECORDS", 0xfacu, 0u, 77u, 17u},
             {2u, 0u, false, "OOB_SELECT 2, no records"},
             {2u, 1u, true, "OOB_SELECT 2, one record"},
             {2u, 16u, true, "OOB_SELECT 2, whole element in range"},
@@ -281,6 +293,44 @@ int main(int argc, char** argv) {
             {3u, 16u, true, "OOB_SELECT 3, selectors W Z 1 0", Wzyx},
             {3u, 8u, false, "OOB_SELECT 3, partly fits, selectors W Z 1 0", Wzyx},
         }};
+        {
+            const Case spanning{1u, 18u, true, "OOB_SELECT 1, a draw spanning NUM_RECORDS", 0xfacu, 0u, 77u, 17u};
+            bool refused = false;
+            try {
+                Draw(device, spanning);
+            } catch (const std::runtime_error& error) {
+                const std::string message(error.what());
+                Require(message.find("vertex fetch exceeds descriptor record count") != std::string::npos, "a draw spanning NUM_RECORDS was refused without the record count: " + message);
+                refused = true;
+            }
+            Require(refused, "a draw spanning NUM_RECORDS was accepted");
+        }
+        const std::uint32_t allPastQuad[4] = {17u, 18u, 19u, 20u};
+        const std::uint32_t spanningQuad[4] = {16u, 18u, 19u, 20u};
+        const std::uint32_t allPastStrip[5] = {17u, 18u, 19u, 20u, 21u};
+        const auto refuses = [&](const Case& value) {
+            bool refused = false;
+            try {
+                Draw(device, value);
+            } catch (const std::runtime_error& error) {
+                const std::string message(error.what());
+                Require(message.find("vertex fetch exceeds descriptor record count") != std::string::npos, std::string(value.what) + ": refused without the record count: " + message);
+                refused = true;
+            }
+            Require(refused, std::string(value.what) + ": was accepted");
+        };
+        {
+            const Case quadAllPast{1u, 17u, false, "indexed quad-list, every index at or past NUM_RECORDS", 0xfacu, 0u, 77u, 0u, false, false, 0u, false, true, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, allPastQuad, 4u};
+            Draw(device, quadAllPast);
+            const Case quadSpanning{1u, 17u, true, "indexed quad-list, a draw spanning NUM_RECORDS", 0xfacu, 0u, 77u, 0u, false, false, 0u, false, true, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, spanningQuad, 4u};
+            refuses(quadSpanning);
+            if (!device->PrimitiveListRestart()) {
+                const Case stripAllPast{1u, 16u, false, "indexed strip, every index past NUM_RECORDS", 0xfacu, 0u, 77u, 0u, false, false, 0u, false, false, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP, allPastStrip, 5u};
+                Draw(device, stripAllPast);
+            } else {
+                std::cout << "indexed strip expansion not exercised: the device restarts strips natively\n";
+            }
+        }
         for (const auto& value : cases) {
             Draw(device, value);
             Check(value);

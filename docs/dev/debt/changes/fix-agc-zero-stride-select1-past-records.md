@@ -1,0 +1,5 @@
+# libSceAgcDriver
+
+## change [Zero-stride vertex fetch range]
+
+- [Zero-stride vertex fetch range](../../../core/libs/prx/libSceAgcDriver/Graphics/include/VertexInput.hpp) (libSceAgcDriver) - a draw whose every index is at or past a nonzero NUM_RECORDS of a stride-0 `OOB_SELECT` 1 V# reads zero, as the hardware does. One that spans NUM_RECORDS still throws: a stride-0 binding cannot read the element for some vertices and zero for others. An indirect draw is not checked. Unmeasured on gfx1013 (the console), with an instruction offset or SOFFSET, with a swizzled V# and in a vertex shader. Rules from #8299, measured on an RX 6700 XT (gfx1031), same results on gfx1010, with raw ISA ([data](https://gist.github.com/thuanquang/3b25d677c1a32d79123dd2df1819dd83)). Stride 0 reads zero for `OOB_SELECT` 0 always; for 1 when index >= NUM_RECORDS (records); for 2 when NUM_RECORDS is 0; for 3 when NUM_RECORDS is under the fetch's bytes. Untyped loads check each dword under 3; only typed fetches are used here.
