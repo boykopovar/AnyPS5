@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#include <vector>
 
 void Check(bool condition, const char* what) {
     if (!condition) throw std::runtime_error(what);
@@ -80,6 +81,29 @@ int main() {
         std::ofstream(path, std::ios::binary | std::ios::trunc) << "APS5_PAD_RECORDING 1\n";
         Pad::RecordingPlayer empty(path);
         Check(empty.Active() && empty.At(1000) == idle && empty.At(9000000) == idle, "an empty recording did not replay the idle state");
+
+        Pad::RecordingPlayer backwardPlayer(std::vector<Pad::RecordedSample>{{0, idle}, {250, cross}, {400, walk}});
+        Check(backwardPlayer.At(20000000) == idle, "the backward-timestamp replay did not start at 0 ms");
+        Check(backwardPlayer.At(19000000) == idle, "a timestamp before replay start did not clamp to 0 ms");
+        Check(backwardPlayer.At(20000000) == idle, "replay at exact start timestamp did not return the 0 ms state");
+        Check(backwardPlayer.At(20400000) == walk, "replay did not advance normally after clamping a backward timestamp");
+
+        {
+            Pad::RecordingWriter backwardWriter(path);
+            Check(backwardWriter.Active(), "the backward-timestamp recording file was not created");
+            backwardWriter.Record(5000000, idle);
+            backwardWriter.Record(4000000, cross);
+            backwardWriter.Record(5500000, walk);
+            backwardWriter.Record(5200000, cross);
+        }
+        std::stringstream backwardText;
+        backwardText << std::ifstream(path, std::ios::binary).rdbuf();
+        const auto clamped = Pad::ParseRecording(backwardText.str());
+        Check(clamped && clamped->size() == 4, "backward timestamps produced an unparseable or incomplete recording");
+        Check((*clamped)[0].ms == 0 && (*clamped)[0].state == idle, "initial sample timestamp or state was incorrect");
+        Check((*clamped)[1].ms == 0 && (*clamped)[1].state == cross, "timestamp before startUs did not clamp to 0 ms");
+        Check((*clamped)[2].ms == 500 && (*clamped)[2].state == walk, "forward sample timestamp or state was incorrect");
+        Check((*clamped)[3].ms == 500 && (*clamped)[3].state == cross, "regressing timestamp was not clamped to previous sample timestamp");
 
         std::filesystem::remove(path);
         std::cout << "pad recording tests passed\n";
