@@ -1,4 +1,6 @@
 import argparse
+import contextlib
+import errno
 import importlib.util
 import hashlib
 import json
@@ -1800,6 +1802,23 @@ def regenerate_isa_forms(xml):
     return 0
 
 
+@contextlib.contextmanager
+def closed_stdout_ignored():
+    try:
+        yield
+        sys.stdout.flush()
+    except OSError as error:
+        if not (isinstance(error, BrokenPipeError) or (sys.platform == "win32" and error.errno == errno.EINVAL)):
+            raise
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        try:
+            os.dup2(devnull, sys.stdout.fileno())
+        except (AttributeError, OSError, ValueError):
+            pass
+        finally:
+            os.close(devnull)
+
+
 def main(argv=None):
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
@@ -1843,7 +1862,8 @@ def main(argv=None):
                 except ValueError as error:
                     parser.error(f"{path}: {error}")
             base, head = snapshots
-            print(report(base, head), end="")
+            with closed_stdout_ignored():
+                print(report(base, head), end="")
             return 0
         if args.regenerate_isa_forms or args.regenerate_gfx1013_forms:
             try:
@@ -1891,20 +1911,21 @@ def main(argv=None):
                 parser.error(str(error))
             except OSError as error:
                 parser.error(f"{args.output}: {error.strerror or error}")
-        if args.json:
-            print(json.dumps(site_data(libraries, shaders, shader_source, open_pr_progress), indent=2))
-        else:
-            print(f'libraries {libraries["done"]}/{libraries["total"]} ({libraries["percent"]}%)')
-            print(f'shader opcode names declared {shaders["done"]}/{shaders["total"]} ({shaders["percent"]}%)')
-            if shader_source:
-                instructions = shader_source["instructions"]
-                print(f'shader forms decoded {instructions["decoded"]}/{instructions["total"]} ({shader_source_percent(shader_source)}%), '
-                      f'translated {instructions["translated"]}, unsupported throws {shader_source["unsupported_throws"]}')
-                profile = shader_source.get("profiles", {}).get("gfx1013")
-                if profile:
-                    instructions = profile["instructions"]
-                    print(f'gfx1013 reference forms decoded {instructions["decoded"]}/{instructions["total"]} '
-                          f'({shader_source_percent(profile)}%), translated {instructions["translated"]}')
+        with closed_stdout_ignored():
+            if args.json:
+                print(json.dumps(site_data(libraries, shaders, shader_source, open_pr_progress), indent=2))
+            else:
+                print(f'libraries {libraries["done"]}/{libraries["total"]} ({libraries["percent"]}%)')
+                print(f'shader opcode names declared {shaders["done"]}/{shaders["total"]} ({shaders["percent"]}%)')
+                if shader_source:
+                    instructions = shader_source["instructions"]
+                    print(f'shader forms decoded {instructions["decoded"]}/{instructions["total"]} ({shader_source_percent(shader_source)}%), '
+                          f'translated {instructions["translated"]}, unsupported throws {shader_source["unsupported_throws"]}')
+                    profile = shader_source.get("profiles", {}).get("gfx1013")
+                    if profile:
+                        instructions = profile["instructions"]
+                        print(f'gfx1013 reference forms decoded {instructions["decoded"]}/{instructions["total"]} '
+                              f'({shader_source_percent(profile)}%), translated {instructions["translated"]}')
         return 0
     finally:
         PRX, OPCODES = previous
