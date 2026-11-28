@@ -245,9 +245,8 @@ extern "C" int APS5_VABI libScePngParserWriteMetadata_nid_no_patch(const void* p
         constexpr std::size_t size = 4096;
         small.reset(allocator.allocate(size));
         if (!small) throw std::bad_alloc();
-        if (!GuestWritable_nid_no_patch(small.get(), size)) throw std::invalid_argument("PNG writer: invalid scratch allocation");
         scratchWrite.emplace(small.get(), size);
-        if (!scratchWrite->Open()) throw std::invalid_argument("PNG writer: invalid scratch allocation");
+        if (!scratchWrite->Open() || !GuestWritable_nid_no_patch(small.get(), size)) throw std::invalid_argument("PNG writer: invalid scratch allocation");
         scratch = {static_cast<Byte*>(small.get()), size};
     }
     if (!CopyChunks(source, output.file, scratch, !title.empty(), !comment.empty())) return kInvalidFile;
