@@ -622,33 +622,8 @@ double APS5_VABI cabs_nid_postfix(__complex__ double z) { return hypot_nid_postf
 float APS5_VABI cabsf_nid_postfix(__complex__ float z) { return hypotf_nid_postfix(__real__ z, __imag__ z); }
 long double APS5_VABI cabsl_nid_postfix(__complex__ long double z) { return hypotl_nid_postfix(__real__ z, __imag__ z); }
 
-__complex__ double APS5_VABI ccos_nid_postfix(__complex__ double z) {
-    const auto result = std::cos(std::complex<double>(__real__ z, __imag__ z));
-    return MakeComplex(result.real(), result.imag());
-}
-
-__complex__ double APS5_VABI ccosh_nid_postfix(__complex__ double z) {
-    const auto result = std::cosh(std::complex<double>(__real__ z, __imag__ z));
-    return MakeComplex(result.real(), result.imag());
-}
-
-__complex__ double APS5_VABI cexp_nid_postfix(__complex__ double z) {
-    const auto result = std::exp(std::complex<double>(__real__ z, __imag__ z));
-    return MakeComplex(result.real(), result.imag());
-}
-
 __complex__ double APS5_VABI clog_nid_postfix(__complex__ double z) {
     const auto result = std::log(std::complex<double>(__real__ z, __imag__ z));
-    return MakeComplex(result.real(), result.imag());
-}
-
-__complex__ double APS5_VABI csin_nid_postfix(__complex__ double z) {
-    const auto result = std::sin(std::complex<double>(__real__ z, __imag__ z));
-    return MakeComplex(result.real(), result.imag());
-}
-
-__complex__ double APS5_VABI csinh_nid_postfix(__complex__ double z) {
-    const auto result = std::sinh(std::complex<double>(__real__ z, __imag__ z));
     return MakeComplex(result.real(), result.imag());
 }
 
@@ -662,33 +637,8 @@ __complex__ double APS5_VABI cpow_nid_postfix(__complex__ double x, __complex__ 
     return MakeComplex(result.real(), result.imag());
 }
 
-__complex__ long double APS5_VABI ccosl_nid_postfix(__complex__ long double z) {
-    const auto result = std::cos(std::complex<long double>(__real__ z, __imag__ z));
-    return MakeComplex(result.real(), result.imag());
-}
-
-__complex__ long double APS5_VABI ccoshl_nid_postfix(__complex__ long double z) {
-    const auto result = std::cosh(std::complex<long double>(__real__ z, __imag__ z));
-    return MakeComplex(result.real(), result.imag());
-}
-
-__complex__ long double APS5_VABI cexpl_nid_postfix(__complex__ long double z) {
-    const auto result = std::exp(std::complex<long double>(__real__ z, __imag__ z));
-    return MakeComplex(result.real(), result.imag());
-}
-
 __complex__ long double APS5_VABI clogl_nid_postfix(__complex__ long double z) {
     const auto result = std::log(std::complex<long double>(__real__ z, __imag__ z));
-    return MakeComplex(result.real(), result.imag());
-}
-
-__complex__ long double APS5_VABI csinl_nid_postfix(__complex__ long double z) {
-    const auto result = std::sin(std::complex<long double>(__real__ z, __imag__ z));
-    return MakeComplex(result.real(), result.imag());
-}
-
-__complex__ long double APS5_VABI csinhl_nid_postfix(__complex__ long double z) {
-    const auto result = std::sinh(std::complex<long double>(__real__ z, __imag__ z));
     return MakeComplex(result.real(), result.imag());
 }
 
