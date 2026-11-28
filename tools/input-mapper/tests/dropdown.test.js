@@ -85,8 +85,8 @@ test('the picker lets an IME handle keys during composition', () => {
     search.value = japanese;
     search.dispatchEvent(new Event('input'));
 
-    const keydown = (key, isComposing) => {
-        const event = Object.assign(new Event('keydown', {cancelable: true}), {key, isComposing});
+    const keydown = (key, isComposing, keyCode) => {
+        const event = Object.assign(new Event('keydown', {cancelable: true}), {key, isComposing, keyCode});
         Object.defineProperty(event, 'target', {value: search});
         dialog.dispatchEvent(event);
         return event;
@@ -94,6 +94,9 @@ test('the picker lets an IME handle keys during composition', () => {
 
     assert.equal(keydown('ArrowDown', true).defaultPrevented, false);
     assert.equal(keydown('Enter', true).defaultPrevented, false);
+    for (const key of ['ArrowDown', 'ArrowUp', 'Enter']) {
+        assert.equal(keydown(key, false, 229).defaultPrevented, false);
+    }
     assert.equal(dialog.open, true);
     assert.equal(control.select.value, 'English');
 

@@ -89,7 +89,7 @@ function openPicker(control) {
 
 search.addEventListener('input', renderOptions);
 dialog.addEventListener('keydown', event => {
-    if (event.isComposing) return;
+    if (event.isComposing || event.keyCode === 229) return;
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
         const inSearch = event.target === search;
