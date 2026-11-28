@@ -254,7 +254,7 @@ void RunConversions(AgcDriver::VulkanDevice& device, bool signedInteger, std::ui
                 if (!signedInteger) {
                     if (source == 6u) word = static_cast<std::uint32_t>(integer < 0 ? -integer : integer);
                     else if (sign != 0u && source < 4u) word &= ~(0x80u << FieldOffset(source));
-                    else if (sign != 0u) word &= ~(0x8000u << FieldOffset(source));
+                    else if (sign != 0u && (word & (0x8000u << FieldOffset(source))) != 0u) word &= ~(0xffu << FieldOffset(source));
                 }
                 ExactFloatBits(SelectInteger(word, source, sign != 0u), signedInteger);
                 ConversionInput[lane * ConversionInputs + source * 2u + sign] = word;
@@ -321,6 +321,92 @@ void RunConversions(AgcDriver::VulkanDevice& device, bool signedInteger, std::ui
         }
     }
     std::printf("sdwa integer-to-f32 %s wave%u: %u combinations passed\n", signedInteger ? "i32" : "u32", waveSize, ConversionResults);
+}
+
+constexpr std::uint32_t SextResults = 14u;
+constexpr std::array<std::uint32_t, 16> SextWords{
+    0xff81fe80u, 0x80fffe00u, 0x7f80fe81u, 0x00fffe82u,
+    0x8000ff00u, 0x8001ff80u, 0xffff7fffu, 0xc0008100u,
+    0x01020304u, 0xfefdfcfbu, 0xdeadbeefu, 0x80808080u,
+    0x7f7f7f7fu, 0xfffffeffu, 0x80ff8000u, 0xff00ff80u,
+};
+alignas(256) std::array<std::uint32_t, Threads> SextInput{};
+alignas(256) std::array<std::uint32_t, Threads * SextResults> SextOutput{};
+
+void RunSignExtendedUnsignedConversions(AgcDriver::VulkanDevice& device, std::uint32_t waveSize) {
+    for (std::uint32_t lane = 0u; lane < Threads; ++lane) {
+        SextInput[lane] = SextWords[lane % SextWords.size()];
+    }
+    SextOutput.fill(0xdeadbeefu);
+    std::vector<std::uint32_t> words{
+        0x160400ffu, SextResults,
+        0xe0302000u, 0x80000400u, 0xbf8c3f70u,
+    };
+    std::uint32_t index = 0u;
+    for (std::uint32_t source = 0u; source < 6u; ++source) {
+        for (std::uint32_t sign = 0u; sign < 2u; ++sign, ++index) {
+            words.insert(words.end(), {
+                0x7e0a0cf9u,
+                4u | (6u << 8u) | (source << 16u) | (sign << 19u),
+                0xe0702000u | (index * 4u), 0x80010502u,
+            });
+        }
+    }
+    words.insert(words.end(), {
+        0x7e0c0280u,
+        0xe0302000u, 0x80000706u, 0xbf8c3f70u,
+        0x7e100507u,
+        0xbe891908u,
+        0x7e0a0c09u,
+        0xe0702000u | (index * 4u), 0x80010502u,
+    });
+    ++index;
+    words.insert(words.end(), {
+        0xbe891a08u,
+        0x7e0a0c09u,
+        0xe0702000u | (index * 4u), 0x80010502u,
+    });
+    words.push_back(0xbf810000u);
+    std::vector<std::uint32_t> userData(8u);
+    const auto input = BufferDescriptor(SextInput.data(), static_cast<std::uint32_t>(SextInput.size()));
+    const auto output = BufferDescriptor(SextOutput.data(), static_cast<std::uint32_t>(SextOutput.size()));
+    std::copy(input.begin(), input.end(), userData.begin());
+    std::copy(output.begin(), output.end(), userData.begin() + 4);
+    const std::span<const std::uint32_t> code(words);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
+        {waveSize, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        device.Target(), {0, 0, 0, 128}
+    };
+    request.useCache = false;
+    const auto result = ShaderRecompiler::Recompile(request);
+    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.WaitIdle();
+    for (std::uint32_t lane = 0u; lane < Threads; ++lane) {
+        const auto word = SextInput[lane];
+        index = 0u;
+        for (std::uint32_t source = 0u; source < 6u; ++source) {
+            for (std::uint32_t sign = 0u; sign < 2u; ++sign, ++index) {
+                const auto expected = std::bit_cast<std::uint32_t>(static_cast<float>(SelectInteger(word, source, sign != 0u)));
+                const auto actual = SextOutput[lane * SextResults + index];
+                Require(actual == expected, "sdwa sign-extended u32-to-f32: lane " + std::to_string(lane) +
+                    " wave" + std::to_string(waveSize) + " source " + std::to_string(source) +
+                    " sext " + std::to_string(sign) + " is " + Hex(actual) + ", expected " + Hex(expected));
+            }
+        }
+        const auto firstLaneWord = SextInput[0];
+        const auto expectedI8 = std::bit_cast<std::uint32_t>(static_cast<float>(SelectInteger(firstLaneWord, 0u, true)));
+        const auto actualI8 = SextOutput[lane * SextResults + 12u];
+        Require(actualI8 == expectedI8, "scalar s_sext_i32_i8 u32-to-f32: lane " + std::to_string(lane) +
+            " wave" + std::to_string(waveSize) + " is " + Hex(actualI8) + ", expected " + Hex(expectedI8));
+        const auto expectedI16 = std::bit_cast<std::uint32_t>(static_cast<float>(SelectInteger(firstLaneWord, 4u, true)));
+        const auto actualI16 = SextOutput[lane * SextResults + 13u];
+        Require(actualI16 == expectedI16, "scalar s_sext_i32_i16 u32-to-f32: lane " + std::to_string(lane) +
+            " wave" + std::to_string(waveSize) + " is " + Hex(actualI16) + ", expected " + Hex(expectedI16));
+    }
+    std::printf("sdwa sign-extended u32-to-f32 wave%u: %u results passed\n", waveSize, Threads * SextResults);
 }
 
 constexpr std::uint32_t F16ConversionInputs = 2u;
@@ -636,6 +722,7 @@ int main(int argc, char** argv) {
         Require(argc == 1 || (argc == 2 && std::string(argv[1]) == "wave64"), "expected no argument or wave64");
         const auto waveSize = argc == 2 ? 64u : 32u;
         for (const bool signedInteger : {false, true}) RunConversions(*device, signedInteger, waveSize);
+        RunSignExtendedUnsignedConversions(*device, waveSize);
         RunF16Conversions(*device, waveSize);
         FillInput();
         Run(*device);
