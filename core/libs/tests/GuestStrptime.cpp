@@ -549,6 +549,29 @@ static void TestEpochSeconds() {
     Require(tmEpochIsoWeek.tm_wday == 1);
     Require(tmEpochIsoWeek.tm_yday == 7);
 
+    GuestTm tmNegEpochIsoWeekNoon{};
+    rem = strptime_nid_postfix("-62198712000 01", "%s %V", &tmNegEpochIsoWeekNoon);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmNegEpochIsoWeekNoon.tm_year == -1901);
+    Require(tmNegEpochIsoWeekNoon.tm_mon == 0);
+    Require(tmNegEpochIsoWeekNoon.tm_mday == 4);
+    Require(tmNegEpochIsoWeekNoon.tm_wday == 1);
+    Require(tmNegEpochIsoWeekNoon.tm_yday == 3);
+
+    const std::int64_t negEpochMidnight = -62198755200;
+    GuestTm negEpochBase{};
+    Require(localtime_r_nid_postfix(&negEpochMidnight, &negEpochBase) != nullptr);
+    GuestTm tmNegEpochIsoWeek{};
+    rem = strptime_nid_postfix("-62198755200 01", "%s %V", &tmNegEpochIsoWeek);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmNegEpochIsoWeek.tm_year == negEpochBase.tm_year);
+    Require(tmNegEpochIsoWeek.tm_mon == 0);
+    Require(tmNegEpochIsoWeek.tm_wday == 1);
+    if (negEpochBase.tm_year == -1901) {
+        Require(tmNegEpochIsoWeek.tm_mday == 4);
+        Require(tmNegEpochIsoWeek.tm_yday == 3);
+    }
+
     GuestTm tmBad{};
     Require(strptime_nid_postfix("99999999999999999999", "%s", &tmBad) == nullptr);
     Require(strptime_nid_postfix("abc", "%s", &tmBad) == nullptr);

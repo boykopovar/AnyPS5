@@ -585,8 +585,7 @@ const char* ParseInternal(const char* buf, const char* format, GuestTm& tm, Pars
             }
             int resolvedIsoWeek = 0;
             const std::int64_t resolvedCivilYear = static_cast<std::int64_t>(tm.tm_year) + 1900;
-            if (resolvedCivilYear < 0 ||
-                IsoWeekYear(resolvedCivilYear, tm.tm_yday, tm.tm_wday, resolvedIsoWeek) != isoYear ||
+            if (IsoWeekYear(resolvedCivilYear, tm.tm_yday, tm.tm_wday, resolvedIsoWeek) != isoYear ||
                 resolvedIsoWeek != state.isoWeek) {
                 return nullptr;
             }
