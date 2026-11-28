@@ -11,6 +11,7 @@ body:
         - Use the same scene, window, resolution and settings for every capture you compare.
         - Set no other `APS5_TRACE_*` or `APS5_PROFILE_*` switch and do not redirect the log; they cost time.
         - Capture the base and the change on the same machine in the same session.
+        - A daily tag may be the base; compare it with that exact commit plus only the measured change, and record both tested SHAs.
 
         A trace holds timings, scope and thread names and counts, no game data. The summary line names the GPU, driver and OS.
   - type: input

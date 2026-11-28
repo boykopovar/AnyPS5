@@ -1,0 +1,118 @@
+name: Daily tag
+
+on:
+  schedule:
+    - cron: '7 2 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: daily-tag
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    if: github.repository == 'boykopovar/AnyPS5' && !github.event.repository.fork && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require the historical-tag publishing token
+        id: token-check
+        uses: actions/github-script@v8
+        env:
+          DAILY_TAG_TOKEN: ${{ secrets.DAILY_TAG_TOKEN }}
+        with:
+          script: |
+            if (!process.env.DAILY_TAG_TOKEN) {
+              throw new Error('Configure DAILY_TAG_TOKEN for this repository with Actions read, Contents write and Workflows write permissions.');
+            }
+      - name: Tag the newest main commit whose push Build passed
+        id: snapshot
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ secrets.DAILY_TAG_TOKEN }}
+          script: |
+            const { owner, repo } = context.repo;
+            const repository = `${owner}/${repo}`;
+            if (repository !== 'boykopovar/AnyPS5' || context.payload.repository.fork !== false ||
+                context.ref !== 'refs/heads/main' || !['schedule', 'workflow_dispatch'].includes(context.eventName)) {
+              throw new Error('Daily tags are only created from upstream main');
+            }
+            const tag = `daily-${new Date().toISOString().slice(0, 10)}`;
+            const ref = `tags/${tag}`;
+            const findTag = async () => {
+              try {
+                return (await github.rest.git.getRef({ owner, repo, ref })).data;
+              } catch (error) {
+                if (error.status === 404) return null;
+                throw error;
+              }
+            };
+            const keepTag = async () => {
+              core.info(`${tag} already exists; leaving it unchanged`);
+              await core.summary.addRaw(`${tag} already exists and was left unchanged.\n`).write();
+            };
+            if (await findTag()) {
+              await keepTag();
+              return;
+            }
+            const eligible = (run) => run.event === 'push' && run.head_branch === 'main' &&
+              run.status === 'completed' && run.conclusion === 'success' &&
+              Number.isSafeInteger(run.id) && run.id > 0 && /^[a-f0-9]{40}$/i.test(run.head_sha);
+            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+              owner, repo, workflow_id: 'build.yml', branch: 'main', event: 'push', status: 'success', per_page: 100,
+            });
+            const byCommit = new Map();
+            for (const run of runs) {
+              if (!eligible(run)) continue;
+              const sha = run.head_sha.toLowerCase();
+              if (!byCommit.has(sha)) byCommit.set(sha, []);
+              byCommit.get(sha).push(run);
+            }
+            if (byCommit.size === 0) throw new Error('No successful main push Build found');
+            const main = (await github.rest.git.getRef({ owner, repo, ref: 'heads/main' })).data.object.sha;
+            const history = new Map();
+            let cursor = main.toLowerCase();
+            let selected;
+            for await (const { data: commits } of github.paginate.iterator(github.rest.repos.listCommits, {
+              owner, repo, sha: main, per_page: 100,
+            })) {
+              for (const commit of commits) history.set(commit.sha.toLowerCase(), commit);
+              while (cursor && history.has(cursor)) {
+                const commit = history.get(cursor);
+                if (!Array.isArray(commit.parents) || commit.parents.some((parent) => !/^[a-f0-9]{40}$/i.test(parent.sha))) {
+                  throw new Error(`Missing or invalid parent metadata for ${cursor}`);
+                }
+                for (const run of byCommit.get(cursor) ?? []) {
+                  const { data: current } = await github.rest.actions.getWorkflowRun({ owner, repo, run_id: run.id });
+                  if (eligible(current) && current.id === run.id && current.head_sha.toLowerCase() === cursor) {
+                    selected = current;
+                    break;
+                  }
+                }
+                if (selected) break;
+                cursor = commit.parents.length ? commit.parents[0].sha.toLowerCase() : null;
+              }
+              if (selected || cursor === null) break;
+            }
+            if (!selected) throw new Error('No successful push Build found in the resolved first-parent main history');
+            const sha = selected.head_sha.toLowerCase();
+            try {
+              await github.rest.git.createRef({ owner, repo, ref: `refs/${ref}`, sha });
+            } catch (error) {
+              let existing;
+              try {
+                existing = await findTag();
+              } catch (readError) {
+                core.warning(`Could not confirm whether ${tag} was created: ${readError.message}`);
+                throw error;
+              }
+              if (!existing) throw error;
+              await keepTag();
+              return;
+            }
+            core.info(`${tag}: ${sha}`);
+            await core.summary.addRaw(`${tag}: \`${sha}\`\n\n` +
+              `[Successful push Build](https://github.com/${repository}/actions/runs/${selected.id}). ` +
+              'This source snapshot does not establish title compatibility or hardware GPU validation.\n').write();
