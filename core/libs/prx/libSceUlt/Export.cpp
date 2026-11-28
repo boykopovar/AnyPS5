@@ -1170,10 +1170,7 @@ int APS5_VABI _sceUltUlthreadCreate(void* ulthread, const char* name, UltUlthrea
 }
 
 int APS5_VABI sceUltGetConditionVariableInfo(void* object, UltConditionVariableInfo* info, UltWaitingThreadInfo* waitingThreads, std::uint32_t capacity) {
-    struct RestoreErrno {
-        int value = errno;
-        ~RestoreErrno() { errno = value; }
-    } restore;
+    const UltRestoreErrno restore;
     if (object == nullptr || info == nullptr) return ULT_ERROR_NULL;
     if (waitingThreads == nullptr && capacity != 0) return ULT_ERROR_NULL;
     std::shared_ptr<UltConditionState> state;
@@ -1197,24 +1194,13 @@ int APS5_VABI sceUltGetConditionVariableInfo(void* object, UltConditionVariableI
         if (waiter->_tracked) records.push_back(waiter->_record);
     }
     const std::size_t count = std::min<std::size_t>(capacity, records.size());
-    UltConditionVariableInfo previousInfo{};
-    if (count > 0 && !GuestCopyIn_nid_no_patch(&previousInfo, info, sizeof(previousInfo))) return ULT_ERROR_NULL;
-    if (!GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo))) return ULT_ERROR_NULL;
-    if (count > 0) {
-        const int writeStatus = WriteWaitRecords(records, waitingThreads, capacity);
-        if (writeStatus != ULT_OK) {
-            GuestCopyOut_nid_no_patch(info, &previousInfo, sizeof(previousInfo));
-            return writeStatus;
-        }
-    }
-    return ULT_OK;
+    return WriteUltInfoWithTrailing(info, localInfo, count > 0, [&] {
+        return WriteWaitRecords(records, waitingThreads, capacity);
+    });
 }
 
 int APS5_VABI sceUltGetMutexInfo(void* object, UltMutexInfo* info, UltWaitingThreadInfo* waitingThreads, std::uint32_t capacity) {
-    struct RestoreErrno {
-        int value = errno;
-        ~RestoreErrno() { errno = value; }
-    } restore;
+    const UltRestoreErrno restore;
     if (object == nullptr || info == nullptr) return ULT_ERROR_NULL;
     if (waitingThreads == nullptr && capacity != 0) return ULT_ERROR_NULL;
     std::shared_ptr<UltMutexState> state;
@@ -1238,20 +1224,13 @@ int APS5_VABI sceUltGetMutexInfo(void* object, UltMutexInfo* info, UltWaitingThr
     localInfo.lockCount = (state->_attribute & 1) ? state->_lockCount : 0;
     localInfo.waitingThreads = state->_waiters;
     const std::size_t count = std::min<std::size_t>(capacity, state->_waiterRecords.size());
-    UltMutexInfo previousInfo{};
-    if (count > 0 && !GuestCopyIn_nid_no_patch(&previousInfo, info, sizeof(previousInfo))) return ULT_ERROR_NULL;
-    if (!GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo))) return ULT_ERROR_NULL;
-    if (count > 0) {
-        const int writeStatus = WriteWaitRecords(state->_waiterRecords, waitingThreads, capacity);
-        if (writeStatus != ULT_OK) {
-            GuestCopyOut_nid_no_patch(info, &previousInfo, sizeof(previousInfo));
-            return writeStatus;
-        }
-    }
-    return ULT_OK;
+    return WriteUltInfoWithTrailing(info, localInfo, count > 0, [&] {
+        return WriteWaitRecords(state->_waiterRecords, waitingThreads, capacity);
+    });
 }
 
 int APS5_VABI sceUltGetQueueDataResourcePoolInfo(void* object, UltQueueDataResourcePoolInfo* info) {
+    const UltRestoreErrno restore;
     if (object == nullptr || info == nullptr) return ULT_ERROR_NULL;
     std::shared_ptr<UltQueueDataPoolState> state;
     {
@@ -1280,10 +1259,7 @@ int APS5_VABI sceUltGetQueueDataResourcePoolInfo(void* object, UltQueueDataResou
 }
 
 int APS5_VABI sceUltGetQueueInfo(void* object, UltQueueInfo* info, UltWaitingThreadInfo* waitingThreads, std::uint32_t capacity) {
-    struct RestoreErrno {
-        int value = errno;
-        ~RestoreErrno() { errno = value; }
-    } restore;
+    const UltRestoreErrno restore;
     if (object == nullptr || info == nullptr) return ULT_ERROR_NULL;
     if (waitingThreads == nullptr && capacity != 0) return ULT_ERROR_NULL;
     std::shared_ptr<UltQueueState> state;
@@ -1310,24 +1286,13 @@ int APS5_VABI sceUltGetQueueInfo(void* object, UltQueueInfo* info, UltWaitingThr
     std::vector<UltWaitRecord> records = state->_pusherRecords;
     records.insert(records.end(), state->_popperRecords.begin(), state->_popperRecords.end());
     const std::size_t count = std::min<std::size_t>(capacity, records.size());
-    UltQueueInfo previousInfo{};
-    if (count > 0 && !GuestCopyIn_nid_no_patch(&previousInfo, info, sizeof(previousInfo))) return ULT_ERROR_NULL;
-    if (!GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo))) return ULT_ERROR_NULL;
-    if (count > 0) {
-        const int writeStatus = WriteWaitRecords(records, waitingThreads, capacity);
-        if (writeStatus != ULT_OK) {
-            GuestCopyOut_nid_no_patch(info, &previousInfo, sizeof(previousInfo));
-            return writeStatus;
-        }
-    }
-    return ULT_OK;
+    return WriteUltInfoWithTrailing(info, localInfo, count > 0, [&] {
+        return WriteWaitRecords(records, waitingThreads, capacity);
+    });
 }
 
 int APS5_VABI sceUltGetSemaphoreInfo(void* object, UltSemaphoreInfo* info, UltWaitingThreadInfo* waitingThreads, std::uint32_t capacity) {
-    struct RestoreErrno {
-        int value = errno;
-        ~RestoreErrno() { errno = value; }
-    } restore;
+    const UltRestoreErrno restore;
     if (object == nullptr || info == nullptr) return ULT_ERROR_NULL;
     if (waitingThreads == nullptr && capacity != 0) return ULT_ERROR_NULL;
     std::shared_ptr<UltSemaphoreState> state;
@@ -1348,20 +1313,13 @@ int APS5_VABI sceUltGetSemaphoreInfo(void* object, UltSemaphoreInfo* info, UltWa
     localInfo.resources = static_cast<std::uint32_t>(state->_resources);
     localInfo.waitingThreads = state->_waiters;
     const std::size_t count = std::min<std::size_t>(capacity, state->_waiterRecords.size());
-    UltSemaphoreInfo previousInfo{};
-    if (count > 0 && !GuestCopyIn_nid_no_patch(&previousInfo, info, sizeof(previousInfo))) return ULT_ERROR_NULL;
-    if (!GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo))) return ULT_ERROR_NULL;
-    if (count > 0) {
-        const int writeStatus = WriteWaitRecords(state->_waiterRecords, waitingThreads, capacity);
-        if (writeStatus != ULT_OK) {
-            GuestCopyOut_nid_no_patch(info, &previousInfo, sizeof(previousInfo));
-            return writeStatus;
-        }
-    }
-    return ULT_OK;
+    return WriteUltInfoWithTrailing(info, localInfo, count > 0, [&] {
+        return WriteWaitRecords(state->_waiterRecords, waitingThreads, capacity);
+    });
 }
 
 int APS5_VABI sceUltGetUlthreadInfo(void* object, UltUlthreadInfo* info) {
+    const UltRestoreErrno restore;
     if (object == nullptr || info == nullptr) return ULT_ERROR_NULL;
     std::shared_ptr<UltUlthreadState> state;
     {
@@ -1376,44 +1334,48 @@ int APS5_VABI sceUltGetUlthreadInfo(void* object, UltUlthreadInfo* info) {
     std::memcpy(localInfo.name, state->_name, sizeof(localInfo.name));
     localInfo.runtime = state->_runtime;
     localInfo.contextAttribute = state->_contextAttribute;
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
-    errno = savedErrno;
-    if (!copied) return ULT_ERROR_NULL;
+    if (!GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo))) return ULT_ERROR_NULL;
     return ULT_OK;
 }
 
 int APS5_VABI sceUltGetUlthreadRuntimeInfo(void* runtime, UltUlthreadRuntimeInfo* info, void** ulthreads, std::uint32_t ulthreadCapacity, Pthread* workerThreads, std::uint32_t workerCapacity) {
+    const UltRestoreErrno restore;
     if (runtime == nullptr || info == nullptr) return ULT_ERROR_NULL;
     if (ulthreads == nullptr && ulthreadCapacity != 0) return ULT_ERROR_NULL;
     if (workerThreads == nullptr && workerCapacity != 0) return ULT_ERROR_NULL;
-    if (workerThreads != nullptr && workerCapacity != 0) throw std::runtime_error("ULT ulthread runtime worker thread handles are not implemented");
-    std::lock_guard lock(gMutex);
-    const auto it = gRuntimes.find(runtime);
-    if (it == gRuntimes.end()) return ULT_ERROR_STATE;
-    const auto& state = it->second;
     UltUlthreadRuntimeInfo localInfo{};
-    localInfo.size = sizeof(UltUlthreadRuntimeInfo);
-    localInfo.object = runtime;
-    std::memcpy(localInfo.name, state._name, sizeof(localInfo.name));
-    localInfo.maxUlthreads = state._maxNumUlthread;
-    localInfo.workerThreads = state._numWorkerThread;
-    std::uint32_t count = 0;
-    for (const auto& [obj, ulthread] : gUlthreads) {
-        if (ulthread->_runtime == runtime && !ulthread->_exited.load(std::memory_order_acquire)) {
-            if (ulthreads != nullptr && count < ulthreadCapacity && !GuestCopyOut_nid_no_patch(&ulthreads[count], &obj, sizeof(obj))) return ULT_ERROR_NULL;
-            ++count;
+    std::vector<void*> activeHandles;
+    {
+        std::lock_guard lock(gMutex);
+        const auto it = gRuntimes.find(runtime);
+        if (it == gRuntimes.end()) return ULT_ERROR_STATE;
+        const auto& state = it->second;
+        if (state._numWorkerThread != 0 && workerThreads != nullptr && workerCapacity != 0) {
+            throw std::runtime_error("ULT ulthread runtime worker thread handles are not implemented");
         }
+        localInfo.size = sizeof(UltUlthreadRuntimeInfo);
+        localInfo.object = runtime;
+        std::memcpy(localInfo.name, state._name, sizeof(localInfo.name));
+        localInfo.maxUlthreads = state._maxNumUlthread;
+        localInfo.workerThreads = state._numWorkerThread;
+        std::uint32_t count = 0;
+        for (const auto& [obj, ulthread] : gUlthreads) {
+            if (ulthread->_runtime == runtime && !ulthread->_exited.load(std::memory_order_acquire)) {
+                if (ulthreads != nullptr && activeHandles.size() < ulthreadCapacity) activeHandles.push_back(obj);
+                ++count;
+            }
+        }
+        localInfo.activeUlthreads = count;
     }
-    localInfo.activeUlthreads = count;
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
-    errno = savedErrno;
-    if (!copied) return ULT_ERROR_NULL;
-    return ULT_OK;
+    return WriteUltInfoWithTrailing(info, localInfo, !activeHandles.empty(), [&] {
+        return GuestCopyOut_nid_no_patch(ulthreads, activeHandles.data(), activeHandles.size() * sizeof(void*))
+            ? ULT_OK
+            : ULT_ERROR_NULL;
+    });
 }
 
 int APS5_VABI sceUltGetWaitingQueueResourcePoolInfo(void* object, UltWaitingQueueResourcePoolInfo* info) {
+    const UltRestoreErrno restore;
     if (object == nullptr || info == nullptr) return ULT_ERROR_NULL;
     std::lock_guard lock(gMutex);
     const auto it = gResourcePools.find(object);
