@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -188,6 +189,79 @@ void* AllocateSharedBlocks(std::size_t bytes) {
 #endif
 }
 
+void CheckRewatchAfterStencilWrite(AgcDriver::VulkanDevice& device, const DepthFastClearHarness::Shaders& shaders, std::uint32_t swizzle, int mode) {
+    auto* blocks = static_cast<std::byte*>(AllocateBlocks(DepthBytes + StencilBytes));
+    auto* depth = reinterpret_cast<float*>(blocks);
+    auto* stencil = reinterpret_cast<std::uint8_t*>(blocks + DepthBytes);
+    std::fill(depth, depth + PlaneTexels, 1.0f);
+    Fill(stencil, 0u);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto stencilBase = reinterpret_cast<std::uintptr_t>(stencil);
+    const Surface surface{reinterpret_cast<std::uintptr_t>(depth), stencilBase, 0, false, VK_FORMAT_D32_SFLOAT_S8_UINT, 0, 0, swizzle};
+    const auto draw = [&](const DrawOptions& options) { return Draw(device, shaders, surface, options, PlaneExtent, Colors); };
+    Require(draw({.depthTest = false, .stencilTest = true, .stencil = Stencil(VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, 0x18u)}) == PlaneTexels, "the rewatch stencil setup draw did not cover the plane");
+    Require(!AgcDriver::Graphics::FlushDepthPlanes(stencilBase, StencilBytes).empty(), "the rewatch stencil setup did not store the plane");
+    device.WaitIdle();
+    Require(Holding(stencil, 0x18u) == StencilBytes, "the rewatch stencil setup did not reach guest memory");
+    Require(draw({.depthTest = false, .stencilTest = true, .stencil = Stencil(VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, 0x2bu)}) == PlaneTexels, "the divergent rewatch stencil draw did not cover the plane");
+    device.WaitIdle();
+
+    const bool watched = AgcDriver::GuestMemory::RewatchSupported() && AgcDriver::GuestMemory::WriteWatched() && AgcDriver::GuestMemory::Watched(stencilBase, StencilBytes);
+    if (mode != 0 && watched) {
+        Fill(stencil, mode == 1 ? 0x18u : 0x77u);
+        Require(AgcDriver::GuestMemory::CollectWrites(stencilBase, StencilBytes) != 0, "the rewatch stencil guest write was not collected");
+    }
+    if (watched) {
+        AgcDriver::GuestMemory::Unwatch(stencilBase, StencilBytes);
+        const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> span{{{stencilBase, stencilBase + StencilBytes}}};
+        AgcDriver::GuestMemory::Rewatch(span);
+    }
+    Require(draw({.depthTest = false, .stencilTest = false}) == PlaneTexels, "the read-only rebind after a stencil rewatch did not cover the plane");
+    static_cast<void>(AgcDriver::Graphics::FlushDepthPlanes(stencilBase, StencilBytes));
+    device.WaitIdle();
+    const auto expected = !watched || mode == 0 ? 0x2bu : mode == 1 ? 0x18u : 0x77u;
+    const char* failure = !watched ? "a stencil plane without write tracking kept the wrong GPU result" : mode == 0 ? "a rewatch alone was treated as a guest stencil write" : mode == 1 ? "a genuine same-value stencil write before a rewatch was lost" : "a changed-value stencil write before a rewatch was lost";
+    Require(Holding(stencil, expected) == StencilBytes, failure);
+}
+
+void CheckReconciledImportSettles(AgcDriver::VulkanDevice& device) {
+    if (!AgcDriver::GuestMemory::RewatchSupported() || !AgcDriver::GuestMemory::WriteWatched()) {
+        std::puts("the reconciled import cannot settle without the Windows write watch; skipped");
+        return;
+    }
+    constexpr std::uint64_t Window = 8ull << 20u;
+    auto* raw = AllocateBlocks(static_cast<std::size_t>(2 * Window));
+    const auto base = (reinterpret_cast<std::uintptr_t>(raw) + Window - 1) & ~static_cast<std::uintptr_t>(Window - 1);
+    auto* memory = reinterpret_cast<std::byte*>(base);
+    const auto neighbour = base + Window - Block;
+    Require(AgcDriver::GuestMemory::Watched(base, Block), "the reconciled import test range is not write-watched");
+    const auto context = device.graphicsContext();
+    AgcDriver::Graphics::SetHostImportWindow(Window);
+    AgcDriver::Graphics::SetImportWatch(context, AgcDriver::Graphics::ImportWatch::Unwatch);
+    {
+        GuestAllocations::Mutation partitioned;
+        partitioned.Remove(raw);
+        partitioned.Add(memory, Block, true, true, true);
+        partitioned.Add(reinterpret_cast<void*>(neighbour), Block, true, true, true);
+    }
+    Require(AgcDriver::Graphics::HostImportFor(context, base, Block, AgcDriver::Graphics::ImportRequester::Access) != nullptr, "the reconciled import test range was not imported");
+    Require(!AgcDriver::GuestMemory::Watched(base, Block), "the reconciled import stayed write-watched");
+    const auto proof = AgcDriver::Graphics::HostImportsIdentity(context);
+    {
+        GuestAllocations::Mutation changed;
+        changed.Protect(reinterpret_cast<void*>(neighbour), Block, true, true, true, [] {});
+    }
+    Require(AgcDriver::Graphics::HostImportsReconciledUnchanged(context, proof), "the reconciled import test lost its import proof");
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> span{{{base, base + Block}}};
+    AgcDriver::GuestMemory::RewatchSettled(span);
+    Require(AgcDriver::GuestMemory::Watched(base, Block), "a reconciled import could not settle back onto the write watch");
+    AgcDriver::Graphics::ClearHostImports(device.Device());
+    GuestAllocations::Mutation().Remove(memory);
+    GuestAllocations::Mutation().Remove(reinterpret_cast<void*>(neighbour));
+    AgcDriver::Graphics::SetHostImportWindow(0);
+    AgcDriver::Graphics::SetImportWatch(context, AgcDriver::Graphics::ImportWatch::Watch);
+}
+
 void CheckReusedStencilPlane(AgcDriver::VulkanDevice& device, const DepthFastClearHarness::Shaders& shaders, std::uint32_t swizzle) {
     auto* blocks = static_cast<std::byte*>(AllocateSharedBlocks(DepthBytes + StencilBytes));
     auto* depth = reinterpret_cast<float*>(blocks);
@@ -246,7 +320,7 @@ void CheckReusedStencilPlane(AgcDriver::VulkanDevice& device, const DepthFastCle
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
@@ -258,6 +332,7 @@ int main() {
         Fill(stencilPlane, 0u);
         const auto stencilBase = reinterpret_cast<std::uintptr_t>(stencilPlane);
         const auto shaders = Compile(*device);
+        CheckReconciledImportSettles(*device);
         const auto swizzle = AgcDriver::Graphics::XorSwizzleMode(AgcDriver::Graphics::TextureTileMode::kZ64KBX);
         const Surface surface{reinterpret_cast<std::uintptr_t>(depthPlane), stencilBase, 0, false, VK_FORMAT_D32_SFLOAT_S8_UINT, 0, 0, swizzle};
         const auto draw = [&](const DrawOptions& options) { return Draw(*device, shaders, surface, options, PlaneExtent, Colors); };
@@ -269,9 +344,15 @@ int main() {
         Require(Holding(stencilPlane, 0x18u) == StencilBytes, "a read of the stencil plane after a draw wrote stencil 0x18 does not see it in guest memory");
         Require(AgcDriver::Graphics::FlushDepthPlanes(stencilBase, StencilBytes).empty(), "a second read of the stored stencil plane stored it again");
 
+        if (argc == 2 && std::string(argv[1]) == "--rewatch-only") {
+            for (int mode = 0; mode != 3; ++mode) CheckRewatchAfterStencilWrite(*device, shaders, swizzle, mode);
+            return 0;
+        }
+
         CheckConsumedStencilClear(*device, shaders, swizzle, true);
         CheckConsumedStencilClear(*device, shaders, swizzle, false);
         CheckGuestWriteBeforeRepeatedClears(*device, shaders, swizzle);
+        for (int mode = 0; mode != 3; ++mode) CheckRewatchAfterStencilWrite(*device, shaders, swizzle, mode);
 
         std::size_t readOnlyFailures = 0;
         const auto checkReadOnly = [&](const DrawOptions& options, const char* name) {

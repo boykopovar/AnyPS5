@@ -919,9 +919,15 @@ void CheckRewatch() {
     BumpCollectEpoch();
     const auto before = CollectWrites(base, 4 * Block);
     Require(before != 0, "the test range was not collected");
+    GuestAllocations::Mutation allocation;
+    allocation.Add(memory, 4 * Block, true, true, true);
     Unwatch(imported, 2 * Block);
     const auto unwatched = UnwatchSerial();
     Require(!Watched(imported, Block) && UntrackedHint(imported, Block) != 0, "the unwatched block does not read as untracked");
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> explicitSpan{{{imported, imported + Block}}};
+    RewatchSettled(explicitSpan);
+    Require(!Watched(imported, Block), "a settled rewatch over an explicitly unwatched block returned it to the write watch");
+    allocation.Remove(memory);
     bytes[Block + 8] = 0x22;
     const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> unaligned{{{imported + 1, imported + Block}}};
     Rewatch(unaligned);
@@ -987,6 +993,76 @@ void CheckRewatchKeepsDriverStores(LostDriverStore kind) {
     Require(StoredOver(stored, Page, taken), "rewatching another page of the block made a driver store read as not stored over");
     GuestArena::GuestArenaReset_nid_postfix(memory, Bytes);
     GuestArena::GuestArenaRelease_nid_postfix(memory, Bytes);
+}
+
+void CheckRewatchMarkerLifetime() {
+    constexpr std::uint64_t page = 4096;
+    void* memory = GuestArena::GuestArenaAllocate_nid_postfix(4 * Block, Block);
+    GuestArena::GuestArenaCommit_nid_postfix(memory, 4 * Block, PAGE_READWRITE, 16384);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    Require(Watched(base, 4 * Block), "the marker lifetime test range is not watched");
+    std::memset(memory, 0x44, 4 * Block);
+    BumpCollectEpoch();
+    const auto before = CollectWrites(base, 4 * Block);
+    Require(before != 0, "the marker lifetime test range was not collected");
+    using Span = std::array<std::pair<std::uint64_t, std::uint64_t>, 1>;
+    const Span first{{{base, base + page}}};
+    const Span mixed{{{base + 1, base + 2 * page - 1}}};
+
+    void* unrelated = GuestArena::GuestArenaAllocate_nid_postfix(4 * Block, Block);
+    GuestArena::GuestArenaCommit_nid_postfix(unrelated, Block, PAGE_READWRITE, Block);
+    {
+        GuestAllocations::Mutation target;
+        target.Add(memory, 4 * Block, true, true, true);
+    }
+    Unwatch(base, page);
+    Require(!Watched(base, page), "the explicit-unwatch marker was not established");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(unrelated, Block, true, true, true);
+    }
+    RewatchSettled(first);
+    Require(!Watched(base, page), "an unrelated allocation mutation discarded explicit-unwatch intent");
+    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(reinterpret_cast<std::uintptr_t>(unrelated), Block);
+    RewatchSettled(first);
+    Require(!Watched(base, page), "an unrelated invalidation discarded explicit-unwatch intent");
+
+    Unwatch(base + page, page);
+    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(base + page, page);
+    RewatchSettled(mixed);
+    Require(!Watched(base, page) && Watched(base + page, page), "a mixed settled rewatch did not restore only the unmarked page");
+
+    Rewatch(first);
+    Require(Watched(base, page), "a public rewatch did not clear the explicit-unwatch marker");
+    Unwatch(base, page);
+    {
+        GuestAllocations::Mutation remap;
+        remap.Protect(memory, page, true, true, true, [] {});
+    }
+    RewatchSettled(first);
+    Require(Watched(base, page), "a remapped explicitly unwatched page kept its marker");
+
+    Unwatch(base, page);
+    {
+        GuestAllocations::Mutation removal;
+        removal.Remove(memory);
+    }
+    {
+        GuestAllocations::Mutation addition;
+        addition.Add(memory, 4 * Block, true, true, true);
+    }
+    RewatchSettled(first);
+    Require(Watched(base, page), "a freed and reused address kept an explicit-unwatch marker");
+
+    UnwatchImportBookkeeping(base, page);
+    Require(!Watched(base, page), "bookkeeping unwatch did not remove the watch");
+    RewatchSettled(first);
+    Require(Watched(base, page), "bookkeeping unwatch created an explicit-unwatch marker");
+
+    GuestArena::GuestArenaReset_nid_postfix(unrelated, Block);
+    GuestArena::GuestArenaRelease_nid_postfix(unrelated, 4 * Block);
+    GuestArena::GuestArenaReset_nid_postfix(memory, 4 * Block);
+    GuestArena::GuestArenaRelease_nid_postfix(memory, 4 * Block);
 }
 
 using RewatchSpan = std::array<std::pair<std::uint64_t, std::uint64_t>, 1>;
@@ -2978,6 +3054,7 @@ int main(int argc, char** argv) {
         CheckPrivateMappingReuse();
         CheckRewatch();
         for (const auto kind : {LostDriverStore::Piece, LostDriverStore::PossiblePiece, LostDriverStore::Whole, LostDriverStore::PossibleWhole}) CheckRewatchKeepsDriverStores(kind);
+        CheckRewatchMarkerLifetime();
         CheckUntrackedHint();
         CheckHostHoleInChild(HostHoleMode, ChildHostHole());
         CheckHostHoleInChild(MetadataCommitMode, ProbedHostHole());
