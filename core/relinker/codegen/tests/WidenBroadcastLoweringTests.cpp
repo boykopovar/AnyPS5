@@ -31,6 +31,11 @@ Bytes withW(Bytes bytes) {
     return bytes;
 }
 
+Bytes withVvvv(Bytes bytes, std::uint8_t value) {
+    bytes[2] = static_cast<std::uint8_t>((bytes[2] & ~0x78u) | ((~value & 15u) << 3));
+    return bytes;
+}
+
 constexpr std::array<std::uint8_t, 12> kWidenOpcodes{0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35};
 
 void decoding() {
@@ -43,10 +48,18 @@ void decoding() {
         const auto ignoredW = withW(site(opcode, true, 9, 3));
         const auto ignoredWOperands = Codegen::DecodeWidenBroadcast(ignoredW.data(), ignoredW.size());
         require(ignoredWOperands && ignoredWOperands->Kind == Codegen::WidenBroadcastKind::Widen && ignoredWOperands->Destination == 9 && ignoredWOperands->Source == 3, "a 256-bit widening move with VEX.W=1, which the move ignores, was not decoded");
+        for (const auto& invalidVvvv : {withVvvv(bytes, 1), withVvvv(ignoredW, 15), withVvvv(memorySite(opcode, true, 5), 1)})
+            require(!Codegen::DecodeWidenBroadcast(invalidVvvv.data(), invalidVvvv.size()), "a widening move with non-1111 VEX.vvvv was decoded");
     }
-    for (const auto& [opcode, wide] : std::array<std::pair<std::uint8_t, bool>, 9>{{{0x18, false}, {0x18, true}, {0x58, false}, {0x58, true}, {0x19, true}, {0x59, false}, {0x59, true}, {0x78, true}, {0x79, false}}}) {
+    for (const auto& [opcode, wide] : std::array<std::pair<std::uint8_t, bool>, 11>{{{0x18, false}, {0x18, true}, {0x58, false}, {0x58, true}, {0x19, true}, {0x59, false}, {0x59, true}, {0x78, false}, {0x78, true}, {0x79, false}, {0x79, true}}}) {
         const auto bytes = site(opcode, wide, 1, 14);
         require(Codegen::DecodeWidenBroadcast(bytes.data(), bytes.size()).has_value(), "a register-source broadcast was not decoded");
+        const auto invalidVvvv = withVvvv(bytes, 1);
+        require(!Codegen::DecodeWidenBroadcast(invalidVvvv.data(), invalidVvvv.size()), "a broadcast with non-1111 VEX.vvvv was decoded");
+        if (opcode == 0x78 || opcode == 0x79) {
+            const auto invalidMemoryVvvv = withVvvv(memorySite(opcode, wide, 6), 1);
+            require(!Codegen::DecodeWidenBroadcast(invalidMemoryVvvv.data(), invalidMemoryVvvv.size()), "a memory broadcast with non-1111 VEX.vvvv was decoded");
+        }
     }
     for (const Bytes bytes : {memorySite(0x18, true, 0), memorySite(0x58, true, 0), memorySite(0x59, true, 0), site(0x19, false, 0, 1), withW(site(0x18, true, 0, 1)), withW(site(0x59, true, 0, 1)), withW(site(0x78, true, 0, 1)), Bytes{0xC4, 0xE2, 0x7D, 0x36, 0xC1}, Bytes{0x90}})
         require(!Codegen::DecodeWidenBroadcast(bytes.data(), bytes.size()), "an AVX broadcast, a twin or an unrelated instruction was taken as widen/broadcast");
@@ -67,6 +80,8 @@ void matching() {
     const auto ignoredW = withW(bytes);
     const auto ignoredWMatch = avx->Match(ignoredW.data(), ignoredW.size());
     require(ignoredWMatch && ignoredWMatch->InstructionName == "VPMOVZXBD" && ignoredWMatch->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "AVX mode left a VEX.W=1 VPMOVZXBD unlowered");
+    for (const auto& invalidVvvv : {withVvvv(bytes, 1), withVvvv(site(0x18, true, 0, 1), 1), withVvvv(site(0x78, true, 0, 1), 1), withVvvv(memorySite(0x78, true, 0), 1)})
+        require(!avx->Match(invalidVvvv.data(), invalidVvvv.size()), "AVX mode lowered an instruction with non-1111 VEX.vvvv");
 }
 
 #if LOWERING_EXECUTION_AVAILABLE

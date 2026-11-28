@@ -116,11 +116,13 @@ std::optional<PermuteOperands> DecodePermute(const std::uint8_t* data, const std
     else if (map == Map0F38 && !wide && opcode == 0x36) { name = "VPERMD"; variable = true; }
     else if (map == Map0F38 && !wide && opcode == 0x16) { name = "VPERMPS"; variable = true; }
     else return std::nullopt;
+    const auto index = static_cast<std::uint8_t>((~data[vex + 2] >> 3) & 15);
+    if (!variable && index != 0) return std::nullopt;
     const auto extensions = static_cast<std::uint8_t>(~data[vex + 1]);
     const auto modrm = data[vex + 4];
     PermuteOperands operands{name, variable,
         static_cast<std::uint8_t>(((modrm >> 3) & 7) | ((extensions & 0x80) >> 4)),
-        static_cast<std::uint8_t>((~data[vex + 2] >> 3) & 15),
+        index,
         static_cast<std::uint8_t>((modrm & 7) | ((extensions & 0x20) >> 2)),
         0, std::nullopt};
     std::size_t end = vex + 5;
