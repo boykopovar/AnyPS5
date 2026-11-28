@@ -775,8 +775,50 @@ void GuestArenaSetPrivateMappingObserver_nid_postfix(void (*callback)(std::uintp
     privateMappingObserver.store(callback, std::memory_order_release);
 }
 
+namespace {
+
+std::pair<std::uintptr_t, std::uintptr_t> WithResidentRuns(std::uintptr_t begin, std::size_t bytes) {
+    auto end = begin + bytes;
+    std::uintptr_t start = 0;
+    std::uintptr_t stop = 0;
+    if (WindowsMappings::Get().ResidentSpan(begin, bytes, &start, &stop)) {
+        begin = std::min(begin, start);
+        end = std::max(end, stop);
+    }
+    return {begin, end};
+}
+
+void ForgetTrapsOverResidentRuns(std::uintptr_t address, std::size_t bytes) {
+    const auto [begin, end] = WithResidentRuns(address, bytes);
+    static_cast<void>(GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(reinterpret_cast<const void*>(begin), static_cast<std::size_t>(end - begin)));
+}
+
+class TrapFence {
+public:
+    TrapFence(const void* pointer, std::size_t bytes) {
+        const auto [begin, end] = WithResidentRuns(reinterpret_cast<std::uintptr_t>(pointer), bytes);
+        _pointer = reinterpret_cast<const void*>(begin);
+        _bytes = static_cast<std::size_t>(end - begin);
+        GuestWriteWatch::GuestWriteWatchBeginHostWrite_nid_postfix(_pointer, _bytes);
+    }
+
+    ~TrapFence() {
+        GuestWriteWatch::GuestWriteWatchEndHostWrite_nid_postfix(_pointer, _bytes);
+    }
+
+    TrapFence(const TrapFence&) = delete;
+    TrapFence& operator=(const TrapFence&) = delete;
+
+private:
+    const void* _pointer = nullptr;
+    std::size_t _bytes = 0;
+};
+
+}
+
 void GuestArenaCommit_nid_postfix(void* pointer, std::size_t bytes, std::uint32_t protection, std::size_t granule) {
     if (!Arena::Get().Contains(pointer, bytes)) throw OutsideArena("commit", pointer, bytes);
+    const TrapFence fence(pointer, bytes);
     const auto generation = commitGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
     const auto created = WindowsMappings::Get().Commit(pointer, bytes, protection, granule, Arena::Get().WriteWatched());
     if (const auto callback = privateMappingObserver.load(std::memory_order_acquire)) {
@@ -787,17 +829,20 @@ void GuestArenaCommit_nid_postfix(void* pointer, std::size_t bytes, std::uint32_
 
 void GuestArenaReset_nid_postfix(void* pointer, std::size_t bytes) {
     if (!Arena::Get().Contains(pointer, bytes)) throw OutsideArena("reset", pointer, bytes);
+    const TrapFence fence(pointer, bytes);
     WindowsMappings::Get().Reset(pointer, bytes);
 }
 
 void GuestArenaMap_nid_postfix(void* pointer, std::size_t bytes, void* section, std::uint64_t offset, std::uint32_t protection) {
     if (!Arena::Get().Contains(pointer, bytes)) throw OutsideArena("shared mapping", pointer, bytes);
+    const TrapFence fence(pointer, bytes);
     WindowsMappings::Get().Map(pointer, bytes, section, offset, protection, Arena::Get().WriteWatched(), false);
     noteAccess(pointer, bytes);
 }
 
 void GuestArenaMapZero_nid_postfix(void* pointer, std::size_t bytes) {
     if (!Arena::Get().Contains(pointer, bytes)) throw OutsideArena("zero page mapping", pointer, bytes);
+    const TrapFence fence(pointer, bytes);
     const auto generation = commitGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
     WindowsMappings::Get().MapZero(pointer, bytes);
     if (const auto callback = privateMappingObserver.load(std::memory_order_acquire)) callback(reinterpret_cast<std::uintptr_t>(pointer), bytes, generation);
@@ -806,6 +851,7 @@ void GuestArenaMapZero_nid_postfix(void* pointer, std::size_t bytes) {
 
 void GuestArenaMapDirect_nid_postfix(void* pointer, std::size_t bytes, void* section, std::uint64_t offset, std::uint32_t protection) {
     if (!Arena::Get().Contains(pointer, bytes)) throw OutsideArena("direct memory mapping", pointer, bytes);
+    const TrapFence fence(pointer, bytes);
     const auto generation = commitGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
     std::vector<std::pair<std::uintptr_t, std::size_t>> created;
     std::exception_ptr failure;
@@ -828,14 +874,17 @@ void GuestArenaMapDirect_nid_postfix(void* pointer, std::size_t bytes, void* sec
 
 void GuestArenaMapFile_nid_postfix(void* pointer, std::size_t bytes, void* section, std::uint64_t offset, std::uint32_t protection, std::uint32_t viewProtection, std::size_t sectionBytes) {
     if (!Arena::Get().Contains(pointer, bytes)) throw OutsideArena("file mapping", pointer, bytes);
+    const TrapFence fence(pointer, bytes);
     WindowsMappings::Get().Map(pointer, bytes, section, offset, protection, Arena::Get().WriteWatched(), false, viewProtection, sectionBytes);
 }
 
 void* GuestArenaMapAlias_nid_postfix(std::uintptr_t address, std::size_t bytes) {
+    ForgetTrapsOverResidentRuns(address, bytes);
     return WindowsMappings::Get().MapAlias(address, bytes);
 }
 
 void* GuestArenaMapAliasForImport_nid_no_patch(std::uintptr_t address, std::size_t bytes, bool* boundsRefused) {
+    ForgetTrapsOverResidentRuns(address, bytes);
     return WindowsMappings::Get().MapAlias(address, bytes, boundsRefused);
 }
 
@@ -1008,10 +1057,12 @@ void GuestArenaPrepareHostRead_nid_no_patch(const void* pointer, std::size_t byt
 
 bool GuestArenaBeginHostWrite_nid_postfix(void* pointer, std::size_t bytes) {
     if (const auto hook = hostWriteHook.load(std::memory_order_acquire); hook != nullptr && bytes != 0) hook(reinterpret_cast<std::uintptr_t>(pointer), bytes);
-#ifdef _WIN32
-    return WindowsMappings::Get().BeginHostWrite(reinterpret_cast<std::uintptr_t>(pointer), bytes);
-#else
     GuestWriteWatch::GuestWriteWatchBeginHostWrite_nid_postfix(pointer, bytes);
+#ifdef _WIN32
+    if (WindowsMappings::Get().BeginHostWrite(reinterpret_cast<std::uintptr_t>(pointer), bytes)) return true;
+    GuestWriteWatch::GuestWriteWatchEndHostWrite_nid_postfix(pointer, bytes);
+    return false;
+#else
     return true;
 #endif
 }
@@ -1029,9 +1080,8 @@ void GuestArenaEndHostImport_nid_no_patch(void* pointer, std::size_t bytes) {
 void GuestArenaEndHostWrite_nid_postfix(void* pointer, std::size_t bytes) {
 #ifdef _WIN32
     WindowsMappings::Get().EndHostWrite(reinterpret_cast<std::uintptr_t>(pointer), bytes);
-#else
-    GuestWriteWatch::GuestWriteWatchEndHostWrite_nid_postfix(pointer, bytes);
 #endif
+    GuestWriteWatch::GuestWriteWatchEndHostWrite_nid_postfix(pointer, bytes);
 }
 
 #ifndef _WIN32

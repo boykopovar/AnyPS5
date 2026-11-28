@@ -659,7 +659,22 @@ void UnprovenProgramsAtSubmit() {
         std::atomic_ref<std::uint32_t>(rewound[1]).store(0x80000000u, std::memory_order_release);
         AgcDriverWaitIdle_nid_postfix();
         while (!ran.load(std::memory_order_acquire)) std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        Require(rewindWaited, "a submission ending in a REWIND did not wait for the queued preparations, though its tail is not scanned");
+        Require(!rewindWaited, "a submission ending in a REWIND waited for queued preparations its pre-REWIND commands do not bind");
+    }
+    alignas(4) static std::array<std::uint32_t, 7> rewoundUnproven{0xc0017600u, 0x20cu, low, 0xc0005900u, 0, 0xc0001000u, 0};
+    {
+        std::atomic<bool> ran{false};
+        AgcDriver::DriverDetail::SubmitRegistrationPreparation([&] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+            ran.store(true, std::memory_order_release);
+        });
+        Packet packet{rewoundUnproven.data(), static_cast<std::uint32_t>(rewoundUnproven.size()), 0, {}};
+        Require(sceAgcDriverSubmitDcb(&packet) == 0, "a REWIND submission with a half-written program address failed");
+        const bool rewindWaited = ran.load(std::memory_order_acquire);
+        std::atomic_ref<std::uint32_t>(rewoundUnproven[4]).store(0x80000000u, std::memory_order_release);
+        AgcDriverWaitIdle_nid_postfix();
+        while (!ran.load(std::memory_order_acquire)) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        Require(rewindWaited, "a REWIND submission with a half-written program address did not wait for the queued preparations");
     }
     commands = pair;
     waited = SubmitBehindSlowPreparation(commands, done);

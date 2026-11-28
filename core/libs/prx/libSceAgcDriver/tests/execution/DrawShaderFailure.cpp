@@ -204,6 +204,7 @@ void FailingShaderDecodeRecordsTheDraw(const char* tracePath, bool correlationEx
         return;
     }
     Require(WaitForTraceRecord(tracePath, "draw-attempt-failed"), "the capture trace received no draw-attempt-failed record");
+    Require(WaitForTraceRecord(tracePath, "draw-error submission="), "the capture trace received no draw-error record");
     const auto trace = ReadTraceFile(tracePath);
     const auto attempt = TraceLine(trace, "draw-attempt ");
     Require(!attempt.empty(), "the failed draw emitted no draw-attempt record");
@@ -250,6 +251,7 @@ void FailingShaderMaterializationRecordsTheDraw(const char* tracePath, bool corr
         return;
     }
     Require(WaitForTraceRecord(tracePath, "draw-shader-request-failed"), "the capture trace received no draw-shader-request-failed record");
+    Require(WaitForTraceRecord(tracePath, "draw-error submission="), "the capture trace received no draw-error record");
     const auto trace = ReadTraceFile(tracePath);
     const auto attempt = TraceLine(trace, "draw-attempt ");
     Require(!attempt.empty(), "the failed draw emitted no draw-attempt record");
