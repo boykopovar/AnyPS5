@@ -76,6 +76,39 @@ file(CONFIGURE OUTPUT "${sdlPulsePatch}" CONTENT [=[
                  }
              }
          }
+@@ -962,6 +982,23 @@
+     UnloadPulseAudioLibrary();
+ }
+
++static void PULSEAUDIO_LockDevice(_THIS)
++{
++    if (!this->thread || SDL_ThreadID() != this->threadid) {
++        SDL_LockMutex(this->mixer_lock);
++    }
++}
++
++static void PULSEAUDIO_UnlockDevice(_THIS)
++{
++    if (!this->thread || SDL_ThreadID() != this->threadid) {
++        SDL_UnlockMutex(this->mixer_lock);
++    }
++    PULSEAUDIO_pa_threaded_mainloop_lock(pulseaudio_threaded_mainloop);
++    PULSEAUDIO_pa_threaded_mainloop_signal(pulseaudio_threaded_mainloop, 0);
++    PULSEAUDIO_pa_threaded_mainloop_unlock(pulseaudio_threaded_mainloop);
++}
++
+ static SDL_bool PULSEAUDIO_Init(SDL_AudioDriverImpl *impl)
+ {
+     if (LoadPulseAudioLibrary() < 0) {
+@@ -980,6 +1017,8 @@
+     impl->WaitDevice = PULSEAUDIO_WaitDevice;
+     impl->GetDeviceBuf = PULSEAUDIO_GetDeviceBuf;
+     impl->CloseDevice = PULSEAUDIO_CloseDevice;
++    impl->LockDevice = PULSEAUDIO_LockDevice;
++    impl->UnlockDevice = PULSEAUDIO_UnlockDevice;
+     impl->Deinitialize = PULSEAUDIO_Deinitialize;
+     impl->CaptureFromDevice = PULSEAUDIO_CaptureFromDevice;
+     impl->FlushCapture = PULSEAUDIO_FlushCapture;
 ]=] @ONLY)
 
 foreach(source IN LISTS sdlPulsePatchedSources)
