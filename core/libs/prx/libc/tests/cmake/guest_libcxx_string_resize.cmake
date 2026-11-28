@@ -1,0 +1,10 @@
+add_test_executable(guest_libcxx_string_resize_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcxxStringResize.cpp)
+target_include_directories(guest_libcxx_string_resize_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(guest_libcxx_string_resize_tests PRIVATE libc)
+configure_windows_unwind(guest_libcxx_string_resize_tests)
+add_test(NAME guest_libcxx_string_resize COMMAND guest_libcxx_string_resize_tests)
+set_tests_properties(guest_libcxx_string_resize PROPERTIES TIMEOUT 20)
+if(WIN32)
+    set_tests_properties(guest_libcxx_string_resize PROPERTIES ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+endif()
