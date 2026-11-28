@@ -244,6 +244,8 @@ With a built Ninja tree, add `--headers` to check the compile commands of transl
 
 Real compile errors still fail. Syntax checks do not replace a full build and test run.
 
+Without file arguments the tool checks the `.c`, `.cpp`, `.cc` and `.cxx` files changed since the branch left `--base` (by default `upstream/main`, then `origin/main`, then `main`), including changes in the working tree that are not committed and untracked files, and succeeds when there are none; with `--headers` it also takes the changed headers and checks the translation units that include them. A selected source file without a compile command in the build is reported as `no compile command` and skipped; if no selected file can be checked, the run fails. `--jobs N` checks up to N translation units at once; diagnostics stay in input order.
+
 `tools/compile_database_inventory.py` reads a saved compilation database and prints JSON that groups its records by source directory and file, with the number of variants of each file. Each database entry counts as one variant, including identical commands.
 The JSON keeps each entry's `arguments` or `command` and its `output` field when present. It does not invoke a compiler or a build tool.
 
