@@ -1,0 +1,12 @@
+if(BUILD_TESTING)
+    add_test_executable(guest_copy_guest_string_tests ${LIBS_INCLUDE_DIR}/tests/GuestCopyGuestString.cpp)
+    target_include_directories(guest_copy_guest_string_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_copy_guest_string_tests PRIVATE libc)
+    configure_windows_unwind(guest_copy_guest_string_tests)
+    add_test(NAME guest_copy_guest_string COMMAND guest_copy_guest_string_tests)
+    set_tests_properties(guest_copy_guest_string PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_copy_guest_string PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
