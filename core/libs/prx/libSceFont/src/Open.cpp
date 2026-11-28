@@ -4,6 +4,7 @@
 
 #include <cerrno>
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/Shutdown.hpp"
 #include <atomic>
 #include <cstdio>
 #include <cstring>
@@ -236,6 +237,7 @@ void WarnMissingSystemFont(std::uint32_t fontSetType) {
     static std::once_flag warned;
     std::call_once(warned, [&] {
         std::fprintf(stderr, "[libSceFont] no file for system font set 0x%08X in %s. Titles that lay out text in system fonts can fail far from here without them: put the console's fonts or the Noto substitutes from docs/user/USAGE.md there, or set ANYPS5_SYSTEM_FONTS to their directory.\n", fontSetType, SystemFontDirectory().string().c_str());
+        LibcSetCrashHint_nid_no_patch("system fonts are missing (see the libSceFont warning above): a title that lays out text in them can fail far from the cause; put the console's fonts or the Noto substitutes from docs/user/USAGE.md in the font directory, or set ANYPS5_SYSTEM_FONTS");
     });
 }
 
