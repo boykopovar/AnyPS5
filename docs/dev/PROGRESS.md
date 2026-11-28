@@ -24,6 +24,14 @@ Each point in `history.json` keeps the existing `shaders` counts and `shader_met
 
 The history takes one point per UTC day, at the last commit of the day, and skips commits whose tree lacks the scanned paths. The chart compacts as days accumulate: up to 14 days it labels every day, up to 150 days one label per Monday, beyond that one per month; points are drawn up to 45 days, and every day keeps a hover tooltip, while the table and `history.json` keep every day. Old trees are measured with today's counting rules and instruction lists, so each series is comparable across days but is not what the page showed on that day. The workflow checks out the full history for it.
 
+To regenerate part of a history locally, pass inclusive UTC dates. For example:
+
+```sh
+python3 tools/progress_history.py site --ref main --since 2026-01-01 --until 2026-01-31 --cache progress-cache.json
+```
+
+The cache can be reused across date windows. Use a separate path from the generated reports.
+
 ## Shader recompiler numbers
 
 The shader badges and the "Shader recompiler: counted from the code" section of the progress page come from [`tools/shader_scan.py`](../../tools/shader_scan.py). They are counted from the shader recompiler's code, not from playing games, so they say nothing about whether a game runs. `badge-shaders.svg` retains the RDNA2 reference counts; `badge-shaders-gfx1013.svg` reports the separate gfx1013 reference. The map and page label the two profiles separately. The older "GPU shader instructions" figure counted instruction names that have an `RdnaOpcode` enumerator and reached 100%. That figure stays in `progress.json` under `shaders` for comparisons and history, and is shown only when the shader source scan cannot run (a local run without `--require-shader-source`).
