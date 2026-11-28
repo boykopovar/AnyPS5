@@ -1,12 +1,14 @@
 #include "Recompiler.hpp"
 #include "SpirvBackend/SpirvClipDistances.hpp"
 #include "SpirvBackend/SpirvModule.hpp"
+#include "SpirvBackend/SpirvVertexLayer.hpp"
 #if ANYPS5_ENABLE_SPIRV_TOOLS
 #include "SpirvBackend/SpirvOptimizer.hpp"
 #endif
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -28,6 +30,13 @@ EmulatedInterface CollectEmulatedInterface(const RecompileResult& vertex, const 
         require(std::find(vertex.parameterExports.begin(), vertex.parameterExports.end(), parameter.sourceLocation) != vertex.parameterExports.end(), "fragment parameter " + std::to_string(parameter.location) + " is not exported by the vertex shader");
     }
     return DescribeEmulatedInterface(fragment.fragmentParameters, fragment.barycentricEmulation);
+}
+
+std::uint32_t InputLocationExtent(const EmulatedInterface& emulated, const std::optional<VertexLayerOutput>& layer) {
+    std::uint32_t extent = layer ? layer->location + 1u : 0u;
+    for (const auto location : emulated.passed) extent = std::max(extent, location + 1u);
+    for (const auto& parameter : emulated.perVertex) extent = std::max(extent, parameter.sourceLocation + 1u);
+    return extent;
 }
 
 class BarycentricGeometryEmitter {
@@ -157,7 +166,7 @@ private:
 
 class BarycentricTessellationEmitter {
 public:
-    BarycentricTessellationEmitter(std::uint32_t version, std::uint32_t clipDistances) : builder(version), clipDistances(clipDistances) {
+    BarycentricTessellationEmitter(std::uint32_t version, std::uint32_t clipDistances, std::optional<std::uint32_t> layerLocation) : builder(version), clipDistances(clipDistances), layerLocation(layerLocation) {
         builder.AddMemoryModel(spv::AddressingModelLogical, spv::MemoryModelGLSL450);
         voidType = builder.Type(spv::OpTypeVoid);
         boolType = builder.Type(spv::OpTypeBool);
@@ -183,6 +192,11 @@ public:
         stageVertexArrayType = builder.Type(spv::OpTypeArray, stageVertexType, constant(uintType, 3u));
         ptrInputVec4 = builder.Type(spv::OpTypePointer, spv::StorageClassInput, vec4FloatType);
         ptrOutputVec4 = builder.Type(spv::OpTypePointer, spv::StorageClassOutput, vec4FloatType);
+        if (layerLocation) {
+            layerArrayType = builder.Type(spv::OpTypeArray, uintType, constant(uintType, 3u));
+            ptrInputUint = builder.Type(spv::OpTypePointer, spv::StorageClassInput, uintType);
+            ptrOutputUint = builder.Type(spv::OpTypePointer, spv::StorageClassOutput, uintType);
+        }
     }
 
     std::vector<std::uint32_t> EmitControl(const std::vector<std::uint32_t>& sources) {
@@ -213,6 +227,14 @@ public:
             decorate(output, spv::DecorationLocation, location);
             parameters.emplace_back(input, output);
         }
+        std::uint32_t layerIn = 0u;
+        std::uint32_t layerOut = 0u;
+        if (layerLocation) {
+            layerIn = addInterface(spv::StorageClassInput, layerArrayType);
+            decorate(layerIn, spv::DecorationLocation, *layerLocation);
+            layerOut = addInterface(spv::StorageClassOutput, layerArrayType);
+            decorate(layerOut, spv::DecorationLocation, *layerLocation);
+        }
         builder.EmitEntryPoint(spv::ExecutionModelTessellationControl, main, "main", interfaces);
         builder.AddFunction(spv::OpLabel, builder.AllocateId());
 
@@ -232,11 +254,16 @@ public:
         store(result(spv::OpAccessChain, ptrOutputVec4, glOut, invocation, constant(intType, 0u)), load(vec4FloatType, result(spv::OpAccessChain, ptrInputVec4, glIn, invocation, constant(intType, 0u))));
         if (clipDistances != 0u) store(result(spv::OpAccessChain, ptrControlOutputClip, glOut, invocation, constant(intType, 1u)), load(clipArrayType, result(spv::OpAccessChain, ptrControlInputClip, clipIn, invocation)));
         for (const auto& [input, output] : parameters) store(result(spv::OpAccessChain, ptrOutputVec4, output, invocation), load(vec4FloatType, result(spv::OpAccessChain, ptrInputVec4, input, invocation)));
+        if (layerLocation) store(result(spv::OpAccessChain, ptrOutputUint, layerOut, invocation), load(uintType, result(spv::OpAccessChain, ptrInputUint, layerIn, invocation)));
         return finish();
     }
 
     std::vector<std::uint32_t> EmitEvaluation(const std::vector<std::uint32_t>& sources, const std::vector<std::uint32_t>& passed, const std::vector<bool>& passedFlat, const std::vector<PerVertexParameter>& perVertex, const BarycentricEmulationLayout& layout, std::uint32_t provokingVertex) {
         begin();
+        if (layerLocation) {
+            builder.EmitCapability(spv::CapabilityShaderViewportIndexLayerEXT);
+            builder.EmitExtension("SPV_EXT_shader_viewport_index_layer");
+        }
         addDomain();
         const auto tessCoord = addInterface(spv::StorageClassInput, vec3FloatType);
         decorate(tessCoord, spv::DecorationBuiltIn, spv::BuiltInTessCoord);
@@ -267,6 +294,14 @@ public:
             perVertexOutputs.push_back(addInterface(spv::StorageClassOutput, vertexArrayType));
             decorate(perVertexOutputs.back(), spv::DecorationLocation, parameter.location);
         }
+        std::uint32_t layerIn = 0u;
+        std::uint32_t layerOut = 0u;
+        if (layerLocation) {
+            layerIn = addInterface(spv::StorageClassInput, layerArrayType);
+            decorate(layerIn, spv::DecorationLocation, *layerLocation);
+            layerOut = addInterface(spv::StorageClassOutput, uintType);
+            decorate(layerOut, spv::DecorationBuiltIn, spv::BuiltInLayer);
+        }
         builder.EmitEntryPoint(spv::ExecutionModelTessellationEvaluation, main, "main", interfaces);
         builder.AddFunction(spv::OpLabel, builder.AllocateId());
 
@@ -284,6 +319,7 @@ public:
         store(result(spv::OpAccessChain, ptrOutputVec4, glOut, constant(intType, 0u)), load(vec4FloatType, result(spv::OpAccessChain, ptrInputVec4, glIn, index, constant(intType, 0u))));
         if (clipDistances != 0u) store(result(spv::OpAccessChain, ptrEvaluationOutputClip, glOut, constant(intType, 1u)), load(clipArrayType, result(spv::OpAccessChain, ptrEvaluationInputClip, glIn, index, constant(intType, 1u))));
         for (std::size_t i = 0; i < passed.size(); ++i) store(passedOutputs[i], load(vec4FloatType, result(spv::OpAccessChain, ptrInputVec4, inputs[passed[i]], passedFlat[i] ? constant(intType, provokingVertex) : index)));
+        if (layerLocation) store(layerOut, load(uintType, result(spv::OpAccessChain, ptrInputUint, layerIn, constant(intType, provokingVertex))));
         if (smooth != 0u) store(smooth, weights);
         if (linear != 0u) store(linear, weights);
         if (reciprocalW != 0u) {
@@ -305,6 +341,10 @@ public:
 private:
     SpirvModule builder;
     std::uint32_t clipDistances;
+    std::optional<std::uint32_t> layerLocation;
+    std::uint32_t layerArrayType = 0;
+    std::uint32_t ptrInputUint = 0;
+    std::uint32_t ptrOutputUint = 0;
     std::vector<std::uint32_t> interfaces;
     std::uint32_t main = 0;
     std::uint32_t voidType = 0;
@@ -420,6 +460,7 @@ EmulatedInterface DescribeEmulatedInterface(std::span<const FragmentParameter> p
 
 RecompileResult BuildBarycentricGeometryShader(const RecompileResult& vertex, const RecompileResult& fragment, const SpirvTarget& target, const std::optional<GeometryStageLimits>& limits) {
     require(fragment.barycentricEmulation.active, "the fragment shader does not emulate barycentrics");
+    require(!FindVertexLayerOutput(vertex.spirv.Words()), "a vertex gl_Layer cannot be forwarded through the emulated-barycentric geometry stage, whose input vertex order Vulkan does not fix relative to the provoking vertex");
     require(limits.has_value(), "geometry shaders are unavailable");
     require(target.spirvVersion >= 0x00010300u && target.spirvVersion <= 0x00010500u, "unsupported SPIR-V target version");
     require(std::find(target.supportedCapabilities.begin(), target.supportedCapabilities.end(), spv::CapabilityGeometry) != target.supportedCapabilities.end(), "geometry capability is unavailable");
@@ -429,7 +470,7 @@ RecompileResult BuildBarycentricGeometryShader(const RecompileResult& vertex, co
     const auto outputComponents = 4u + 4u * passed + 3u * (emulated.barycentrics + (emulated.layout.reciprocalWLocation != BarycentricEmulationLayout::NoLocation ? 1u : 0u)) + 12u * perVertex;
     const auto inputComponents = 4u + 4u * emulated.sources;
     const auto fragmentComponents = 4u * (passed + emulated.barycentrics + 3u * perVertex + (emulated.layout.reciprocalWLocation != BarycentricEmulationLayout::NoLocation ? 1u : 0u));
-    require(limits->maxGeometryOutputVertices >= 3u && outputComponents <= limits->maxGeometryOutputComponents && 3u * outputComponents <= limits->maxGeometryTotalOutputComponents && inputComponents <= limits->maxGeometryInputComponents && fragmentComponents <= limits->maxFragmentInputComponents, "the emulated barycentric interface exceeds device limits");
+    require(limits->maxGeometryOutputVertices >= 3u && outputComponents <= limits->maxGeometryOutputComponents && 3u * outputComponents <= limits->maxGeometryTotalOutputComponents && inputComponents <= limits->maxGeometryInputComponents && 4u * InputLocationExtent(emulated, std::nullopt) <= limits->maxGeometryInputComponents && fragmentComponents <= limits->maxFragmentInputComponents, "the emulated barycentric interface exceeds device limits");
     BarycentricGeometryEmitter emitter(target.spirvVersion);
     RecompileResult result;
     result.spirv = emitter.Emit(emulated.passed, emulated.perVertex, emulated.layout);
@@ -450,17 +491,20 @@ BarycentricTessellationShaders BuildBarycentricTessellationShaders(const Recompi
     const auto perVertex = static_cast<std::uint32_t>(emulated.perVertex.size());
     const auto clipDistances = VertexClipDistanceCount(vertex.spirv.Words());
     require(clipDistances == 0u || std::find(target.supportedCapabilities.begin(), target.supportedCapabilities.end(), spv::CapabilityClipDistance) != target.supportedCapabilities.end(), "the vertex clip distances need shaderClipDistance");
-    const auto controlComponents = 4u + clipDistances + 4u * emulated.sources;
-    const auto evaluationOutputComponents = 4u + clipDistances + 4u * passed + 3u * (emulated.barycentrics + (emulated.layout.reciprocalWLocation != BarycentricEmulationLayout::NoLocation ? 1u : 0u)) + 12u * perVertex;
+    const auto layer = FindVertexLayerOutput(vertex.spirv.Words());
+    require(!layer || std::find(target.supportedCapabilities.begin(), target.supportedCapabilities.end(), spv::CapabilityShaderViewportIndexLayerEXT) != target.supportedCapabilities.end(), "forwarding the vertex gl_Layer needs VK_EXT_shader_viewport_index_layer");
+    const std::optional<std::uint32_t> layerLocation = layer ? std::optional<std::uint32_t>(layer->location) : std::nullopt;
+    const auto controlComponents = 4u + clipDistances + 4u * emulated.sources + (layer ? 4u : 0u);
+    const auto evaluationOutputComponents = 4u + clipDistances + (layer ? 1u : 0u) + 4u * passed + 3u * (emulated.barycentrics + (emulated.layout.reciprocalWLocation != BarycentricEmulationLayout::NoLocation ? 1u : 0u)) + 12u * perVertex;
     const auto fragmentComponents = 4u * (passed + emulated.barycentrics + 3u * perVertex + (emulated.layout.reciprocalWLocation != BarycentricEmulationLayout::NoLocation ? 1u : 0u));
     const auto& limits = *target.tessellation;
-    require(limits.maxPatchSize >= 3u && controlComponents <= limits.maxControlPerVertexInputComponents && controlComponents <= limits.maxControlPerVertexOutputComponents && 3u * controlComponents + 4u <= limits.maxControlTotalOutputComponents && limits.maxControlPerPatchOutputComponents >= 4u && controlComponents <= limits.maxEvaluationInputComponents && evaluationOutputComponents <= limits.maxEvaluationOutputComponents && fragmentComponents <= maxFragmentInputComponents, "the emulated barycentric interface exceeds device limits");
+    require(limits.maxPatchSize >= 3u && controlComponents <= limits.maxControlPerVertexInputComponents && controlComponents <= limits.maxControlPerVertexOutputComponents && 3u * controlComponents + 4u <= limits.maxControlTotalOutputComponents && limits.maxControlPerPatchOutputComponents >= 4u && controlComponents <= limits.maxEvaluationInputComponents && 4u * InputLocationExtent(emulated, layer) <= std::min({limits.maxControlPerVertexInputComponents, limits.maxControlPerVertexOutputComponents, limits.maxEvaluationInputComponents}) && evaluationOutputComponents <= limits.maxEvaluationOutputComponents && fragmentComponents <= maxFragmentInputComponents, "the emulated barycentric interface exceeds device limits");
     std::set<std::uint32_t> sourceSet(emulated.passed.begin(), emulated.passed.end());
     for (const auto& parameter : emulated.perVertex) sourceSet.insert(parameter.sourceLocation);
     const std::vector<std::uint32_t> sources(sourceSet.begin(), sourceSet.end());
     BarycentricTessellationShaders shaders;
-    shaders.control.spirv = BarycentricTessellationEmitter(target.spirvVersion, clipDistances).EmitControl(sources);
-    shaders.evaluation.spirv = BarycentricTessellationEmitter(target.spirvVersion, clipDistances).EmitEvaluation(sources, emulated.passed, emulated.passedFlat, emulated.perVertex, emulated.layout, provokingVertex);
+    shaders.control.spirv = BarycentricTessellationEmitter(target.spirvVersion, clipDistances, layerLocation).EmitControl(sources);
+    shaders.evaluation.spirv = BarycentricTessellationEmitter(target.spirvVersion, clipDistances, layerLocation).EmitEvaluation(sources, emulated.passed, emulated.passedFlat, emulated.perVertex, emulated.layout, provokingVertex);
 #if ANYPS5_ENABLE_SPIRV_TOOLS
     shaders.control.spirv = ValidateAndOptimizeSpirv(shaders.control.spirv, target.vulkanVersion, target.spirvVersion);
     shaders.evaluation.spirv = ValidateAndOptimizeSpirv(shaders.evaluation.spirv, target.vulkanVersion, target.spirvVersion);

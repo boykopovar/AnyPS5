@@ -286,6 +286,7 @@ function(add_shader_recompiler target runtimeTarget)
             ImageTableAbi::PoisonCode
             ImageTableAbi::PoisonReasonName
             ImageTableAbi::TableHeader
+            FindVertexLayerOutput
             FmaskLayoutOf
             IsFmaskTextureFormat
             PipelineSpecialization::IsAtomicLockTable
@@ -297,6 +298,7 @@ function(add_shader_recompiler target runtimeTarget)
             RayTracingStrict
             RayTracingMiss
             ReadWholeFile
+            RelocateVertexLayerOutput
             RetargetTableCallPointer
             SetDiagnosticSink
             Recompile
