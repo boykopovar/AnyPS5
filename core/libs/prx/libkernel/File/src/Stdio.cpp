@@ -57,6 +57,35 @@ static constexpr std::uint64_t KERNEL_MNT_RDONLY = 0x1;
 static constexpr std::uint64_t KERNEL_MNT_NOEXEC = 0x4;
 static constexpr std::uint64_t KERNEL_MNT_NOSUID = 0x8;
 
+#if defined(_WIN32) || defined(__APPLE__)
+struct PositionedLock {
+    std::mutex mutex;
+};
+std::mutex g_positionedTableLock;
+std::unordered_map<int, std::shared_ptr<PositionedLock>> g_positionedLocks;
+File::PositionedTransferLock File::LockPositionedTransfer(int descriptor) {
+    std::shared_ptr<PositionedLock> entry;
+    {
+        std::lock_guard table(g_positionedTableLock);
+        auto& slot = g_positionedLocks[descriptor];
+        if (!slot) slot = std::make_shared<PositionedLock>();
+        entry = slot;
+    }
+    return PositionedTransferLock(std::shared_ptr<std::mutex>(entry, &entry->mutex));
+}
+void File::SharePositionedTransfer(int from, int to) {
+    std::lock_guard table(g_positionedTableLock);
+    auto& source = g_positionedLocks[from];
+    if (!source) source = std::make_shared<PositionedLock>();
+    g_positionedLocks[to] = source;
+}
+#endif
+#ifdef __APPLE__
+std::optional<File::PositionedTransferLock> File::LockAppendingTransfer(int descriptor) {
+    if (!File::Appends(descriptor)) return std::nullopt;
+    return LockPositionedTransfer(descriptor);
+}
+#endif
 #ifdef _WIN32
 #include <windows.h>
 #include "prx/libkernel/File/include/WindowsSymbolicLink.hpp"
@@ -293,27 +322,6 @@ static int NativeSync(int descriptor) {
 static int NativeFlock(int descriptor, int operation) {
     return File::Flock(descriptor, operation);
 }
-struct PositionedLock {
-    std::mutex mutex;
-};
-std::mutex g_positionedTableLock;
-std::unordered_map<int, std::shared_ptr<PositionedLock>> g_positionedLocks;
-File::PositionedTransferLock File::LockPositionedTransfer(int descriptor) {
-    std::shared_ptr<PositionedLock> entry;
-    {
-        std::lock_guard table(g_positionedTableLock);
-        auto& slot = g_positionedLocks[descriptor];
-        if (!slot) slot = std::make_shared<PositionedLock>();
-        entry = slot;
-    }
-    return PositionedTransferLock(std::shared_ptr<std::mutex>(entry, &entry->mutex));
-}
-void File::SharePositionedTransfer(int from, int to) {
-    std::lock_guard table(g_positionedTableLock);
-    auto& source = g_positionedLocks[from];
-    if (!source) source = std::make_shared<PositionedLock>();
-    g_positionedLocks[to] = source;
-}
 bool File::LimitSharedMemoryWrite_nid_no_patch(int descriptor, std::size_t& size, std::int64_t offset) {
     if (offset < 0) { errno = EINVAL; return false; }
     const auto length = WithoutParameterHandler([descriptor] { return ::_filelengthi64(descriptor); });
@@ -544,6 +552,7 @@ static std::int64_t NativePread(int descriptor, void* buf, std::size_t nbytes, s
 std::int64_t File::WritevAtEnd(int descriptor, const iovec* iov, int iovcnt) {
     struct stat status{};
     if (!File::Appends(descriptor) || ::fstat(descriptor, &status) != 0 || !S_ISREG(status.st_mode)) return -2;
+    const auto positioned = LockPositionedTransfer(descriptor);
     const off_t position = ::lseek(descriptor, 0, SEEK_CUR);
     if (position < 0) return -1;
     const auto result = static_cast<std::int64_t>(::writev(descriptor, iov, iovcnt));
@@ -2055,6 +2064,7 @@ static int64_t KernelReadv(int d, const KernelIovec* guestIov, int iovcnt) {
     if (const auto archived = File::ReadArchivedIovecs(d, iov, iovcnt, nullptr)) return *archived < 0 ? SceErrorFromErrno(static_cast<int>(-*archived)) : *archived;
 #ifdef __APPLE__
     if (iovcnt == 0) return EmptyIovecsResult(d, false, false);
+    const auto appending = File::LockAppendingTransfer(d);
 #endif
     const auto parts = File::TransferInParts(d, NativeIovecs(iov), iovcnt, nullptr, false);
     const auto result = parts == -2 ? static_cast<std::int64_t>(::readv(d, NativeIovecs(iov), iovcnt)) : parts;
@@ -2077,6 +2087,7 @@ static int64_t KernelWritev(int d, const KernelIovec* guestIov, int iovcnt) {
     if (sharedResult != -2) return sharedResult < 0 ? SceErrorFromErrno(errno) : sharedResult;
 #ifdef __APPLE__
     if (iovcnt == 0) return EmptyIovecsResult(d, true, false);
+    const auto appending = File::LockAppendingTransfer(d);
 #endif
     const auto parts = File::TransferInParts(d, NativeIovecs(iov), iovcnt, nullptr, true);
     const auto result = parts == -2 ? static_cast<std::int64_t>(::writev(d, NativeIovecs(iov), iovcnt)) : parts;

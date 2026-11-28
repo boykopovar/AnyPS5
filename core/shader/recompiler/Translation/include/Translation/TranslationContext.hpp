@@ -91,6 +91,7 @@ private:
     IrU32 shareVectorWrite(const RdnaOperand& operand, IrU32 merged, IrU32 written, bool readByInstruction);
     void trackInactiveExecHalves(const RdnaInstruction& inst);
     IrF32 applyF32ResultModifiers(const RdnaOperand& operand, IrF32 value);
+    IrValue& f32OverflowBits(IrValue& sign);
     IrF32 scaleF32Result(std::uint32_t omod, IrF32 value);
     IrU32 scaleF16Bits(std::uint32_t omod, IrU32 bits, bool followsRoundMode);
     IrValue& scaleF64Result(std::uint32_t omod, IrValue& value);
@@ -129,6 +130,7 @@ private:
     IrValue& invalidProductF32(IrValue* lhs, IrValue* rhs);
     IrValue& invalidOperationF32(std::initializer_list<IrValue*> sources, IrValue& invalidProduct);
     std::array<IrU32, 2> quietNan64(const std::array<IrU32, 2>& bits);
+    IrValue& ldexpF64(const std::array<IrU32, 2>& argument, IrValue& exponent);
     std::array<IrU32, 2> readU32Pair(const RdnaOperand& operand);
     IrU64 readU64(const RdnaOperand& operand);
     std::array<IrU32, 2> readF64Bits(const RdnaOperand& operand);
@@ -173,6 +175,7 @@ private:
     bool sLoad(const RdnaInstruction& inst, bool raw);
     bool sScratchLoad(const RdnaInstruction& inst);
     bool bufferLoad(const RdnaInstruction& inst);
+    void bufferLoadToLds(const RdnaInstruction& inst, const MemoryInfo& memory, IrOpcode opcode, IrValue* resource, const BufferAddress& address);
     bool bufferLoadFormatD16(const RdnaInstruction& inst);
     bool bufferStoreFormatD16(const RdnaInstruction& inst);
     bool bufferStore(const RdnaInstruction& inst);

@@ -152,6 +152,22 @@ static void PollsKqueues(int socket) {
     Require(close_nid_postfix(queue) == 0);
     Require(poll_nid_postfix(&kq, 1, 0) == 1 && kq.revents == Invalid);
 }
+static void NeverReportsWriteBandOnSocketsAndPipes() {
+    constexpr int UnixDomain = 1, Stream = 1;
+    int pair[2];
+    Require(socketpair_nid_postfix(UnixDomain, Stream, 0, pair) == 0);
+    int pipe[2];
+    Require(pipe_nid_postfix(pipe) == 0);
+    GuestPollDescriptor entries[4]{
+        {pair[0], static_cast<short>(Out | WriteBand), -1},
+        {pipe[1], static_cast<short>(Out | WriteBand), -1},
+        {pair[1], WriteBand, -1},
+        {pipe[1], WriteBand, -1}};
+    Require(poll_nid_postfix(entries, 4, 0) == 2);
+    Require(entries[0].revents == Out && entries[1].revents == Out && entries[2].revents == 0 && entries[3].revents == 0);
+    for (const int descriptor : {pair[0], pair[1], pipe[0], pipe[1]}) Require(close_nid_postfix(descriptor) == 0);
+}
+
 static void PollsFilesAndDirectories(int socket) {
     constexpr int ReadWrite = 0x0002, Create = 0x0200, DirectoryFlag = 0x00020000;
     const auto stamp = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
@@ -831,6 +847,7 @@ int main() {
     Require(poll_nid_postfix(&input, 1, 30) == 0 && input.revents == 0);
     Require(std::chrono::steady_clock::now() - inputStart >= std::chrono::milliseconds(25));
     PollsKqueues(listener);
+    NeverReportsWriteBandOnSocketsAndPipes();
     Require(close_nid_postfix(listener) == 0);
     PollsASocketClosedDuringTheWait();
     RejectsReadinessAfterSocketClose();

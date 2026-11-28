@@ -114,7 +114,7 @@ def main():
         elf = image()
         struct.pack_into("<Q", elf, 0x708, (5 << 32) | 7)
         struct.pack_into("<I", elf, SYMBOLS + 5 * 24, 8)
-        run(relinker, work, "relocation-past-symbols", elf, "invalid relocation symbol")
+        run(relinker, work, "relocation-past-symbols", elf, "Symbol table entry out of bounds")
 
         elf = image(bucket_count=1)
         struct.pack_into("<Q", elf, SYMBOLS + 4 * 24 + 8, 0x2000)

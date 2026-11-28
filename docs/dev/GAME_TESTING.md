@@ -17,7 +17,7 @@ For user options see [USAGE](../user/USAGE.md); for internals see [ARCHITECTURE]
 - Convert every module the title loads from its own folders (`sce_module/`, `Media/Modules/`, `Media/Plugins/`). Unity titles need `--module-dir Media/Modules --module-dir Media/Plugins`. The relinker writes each converted module as `<name>.guest.prx` into `app0/` beside the output, in the module's own folder, and lists it in the `Arrange the files like this` tree it prints. Keep the original `.prx` next to it.
 - `libs/` holds only AnyPS5's own libraries, from `build/core/libs/libs` (not `unpatched/`). A game module placed there fails to load (error 193 on Windows). A self-built `libs/` on Windows also needs `libgcc_s_seh-1.dll`, `libstdc++-6.dll` and `libwinpthread-1.dll` from the toolchain's `mingw64/bin`, or every library fails with error 126 ([USAGE](../user/USAGE.md#runtime-layout)).
 - Run `tools/import_audit.py` on the registries. Exit code 1 means an import or a needed library is missing; the report also lists `stub` imports, which throw when called, and `--strict-stubs` makes them fail the audit too.
-  `tools/audit_dump.py <app0> --relinker <relinker> --libs build/core/libs/libs` (`--windows` on Windows) does the
+  `tools/audit_dump.py <app0> --relinker <relinker> --libs build/core/libs/libs` (`--windows` on Windows, `--to-intel` on an Intel host) does the
   unwrapping, the conversion with `--registry` and the audit in one step, from every module folder above and `.prx`
   files beside `eboot.bin`, into a temporary directory (or `--work <dir>`), reading the dump only. `--trap-sdk-syscall-stubs`
   and `--function-symbol-roots` pass the relinker options of the same name, for a title converted with them.
