@@ -40,6 +40,7 @@
 #include <sys/resource.h>
 #include <unistd.h>
 #ifdef __linux__
+#include <sys/resource.h>
 #include <dlfcn.h>
 #include <link.h>
 #include <pthread.h>
