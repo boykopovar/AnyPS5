@@ -13741,6 +13741,21 @@ void verifyTableKeep() {
     }
 }
 
+void verifyReadWordsRegions() {
+    alignas(4096) static std::array<std::uint32_t, 2048> words{};
+    for (std::size_t index = 0; index < words.size(); ++index) words[index] = static_cast<std::uint32_t>(0x9e3779b9u * (index + 1u));
+    AgcDriver::ShaderMemory memory({});
+    std::array<std::uint32_t, 6> values{};
+    const auto first = words.data() + 1022;
+    require(memory.ReadWords(reinterpret_cast<std::uintptr_t>(first), values), "ReadWords failed on readable guest words");
+    require(std::equal(values.begin(), values.end(), first), "ReadWords returned other words than guest memory holds");
+    const auto recent = memory.TakeRecentRegions();
+    require(TableCovered(recent, first, sizeof(values)), "words read with ReadWords are missing from the recent regions");
+    require(!TableCovered(recent, words.data(), sizeof(std::uint32_t)) && !TableCovered(recent, first + values.size(), sizeof(std::uint32_t)), "the recent regions list words ReadWords did not read");
+    require(TableCovered(memory.Regions(), first, sizeof(values)), "words read with ReadWords are missing from the capture's regions");
+    require(memory.TakeRecentRegions().empty(), "ReadWords left recent regions after they were taken");
+}
+
 int main(int argc, char** argv) {
     try {
 #ifdef _WIN32
@@ -14345,6 +14360,7 @@ int main(int argc, char** argv) {
         require(Recompile(request, *nullRootCapture)->poisonedSrtReads >= nullRootCapture->snapshot.nullRootReads, "a capture through a null user-data pointer is cacheable");
         verifyAllocationChurnSnapshot();
         verifySnapshotAllocationMoves();
+        verifyReadWordsRegions();
         std::cout << "Shader memory capture, strict validation and deterministic replay passed\n";
         return 0;
     } catch (const std::exception& error) {

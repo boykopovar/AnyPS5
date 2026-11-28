@@ -25,16 +25,16 @@ namespace AgcDriver::DriverDetail {
 
 namespace {
 
-std::array<std::uint32_t, ShaderRecompiler::TessellationConstantWords> ReadTessellationConstants(std::span<const std::uint32_t> userData, std::uint32_t word) {
+std::array<std::uint32_t, ShaderRecompiler::TessellationConstantWords> ReadTessellationConstants(ShaderMemory& shaderMemory, std::span<const std::uint32_t> userData, std::uint32_t word) {
     require(word + 4u <= userData.size(), "the tessellation constant buffer's V# lies past the stage's user data");
     const auto base = static_cast<std::uint64_t>(userData[word]) | (static_cast<std::uint64_t>(userData[word + 1u] & 0xffffu) << 32u);
     const auto stride = (userData[word + 1u] >> 16u) & 0x3fffu;
     const auto size = stride == 0u ? static_cast<std::uint64_t>(userData[word + 2u]) : static_cast<std::uint64_t>(stride) * userData[word + 2u];
     std::array<std::uint32_t, ShaderRecompiler::TessellationConstantWords> constants{};
-    for (std::uint32_t index = 0; index < constants.size(); ++index) {
-        if (4u * index + 4u > size) break;
-        GuestMemory::Read(base + 4u * index, std::as_writable_bytes(std::span(&constants[index], 1u)), 4u);
-    }
+    const auto count = static_cast<std::size_t>(std::min<std::uint64_t>(constants.size(), size / 4u));
+    if (count == 0u) return constants;
+    require(base % 4u == 0u, "the tessellation constant buffer starts at an address that is not a whole dword");
+    require(shaderMemory.ReadWords(base, std::span(constants).first(count)), "the tessellation constant buffer could not be read");
     return constants;
 }
 
@@ -214,12 +214,12 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
         ShaderRecompiler::GraphicsCompileContext{program.firstUserSgpr, linked, Graphics::StageMeshConfiguration(graphics.stages, program.binary.stage), graphics.stages.tessellation, {drawParameters.indexAddress, drawParameters.indexCount, drawParameters.indexSize, drawParameters.instanceCount}, program.binary.stage == Stage::Mesh ? meshBarycentrics : std::nullopt, emulateBarycentrics && program.binary.stage == Stage::Fragment, std::nullopt, Graphics::StageGeometryConfiguration(graphics.stages, program.binary.stage)}
     };
     if (request.graphics->tessellation && request.graphics->tessellation->onChip && (program.binary.stage == Stage::TessellationControl || program.binary.stage == Stage::TessellationEvaluation)) {
-        if (const auto word = TessellationConstantWord(*program.snapshot, program.codeOffset)) request.graphics->tessellationConstants = ReadTessellationConstants(program.userData, *word);
+        if (const auto word = TessellationConstantWord(*program.snapshot, program.codeOffset)) request.graphics->tessellationConstants = ReadTessellationConstants(shaderMemory, program.userData, *word);
     }
     const auto pinTessellationConstants = [&](const ShaderRecompiler::TessellationConstantsRequired& required) {
         if (request.graphics->tessellationConstants) throw required;
         RecordTessellationConstantWord(*program.snapshot, program.codeOffset, required.UserDataWord());
-        request.graphics->tessellationConstants = ReadTessellationConstants(program.userData, required.UserDataWord());
+        request.graphics->tessellationConstants = ReadTessellationConstants(shaderMemory, program.userData, required.UserDataWord());
     };
     const auto waitedBefore = traceCapSync() || profile ? Graphics::Recorder::ThreadWaitedMs() : 0.0;
     auto invocation = [&] {
