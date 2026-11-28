@@ -1,5 +1,8 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #else
@@ -205,6 +208,19 @@ void TestGuardedPointers() {
     readOnlyHeapDest.hostname.size = 4;
     readOnlyHeapDest.hostname.capacity = 63;
     Require(ThrowsInvalidArgument([&] { _ZN3rtc13SocketAddressaSERKS0__nid_postfix(&readOnlyHeapDest, &valid); }));
+
+    char largeText[4097];
+    std::memset(largeText, 'b', 4096);
+    largeText[4096] = '\0';
+    WebRtcSocketAddress largeSource{};
+    SetHeap(largeSource.hostname, largeText, 4096);
+    WebRtcSocketAddress badOldLargeDest{};
+    badOldLargeDest.hostname.pointer = reinterpret_cast<char*>(pages.Guard() + sizeof(void*));
+    badOldLargeDest.hostname.size = 0;
+    badOldLargeDest.hostname.capacity = 4095;
+    Require(ThrowsInvalidArgument([&] { _ZN3rtc13SocketAddressaSERKS0__nid_postfix(&badOldLargeDest, &largeSource); }));
+    Require(badOldLargeDest.hostname.capacity == 4095);
+    Release(largeSource.hostname);
 }
 
 }

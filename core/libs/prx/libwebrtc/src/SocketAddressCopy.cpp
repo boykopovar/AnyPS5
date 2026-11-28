@@ -83,9 +83,8 @@ void CopyIn(void* destination, const void* source, std::size_t bytes, const char
 class GuestWriteScope {
 public:
     GuestWriteScope(void* pointer, std::size_t bytes, const char* message)
-        : guard(pointer ? pointer : nullptr, pointer ? bytes : 0) {
+        : savedErrno(), guard(pointer ? pointer : nullptr, pointer ? bytes : 0) {
         if (!bytes) return;
-        ErrnoGuard guardErrno;
         if (!pointer || !guard.Open() || !GuestWritable_nid_no_patch(pointer, bytes))
             throw std::invalid_argument(message);
     }
@@ -93,6 +92,7 @@ public:
     GuestWriteScope& operator=(const GuestWriteScope&) = delete;
 
 private:
+    ErrnoGuard savedErrno;
     GuestArena::HostWrite guard;
 };
 
@@ -139,6 +139,25 @@ std::string ReadGuestString(const WebRtcGuestString& source, const char* message
     return text;
 }
 
+void ValidateOldHeapStorage(char* storage, std::size_t capacity, const char* message) {
+    if (capacity > std::numeric_limits<std::size_t>::max() - 1)
+        throw std::invalid_argument(message);
+    const std::size_t bytes = capacity + 1;
+    if (!storage)
+        throw std::invalid_argument(message);
+    RequireReadable(storage, 1, message);
+    if (bytes >= GuestStringStorage::LargeAllocation) {
+        const auto addr = reinterpret_cast<std::uintptr_t>(storage);
+        if (addr < sizeof(void*) || (addr & (GuestStringStorage::AllocationAlignment - 1)) != 0)
+            throw std::invalid_argument(message);
+        void* raw = nullptr;
+        CopyIn(&raw, reinterpret_cast<const unsigned char*>(storage) - sizeof(void*), sizeof(raw), message);
+        const auto rawAddr = reinterpret_cast<std::uintptr_t>(raw);
+        if (!raw || addr < rawAddr + sizeof(void*) || addr - rawAddr > GuestStringStorage::AllocationPadding)
+            throw std::invalid_argument(message);
+    }
+}
+
 void InitEmpty(WebRtcGuestString& string) {
     string.reserved = 0;
     std::memset(string.buffer, 0, sizeof(string.buffer));
@@ -159,6 +178,7 @@ void CopyFields(WebRtcSocketAddress& address, const WebRtcSocketAddress& other) 
 extern "C" {
 
 WebRtcSocketAddress* APS5_VABI _ZN3rtc13SocketAddressaSERKS0__nid_postfix(WebRtcSocketAddress* address, const WebRtcSocketAddress* other) {
+    ErrnoGuard exportErrno;
     if (!address || !other)
         throw std::invalid_argument("SocketAddress::operator= requires two addresses");
     if (address == other)
@@ -196,6 +216,11 @@ WebRtcSocketAddress* APS5_VABI _ZN3rtc13SocketAddressaSERKS0__nid_postfix(WebRtc
         }
         destCopy.hostname.size = count;
     } else {
+        if (destCopy.hostname.capacity > WebRtcGuestStringInlineCapacity) {
+            ValidateOldHeapStorage(destCopy.hostname.pointer, destCopy.hostname.capacity, unreadable);
+            oldPointer = destCopy.hostname.pointer;
+            oldCapacity = destCopy.hostname.capacity;
+        }
         if (count > std::numeric_limits<std::size_t>::max() - CapacityMask - 1)
             throw std::invalid_argument("SocketAddress::operator= hostname length overflow");
         const std::size_t capacity = count | CapacityMask;
@@ -206,10 +231,6 @@ WebRtcSocketAddress* APS5_VABI _ZN3rtc13SocketAddressaSERKS0__nid_postfix(WebRtc
         CopyOut(newBuffer.ptr, sourceText.data(), count, unwritable);
         const char terminator = '\0';
         CopyOut(newBuffer.ptr + count, &terminator, 1, unwritable);
-        if (destCopy.hostname.capacity > WebRtcGuestStringInlineCapacity) {
-            oldPointer = destCopy.hostname.pointer;
-            oldCapacity = destCopy.hostname.capacity;
-        }
         destCopy.hostname.pointer = newBuffer.ptr;
         destCopy.hostname.capacity = capacity;
         destCopy.hostname.size = count;
@@ -224,6 +245,7 @@ WebRtcSocketAddress* APS5_VABI _ZN3rtc13SocketAddressaSERKS0__nid_postfix(WebRtc
 }
 
 void APS5_VABI _ZN3rtc13SocketAddressC1ERKS0__nid_postfix(WebRtcSocketAddress* address, const WebRtcSocketAddress* other) {
+    ErrnoGuard exportErrno;
     if (!address || !other)
         throw std::invalid_argument("SocketAddress::SocketAddress requires two addresses");
     const char* unreadable = "SocketAddress::SocketAddress requires a readable address";
