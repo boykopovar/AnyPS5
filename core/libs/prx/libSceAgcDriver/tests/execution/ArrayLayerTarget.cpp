@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
@@ -23,10 +24,21 @@
 #include <bit>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <iostream>
+#include <mutex>
 #include <span>
 #include <string>
 #include <vector>
+
+namespace AgcDriver {
+
+struct VulkanDeviceTestAccess {
+    static Graphics::Context ContextOf(const VulkanDevice& device) { return device.graphicsContext(); }
+};
+
+}
 
 namespace {
 
@@ -45,6 +57,7 @@ constexpr std::uint32_t TileR64KBX = 0x1b;
 constexpr std::uint32_t Type2D = 9;
 constexpr std::uint32_t Type2DArray = 13;
 constexpr std::uint32_t Color32FloatInfo = (4u << 2u) | (7u << 8u);
+constexpr std::uint32_t Color8888UnormInfo = 10u << 2u;
 constexpr std::uint32_t TiledAttrib3 = 0x4dc6c000u;
 constexpr std::uint32_t Float32Export = 9;
 constexpr std::uint32_t Initial = 0x5a5a5a5au;
@@ -148,7 +161,7 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t by
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
-void Dispatch(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData) {
+void Dispatch(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData, bool wait = true) {
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
@@ -160,10 +173,10 @@ void Dispatch(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> co
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
-    device.WaitIdle();
+    if (wait) device.WaitIdle();
 }
 
-void Load(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::array<std::uint32_t, 8>& texture) {
+void Load(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::array<std::uint32_t, 8>& texture, bool wait = true) {
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(16, 0u);
     const auto buffer = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
@@ -171,13 +184,13 @@ void Load(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, 
     std::copy(pointSampler.begin(), pointSampler.end(), userData.begin() + 12);
     std::copy(buffer.begin(), buffer.end(), userData.begin());
     std::copy(texture.begin(), texture.end(), userData.begin() + 4);
-    Dispatch(device, code, userData);
+    Dispatch(device, code, userData, wait);
 }
 
-void LoadLayer(AgcDriver::VulkanDevice& device, std::uint64_t surface, std::uint32_t layer, std::uint32_t swizzleMode, std::uint32_t lastLayer = Layers - 1u) {
+void LoadLayer(AgcDriver::VulkanDevice& device, std::uint64_t surface, std::uint32_t layer, std::uint32_t swizzleMode, std::uint32_t lastLayer = Layers - 1u, bool wait = true) {
     auto& code = LoadCodes[layer];
     code = {0x7e020280, 0x7e040280u | layer, 0xf0001128, 0x00010300, 0x34080082, 0xbf8c3f70, 0xe0701000, 0x80000304, 0xbf810000};
-    Load(device, code, SurfaceDescriptor(surface, swizzleMode, Type2DArray, lastLayer));
+    Load(device, code, SurfaceDescriptor(surface, swizzleMode, Type2DArray, lastLayer), wait);
 }
 
 void Sample2D(AgcDriver::VulkanDevice& device, std::uint64_t surface, std::uint32_t swizzleMode) {
@@ -207,13 +220,28 @@ AgcDriver::Graphics::ColorTarget DecodeTarget(std::uint64_t address, std::uint32
     return color;
 }
 
-void DrawSlice(AgcDriver::VulkanDevice& device, std::uint64_t surface, std::uint32_t slice, std::uint32_t swizzleMode, bool collapsed, std::uint32_t lastSlice = Layers - 1u, std::uint32_t width = ScissorWidth) {
+// A plain 2D color view, linear, of any extent and 4-byte format at any address.
+AgcDriver::Graphics::ColorTarget DecodePlain(std::uint64_t address, std::uint32_t side, std::uint32_t info, VkFormat format) {
+    AgcDriver::Registers cx;
+    cx[0x318] = static_cast<std::uint32_t>(address >> 8u);
+    cx[0x31b] = 0;
+    cx[0x31c] = info;
+    cx[0x31d] = 0;
+    cx[0x3b0] = ((side - 1u) << 14u) | (side - 1u);
+    cx[0x3b8] = TiledAttrib3 & ~(0x1fu << 14u);
+    cx[0x390] = static_cast<std::uint32_t>(address >> 40u);
+    const auto color = AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
+    Require(color.format == format && color.bytes == side * side * 4u && color.address == address && color.arrayAddress == 0, "the plain color view did not decode as the 2D image the test draws into");
+    return color;
+}
+
+void DrawTarget(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, std::uint32_t side, std::uint32_t width, float value, bool wait) {
     const auto target = device.Target();
     constexpr std::uint32_t waveSize = 64;
     std::size_t at = 0;
     for (std::uint32_t channel = 0; channel < 4; ++channel) {
         PixelCode[at++] = 0x7e0002ffu | ((4u + channel) << 17u);
-        PixelCode[at++] = std::bit_cast<std::uint32_t>(Drawn);
+        PixelCode[at++] = std::bit_cast<std::uint32_t>(value);
     }
     PixelCode[at++] = 0xf800180fu;
     PixelCode[at++] = 0x07060504u;
@@ -234,7 +262,6 @@ void DrawSlice(AgcDriver::VulkanDevice& device, std::uint64_t surface, std::uint
     const auto vertexResult = ShaderRecompiler::Recompile(vertex);
     const auto vertexPush = static_cast<std::uint32_t>(vertexResult.pushConstants.size());
 
-    const auto color = DecodeTarget(surface, slice, swizzleMode, collapsed, lastSlice);
     VkPipelineColorBlendAttachmentState blend{};
     blend.colorWriteMask = 0xf;
     AgcDriver::Graphics::State state{};
@@ -242,11 +269,11 @@ void DrawSlice(AgcDriver::VulkanDevice& device, std::uint64_t surface, std::uint
     state.colors = {color};
     state.color = color;
     state.hasColorTarget = true;
-    state.renderExtent = {Side, Side};
+    state.renderExtent = {side, side};
     state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    state.viewport = {0, static_cast<float>(Side), static_cast<float>(Side), -static_cast<float>(Side), 0, 1};
+    state.viewport = {0, static_cast<float>(side), static_cast<float>(side), -static_cast<float>(side), 0, 1};
     state.negativeOneToOne = false;
-    state.scissor = {{0, 0}, {width, Side}};
+    state.scissor = {{0, 0}, {width, side}};
     state.cullMode = VK_CULL_MODE_NONE;
     state.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     state.blends = {blend};
@@ -270,7 +297,11 @@ void DrawSlice(AgcDriver::VulkanDevice& device, std::uint64_t surface, std::uint
     }};
     const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(Triangle.size()), 0, 1, 0, false};
     device.Draw(state, draw, shaders);
-    device.WaitIdle();
+    if (wait) device.WaitIdle();
+}
+
+void DrawSlice(AgcDriver::VulkanDevice& device, std::uint64_t surface, std::uint32_t slice, std::uint32_t swizzleMode, bool collapsed, std::uint32_t lastSlice = Layers - 1u, std::uint32_t width = ScissorWidth, float value = Drawn, bool wait = true) {
+    DrawTarget(device, DecodeTarget(surface, slice, swizzleMode, collapsed, lastSlice), Side, width, value, wait);
 }
 
 void Run(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::uint32_t swizzleMode, bool collapsed = false, std::uint32_t slice = 1) {
@@ -456,13 +487,139 @@ void OverlappingArrays(AgcDriver::VulkanDevice& device, std::uint8_t* texels, st
     AgcDriver::Graphics::ClearCachedTextures(device.Device());
 }
 
+// A linear array tracks one unit per layer. A slice drawn as its own 2D target is whole layers of
+// the array's image: once both images exist, the array's refresh takes the slice's pending results
+// on the device, the slice stays pending and guest memory is not written. Without a host import
+// or write stamps, or with APS5_NO_ALIAS_BORROW=1, the results are stored and uploaded again; the
+// texels read are the same.
+void LayerBorrow(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::uint32_t slice) {
+    constexpr auto linear = static_cast<std::uint32_t>(AgcDriver::Graphics::ColorTileMode::Linear);
+    const auto surface = AddressOf(texels);
+    const auto target = surface + slice * LayerBytes;
+    const auto bits = [](float value) { return std::bit_cast<std::uint32_t>(value); };
+    auto* sliceTexels = reinterpret_cast<std::uint32_t*>(texels + slice * LayerBytes);
+    const auto inGuest = [&](float value) { return std::count(sliceTexels, sliceTexels + LayerBytes / sizeof(std::uint32_t), bits(value)); };
+    const auto name = "slice " + std::to_string(slice);
+    std::fill_n(reinterpret_cast<std::uint32_t*>(texels), SurfaceBytes / 4u, Initial);
+    AgcDriver::GuestMemory::CollectWrites(surface, SurfaceBytes);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    // The slice's own image first, stored; then the array's image, uploaded from those bytes.
+    DrawSlice(device, surface, slice, linear, true);
+    StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test");
+    device.WaitIdle();
+    AgcDriver::GuestMemory::CollectWrites(surface, SurfaceBytes);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(inGuest(Drawn) == ScissorWidth * Side, name + ": the first draw was not stored");
+    for (std::uint32_t layer = 0; layer < Layers; ++layer) {
+        LoadLayer(device, surface, layer, linear);
+        RequireOutput(layer == slice ? bits(Drawn) : Initial, Initial, "slice " + std::to_string(layer) + " of the linear array after the stored draw into " + name);
+    }
+    // Drawn again while the array's image is cached, and read through the array before the next
+    // wait. WaitIdle stores every drawn linear target, as a label on queue 0 does, so only a read
+    // that comes first finds the slice's results pending: the order inside a title's pass. The
+    // array is sampled right after the device copy, where a missing barrier or a wrong layer
+    // reads other texels.
+    DrawSlice(device, surface, slice, linear, true, Layers - 1u, ScissorWidth, 0.5f, false);
+    const auto found = StorageTexture::FindPending(target, LayerBytes);
+    const bool imported = AgcDriver::Graphics::HostImportCovers(AgcDriver::VulkanDeviceTestAccess::ContextOf(device), surface, SurfaceBytes);
+    const bool watched = AgcDriver::GuestMemory::Watched(surface, SurfaceBytes);
+    // Pending in the slice's own 2D image is the case the borrow is for. Over memory with no host
+    // import or no write stamps the results need not stay pending there: then only the texels the
+    // array reads and the bytes in guest memory are checked.
+    const bool ownImage = found != nullptr && found->Descriptor().dimension == TextureDimension::k2D && found->Descriptor().baseAddress == target;
+    Require(ownImage || !imported || !watched, name + " did not render into its own 2D image");
+    const auto own = ownImage ? found : nullptr;
+    const bool borrows = own != nullptr && std::getenv("APS5_NO_ALIAS_BORROW") == nullptr && imported && watched;
+    if (slice == 0) std::printf("layer borrow: %s; after the draw the slice is %s (host import %d, write stamps %d)\n", borrows ? "the array takes a pending slice on the device" : "the array reads stored results", ownImage ? "pending in its own 2D image" : found != nullptr ? "pending in another image" : "not pending", imported, watched);
+    const auto readThroughArray = [&](float value, std::uint32_t outside, const std::string& when) {
+        LoadLayer(device, surface, slice, linear, Layers - 1u, false);
+        const bool pending = own != nullptr && StorageTexture::FindPending(target, LayerBytes) == own;
+        if (borrows) Require(pending && inGuest(value) == 0, name + ": the array's refresh " + when + " stored the slice's results instead of taking them on the device");
+        else if (own != nullptr) Require(!pending, name + ": the array's refresh " + when + " left the slice's results pending without taking them on the device");
+        device.WaitIdle();
+        RequireOutput(bits(value), outside, name + " read through the array " + when);
+        Require(inGuest(value) != 0, name + ": the slice's results were not stored at the wait " + when);
+    };
+    readThroughArray(0.5f, Initial, "after the second draw");
+    for (std::uint32_t other = 0; other < Layers; ++other) {
+        if (other == slice) continue;
+        LoadLayer(device, surface, other, linear);
+        RequireOutput(Initial, Initial, "slice " + std::to_string(other) + " after the draw into " + name);
+    }
+    // Read again after the wait stored the slice: the layer already holds those texels.
+    LoadLayer(device, surface, slice, linear);
+    RequireOutput(bits(0.5f), Initial, name + " read through the array a second time");
+    // The array follows the next draw into the slice.
+    DrawSlice(device, surface, slice, linear, true, Layers - 1u, Side, 0.75f, false);
+    readThroughArray(0.75f, bits(0.75f), "after the third draw");
+    // A CPU write over the slice replaces the layer the array took from the slice's results.
+    std::fill_n(sliceTexels, LayerBytes / sizeof(std::uint32_t), bits(0.125f));
+    AgcDriver::GuestMemory::CollectWrites(target, LayerBytes);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    LoadLayer(device, surface, slice, linear);
+    RequireOutput(bits(0.125f), bits(0.125f), name + " read through the array after a CPU write over the drawn slice");
+    StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test");
+    device.WaitIdle();
+    Require(inGuest(0.75f) == 0 && inGuest(0.125f) == static_cast<std::ptrdiff_t>(LayerBytes / sizeof(std::uint32_t)), name + ": results the CPU wrote over reached guest memory");
+    AgcDriver::Graphics::ClearCachedTextures(device.Device());
 }
 
-int main() {
+// The array takes a pending image on the device only where that image is whole layers of the
+// array's own texels. Any other image over the array is stored by the array's refresh, which then
+// reads the stored bytes.
+void LayerBorrowFallback(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const std::string& name, std::size_t offset, std::uint32_t side, std::uint32_t info, VkFormat format, float value, std::uint32_t stored, std::uint32_t layer) {
+    constexpr auto linear = static_cast<std::uint32_t>(AgcDriver::Graphics::ColorTileMode::Linear);
+    const auto surface = AddressOf(texels);
+    const auto target = surface + offset;
+    const std::size_t bytes = std::size_t{side} * side * 4u;
+    std::fill_n(reinterpret_cast<std::uint32_t*>(texels), SurfaceBytes / 4u, Initial);
+    AgcDriver::GuestMemory::CollectWrites(surface, SurfaceBytes);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    for (std::uint32_t other = 0; other < Layers; ++other) {
+        LoadLayer(device, surface, other, linear);
+        RequireOutput(Initial, Initial, "slice " + std::to_string(other) + " of the linear array before the draw into " + name);
+    }
+    DrawTarget(device, DecodePlain(target, side, info, format), side, side, value, false);
+    const auto own = StorageTexture::FindPending(target, bytes);
+    const bool ownImage = own != nullptr && own->Descriptor().dimension == TextureDimension::k2D && own->Descriptor().baseAddress == target && own->Descriptor().width == side;
+    Require(ownImage || !AgcDriver::Graphics::HostImportCovers(AgcDriver::VulkanDeviceTestAccess::ContextOf(device), surface, SurfaceBytes) || !AgcDriver::GuestMemory::Watched(surface, SurfaceBytes), name + " did not render into its own 2D image");
+    LoadLayer(device, surface, layer, linear, Layers - 1u, false);
+    if (ownImage) Require(StorageTexture::FindPending(target, bytes) != own, name + ": the array's refresh left pending an image that is not whole layers of its texels");
+    device.WaitIdle();
+    RequireOutput(stored, stored, name + " read through slice " + std::to_string(layer) + " of the array");
+    const auto* words = reinterpret_cast<const std::uint32_t*>(texels + offset);
+    Require(std::count(words, words + bytes / 4u, stored) == static_cast<std::ptrdiff_t>(bytes / 4u), name + ": the stored results are not in guest memory");
+    for (std::uint32_t other = 0; other < Layers; ++other) {
+        if (other == layer) continue;
+        LoadLayer(device, surface, other, linear);
+        RequireOutput(Initial, Initial, "slice " + std::to_string(other) + " after the draw into " + name);
+    }
+    StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test");
+    device.WaitIdle();
+    AgcDriver::Graphics::ClearCachedTextures(device.Device());
+}
+
+}
+
+int main(int argc, char** argv) {
     try {
         GuestBlock block;
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (argc > 1 && std::strcmp(argv[1], "--layer-borrow") == 0) {
+            for (std::uint32_t slice = 0; slice < Layers; ++slice) LayerBorrow(*device, block.Data(), slice);
+            const auto bits = [](float value) { return std::bit_cast<std::uint32_t>(value); };
+            // Half a layer in: the image's row 64 is row 0 of slice 1.
+            LayerBorrowFallback(*device, block.Data(), "an image based inside a layer", LayerBytes / 2u, Side, Color32FloatInfo, VK_FORMAT_R32_SFLOAT, 0.5f, bits(0.5f), 1u);
+            // 64 texels wide: its rows 0 and 1 are row 0 of the slice.
+            LayerBorrowFallback(*device, block.Data(), "an image of another extent", 2u * LayerBytes, Side / 2u, Color32FloatInfo, VK_FORMAT_R32_SFLOAT, 0.5f, bits(0.5f), 2u);
+            // 51 of 255 in each of the four channels.
+            LayerBorrowFallback(*device, block.Data(), "an image of another format", LayerBytes, Side, Color8888UnormInfo, VK_FORMAT_R8G8B8A8_UNORM, 0.2f, 0x33333333u, 1u);
+            std::puts("array layer borrow tests passed");
+            return 0;
+        }
         Run(*device, block.Data(), TileR64KBX);
         Run(*device, block.Data(), static_cast<std::uint32_t>(AgcDriver::Graphics::ColorTileMode::D64KBX));
         for (std::uint32_t slice = 1; slice < Layers; ++slice) Run(*device, block.Data(), TileR64KBX, true, slice);
