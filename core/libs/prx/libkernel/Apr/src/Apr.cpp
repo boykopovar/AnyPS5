@@ -810,6 +810,17 @@ std::optional<Deferred> _execute(const Apr::CommandBufferObject& buffer, int& st
             cursor += bytes;
             continue;
         }
+        if ((first & 0xfffu) == 0x205u) {
+            constexpr std::uint32_t writeBytes = 12u;
+            if (writeBytes > buffer.offset - cursor) throw std::runtime_error("APR: truncated compact write-address command");
+            std::array<std::uint32_t, 3> words{};
+            std::memcpy(words.data(), buffer.base + cursor, writeBytes);
+            const auto address = (static_cast<std::uint64_t>((words[0] >> 16) & 0xffu) << 32u) | words[1];
+            const auto value = static_cast<std::uint64_t>((words[0] >> 12u) & 0xfu);
+            _writeAddress(Apr::WriteAddressCommand{{}, address, value, 0, 0});
+            cursor += writeBytes;
+            continue;
+        }
         if (cursor + sizeof(Apr::CommandHeader) > buffer.offset) throw std::runtime_error("APR: truncated command buffer");
         Apr::CommandHeader header;
         std::memcpy(&header, buffer.base + cursor, sizeof(header));
