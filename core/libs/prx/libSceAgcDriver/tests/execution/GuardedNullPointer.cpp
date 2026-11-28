@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Dispatch/DispatchCache.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
 #include "tests/TemporaryFile.hpp"
@@ -41,6 +42,14 @@ alignas(256) std::array<std::uint32_t, 16> Root{};
 alignas(256) std::array<std::uint32_t, 4> Data{Payload, 0u, 0u, 0u};
 alignas(256) std::array<std::uint64_t, 1> Indirect{};
 alignas(256) std::array<std::uint32_t, 8> Table{};
+alignas(256) std::array<std::uint32_t, 1> ConditionInput{};
+
+alignas(256) constexpr std::array<std::uint32_t, 27> DynamicDescriptorCode{
+    0xf4080100u, 0xfa000000u, 0xbe8803ffu, 0x00000001u, 0xf4080401u, 0xfa000000u, 0xf4000240u, 0xfa000010u,
+    0x7e0202ffu, 0x11111111u, 0x34040082u, 0xbf8cc07fu, 0xe0300000u, 0x80040000u, 0xbf8c3f70u, 0x7da80008u,
+    0xbf880006u, 0xf4080501u, 0x12000000u, 0xbf8cc07fu, 0xe0300000u, 0x80050100u, 0xbf8c3f70u, 0xbefe04c1u,
+    0xe0701000u, 0x80010102u, 0xbf810000u,
+};
 
 alignas(256) constexpr std::array<std::uint32_t, 19> BranchCode{
     0xf4080100u, 0xfa000000u, 0xf4000200u, 0xfa000010u, 0xf4040280u, 0xfa000018u, 0xbe8c03ffu, 0x11111111u,
@@ -236,6 +245,69 @@ void RunDirectRootTests(AgcDriver::VulkanDevice& device) {
 #endif
 }
 
+void RunDynamicDescriptorTests(AgcDriver::VulkanDevice& device) {
+    std::size_t pageBytes = 0;
+    void* reserved = nullptr;
+#ifdef _WIN32
+    SYSTEM_INFO system{};
+    GetSystemInfo(&system);
+    pageBytes = system.dwPageSize;
+    reserved = VirtualAlloc(nullptr, pageBytes * 2u, MEM_RESERVE, PAGE_NOACCESS);
+    Require(reserved != nullptr && VirtualAlloc(reserved, pageBytes, MEM_COMMIT, PAGE_READWRITE) == reserved, "dynamic descriptor: cannot prepare readable and inaccessible pages");
+#else
+    const auto queriedPageBytes = sysconf(_SC_PAGESIZE);
+    Require(queriedPageBytes > 0, "dynamic descriptor: cannot query the host page size");
+    pageBytes = static_cast<std::size_t>(queriedPageBytes);
+    reserved = mmap(nullptr, pageBytes * 2u, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(reserved != MAP_FAILED && mprotect(reserved, pageBytes, PROT_READ | PROT_WRITE) == 0, "dynamic descriptor: cannot prepare readable and inaccessible pages");
+#endif
+    GuestAllocations::Mutation().Add(reserved, pageBytes, true, true, true);
+    auto* descriptor = static_cast<std::uint32_t*>(reserved);
+    const auto input = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Data.data()));
+    const auto condition = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(ConditionInput.data()));
+    descriptor[0] = static_cast<std::uint32_t>(condition);
+    descriptor[1] = static_cast<std::uint32_t>((condition >> 32u) & 0xffffu);
+    descriptor[2] = sizeof(ConditionInput);
+    descriptor[3] = 0x30027facu;
+    descriptor[16] = static_cast<std::uint32_t>(input);
+    descriptor[17] = static_cast<std::uint32_t>((input >> 32u) & 0xffffu);
+    descriptor[18] = sizeof(Data);
+    descriptor[19] = 0x30027facu;
+    const auto base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(reserved));
+    ConditionInput[0] = 0u;
+    const auto taken = Run(device, DynamicDescriptorCode, base, 64u, 1u, 0u, true);
+    Require(!Faulted(taken) && taken.poisoned == 0u, "dynamic descriptor: mapped taken arm faulted:\n" + taken.log);
+    RequireWords(taken, Lanes, Payload, "dynamic descriptor: mapped taken arm");
+    std::puts("dynamic descriptor: GPU condition0 took the mapped arm and wrote the payload");
+    descriptor[32] = static_cast<std::uint32_t>(input + sizeof(std::uint32_t));
+    descriptor[33] = static_cast<std::uint32_t>(((input + sizeof(std::uint32_t)) >> 32u) & 0xffffu);
+    descriptor[34] = sizeof(Data) - sizeof(std::uint32_t);
+    descriptor[35] = 0x30027facu;
+    const auto second = Run(device, DynamicDescriptorCode, base, 128u, 1u, 0u, true);
+    Require(!Faulted(second) && second.poisoned == 0u && second.pipelineVariantId == taken.pipelineVariantId, "dynamic descriptor: a changed mapped offset faulted or changed the pipeline variant:\n" + second.log);
+    RequireWords(second, Lanes, 0u, "dynamic descriptor: second mapped descriptor");
+    std::puts("dynamic descriptor: a changed runtime offset selected the second mapped descriptor");
+    ConditionInput[0] = 1u;
+    const auto skippedMapped = Run(device, DynamicDescriptorCode, base, 64u, 1u, 0u, true);
+    Require(!Faulted(skippedMapped) && skippedMapped.poisoned == 0u, "dynamic descriptor: mapped skipped arm faulted:\n" + skippedMapped.log);
+    RequireWords(skippedMapped, 0u, 0u, "dynamic descriptor: mapped skipped arm");
+    std::puts("dynamic descriptor: GPU condition1 skipped the mapped arm and wrote the default");
+    const auto skipped = Run(device, DynamicDescriptorCode, base, static_cast<std::uint32_t>(pageBytes), 1u, 0u, true);
+    Require(!Faulted(skipped), "dynamic descriptor: an inaccessible descriptor in the skipped arm faulted:\n" + skipped.log);
+    RequireWords(skipped, 0u, 0u, "dynamic descriptor: inaccessible skipped arm");
+    std::puts("dynamic descriptor: GPU condition1 skipped the inaccessible arm and wrote the default");
+    ConditionInput[0] = 0u;
+    const auto inaccessible = Run(device, DynamicDescriptorCode, base, static_cast<std::uint32_t>(pageBytes), 1u, 0u, true);
+    Require(Faulted(inaccessible) && inaccessible.log.find(Fault(base + pageBytes, 0x44u)) != std::string::npos, "dynamic descriptor: an executed inaccessible descriptor did not fault at its address and pc:\n" + inaccessible.log);
+    std::puts("dynamic descriptor: GPU condition0 faulted on the inaccessible descriptor at its address and pc");
+    GuestAllocations::Mutation().Remove(reserved);
+#ifdef _WIN32
+    VirtualFree(reserved, 0, MEM_RELEASE);
+#else
+    munmap(reserved, pageBytes * 2u);
+#endif
+}
+
 void RunTests(AgcDriver::VulkanDevice& device) {
     const auto valid = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Data.data()));
     void* reserved = nullptr;
@@ -319,10 +391,13 @@ void RunTests(AgcDriver::VulkanDevice& device) {
 
 int main(int argc, char** argv) {
     try {
-        Require(argc == 1 || (argc == 2 && std::string(argv[1]) == "--direct-root-only"), "unknown guarded-pointer test arguments");
+        Require(argc == 1 || (argc == 2 && (std::string(argv[1]) == "--direct-root-only" || std::string(argv[1]) == "--dynamic-descriptor-only")), "unknown guarded-pointer test arguments");
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        if (argc == 2) {
+        if (argc == 2 && std::string(argv[1]) == "--dynamic-descriptor-only") {
+            RunDynamicDescriptorTests(*device);
+            std::puts("guarded dynamic descriptor tests passed");
+        } else if (argc == 2) {
             RunDirectRootTests(*device);
             std::puts("guarded direct root tests passed");
         } else {

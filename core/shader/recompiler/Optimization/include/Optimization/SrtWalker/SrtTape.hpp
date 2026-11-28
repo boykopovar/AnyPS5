@@ -37,6 +37,7 @@ private:
         Op op = Op::Fail;
         bool clean = false;
         bool loaded = false;
+        bool addressLoaded = false;
         std::uint8_t component = 0;
         std::uint8_t argumentCount = 0;
         std::int32_t baseWord = -1;
