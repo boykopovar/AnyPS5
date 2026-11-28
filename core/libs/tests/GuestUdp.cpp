@@ -250,6 +250,66 @@ static void CheckSendToPortZero() {
     Require(close_nid_postfix(bound) == 0 && close_nid_postfix(receiver) == 0 && close_nid_postfix(sender) == 0);
 }
 
+static void CheckSendToPortZeroIpv6() {
+    const int receiver = socket_nid_postfix(28, 2, 0);
+    if (receiver < 0 && *__error_nid_postfix() == 47) return;
+    Require(receiver >= 0);
+    std::array<unsigned char, 28> address{28, 28};
+    address[23] = 1;
+    if (bind_nid_postfix(receiver, address.data(), address.size()) != 0) {
+        Require(*__error_nid_postfix() == 49 && close_nid_postfix(receiver) == 0);
+        return;
+    }
+    std::uint32_t size = address.size();
+    Require(getsockname_nid_postfix(receiver, address.data(), &size) == 0 && size == 28);
+    const int unbound = socket_nid_postfix(28, 2, 0);
+    const int bound = socket_nid_postfix(28, 2, 0);
+    const int connected = socket_nid_postfix(28, 2, 0);
+    Require(unbound >= 0 && bound >= 0 && connected >= 0);
+    std::array<unsigned char, 28> local{28, 28};
+    local[23] = 1;
+    Require(bind_nid_postfix(bound, local.data(), local.size()) == 0);
+    Require(connect_nid_postfix(connected, address.data(), address.size()) == 0);
+    std::array<unsigned char, 28> portZero{28, 28};
+    portZero[23] = 1;
+    std::array<unsigned char, 28> mappedPortZero{28, 28};
+    mappedPortZero[18] = 0xff;
+    mappedPortZero[19] = 0xff;
+    mappedPortZero[20] = 127;
+    mappedPortZero[23] = 1;
+    char payload[] = "x";
+    KernelIovec part{payload, 1};
+    for (const int sender : {unbound, bound, connected}) {
+        for (auto* destination : {&portZero, &mappedPortZero}) {
+            *__error_nid_postfix() = 0;
+            Require(sendto_nid_postfix(sender, payload, 1, 0, destination->data(), destination->size()) == -1 && *__error_nid_postfix() == 49);
+            GuestMsghdr message{destination->data(), static_cast<std::uint32_t>(destination->size()), &part, 1, nullptr, 0, 0};
+            *__error_nid_postfix() = 0;
+            Require(sendmsg_nid_postfix(sender, &message, 0) == -1 && *__error_nid_postfix() == 49);
+        }
+    }
+    for (const unsigned char prefix : {0x80, 0x01, 0x02}) {
+        std::array<unsigned char, 28> scoped{28, 28};
+        scoped[8] = prefix == 0x80 ? 0xfe : 0xff;
+        scoped[9] = prefix;
+        scoped[23] = 1;
+        for (const std::uint32_t scope : {0u, 0x7fffffffu}) {
+            std::memcpy(scoped.data() + 24, &scope, sizeof(scope));
+            const int expected = scope == 0 ? 49 : 6;
+            *__error_nid_postfix() = 0;
+            Require(sendto_nid_postfix(unbound, payload, 1, 0, scoped.data(), scoped.size()) == -1 && *__error_nid_postfix() == expected);
+            GuestMsghdr message{scoped.data(), static_cast<std::uint32_t>(scoped.size()), &part, 1, nullptr, 0, 0};
+            *__error_nid_postfix() = 0;
+            Require(sendmsg_nid_postfix(unbound, &message, 0) == -1 && *__error_nid_postfix() == expected);
+        }
+    }
+    char buffer[4];
+    Require(recv_nid_postfix(receiver, buffer, sizeof(buffer), 0x80) == -1 && *__error_nid_postfix() == 35);
+    Require(sendto_nid_postfix(unbound, payload, 1, 0, address.data(), address.size()) == 1);
+    Require(recv_nid_postfix(receiver, buffer, sizeof(buffer), 0) == 1);
+    Require(close_nid_postfix(connected) == 0 && close_nid_postfix(bound) == 0 && close_nid_postfix(unbound) == 0 && close_nid_postfix(receiver) == 0);
+}
+
 static void CheckShutReadUnconnected() {
     const int receiver = socket_nid_postfix(2, 2, 0);
     const int sender = socket_nid_postfix(2, 2, 0);
@@ -735,6 +795,7 @@ int main() {
     CheckTcpStreamNoTimestamps();
     CheckDontWait();
     CheckSendToPortZero();
+    CheckSendToPortZeroIpv6();
     CheckShutReadUnconnected();
 #ifndef __APPLE__
     CheckShutReadEndsBlockedReceive();

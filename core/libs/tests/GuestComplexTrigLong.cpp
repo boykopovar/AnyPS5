@@ -146,5 +146,38 @@ int main() {
     Require(std::isnan(__real__ nanReal) && __imag__ nanReal == 0.0L && std::signbit(__imag__ nanReal));
     const __complex__ long double infiniteImaginary = ctanhl_nid_postfix(Make(1.0L, infinity));
     Require(std::isnan(__real__ infiniteImaginary) && std::isnan(__imag__ infiniteImaginary));
+
+    Require(Near(catanhl_nid_postfix(Make(3.0L, 4.0L)), 0.1175009073114339L, 1.4099210495965755L));
+    Require(Near(catanhl_nid_postfix(Make(-0.25L, 2.0L)), -0.04954423214593717L, 1.1121113339878292L));
+    Require(Near(catanl_nid_postfix(Make(5.0L, -0.5L)), 1.375233603310382L, -0.01905684134697106L));
+    struct Large {
+        long double x;
+        long double y;
+        long double real;
+    };
+    const long double belowSquareLimit = std::ldexp(1 - LDBL_EPSILON / 2, LDBL_MAX_EXP / 2 - LDBL_MANT_DIG / 2);
+    const long double nearSquareLimit = std::ldexp(1 - LDBL_EPSILON / 2, LDBL_MAX_EXP / 2);
+    for (const Large& large : {Large{1e20L, 1.0L, 1e-20L}, Large{-1e30L, -2.0L, -1e-30L},
+                               Large{belowSquareLimit, nearSquareLimit, belowSquareLimit / nearSquareLimit / nearSquareLimit},
+                               Large{std::ldexp(1.0L, LDBL_MAX_EXP * 3 / 4), 1.0L, std::ldexp(1.0L, -LDBL_MAX_EXP * 3 / 4)},
+                               Large{1.0L, std::ldexp(1.0L, LDBL_MAX_EXP / 2 - 100), std::ldexp(1.0L, 200 - LDBL_MAX_EXP)},
+                               Large{std::ldexp(1.0L, LDBL_MAX_EXP - 100), std::ldexp(1.0L, LDBL_MAX_EXP - 100), std::ldexp(1.0L, 99 - LDBL_MAX_EXP)}}) {
+        const __complex__ long double hyperbolic = catanhl_nid_postfix(Make(large.x, large.y));
+        Require(Close(__real__ hyperbolic, large.real) && Close(__imag__ hyperbolic, std::copysign(pi / 2, large.y)));
+        const __complex__ long double circular = catanl_nid_postfix(Make(large.y, large.x));
+        Require(Close(__imag__ circular, large.real) && Close(__real__ circular, std::copysign(pi / 2, large.y)));
+    }
+    const long double small = std::fmin(1e-12L, std::sqrt(LDBL_EPSILON) / 4);
+    const __complex__ long double tiny = Make(small, -small);
+    const __complex__ long double tinyResult = catanhl_nid_postfix(tiny);
+    Require(__real__ tinyResult == __real__ tiny && __imag__ tinyResult == __imag__ tiny);
+    const __complex__ long double nearOne = catanhl_nid_postfix(Make(1.0L, 1e-30L));
+    Require(Close(__real__ nearOne, (std::log(2.0L) - std::log(1e-30L)) / 2) && Close(__imag__ nearOne, pi / 4 + std::atan(1e-30L / 2) / 2));
+    const __complex__ long double infiniteReal = catanhl_nid_postfix(Make(infinity, 1.0L));
+    Require(__real__ infiniteReal == 0.0L && Close(__imag__ infiniteReal, pi / 2));
+    const __complex__ long double infiniteImaginaryArc = catanhl_nid_postfix(Make(2.0L, -infinity));
+    Require(__real__ infiniteImaginaryArc == 0.0L && Close(__imag__ infiniteImaginaryArc, -pi / 2));
+    const __complex__ long double infiniteNan = catanhl_nid_postfix(Make(infinity, nan));
+    Require(__real__ infiniteNan == 0.0L && std::isnan(__imag__ infiniteNan));
     return 0;
 }

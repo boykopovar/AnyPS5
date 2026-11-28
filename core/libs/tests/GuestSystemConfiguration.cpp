@@ -276,40 +276,26 @@ static void CheckPathnameSysctl() {
     Require(sysctl_nid_postfix(mibTooLong, 5, buffer, &length, buffer, sizeof(buffer)) == -1 && *__error_nid_postfix() == 1);
     Require(sysctlbyname_nid_postfix("kern.proc.pathname", buffer, &length, buffer, sizeof(buffer)) == -1 && *__error_nid_postfix() == 1);
 
-    const int mibSelf[] = {1, 14, 12, -1};
-    length = 0;
-    Require(sysctl_nid_postfix(mibSelf, 4, nullptr, &length, nullptr, 0) == 0 && length == sizeof("/app0/eboot.bin"));
-
-    std::memset(buffer, 0xaa, sizeof(buffer));
-    length = sizeof(buffer);
-    Require(sysctl_nid_postfix(mibSelf, 4, buffer, &length, nullptr, 0) == 0);
-    Require(length == sizeof("/app0/eboot.bin"));
-    Require(std::strcmp(buffer, "/app0/eboot.bin") == 0);
-
     const int callerPid = getpid_nid_postfix();
+    const int mibSelf[] = {1, 14, 12, -1};
     const int mibPid[] = {1, 14, 12, callerPid};
-    std::memset(buffer, 0xaa, sizeof(buffer));
-    length = sizeof(buffer);
-    Require(sysctl_nid_postfix(mibPid, 4, buffer, &length, nullptr, 0) == 0);
-    Require(length == sizeof("/app0/eboot.bin"));
-    Require(std::strcmp(buffer, "/app0/eboot.bin") == 0);
-
     const int mibThread[] = {1, 14, 12, scePthreadGetthreadid()};
-    std::memset(buffer, 0xaa, sizeof(buffer));
-    length = sizeof(buffer);
-    Require(sysctl_nid_postfix(mibThread, 4, buffer, &length, nullptr, 0) == 0 && length == sizeof("/app0/eboot.bin"));
-    Require(std::strcmp(buffer, "/app0/eboot.bin") == 0);
-
     const int mibForeign[] = {1, 14, 12, callerPid == 1 ? 2 : 1};
-    Require(sysctl_nid_postfix(mibForeign, 4, buffer, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 3);
-
-    length = 5;
-    std::memset(buffer, 0xaa, sizeof(buffer));
-    Require(sysctl_nid_postfix(mibSelf, 4, buffer, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 12);
-    Require(length == 5 && buffer[4] == '0' && buffer[5] == static_cast<char>(0xaa));
-
-    length = sizeof(buffer);
-    Require(sysctl_nid_postfix(mibSelf, 4, buffer, &length, buffer, sizeof(buffer)) == -1 && *__error_nid_postfix() == 1);
+    const int mibAbsent[] = {1, 14, 12, 0x7fffffff};
+    for (const int* mib : {mibSelf, mibPid, mibThread, mibForeign, mibAbsent}) {
+        length = 0;
+        *__error_nid_postfix() = 13;
+        Require(sysctl_nid_postfix(mib, 4, nullptr, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 2 && length == 0);
+        for (const std::size_t capacity : {sizeof(buffer), std::size_t{1}}) {
+            std::memset(buffer, 0xaa, sizeof(buffer));
+            length = capacity;
+            *__error_nid_postfix() = 13;
+            Require(sysctl_nid_postfix(mib, 4, buffer, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 2);
+            Require(length == capacity && Untouched(reinterpret_cast<const unsigned char*>(buffer), sizeof(buffer)));
+        }
+        length = sizeof(buffer);
+        Require(sysctl_nid_postfix(mib, 4, buffer, &length, buffer, 0) == -1 && *__error_nid_postfix() == 1);
+    }
 }
 static void CheckProcessSysctl() {
     const int callerPid = getpid_nid_postfix();
@@ -1209,7 +1195,7 @@ static void CheckNameToMib() {
     mib[3] = -1;
     char path[32] = {};
     length = sizeof(path);
-    Require(sysctl_nid_postfix(mib, 4, path, &length, nullptr, 0) == 0 && std::strcmp(path, "/app0/eboot.bin") == 0);
+    Require(sysctl_nid_postfix(mib, 4, path, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 2 && length == sizeof(path) && path[0] == 0);
 
     int truncated[3] = {0x5a5a5a5a, 0x5a5a5a5a, 0x5a5a5a5a};
     size = 1;
