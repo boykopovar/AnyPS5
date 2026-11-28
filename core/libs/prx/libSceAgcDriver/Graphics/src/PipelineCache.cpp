@@ -2,14 +2,21 @@
 #include "prx/libc/include/HostThread.hpp"
 #include "ShaderCacheDirectory.hpp"
 #include "ShaderDiskCache.hpp"
+#include "prx/libSceAgcDriver/Graphics/src/MappedCacheFile.hpp"
 #include <algorithm>
+#include <atomic>
+#include <charconv>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <functional>
+#include <limits>
 #include <map>
+#include <memory>
 #include <new>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -31,6 +38,52 @@ bool profiling() {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     return profile;
 }
+
+constexpr std::size_t CheckedSaveBytes = std::size_t{64} << 20u;
+constexpr std::uint64_t LargestDefaultReserveBytes = std::uint64_t{4096} << 20u;
+
+std::atomic<std::uint64_t> mappedSaves{0};
+std::atomic<std::uint64_t> mappedWindows{0};
+std::atomic<std::uint64_t> postponedSaves{0};
+
+struct HostMemory {
+    std::uint64_t available = 0;
+    std::uint64_t installed = 0;
+};
+
+HostMemory hostMemory() {
+#ifdef _WIN32
+    MEMORYSTATUSEX status{};
+    status.dwLength = sizeof(status);
+    if (GlobalMemoryStatusEx(&status)) return {status.ullAvailPhys, status.ullTotalPhys};
+#endif
+    return {};
+}
+
+std::optional<std::uint64_t> setting(const char* name, const char* text, unsigned shift, unsigned index) {
+    if (text == nullptr || *text == '\0') return std::nullopt;
+    const auto value = PipelineCache::ParseSetting(text, shift);
+    static std::atomic<std::uint32_t> reported{0};
+    if (!value.has_value() && (reported.fetch_or(1u << index, std::memory_order_relaxed) & (1u << index)) == 0) std::fprintf(stderr, "[pipeline-cache] ignoring %s=%s: not a whole number in range; using the default\n", name, text);
+    return value;
+}
+
+std::uint64_t saveReserveBytes(const HostMemory& memory) {
+    const auto value = setting("APS5_PIPELINE_CACHE_SAVE_FREE_MB", std::getenv("APS5_PIPELINE_CACHE_SAVE_FREE_MB"), 20u, 0u);
+    return value.has_value() ? *value : std::min(LargestDefaultReserveBytes, memory.installed / 16u);
+}
+
+#ifdef _WIN32
+std::optional<std::size_t> mappedSaveFromBytes() {
+    const char* text = std::getenv("APS5_PIPELINE_CACHE_MAPPED_SAVE_MB");
+    if (text != nullptr && std::strcmp(text, "off") == 0) return std::nullopt;
+    return setting("APS5_PIPELINE_CACHE_MAPPED_SAVE_MB", text, 20u, 1u);
+}
+
+std::size_t saveWindowBytes() {
+    return setting("APS5_PIPELINE_CACHE_SAVE_WINDOW_KIB", std::getenv("APS5_PIPELINE_CACHE_SAVE_WINDOW_KIB"), 10u, 2u).value_or(std::uint64_t{64} << 20u);
+}
+#endif
 
 std::mutex& pathMutex(const std::filesystem::path& path) {
     struct Registry {
@@ -218,6 +271,7 @@ void PipelineCache::save(bool final, bool waitForPipelines) try {
     const auto onDisk = readHeader();
     if (liveBytes == settledBytes && onDisk == settledFile) return;
     const bool fileUnchanged = holdsFile && settledFile.has_value() && onDisk == settledFile;
+    if (!fileUnchanged) holdsFile = false;
     const auto started = std::chrono::steady_clock::now();
     const auto settle = [&](const std::optional<FileHeader>& file) {
         settledBytes = liveBytes;
@@ -269,6 +323,10 @@ void PipelineCache::save(bool final, bool waitForPipelines) try {
     const auto source = merged != VK_NULL_HANDLE ? merged : cache;
     std::size_t size = 0;
     std::vector<std::byte> file;
+    std::byte* contents = nullptr;
+#ifdef _WIN32
+    std::unique_ptr<MappedCacheFile> mapped;
+#endif
     {
         auto synchronizationLock = source == cache ? snapshot() : PipelineCacheSynchronization::SnapshotLock{};
         if (source == cache && !synchronizationLock.owns_lock()) return;
@@ -277,10 +335,36 @@ void PipelineCache::save(bool final, bool waitForPipelines) try {
             settle(disk.header);
             return;
         }
-        file.resize(sizeof(FileHeader) + size);
-        const auto result = getData(context.device, source, &size, file.data() + sizeof(FileHeader));
+        const auto affordable = [&](std::uint64_t held) {
+            if (final || size < CheckedSaveBytes) return true;
+            const auto memory = hostMemory();
+            const auto reserve = saveReserveBytes(memory);
+            if (reserve == 0 || memory.available == 0 || (memory.available >= held && memory.available - held >= reserve)) return true;
+            const auto postponed = postponedSaves.fetch_add(1, std::memory_order_relaxed) + 1;
+            static std::atomic<std::int64_t> nextReport{0};
+            const auto now = static_cast<std::int64_t>(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+            auto due = nextReport.load(std::memory_order_relaxed);
+            if (now >= due && nextReport.compare_exchange_strong(due, now + 60, std::memory_order_relaxed)) std::fprintf(stderr, "[pipeline-cache] not saving %.1f KiB now: the host has %.0f MiB of memory free, the save would hold %.0f MiB and %.0f MiB are to stay free (APS5_PIPELINE_CACHE_SAVE_FREE_MB); %llu saves put off so far\n", static_cast<double>(size) / 1024.0, static_cast<double>(memory.available) / 1048576.0, static_cast<double>(held) / 1048576.0, static_cast<double>(reserve) / 1048576.0, static_cast<unsigned long long>(postponed));
+            return false;
+        };
+#ifdef _WIN32
+        if (const auto from = mappedSaveFromBytes(); from.has_value() && size >= *from) {
+            const auto window = saveWindowBytes();
+            if (!affordable(window != 0 && window < size / 4 ? 4 * static_cast<std::uint64_t>(window) : size)) return;
+            std::error_code error;
+            const auto native = ShaderRecompiler::NativeCachePath_nid_no_patch(path, error);
+            if (!error) mapped = MappedCacheFile::Create(native, sizeof(FileHeader) + size, window, [](std::function<void()> body) { return Libc::StartHostThread(std::move(body)); });
+            if (mapped != nullptr) contents = mapped->Data();
+            else std::fprintf(stderr, "[pipeline-cache] cannot map a new file beside %s; saving from a buffer\n", path.string().c_str());
+        }
+#endif
+        if (contents == nullptr) {
+            if (!affordable(size)) return;
+            file.resize(sizeof(FileHeader) + size);
+            contents = file.data();
+        }
+        const auto result = getData(context.device, source, &size, contents + sizeof(FileHeader));
         if (result != VK_SUCCESS && result != VK_INCOMPLETE) return;
-        file.resize(sizeof(FileHeader) + size);
     }
     destroyMerged.Reset();
     if (size < floor) {
@@ -288,16 +372,55 @@ void PipelineCache::save(bool final, bool waitForPipelines) try {
         settle(fileUnchanged ? *settledFile : disk.header);
         return;
     }
-    const FileHeader header{FileMagic, FileFormat, size, ShaderRecompiler::HashBytes(std::span(file).subspan(sizeof(FileHeader)))};
-    std::memcpy(file.data(), &header, sizeof(header));
-    if (!ShaderRecompiler::WriteFileAtomically(path, file)) {
-        std::fprintf(stderr, "[pipeline-cache] cannot write %s\n", path.string().c_str());
-        return;
+    const FileHeader header{FileMagic, FileFormat, size, ShaderRecompiler::HashBytes(std::span<const std::byte>(contents + sizeof(FileHeader), size))};
+    std::memcpy(contents, &header, sizeof(header));
+    bool throughMapping = false;
+#ifdef _WIN32
+    if (mapped != nullptr) {
+        mappedWindows.fetch_add(mapped->WindowsOpened(), std::memory_order_relaxed);
+        if (const auto failures = mapped->ReleaseFailures(); failures != 0) std::fprintf(stderr, "[pipeline-cache] %llu parts of the mapped file could not be written out or dropped from the working set while the driver filled it\n", static_cast<unsigned long long>(failures));
+        if (!mapped->Commit(sizeof(FileHeader) + size)) {
+            std::fprintf(stderr, "[pipeline-cache] cannot write %s\n", path.string().c_str());
+            return;
+        }
+        mapped.reset();
+        mappedSaves.fetch_add(1, std::memory_order_relaxed);
+        throughMapping = true;
+    }
+#endif
+    if (!throughMapping) {
+        file.resize(sizeof(FileHeader) + size);
+        if (!ShaderRecompiler::WriteFileAtomically(path, file)) {
+            std::fprintf(stderr, "[pipeline-cache] cannot write %s\n", path.string().c_str());
+            return;
+        }
     }
     settle(header);
-    if (final || profiling()) std::fprintf(stderr, "[pipeline-cache] saved %.1f KiB to %s in %.1f ms%s%s\n", static_cast<double>(size) / 1024.0, path.string().c_str(), std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count(), mergedWithFile ? " (merged with the file)" : "", final ? " (teardown)" : "");
+    if (source == cache) holdsFile = true;
+    if (final || profiling()) std::fprintf(stderr, "[pipeline-cache] saved %.1f KiB to %s in %.1f ms%s%s%s\n", static_cast<double>(size) / 1024.0, path.string().c_str(), std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count(), mergedWithFile ? " (merged with the file)" : "", throughMapping ? " (written through a mapped file)" : "", final ? " (teardown)" : "");
 } catch (const std::bad_alloc&) {
     std::fputs("[pipeline-cache] save skipped: host memory exhausted\n", stderr);
+}
+
+std::uint64_t PipelineCache::MappedSaves() {
+    return mappedSaves.load(std::memory_order_relaxed);
+}
+
+std::uint64_t PipelineCache::MappedSaveWindows() {
+    return mappedWindows.load(std::memory_order_relaxed);
+}
+
+std::optional<std::uint64_t> PipelineCache::ParseSetting(std::string_view text, unsigned shift) {
+    std::uint64_t value = 0;
+    const auto* end = text.data() + text.size();
+    const auto parsed = std::from_chars(text.data(), end, value);
+    if (text.empty() || parsed.ec != std::errc{} || parsed.ptr != end) return std::nullopt;
+    if (value > (std::numeric_limits<std::uint64_t>::max() >> shift)) return std::nullopt;
+    return value << shift;
+}
+
+std::uint64_t PipelineCache::PostponedSaves() {
+    return postponedSaves.load(std::memory_order_relaxed);
 }
 
 void PipelineCache::SaveNow() {
