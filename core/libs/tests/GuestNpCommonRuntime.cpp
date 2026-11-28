@@ -480,7 +480,8 @@ PanicChildResult RunSemaphorePanicChild(const char* program, const char* mode, c
     CloseHandle(child.hThread);
     CloseHandle(child.hProcess);
     constexpr DWORD WindowsAbortExitCode = 3;
-    return {true, code == WindowsAbortExitCode};
+    constexpr DWORD WindowsFailFastExitCode = 0xC0000409;
+    return {true, code == WindowsAbortExitCode || code == WindowsFailFastExitCode};
 #else
     const pid_t child = ::fork();
     Require(child >= 0, "the panic child forks");
