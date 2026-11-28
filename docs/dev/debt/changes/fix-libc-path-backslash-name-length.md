@@ -1,0 +1,5 @@
+# libc
+
+## change A backslash counts as a path separator for the component length
+
+- [Guest path names](../../../core/libs/prx/libc/src/General.cpp) (libc) are checked against FreeBSD 11.4's `NAME_MAX` (255 bytes per component) and `MAXPATHLEN` (1024 bytes with the terminating NUL) before they are resolved, and a longer name fails with `ENAMETOOLONG`, as `namei` does. The host's own limit still applies below that: on Windows a path whose host form exceeds `MAX_PATH` fails with `ENOENT`. A backslash counts as a name character for the component length, as in FreeBSD, but the guest path resolver then turns it into `/` before the host call, where FreeBSD keeps it in the name. `sceNgs2ParseWaveformFile` resolves its path without a try block, so a long component ends in an uncaught `filesystem_error` there where a missing file ended in a `runtime_error` (both end the title). A path through a regular file (`file/x`, `file/`) is not always `ENOTDIR` on the calls that resolve it. None of this was measured on a console.

@@ -57,7 +57,8 @@ int main() {
     Require(!TooLong(below + name255 + "/x"), "a middle component of exactly 255 bytes must not be too long");
     Require(TooLong(below + longName + "/x"), "a middle component of 256 bytes must fail with ENAMETOOLONG (63)");
     Require(TooLong(below + longName + "/"), "a long component followed by a trailing slash must fail with ENAMETOOLONG (63)");
-    Require(!TooLong(below + std::string(200, 'n') + "\\" + std::string(100, 'n')), "a backslash separates components here, so 200 + 100 bytes around it are accepted (FreeBSD would refuse the 301-byte name)");
+    Require(TooLong(below + std::string(200, 'n') + "\\" + std::string(100, 'n')), "a backslash is a name character for NAME_MAX, so a 301-byte name containing one must fail with ENAMETOOLONG (63)");
+    Require(!TooLong(below + std::string(127, 'n') + "\\" + std::string(127, 'n')), "a 255-byte name containing a backslash must not be too long");
     const std::string block = name255 + "/";
 #ifndef __APPLE__
     Require(!TooLong(block + block + block + name255), "a path of exactly 1023 bytes must not be too long");
