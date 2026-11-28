@@ -45,12 +45,17 @@ private:
 class StorageTexture;
 struct HostImportCopy;
 
+bool LabelTrapBypassed();
+bool LabelTrapResolveWaits(std::uint64_t address, std::size_t bytes);
+
 // The Vulkan format storage images of a guest format use (sRGB formats store as their UNORM form).
 // Throws when the format has no storage form; the query is cached per format (a lookup cost a
 // vkGetPhysicalDeviceFormatProperties call before).
 VkFormat StorageFormatForGuest(const Context& context, std::uint32_t guestFormat);
 // Whether StorageFormatForGuest would succeed, without throwing (unknown guest formats included).
 bool StorageFormatAvailable(const Context& context, std::uint32_t guestFormat);
+bool StorageSegmentsServe(const Context& context, const GuestTextureResource& descriptor, std::uint64_t guestBytes);
+bool StorageSegmentsServe(const Context& context, const StorageTexture& image);
 VkFormat HostStorageFormat(const Context& context, VkFormat format);
 bool StorageClearAvailable(const Context& context, std::uint32_t guestFormat, DccKeys keys);
 std::uint64_t SampledTextureMemory();
@@ -357,6 +362,7 @@ public:
     static bool UnwatchHookLocksGpu(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
     static void SetPublishHookForTest(void (*hook)());
     static void SetFlushSelectedHookForTest(void (*hook)());
+    static void SetFlushingHookForTest(void (*hook)());
     static void SetPendingHookForTest(void (*hook)(std::uint64_t address, std::size_t bytes));
     static constexpr std::uint64_t SmallStoreBytes = 64 * 1024;
     static constexpr std::uint64_t OccasionalStoreBytes = 1024 * 1024;
@@ -538,6 +544,26 @@ public:
     // Results pending in images lying wholly inside the range are dead (a fill overwrites every
     // byte of them): they are dropped instead of stored. Returns how many images were.
     static std::size_t DiscardPendingInside(std::uint64_t address, std::size_t bytes);
+    static bool Created();
+    static void NoteUnmapped(std::uint64_t address, std::size_t bytes);
+    struct OverwriteClaim {
+        std::uint64_t baseAddress = 0;
+        std::uint32_t width = 0;
+        std::uint32_t height = 0;
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> bytes;
+    };
+    static const OverwriteClaim*& ClaimedOverwrite();
+    class OverwriteScope {
+    public:
+        explicit OverwriteScope(const OverwriteClaim* claim) : previous(ClaimedOverwrite()) { ClaimedOverwrite() = claim; }
+        ~OverwriteScope() { ClaimedOverwrite() = previous; }
+        OverwriteScope(const OverwriteScope&) = delete;
+        OverwriteScope& operator=(const OverwriteScope&) = delete;
+
+    private:
+        const OverwriteClaim* previous;
+    };
+    static std::size_t DiscardPendingCovered(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, const StorageTexture* self);
     // A fill of the whole surface (`layer` WholeImage) or of one array layer with the 16-byte
     // `pattern`, done as a GPU clear of the image instead of a store into guest memory: the
     // pattern must be one texel of the storage format repeated, exactly representable as a clear
@@ -551,6 +577,7 @@ public:
     // False, naming why in `refusal`, when the fill must be stored as before.
     static constexpr std::uint32_t WholeImage = ~0u;
     bool FillClear(std::span<const std::uint32_t, 4> pattern, std::uint32_t layer, const char*& refusal, bool allowRegisterClear = false);
+    bool ClearMip(const std::array<std::byte, 16>& texel, std::uint32_t level, bool verifiedCodeClear, const char*& refusal);
     // The cached, live image whose surface is exactly [address, address + bytes), if any (the newest
     // of several: see ClassifyFill).
     static std::shared_ptr<StorageTexture> FindLive(std::uint64_t address, std::uint64_t bytes);
@@ -602,6 +629,7 @@ public:
     static std::uint64_t LinearImportRetiles();
     static std::uint64_t RefreshesProved();
     const char* RefreshObligation(std::uint32_t first = 0, std::uint32_t count = 0) const;
+    bool OtherPendingOverlaps() const;
     static std::uint64_t ClearHandOvers();
     static std::uint64_t CreationHandOvers();
     static std::uint64_t HandedOverSuperseded();
@@ -798,6 +826,7 @@ private:
     // Marks `count` tracked layers from `first` pending and registers the image (MarkDirty's
     // registration; APS5_EAGER_WRITEBACK=1 stores at once instead).
     void markLayersPending(std::uint32_t first, std::uint32_t count);
+    std::optional<std::vector<bool>> withoutUnmapped(const std::vector<bool>& layers);
     // Registers or unregisters the image as its pending layers say (after a write-back).
     void reconcilePending();
     // Pending images whose surface shares one of the 64 KiB write-stamp blocks firstBlock..lastBlock
@@ -847,6 +876,7 @@ private:
     void forgetBorrowed(std::uint32_t first, std::uint32_t count);
     bool clearByKeysFill(DccKeys keys, std::uint8_t key);
     bool overlaps(std::uint64_t address, std::size_t bytes) const;
+    bool pendingUnitsOverlap(std::uint64_t address, std::size_t bytes) const;
     static bool trapReadsAtLabel(const StorageTexture* texture);
     // Whether the image is live (not released) and overlaps the fill: the test that gives ClassifyFill
     // its overlapping images, and that NoteKeysFill and ClearByKeysFill use to bound the key match.
@@ -903,6 +933,7 @@ private:
     // DCC keys the image content was uploaded under: a fast-cleared surface starts as its clear value.
     DccKeys uploadedKeys = DccKeys::Uncompressed;
     mutable DccKeys filledKeys = DccKeys::Uncompressed;
+    bool holdsClearFill = false;
     mutable DccKeyProof keyProof;
     mutable DccRangeProof targetKeyProof;
     DccSingleProof singleProof;
@@ -969,6 +1000,7 @@ private:
     bool dirty = false;
     bool drawnListed = false;
     mutable std::atomic<bool> readTrapped{false};
+    mutable std::uint64_t readTrapGeneration = 0;
     bool drawnWhole = false;
     bool drawingTarget = false;
     bool pendingFromOthers = false;
@@ -984,6 +1016,8 @@ private:
     std::uint64_t zeroForgetEnd = 0;
     // `original` holds the guest bytes; false after a GPU-side clear, which never read them.
     std::vector<bool> layerOriginal;
+    std::vector<bool> layerUnmapped;
+    std::atomic<bool> anyUnmapped{false};
     std::map<std::uint64_t, std::uint64_t> keptAtUnwatch;
     std::shared_ptr<Buffer> savedBytes;
     std::vector<std::uint64_t> savedTicket;

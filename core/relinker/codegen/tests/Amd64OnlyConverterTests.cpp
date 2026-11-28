@@ -859,8 +859,10 @@ void wideStoreSplit() {
         require(split && split->Low.Bytes == item.Low && split->High.Bytes == item.High && !split->Low.RipDisplacementOffset && !split->High.RipDisplacementOffset, (std::string("A 64-bit addressed wide store lost its supported split: ") + item.Name).c_str());
         auto dynamic32 = item.Original;
         dynamic32.insert(dynamic32.begin(), 0x67);
-        requireFailure([&] { (void)Codegen::DecodeVexWideStore(dynamic32.data(), dynamic32.size()); }, "A runtime 32-bit address can wrap the upper half despite a small displacement");
-        requireFailure([&] { (void)rosetta32->Match(dynamic32.data(), dynamic32.size()); }, "Rosetta conversion accepted an unsafe 32-bit addressed wide-store split");
+        const auto materialized = Codegen::DecodeVexWideStore(dynamic32.data(), dynamic32.size());
+        require(materialized && materialized->Materialized && !materialized->Materialized->Memory.RipRelative, (std::string("A 32-bit addressed wide store with a base or index was not recognized as materialized: ") + item.Name).c_str());
+        const auto dynamicMatch = rosetta32->Match(dynamic32.data(), dynamic32.size());
+        require(dynamicMatch && dynamicMatch->Lowering == Codegen::Amd64OnlyLowering::Trampoline && dynamicMatch->InstructionName == "256-bit store", (std::string("Rosetta conversion rejected a 32-bit addressed wide store: ") + item.Name).c_str());
         require(!intel->Match(dynamic32.data(), dynamic32.size()), "Intel conversion changed a native 32-bit addressed wide store");
     }
     for (const auto& unchanged32 : {
@@ -895,11 +897,23 @@ void wideStoreSplit() {
         require(segmentEipMatch && segmentEipMatch->Relocations.size() == 2 && segmentEipMatch->Relocations[0].AddressSize32 && segmentEipMatch->Relocations[1].AddressSize32 && segmentEipMatch->Relocations[0].SiteTarget == 10 + 0x100 && segmentEipMatch->Relocations[1].SiteTarget == 10 + 0x110, "Rosetta conversion lost a segment-prefixed EIP-relative relocation's address size or target");
     }
     const Bytes disp32 = {0x67, 0xC5, 0xFC, 0x11, 0x80, 0xF8, 0xFF, 0xFF, 0x7F};
-    requireFailure([&] { (void)Codegen::DecodeVexWideStore(disp32.data(), disp32.size()); }, "A 32-bit base-relative 256-bit store whose upper half can wrap was split");
+    const auto disp32Materialized = Codegen::DecodeVexWideStore(disp32.data(), disp32.size());
+    require(disp32Materialized && disp32Materialized->Materialized && disp32Materialized->Materialized->Memory.Mod == 2 && disp32Materialized->Materialized->Memory.Rm == 0 && disp32Materialized->Materialized->Memory.Displacement == 2147483640, "A 32-bit base-relative 256-bit store whose upper half can wrap was not recognized as materialized");
     const Bytes indexed32 = {0x67, 0xC5, 0xFC, 0x11, 0x04, 0x0D, 0xF8, 0xFF, 0xFF, 0x7F};
-    requireFailure([&] { (void)Codegen::DecodeVexWideStore(indexed32.data(), indexed32.size()); }, "A 32-bit indexed 256-bit store whose upper half can wrap was split");
+    const auto indexed32Materialized = Codegen::DecodeVexWideStore(indexed32.data(), indexed32.size());
+    require(indexed32Materialized && indexed32Materialized->Materialized && indexed32Materialized->Materialized->Memory.Rm == 4 && indexed32Materialized->Materialized->Memory.Sib == 0x0D, "A 32-bit indexed 256-bit store whose upper half can wrap was rejected");
     const Bytes extendedIndex32 = {0x67, 0xC4, 0xA1, 0x7C, 0x11, 0x04, 0x25, 0xF8, 0xFF, 0xFF, 0x7F};
-    requireFailure([&] { (void)Codegen::DecodeVexWideStore(extendedIndex32.data(), extendedIndex32.size()); }, "A 32-bit store indexed by an extended register through VEX.X was split as absolute");
+    const auto extendedIndex32Materialized = Codegen::DecodeVexWideStore(extendedIndex32.data(), extendedIndex32.size());
+    require(extendedIndex32Materialized && extendedIndex32Materialized->Materialized && extendedIndex32Materialized->Materialized->Memory.RexIndexBase == 2, "A 32-bit store indexed by an extended register through VEX.X was rejected as absolute");
+    const Bytes extendedSource32 = {0x67, 0xC4, 0x41, 0x7E, 0x7F, 0x45, 0x00};
+    const auto extendedSource32Materialized = Codegen::DecodeVexWideStore(extendedSource32.data(), extendedSource32.size());
+    require(extendedSource32Materialized && extendedSource32Materialized->Materialized && extendedSource32Materialized->Materialized->Source == 8 && extendedSource32Materialized->Materialized->Memory.Prefixes == Bytes{0x67}, "A 32-bit wide store from an extended register lost its source or prefixes");
+    const Bytes segmentSource32 = {0x65, 0x67, 0xC5, 0xFE, 0x7F, 0x07};
+    const auto segmentSource32Materialized = Codegen::DecodeVexWideStore(segmentSource32.data(), segmentSource32.size());
+    require(segmentSource32Materialized && segmentSource32Materialized->Materialized && segmentSource32Materialized->Materialized->Source == 0 && segmentSource32Materialized->Materialized->Memory.Prefixes == Bytes{0x65, 0x67}, "A segment-prefixed 32-bit wide store lost its prefixes");
+    const Bytes address32Base = {0x67, 0xC5, 0xFC, 0x11, 0x47, 0x68};
+    const auto address32Match = rosetta32->Match(address32Base.data(), address32Base.size());
+    require(address32Match && address32Match->Lowering == Codegen::Amd64OnlyLowering::Trampoline && Bytes(address32Match->StubBody.begin(), address32Match->StubBody.begin() + static_cast<std::ptrdiff_t>(address32Match->ReturnBranchOffset)) == Bytes{0x48, 0x8D, 0x64, 0x24, 0x80, 0x9C, 0x50, 0x51, 0x67, 0x48, 0x8D, 0x47, 0x68, 0xC4, 0xE3, 0x7D, 0x19, 0x00, 0x00, 0xC4, 0xE3, 0x7D, 0x19, 0x40, 0x10, 0x01, 0x59, 0x58, 0x9D, 0x48, 0x8D, 0xA4, 0x24, 0x80, 0x00, 0x00, 0x00}, "A 32-bit addressed wide store did not lower through the spill scaffold with an effective address and two 128-bit halves");
     const Bytes absolute32Overflow = {0x67, 0xC5, 0xFC, 0x11, 0x04, 0x25, 0xF8, 0xFF, 0xFF, 0xFF};
     requireFailure([&] { (void)Codegen::DecodeVexWideStore(absolute32Overflow.data(), absolute32Overflow.size()); }, "A 32-bit absolute 256-bit store whose upper half crosses the address boundary was split");
     const Bytes absolute64 = {0xC5, 0xFC, 0x11, 0x04, 0x25, 0xF8, 0xFF, 0xFF, 0x7F};
@@ -1252,28 +1266,31 @@ void converterAddressSizeJumpTableTargets() {
     const Bytes dispatch = {0x48, 0x63, 0x04, 0x81, 0x48, 0x01, 0xC8, 0xFF, 0xE0, 0x48, 0x83, 0xC1, 0x01, 0xC5, 0xFC, 0x11, 0x07, 0x48, 0x83, 0xC2, 0x01, 0xC3};
     for (const bool addressSize32 : {false, true}) {
         for (const std::uint8_t segment : {0x00, 0x64, 0x65}) {
-            for (const std::uint64_t table : {0x3000ull, 0x80001010ull}) {
-                Bytes first;
-                first.reserve(9);
-                if (segment != 0) first.push_back(segment);
-                if (addressSize32) first.push_back(0x67);
-                first.insert(first.end(), {0x48, 0x8D, 0x0D, 0, 0, 0, 0});
-                write<std::uint32_t>(first, first.size() - 4, static_cast<std::uint32_t>(table - (0x1000 + first.size())));
-                Bytes file(0x400, 0xCC);
-                std::copy(first.begin(), first.end(), file.begin() + 0x200);
-                std::copy(dispatch.begin(), dispatch.end(), file.begin() + static_cast<std::ptrdiff_t>(0x200 + first.size()));
-                write<std::uint32_t>(file, 0x300, static_cast<std::uint32_t>(0x1000 + first.size() + 9 - table));
-                write<std::uint32_t>(file, 0x304, static_cast<std::uint32_t>(0x1000 + first.size() + 17 - table));
-                const auto size = first.size() + dispatch.size();
-                const auto result = converter->Convert(file, {{1, 5, 0x200, 0x1000, 0, size, size, 16}, {1, 4, 0x300, table, 0, 8, 8, 16}});
-                const bool reachableTable = addressSize32 || table == 0x3000;
-                const auto expectedOffset = 0x200 + first.size() + (reachableTable ? 9 : 13);
-                require(result.Trampolines.size() == 1 && result.Trampolines[0].Offset == expectedOffset && result.Trampolines[0].Length == 8,
-                        "A jump table's address size did not protect the instruction after a 256-bit store");
-                if (reachableTable) {
-                    const auto target = 0x200 + first.size() + 17;
-                    require(std::equal(file.begin() + static_cast<std::ptrdiff_t>(target), file.begin() + static_cast<std::ptrdiff_t>(target + 4), result.Bytes.begin() + static_cast<std::ptrdiff_t>(target)),
-                            "Conversion overwrote a jump-table destination");
+            for (const auto& operand : {Bytes{}, Bytes{0x48}, Bytes{0x66, 0x48}}) {
+                for (const std::uint64_t table : {0x3000ull, 0x8000100Eull}) {
+                    Bytes first;
+                    first.reserve(10);
+                    if (segment != 0) first.push_back(segment);
+                    if (addressSize32) first.push_back(0x67);
+                    first.insert(first.end(), operand.begin(), operand.end());
+                    first.insert(first.end(), {0x8D, 0x0D, 0, 0, 0, 0});
+                    write<std::uint32_t>(first, first.size() - 4, static_cast<std::uint32_t>(table - (0x1000 + first.size())));
+                    Bytes file(0x400, 0xCC);
+                    std::copy(first.begin(), first.end(), file.begin() + 0x200);
+                    std::copy(dispatch.begin(), dispatch.end(), file.begin() + static_cast<std::ptrdiff_t>(0x200 + first.size()));
+                    write<std::uint32_t>(file, 0x300, static_cast<std::uint32_t>(0x1000 + first.size() + 9 - table));
+                    write<std::uint32_t>(file, 0x304, static_cast<std::uint32_t>(0x1000 + first.size() + 17 - table));
+                    const auto size = first.size() + dispatch.size();
+                    const auto result = converter->Convert(file, {{1, 5, 0x200, 0x1000, 0, size, size, 16}, {1, 4, 0x300, table, 0, 8, 8, 16}});
+                    const bool reachableTable = addressSize32 || operand.empty() || table == 0x3000;
+                    const auto expectedOffset = 0x200 + first.size() + (reachableTable ? 9 : 13);
+                    require(result.Trampolines.size() == 1 && result.Trampolines[0].Offset == expectedOffset && result.Trampolines[0].Length == 8,
+                            "A jump table's address or operand size did not protect the instruction after a 256-bit store");
+                    if (reachableTable) {
+                        const auto target = 0x200 + first.size() + 17;
+                        require(std::equal(file.begin() + static_cast<std::ptrdiff_t>(target), file.begin() + static_cast<std::ptrdiff_t>(target + 4), result.Bytes.begin() + static_cast<std::ptrdiff_t>(target)),
+                                "Conversion overwrote a jump-table destination");
+                    }
                 }
             }
         }
@@ -2383,6 +2400,53 @@ void wideStoreExecution() {
     munmap(code, 4096);
 }
 
+void wideStoreMaterializedExecution() {
+    if (!hostExecutesAvx("materialized 256-bit store stub execution, the host does not execute AVX")) return;
+    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
+    const std::vector<Bytes> sites = {
+        Bytes{0x67, 0xC5, 0xFC, 0x11, 0x00},
+        Bytes{0x67, 0xC5, 0xFE, 0x7F, 0x00}};
+    std::vector<Bytes> bodies;
+    for (const auto& site : sites) {
+        const auto match = matcher->Match(site.data(), site.size());
+        require(match && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "materialized 256-bit store stub was not produced");
+        auto body = match->StubBody;
+        body[match->ReturnBranchOffset] = 0xC3;
+        bodies.push_back(std::move(body));
+    }
+    auto* pages = static_cast<std::uint8_t*>(mmap(reinterpret_cast<void*>(0x10000000), 8192, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0));
+    if (pages == MAP_FAILED) {
+        std::cout << "skipped: materialized 256-bit store execution, 0x10000000 is unavailable\n";
+        return;
+    }
+    void* code = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    require(code != MAP_FAILED, "cannot map executable memory for the materialized stub");
+    alignas(32) std::uint8_t source[32];
+    for (std::size_t index = 0; index < sizeof(source); ++index) source[index] = static_cast<std::uint8_t>(index + 1);
+    for (const auto& body : bodies) {
+        std::memcpy(code, body.data(), body.size());
+        for (const std::size_t offset : {std::size_t{0}, std::size_t{1}, std::size_t{4080}}) {
+            std::memset(pages, 0, 8192);
+            auto* destination = pages + offset;
+            const std::uint64_t truncatedAddress = reinterpret_cast<std::uint64_t>(destination) + (std::uint64_t{1} << 32);
+            asm volatile(
+                "vmovups (%[source]), %%ymm0\n\t"
+                "sub $128, %%rsp\n\t"
+                "call *%[code]\n\t"
+                "add $128, %%rsp\n\t"
+                :
+                : [source] "r"(source), [code] "r"(code), "a"(truncatedAddress)
+                : "memory", "ymm0");
+            require(std::memcmp(destination, source, sizeof(source)) == 0, "materialized 256-bit store stub did not write both halves at the truncated address");
+            require(std::all_of(pages, destination, [](const std::uint8_t value) { return value == 0; }), "materialized 256-bit store stub wrote before its operand");
+            require(std::all_of(destination + sizeof(source), pages + 8192, [](const std::uint8_t value) { return value == 0; }),
+                    "materialized 256-bit store stub wrote past its operand");
+        }
+    }
+    munmap(code, 4096);
+    munmap(pages, 8192);
+}
+
 void xsaveoptExecution() {
     if (!hostExecutesAvx("XSAVEOPT replacement execution, the host does not execute AVX")) return;
     const Bytes site = {0x48, 0x0F, 0xAE, 0x37};
@@ -2593,6 +2657,7 @@ void rdtscpExecution() {
 #else
 void rdtscpExecution() {}
 void wideStoreExecution() {}
+void wideStoreMaterializedExecution() {}
 void scalarCompareExecution() {}
 void rdpidExecution() {}
 void rdseedExecution() {}
@@ -2661,6 +2726,7 @@ int main() {
         converterRosettaLegacyScalarCompare();
         rdtscpExecution();
         wideStoreExecution();
+        wideStoreMaterializedExecution();
         scalarCompareExecution();
         rdpidExecution();
         rdseedExecution();

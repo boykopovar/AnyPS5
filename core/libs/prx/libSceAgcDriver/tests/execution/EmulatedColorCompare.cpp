@@ -101,6 +101,12 @@ alignas(256) constexpr std::array<std::uint32_t, 17> QuadCode{
     0x1614008c, 0xe03c1000, 0x8000010a, 0x7e0802f3, 0x7e0a02f3, 0x7e0c02f3, 0x7e0e02f3, 0xbf8c3f70, 0xf0bc0f08, 0x00820401, 0xbf8c3f70, 0x34160084, 0xe0781000, 0x8001040b, 0xbf810000, 0xbf810000, 0xbf810000,
 };
 
+alignas(256) constexpr auto GatherCode = [] {
+    auto code = QuadCode;
+    code[8] = 0xf13c0108u;
+    return code;
+}();
+
 alignas(256) constexpr std::array<std::uint32_t, 17> PairCode{
     0x1614008c, 0xe03c1000, 0x8000010a, 0x7e0802f3, 0x7e0a02f3, 0x7e0c02f3, 0x7e0e02f3, 0xbf8c3f70, 0xf0bc0608, 0x00820401, 0xbf8c3f70, 0x34160084, 0xe0781000, 0x8001040b, 0xbf810000, 0xbf810000, 0xbf810000,
 };
@@ -355,6 +361,19 @@ void RunZero(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sample
     }
 }
 
+void RunGatherZero(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sampler& sampler, const std::string& name) {
+    Output.fill(-1.0f);
+    const auto result = Compile(device, format, sampler, GatherCode);
+    Require(!BindsDepthCompare(result), name + " kept a depth-compare binding");
+    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(GatherCode.data()));
+    device.WaitIdle();
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        for (std::uint32_t reg = 0; reg < 4u; ++reg) {
+            Require(Output[tid * 4u + reg] == 0.0f, name + ": thread " + std::to_string(tid) + " texel " + std::to_string(reg) + " compared to " + std::to_string(Output[tid * 4u + reg]) + ", expected 0");
+        }
+    }
+}
+
 void Reject(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sampler& sampler, std::string_view reason, std::span<const std::uint32_t> code = Code, bool nativeSampleOffsets = true, bool cube = false) {
     try {
         static_cast<void>(Compile(device, format, sampler, code, false, nativeSampleOffsets, cube));
@@ -456,6 +475,15 @@ int main() {
         RunLayers(*device, true);
         FillTexels();
         Reject(*device, Format32Float, {ClampEdge, FilterPoint}, "native comparison with a nonconstant texel offset requires", OffsetCode, false);
+        for (const auto format : {Format8888Srgb, Format8888UNorm, Format1616UNorm}) {
+            for (std::uint32_t function = 0; function < 8u; ++function) {
+                for (const auto filter : {FilterPoint, FilterBilinear}) {
+                    RunGatherZero(*device, format, {ClampEdge, filter, BorderBlack, 0u, 0u, false, function}, "comparison gather of format " + std::to_string(format) + " function " + std::to_string(function) + (filter == FilterPoint ? " point" : " bilinear"));
+                }
+            }
+        }
+        RunGatherZero(*device, Format8888Srgb, {ClampWrap, FilterBilinear}, "comparison gather of format 130 with wrap");
+        RunGatherZero(*device, Format8888Srgb, {ClampBorder, FilterBilinear, BorderWhite}, "comparison gather of format 130 with a white border");
         RunChannels(*device, QuadCode, {4, 5, 6, 7}, 4, 0, "view R,G,B,A");
         RunChannels(*device, QuadCode, {0, 0, 0, 0}, 4, 0, "view 0,0,0,0");
         RunChannels(*device, QuadCode, {1, 1, 1, 1}, 4, 0, "view 1,1,1,1");

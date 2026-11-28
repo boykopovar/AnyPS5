@@ -16,13 +16,6 @@ namespace {
 
 constexpr std::uint32_t SocketCreationCallbackSdkVersion = 0x01500000u;
 
-std::uint32_t CompiledSdkVersion() {
-    const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::uint32_t sdkVersion;
-    std::memcpy(&sdkVersion, process + 16, sizeof(sdkVersion));
-    return sdkVersion;
-}
-
 constexpr std::uint32_t PrivateSslFlags = 0x2dffu;
 
 std::mutex g_optionsMutex;
@@ -200,7 +193,7 @@ int APS5_VABI sceHttpSetSocketCreationCallback(std::int32_t id, HttpSocketCreati
     (void)callback;
     (void)userArg;
     if (!FindHttpOptions(id)) return ERROR_INVALID_ID;
-    return CompiledSdkVersion() < SocketCreationCallbackSdkVersion ? ERROR_INVALID_VALUE : 0;
+    return ApplicationCompiledSdkVersion() < SocketCreationCallbackSdkVersion ? ERROR_INVALID_VALUE : 0;
 }
 
 }

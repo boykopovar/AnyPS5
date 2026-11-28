@@ -9,5 +9,10 @@ int main() {
         std::fprintf(stderr, "RestModeProcessGetStatus without a client: expected 0x80a80002, got 0x%08x\n", static_cast<unsigned>(actual));
         return 1;
     }
+    const std::uint32_t started = static_cast<std::uint32_t>(sceVideoRecordingRestModeProcessStart(nullptr));
+    if (started != 0x80a80002u) {
+        std::fprintf(stderr, "RestModeProcessStart without a client: expected 0x80a80002, got 0x%08x\n", static_cast<unsigned>(started));
+        return 1;
+    }
     return 0;
 }

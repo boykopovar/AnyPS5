@@ -15,6 +15,7 @@ MAX_LOG_BYTES = 32 * 1024 * 1024
 MAX_TREE_BYTES = 64 * 1024 * 1024 * 1024
 MAX_TREE_FILES = 50000
 MAX_FRAMES = 1000000
+MAX_REPLAY_MEASUREMENT = 1e15
 INTEGER_FIELDS = (
     "frames", "kept_reservations", "submits", "park_restores", "pace_timeouts",
     "stale_registrations", "failed_registrations", "threads", "released_waits",
@@ -214,7 +215,7 @@ def parse_replay_result(stdout, stderr="", expected_commit=None):
             if type(native.get(key)) is not int or not 0 <= native[key] <= (1 << 64) - 1:
                 raise ValueError(f"native replay {key} must be a nonnegative integer")
         for key in NUMBER_FIELDS:
-            if type(native.get(key)) not in (int, float) or not math.isfinite(native[key]) or not 0 <= native[key] <= 1e15:
+            if type(native.get(key)) not in (int, float) or not 0 <= native[key] <= MAX_REPLAY_MEASUREMENT:
                 raise ValueError(f"native replay {key} must be a finite nonnegative number")
         if not 0 <= native["pixels_identical"] <= 1:
             raise ValueError("pixels_identical must be between zero and one")
@@ -224,7 +225,7 @@ def parse_replay_result(stdout, stderr="", expected_commit=None):
         if not isinstance(frame_ms, dict):
             raise ValueError("native replay frame_ms must be an object")
         for key in ("p50", "p90", "max"):
-            if type(frame_ms.get(key)) not in (int, float) or not math.isfinite(frame_ms[key]) or not 0 <= frame_ms[key] <= 1e15:
+            if type(frame_ms.get(key)) not in (int, float) or not 0 <= frame_ms[key] <= MAX_REPLAY_MEASUREMENT:
                 raise ValueError(f"frame_ms.{key} must be a finite nonnegative number")
         if not frame_ms["p50"] <= frame_ms["p90"] <= frame_ms["max"]:
             raise ValueError("frame_ms percentiles are out of order")
@@ -241,7 +242,7 @@ def parse_replay_result(stdout, stderr="", expected_commit=None):
                 if type(entry.get(key)) is not int or not 0 <= entry[key] <= (1 << 64) - 1:
                     raise ValueError(f"pass.{key} must be a nonnegative integer")
             for key in ("replay_s", "p50"):
-                if type(entry.get(key)) not in (int, float) or not math.isfinite(entry[key]) or not 0 <= entry[key] <= 1e15:
+                if type(entry.get(key)) not in (int, float) or not 0 <= entry[key] <= MAX_REPLAY_MEASUREMENT:
                     raise ValueError(f"pass.{key} must be a finite nonnegative number")
         if len(passes) == 1 and (passes[0]["frames"] != native["frames"] or len(each) != max(0, native["frames"] - 1)):
             raise ValueError("native replay pass/frame counts disagree")
@@ -415,10 +416,22 @@ def verify_replay_bundle(root, manifest, *, exclude=(), max_bytes=MAX_TREE_BYTES
     return True
 
 
+def comparison_metric(native, key):
+    if key == "p50_ms":
+        frame_ms = native.get("frame_ms")
+        value = frame_ms.get("p50") if isinstance(frame_ms, dict) else None
+    else:
+        value = native.get(key)
+    return value if type(value) in (int, float) and 0 < value <= MAX_REPLAY_MEASUREMENT else None
+
+
 def replay_comparison_report(report, markdown=False):
     if not isinstance(report, dict) or report.get("format") != "aps5-frame-replay-comparison/1" or not isinstance(report.get("runs"), list):
         raise ValueError("expected aps5-frame-replay-comparison/1 with runs")
     result = copy.deepcopy(report)
+    inputs = result.get("inputs", {})
+    if not isinstance(inputs, dict):
+        raise ValueError("comparison inputs must be an object")
     for name in ("issues", "unknowns", "notes"):
         if not isinstance(result.get(name, []), list) or any(not isinstance(item, str) for item in result.get(name, [])):
             raise ValueError(f"comparison {name} must be an array of text")
@@ -446,14 +459,12 @@ def replay_comparison_report(report, markdown=False):
         for key in ("replay_s", "fps", "p50_ms"):
             values = []
             for row in eligible:
-                native = row["assessment"]["native"]
-                value = native.get("frame_ms", {}).get("p50") if key == "p50_ms" else native.get(key)
-                if type(value) in (int, float) and math.isfinite(value) and value > 0:
+                value = comparison_metric(row["assessment"]["native"], key)
+                if value is not None:
                     values.append(value)
             metrics[key] = {"n": len(values), "median": statistics.median(values) if values else None,
                             "min": min(values) if values else None, "max": max(values) if values else None}
         observations[arm] = {"attempted_trials": len(runs), "healthy_trials": len(eligible), "metrics": metrics}
-    inputs = result.get("inputs", {})
     recipe = result.get("recipe", {})
     arms = recipe.get("arms", {}) if isinstance(recipe, dict) else {}
     settings = [arms.get(arm) for arm in ("baseline", "candidate")] if isinstance(arms, dict) else [None, None]
@@ -489,11 +500,8 @@ def replay_comparison_report(report, markdown=False):
             if len(contexts) == 2 and contexts[0] != contexts[1]:
                 pair["issues"].append("observed invocation host contexts differ")
             for key in ("replay_s", "fps", "p50_ms"):
-                values = []
-                for arm in ("baseline", "candidate"):
-                    native = members[arm]["assessment"]["native"]
-                    value = native.get("frame_ms", {}).get("p50") if key == "p50_ms" else native.get(key)
-                    values.append(value if type(value) in (int, float) and math.isfinite(value) and value > 0 else None)
+                values = [comparison_metric(members[arm]["assessment"]["native"], key)
+                          for arm in ("baseline", "candidate")]
                 before, after = values
                 percentage = (after / before - 1) * 100 if not pair["issues"] and None not in values else None
                 if percentage is not None and not math.isfinite(percentage):
@@ -506,7 +514,10 @@ def replay_comparison_report(report, markdown=False):
     paired = {}
     for key in ("replay_s", "fps", "p50_ms"):
         values = [pair["metrics"][key]["change_pct"] for pair in pairs if key in pair["metrics"] and pair["metrics"][key]["change_pct"] is not None]
-        paired[key] = {"n": len(values), "median_change_pct": statistics.median(values) if values else None,
+        median = statistics.median(values) if values else None
+        if median is not None and not math.isfinite(median):
+            median = statistics.median([value / 2 for value in values]) * 2
+        paired[key] = {"n": len(values), "median_change_pct": median,
                        "min_change_pct": min(values) if values else None, "max_change_pct": max(values) if values else None}
     result["paired_observations"] = paired
     result["notes"] = list(dict.fromkeys([*result.get("notes", []), *LIMITATIONS,

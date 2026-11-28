@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libSceLibreSsl/include/Ec.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 
 #include <array>
 #include <atomic>
@@ -270,6 +271,101 @@ static void CheckEcLifetime(bool named) {
     EC_KEY_free_nid_postfix(key);
 }
 
+static std::atomic<long> liveBlocks;
+
+static void* APS5_VABI Allocate(std::size_t bytes) {
+    void* const block = std::malloc(bytes ? bytes : 1);
+    if (block)
+        ++liveBlocks;
+    return block;
+}
+
+static void APS5_VABI Release(void* block) {
+    if (!block)
+        return;
+    --liveBlocks;
+    std::free(block);
+}
+
+static void* APS5_VABI AllocateZeroed(std::size_t count, std::size_t bytes) {
+    void* const block = std::calloc(count ? count : 1, bytes ? bytes : 1);
+    if (block)
+        ++liveBlocks;
+    return block;
+}
+
+static void* APS5_VABI Reallocate(void* block, std::size_t bytes) {
+    void* const moved = std::realloc(block, bytes ? bytes : 1);
+    if (moved && !block)
+        ++liveBlocks;
+    return moved;
+}
+
+static void* APS5_VABI Align(std::size_t, std::size_t) {
+    Require(false, "unexpected aligned allocation");
+    return nullptr;
+}
+
+static void* APS5_VABI Realign(void*, std::size_t, std::size_t) {
+    Require(false, "unexpected aligned reallocation");
+    return nullptr;
+}
+
+static int APS5_VABI PosixAlign(void**, std::size_t, std::size_t) {
+    Require(false, "unexpected posix_memalign");
+    return 0;
+}
+
+static void CheckSslLifetime() {
+    void* const api[10]{reinterpret_cast<void*>(Allocate), reinterpret_cast<void*>(Release), reinterpret_cast<void*>(AllocateZeroed),
+        reinterpret_cast<void*>(Reallocate), reinterpret_cast<void*>(Align), reinterpret_cast<void*>(Realign), reinterpret_cast<void*>(PosixAlign)};
+    ApplicationHeapRegister_nid_no_patch(api);
+    SSL_CTX_free_nid_postfix(SSL_CTX_new_nid_postfix(TLS_client_method_nid_postfix()));
+    const long blocksBefore = liveBlocks;
+    LibreSslCtx* ctx = SSL_CTX_new_nid_postfix(TLS_client_method_nid_postfix());
+    Require(ctx && ctx->references == 1, "new context reference count");
+    LibreSslCtx created;
+    std::memcpy(&created, ctx, sizeof(created));
+    Require(SSL_CTX_up_ref_nid_postfix(ctx) == 1 && ctx->references == 2, "retain context");
+    created.references = 2;
+    Require(std::memcmp(&created, ctx, sizeof(created)) == 0, "retain changed a context field");
+    SSL_CTX_free_nid_postfix(ctx);
+    Require(ctx->references == 1, "context free did not release one reference");
+    Require(SSL_CTX_get_cert_store_nid_postfix(ctx) == created.certStore, "retained context lost its store after free");
+    LibreSslSsl* ssl = SSL_new_nid_postfix(ctx);
+    Require(ssl && ssl->references == 1 && ctx->references == 3, "new SSL reference counts");
+    LibreSslSsl connection;
+    std::memcpy(&connection, ssl, sizeof(connection));
+    Require(SSL_up_ref_nid_postfix(ssl) == 1 && ssl->references == 2, "retain SSL");
+    connection.references = 2;
+    Require(std::memcmp(&connection, ssl, sizeof(connection)) == 0, "retain changed an SSL field");
+    SSL_free_nid_postfix(ssl);
+    Require(ssl->references == 1 && ctx->references == 3, "SSL free did not release one reference");
+    Require(SSL_get_SSL_CTX_nid_postfix(ssl) == ctx, "retained SSL lost its context after free");
+    std::atomic<bool> start = false;
+    std::array<std::thread, 4> threads;
+    for (auto& thread : threads) {
+        thread = std::thread([&] {
+            while (!start.load())
+                std::this_thread::yield();
+            for (int index = 0; index < 1000; ++index) {
+                Require(SSL_CTX_up_ref_nid_postfix(ctx) == 1, "concurrent context retain failed");
+                Require(SSL_up_ref_nid_postfix(ssl) == 1, "concurrent SSL retain failed");
+                SSL_free_nid_postfix(ssl);
+                SSL_CTX_free_nid_postfix(ctx);
+            }
+        });
+    }
+    start = true;
+    for (auto& thread : threads)
+        thread.join();
+    Require(ssl->references == 1 && ctx->references == 3, "balanced concurrent references");
+    SSL_free_nid_postfix(ssl);
+    Require(ctx->references == 1, "last SSL free did not release its context references");
+    SSL_CTX_free_nid_postfix(ctx);
+    Require(liveBlocks == blocksBefore, "last frees left allocations behind");
+}
+
 static void CheckGet0EcKey() {
     bool nullThrown = false;
     try {
@@ -315,8 +411,10 @@ int main(int argc, char** argv) {
         CheckKey<LibreSsl3Rsa>(RSA_up_ref_nid_postfix, 104);
     if (argc == 1 || std::strcmp(argv[1], "bits") == 0)
         CheckBits();
-    if (argc == 1 || std::strcmp(argv[1], "ssl_ctx") == 0)
-        CheckKey<LibreSsl3SslCtx>(SSL_CTX_up_ref_nid_postfix, 40);
+    if (argc == 1 || std::strcmp(argv[1], "ssl_ctx") == 0) {
+        CheckKey<LibreSslCtx>(SSL_CTX_up_ref_nid_postfix, 32);
+        CheckSslLifetime();
+    }
     if (argc == 1 || std::strcmp(argv[1], "bio") == 0)
         CheckKey<LibreSsl::Bio>(BIO_up_ref_nid_postfix, 72);
     if (argc == 1 || std::strcmp(argv[1], "ec_get0") == 0)

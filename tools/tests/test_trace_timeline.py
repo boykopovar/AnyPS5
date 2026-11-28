@@ -44,6 +44,17 @@ class TimelineTests(unittest.TestCase):
         durations = sorted(slice_["dur"] for slice_ in slices)
         self.assertEqual(durations, [1000, 2000, 3000])
 
+    def test_cli_saves_trace_labels_with_invalid_svg_characters(self):
+        path = Path(self.tmp.name) / "capture.json"
+        capture = document([complete(1, "driver\u0000\ufffe", 0, 1)])
+        capture["traceEvents"][0]["args"]["name"] = "worker\u0001 & queue"
+        path.write_text(json.dumps(capture), encoding="utf-8")
+        done = subprocess.run([sys.executable, trace_timeline.__file__, str(path)], capture_output=True, timeout=5)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        page = path.with_suffix(".html").read_text(encoding="utf-8")
+        self.assertIn("driver\ufffd\ufffd", page)
+        self.assertIn("worker\ufffd &amp; queue", page)
+
     def test_window_keeps_only_the_selected_threads(self):
         slices = trace_timeline.window_slices(trace_of(self.items), 0, 10000, threads=["presenter"])
         self.assertEqual([slice_["name"] for slice_ in slices], ["Driver.Present"])
@@ -173,6 +184,21 @@ class TimelineTests(unittest.TestCase):
     def test_layout_orders_rows_by_thread_name(self):
         laid = trace_timeline.layout(trace_timeline_slices(self.items), 0, 10000, 1000)
         self.assertEqual(laid["threads"], [("presenter", 0), ("queue worker", trace_timeline.ROW_HEIGHT)])
+
+    def test_layout_scales_narrow_windows_and_their_present_markers_to_the_full_axis(self):
+        trace = trace_of([complete(1, "tiny interval", 5e-11, 5e-11)])
+        slices = trace_timeline.window_slices(trace, 0, 1e-10)
+        result = trace_timeline.layout(slices, 0, 1e-10, 1000, presents=[(1e-10, 7)])
+        self.assertAlmostEqual(result["bars"][0]["x"], trace_timeline.LABEL_WIDTH + 500)
+        self.assertAlmostEqual(result["bars"][0]["w"], 500)
+        self.assertEqual(result["presents"][0][0], result["width"])
+
+    def test_last_subpixel_slice_keeps_its_visible_width_inside_the_plot(self):
+        slices = trace_timeline_slices([complete(1, "last", 9999, 1)])
+        result = trace_timeline.layout(slices, 0, 10000, 100)
+        bar = result["bars"][0]
+        self.assertEqual(bar["w"], 1.0)
+        self.assertEqual(bar["x"] + bar["w"], result["width"])
 
     def test_layout_places_nested_slices_on_separate_rows(self):
         items = [

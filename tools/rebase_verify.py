@@ -29,18 +29,18 @@ def default_onto(root, name=None):
 
 
 def people(root, base, tip):
-    lines = git(root, "log", "--no-merges", "--format=%an <%ae>%x1f%s", f"{base}..{tip}").splitlines()
-    return collections.Counter(line for line in lines if line)
+    lines = git(root, "log", "--no-merges", "--format=%an <%ae>%x1f%s", f"{base}..{tip}", "--", raw=True).split(b"\n")
+    return collections.Counter(line.decode("utf-8", "surrogateescape") for line in lines if line)
 
 
 def commits(root, base, tip):
-    return len(git(root, "rev-list", "--no-merges", f"{base}..{tip}").split())
+    return len(git(root, "rev-list", "--no-merges", f"{base}..{tip}", "--").split())
 
 
 def patch_path(header, prefix):
     path = header[4:].removesuffix("\t")
     if path.startswith('"') and path.endswith('"'):
-        path = codecs.escape_decode(path[1:-1].encode("utf-8"))[0].decode("utf-8", "replace")
+        path = codecs.escape_decode(path[1:-1].encode("utf-8", "surrogateescape"))[0].decode("utf-8", "surrogateescape")
     return path[len(prefix):] if path.startswith(prefix) else None
 
 
@@ -49,8 +49,10 @@ def changed_lines(root, base, tip):
     deleted = collections.defaultdict(collections.Counter)
     old_path, new_path, in_hunk = None, None, False
     diff = git(root, "diff", "-U0", "--no-renames", "--no-relative", "--no-color", "--no-ext-diff", "--no-textconv",
-               "--ignore-submodules=none", "--submodule=short", "--src-prefix=a/", "--dst-prefix=b/", base, tip, raw=True)
-    lines = diff.decode("utf-8", "replace").split("\n")
+               "--ignore-submodules=none", "--submodule=short", "--src-prefix=a/", "--dst-prefix=b/",
+               "--output-indicator-new=+", "--output-indicator-old=-", "--output-indicator-context= ",
+               base, tip, "--", raw=True)
+    lines = diff.decode("utf-8", "surrogateescape").split("\n")
     for index, line in enumerate(lines):
         if line.startswith("diff --git "):
             old_path, new_path, in_hunk = None, None, False
@@ -180,8 +182,10 @@ def unchanged_base_content_differences(root, old_base, old, new_base, new):
 
 
 def verify(root, old, new, onto):
-    old_base = git(root, "merge-base", old, onto).strip()
-    new_base = git(root, "merge-base", new, onto).strip()
+    old, new, onto_commit = (git(root, "rev-parse", "--verify", "--end-of-options", f"{ref}^0").strip()
+                             for ref in (old, new, onto))
+    old_base = git(root, "merge-base", old, onto_commit).strip()
+    new_base = git(root, "merge-base", new, onto_commit).strip()
     problems = []
     if people(root, old_base, old) != people(root, new_base, new):
         problems.append("authors or subjects differ between the old and the new commits")
@@ -217,7 +221,7 @@ def main(argv=None):
     try:
         onto = default_onto(args.repo, args.onto)
         old_base, count_old, count_new, problems = verify(args.repo, args.old, args.new, onto)
-    except (RuntimeError, ValueError) as error:
+    except (OSError, RuntimeError, ValueError) as error:
         parser.error(str(error))
     print(f"{args.new} rebases {args.old} onto {onto} (old base {old_base[:10]}): {count_old} commits before, {count_new} after")
     for problem in problems:
