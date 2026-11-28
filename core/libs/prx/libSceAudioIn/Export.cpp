@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <cerrno>
+#include <charconv>
 #include <cstdlib>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -113,12 +114,19 @@ SDL_AudioDeviceID openDevice(std::uint32_t freq, std::uint32_t samples, const Fo
         selectedName = name;
     }
     if (g_openStalled.load(std::memory_order_acquire)) return 0;
+    std::chrono::milliseconds delay{};
+    if (const char* stall = std::getenv("ANYPS5_TEST_AUDIO_IN_OPEN_STALL_MS")) {
+        const char* end = stall + std::strlen(stall);
+        unsigned int milliseconds = 0;
+        const auto parsed = std::from_chars(stall, end, milliseconds);
+        if (parsed.ec == std::errc{} && parsed.ptr == end && milliseconds <= 10000) {
+            delay = std::chrono::milliseconds(milliseconds);
+        }
+    }
     const auto opened = audioin::detail::openWithin(OPEN_LIMIT,
-        [selectedName, named, desired]() mutable {
+        [selectedName, named, desired, delay]() mutable {
             SDL_AudioSpec obtained{};
-            if (const char* stall = std::getenv("ANYPS5_TEST_AUDIO_IN_OPEN_STALL_MS"); stall != nullptr && *stall != 0) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(std::strtoul(stall, nullptr, 10)));
-            }
+            if (delay.count() != 0) std::this_thread::sleep_for(delay);
             const SDL_AudioDeviceID device = SDL_OpenAudioDevice(named ? selectedName.c_str() : nullptr, 1, &desired, &obtained, 0);
             if (device != 0) SDL_PauseAudioDevice(device, 0);
             return static_cast<std::uint32_t>(device);

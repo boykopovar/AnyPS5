@@ -278,6 +278,12 @@ void TestOpenStall() {
     std::ofstream(path, std::ios::binary).write(std::string(4096, 0).data(), 4096);
     SetEnvironment("SDL_AUDIODRIVER", "disk");
     SetEnvironment("SDL_DISKAUDIOFILEIN", path.string());
+    for (const char* invalid : {"-1", "5000ms", "10001", "999999999999999999999999"}) {
+        SetEnvironment("ANYPS5_TEST_AUDIO_IN_OPEN_STALL_MS", invalid);
+        const int handle = sceAudioInOpen(user, 0, 0, 256, 48000, 2);
+        Require(handle > 0 && sceAudioInGetSilentState(handle) == 0);
+        Require(sceAudioInClose(handle) == 0);
+    }
     SetEnvironment("ANYPS5_TEST_AUDIO_IN_OPEN_STALL_MS", "5000");
     const auto start = std::chrono::steady_clock::now();
     const int stalled = sceAudioInOpen(user, 0, 0, 256, 48000, 2);
