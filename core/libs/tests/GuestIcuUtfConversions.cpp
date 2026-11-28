@@ -1,11 +1,27 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
+#include <stdexcept>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 
 namespace {
@@ -246,6 +262,184 @@ void LongStrings() {
     Require(error == 15 && length == static_cast<std::int32_t>(bytes.size()), "long UTF-16 overflow");
 }
 
+template<class TCall>
+bool Throws(TCall call) {
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
+}
+
+class GuardedPage {
+public:
+    explicit GuardedPage(std::size_t count = 1) : pages(count) {
+#ifdef _WIN32
+        SYSTEM_INFO info {};
+        GetSystemInfo(&info);
+        size = info.dwPageSize;
+        base = static_cast<char*>(VirtualAlloc(nullptr, size * (pages + 1), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+        Require(base != nullptr, "guard page allocation");
+        DWORD previous {};
+        Require(VirtualProtect(End(), size, PAGE_NOACCESS, &previous) != 0, "guard page protection");
+#else
+        size = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        void* mapped = mmap(nullptr, size * (pages + 1), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED, "guard page allocation");
+        base = static_cast<char*>(mapped);
+        Require(mprotect(End(), size, PROT_NONE) == 0, "guard page protection");
+#endif
+    }
+    ~GuardedPage() {
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, size * (pages + 1));
+#endif
+    }
+    GuardedPage(const GuardedPage&) = delete;
+    GuardedPage& operator=(const GuardedPage&) = delete;
+
+    char* SecondPage() const { return base + size; }
+    char* End() const { return base + size * pages; }
+    void ReadOnly() const {
+#ifdef _WIN32
+        DWORD previous {};
+        Require(VirtualProtect(base, size, PAGE_READONLY, &previous) != 0, "read-only page");
+#else
+        Require(mprotect(base, size, PROT_READ) == 0, "read-only page");
+#endif
+    }
+
+private:
+    std::size_t pages;
+    char* base = nullptr;
+    std::size_t size = 0;
+};
+
+void LenientGuestPointers() {
+    constexpr auto huge = std::numeric_limits<std::int32_t>::max();
+    std::array<char16_t, 8> wide;
+    wide.fill(0x5555);
+    std::int32_t length = 77, error = 0;
+    auto* unmappedStatus = reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10});
+    auto* unmappedLength = reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10});
+    const auto* unmappedSource = reinterpret_cast<const char*>(std::uintptr_t{0x10});
+    auto* unmappedDestination = reinterpret_cast<char16_t*>(std::uintptr_t{0x10});
+    Require(Throws([&] { u_strFromUTF8Lenient_nid_postfix(wide.data(), 8, &length, "a", 1, unmappedStatus); }), "lenient unreadable status");
+    Require(Throws([&] { u_strFromUTF8Lenient_nid_postfix(wide.data(), 8, &length, "a", 1, nullptr); }), "lenient null status");
+    Require(Throws([&] { u_strFromUTF8Lenient_nid_postfix(wide.data(), 8, unmappedLength, "a", 1, &error); }), "lenient unwritable length");
+    Require(Throws([&] { u_strFromUTF8Lenient_nid_postfix(wide.data(), 8, &length, unmappedSource, 3, &error); }), "lenient unreadable counted source");
+    Require(Throws([&] { u_strFromUTF8Lenient_nid_postfix(wide.data(), 8, &length, unmappedSource, -1, &error); }), "lenient unreadable terminated source");
+    Require(Throws([&] { u_strFromUTF8Lenient_nid_postfix(unmappedDestination, 8, &length, "a", 1, &error); }), "lenient unwritable destination");
+    Require(length == 77 && error == 0 && wide[0] == 0x5555, "lenient failures leave outputs unchanged");
+    error = 10;
+    Require(!u_strFromUTF8Lenient_nid_postfix(unmappedDestination, 8, unmappedLength, unmappedSource, 3, &error) && error == 10, "lenient latched failure reads nothing else");
+    error = 0;
+    Require(!u_strFromUTF8Lenient_nid_postfix(wide.data(), 2, &length, unmappedSource, huge, &error) && error == 15 && length == huge, "lenient oversized count fast rejection");
+
+    GuardedPage page;
+    auto* tail = page.End() - 4;
+    std::memcpy(tail, "\xe2\x82\xac" "A", 4);
+    error = 0;
+    length = 77;
+    Require(u_strFromUTF8Lenient_nid_postfix(wide.data(), 8, &length, tail, 4, &error) == wide.data() && error == 0 && length == 2 &&
+        wide[0] == 0x20ac && wide[1] == u'A' && wide[2] == 0, "lenient source ending at a guard page");
+    wide.fill(0x5555);
+    length = 77;
+    Require(Throws([&] { u_strFromUTF8Lenient_nid_postfix(wide.data(), huge, &length, tail, huge, &error); }), "lenient oversized count reaching a guard page");
+    Require(Throws([&] { u_strFromUTF8Lenient_nid_postfix(wide.data(), 8, &length, tail, -1, &error); }), "lenient unterminated source reaching a guard page");
+    Require(length == 77 && error == 0 && wide[0] == 0x5555, "lenient guard page failures leave outputs unchanged");
+    auto* last = reinterpret_cast<char16_t*>(page.End()) - 2;
+    Require(u_strFromUTF8Lenient_nid_postfix(last, 2, &length, "ab", 2, &error) == last && error == -124 && length == 2 && last[0] == u'a' && last[1] == u'b',
+        "lenient destination ending at a guard page");
+    error = 0;
+    Require(Throws([&] { u_strFromUTF8Lenient_nid_postfix(last, huge, &length, "abc", 3, &error); }), "lenient destination crossing a guard page");
+    Require(error == 0, "lenient destination failure leaves the status unchanged");
+
+    GuardedPage readOnly;
+    auto* frozen = reinterpret_cast<char16_t*>(readOnly.End()) - 4;
+    auto* frozenStatus = reinterpret_cast<std::int32_t*>(readOnly.End() - 32);
+    auto* frozenLength = reinterpret_cast<std::int32_t*>(readOnly.End() - 64);
+    *frozenStatus = 0;
+    readOnly.ReadOnly();
+    Require(Throws([&] { u_strFromUTF8Lenient_nid_postfix(frozen, 4, &length, "a", 1, &error); }), "lenient read-only destination");
+    Require(Throws([&] { u_strFromUTF8Lenient_nid_postfix(wide.data(), 8, &length, "a", 1, frozenStatus); }), "lenient read-only status");
+    Require(Throws([&] { u_strFromUTF8Lenient_nid_postfix(wide.data(), 8, frozenLength, "a", 1, &error); }), "lenient read-only length");
+    Require(Throws([&] { u_strFromUTF8Lenient_nid_postfix(wide.data(), 0, frozenLength, "a", 1, &error); }), "lenient read-only preflight length");
+}
+
+void LenientPageBoundaries() {
+    constexpr std::array<std::uint32_t, 3> scalars{0xe9, 0x20ac, 0x1f600};
+    GuardedPage accessible(2);
+    GuardedPage guarded;
+    for (const auto scalar : scalars) {
+        const auto encoded = Utf8(scalar);
+        const auto expected = Utf16(scalar);
+        const auto width = static_cast<std::int32_t>(encoded.size());
+        const auto units = static_cast<std::int32_t>(expected.size());
+        for (std::int32_t split = 1; split < width; ++split) {
+            auto* source = accessible.SecondPage() - split;
+            std::memcpy(source, encoded.data(), encoded.size());
+            source[width] = 'A';
+            source[width + 1] = 0;
+            for (const std::int32_t sourceLength : {width + 1, -1}) {
+                std::array<char16_t, 8> wide;
+                wide.fill(0x5555);
+                std::int32_t length = 77, error = 0;
+                Require(u_strFromUTF8Lenient_nid_postfix(wide.data(), 8, &length, source, sourceLength, &error) == wide.data() && error == 0 &&
+                    length == units + 1 && std::memcmp(wide.data(), expected.data(), expected.size() * 2) == 0 && wide[units] == u'A' &&
+                    wide[units + 1] == 0 && wide[units + 2] == 0x5555, "lenient sequence crossing an accessible page boundary");
+            }
+
+            auto* tail = guarded.End() - split;
+            std::memcpy(tail, encoded.data(), static_cast<std::size_t>(split));
+            std::array<char16_t, 8> wide;
+            wide.fill(0x5555);
+            std::int32_t length = 77, error = 0;
+            Require(u_strFromUTF8Lenient_nid_postfix(wide.data(), 8, &length, tail, split, &error) == wide.data() && error == 0 && length == 1 &&
+                wide[0] == 0xfffd && wide[1] == 0 && wide[2] == 0x5555, "lenient truncated sequence ending at a guard page");
+            wide.fill(0x5555);
+            length = 77;
+            Require(Throws([&] { u_strFromUTF8Lenient_nid_postfix(wide.data(), 8, &length, tail, width, &error); }), "lenient counted sequence crossing into a guard page");
+            Require(Throws([&] { u_strFromUTF8Lenient_nid_postfix(wide.data(), 8, &length, tail, -1, &error); }), "lenient unterminated sequence crossing into a guard page");
+            Require(length == 77 && error == 0 && wide[0] == 0x5555, "lenient guard page sequence failures leave outputs unchanged");
+            auto* terminated = guarded.End() - split - 1;
+            std::memcpy(terminated, encoded.data(), static_cast<std::size_t>(split));
+            terminated[split] = 0;
+            Require(u_strFromUTF8Lenient_nid_postfix(wide.data(), 8, &length, terminated, -1, &error) == wide.data() && error == 0 && length == 1 &&
+                wide[0] == 0xfffd && wide[1] == 0 && wide[2] == 0x5555, "lenient terminated truncated sequence before a guard page");
+        }
+    }
+}
+
+void LenientChunks() {
+    std::string bytes;
+    std::u16string units;
+    for (std::uint32_t index = 0; index < 0x900; ++index) {
+        const std::uint32_t value = index % 3 == 0 ? 0x41 + index % 26 : index % 3 == 1 ? 0x20ac + index : 0x1f600 + index % 0x40;
+        bytes += Utf8(value);
+        units += Utf16(value);
+    }
+    const auto total = static_cast<std::int32_t>(units.size());
+    const auto bounded = static_cast<std::int32_t>(bytes.size());
+    std::vector<char16_t> wide(bytes.size() + 4, 0x5555);
+    std::int32_t length = 0, error = 0;
+    Require(u_strFromUTF8Lenient_nid_postfix(wide.data(), bounded, &length, bytes.data(), bounded, &error) == wide.data(), "lenient chunked return");
+    Require(error == 0 && length == total && std::memcmp(wide.data(), units.data(), units.size() * 2) == 0 && wide[units.size()] == 0 && wide[units.size() + 1] == 0x5555,
+        "lenient chunked conversion");
+    std::fill(wide.begin(), wide.end(), 0x5555);
+    Require(u_strFromUTF8Lenient_nid_postfix(wide.data(), total, &length, bytes.c_str(), -1, &error) == wide.data() && error == -124 && length == total &&
+        std::memcmp(wide.data(), units.data(), units.size() * 2) == 0 && wide[units.size()] == 0x5555, "lenient chunked unterminated output");
+    error = 0;
+    const std::int32_t capacity = 0x900;
+    std::fill(wide.begin(), wide.end(), 0x5555);
+    Require(u_strFromUTF8Lenient_nid_postfix(wide.data(), capacity, &length, bytes.c_str(), -1, &error) == wide.data() && error == 15 && length == total,
+        "lenient chunked overflow status");
+    Require(std::memcmp(wide.data(), units.data(), capacity * 2) == 0 && wide[capacity] == 0x5555, "lenient chunked overflow prefix");
+}
+
 } // namespace
 
 int main() {
@@ -256,4 +450,7 @@ int main() {
     SubstitutionGeometry();
     Empty();
     LongStrings();
+    LenientGuestPointers();
+    LenientPageBoundaries();
+    LenientChunks();
 }
