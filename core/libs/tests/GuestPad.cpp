@@ -1646,6 +1646,54 @@ static void CheckInjectedTimelineBetweenReads(const std::filesystem::path& path)
     Require(Pad::Read(samples, 64) == 1 && (samples[0].buttons & 0x2000) == 0);
 }
 
+static PadData WaitForInjectedButton(std::uint32_t button) {
+    PadData state{};
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    do {
+        state = Pad::ReadState();
+        if ((state.buttons & button) != 0) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    } while (std::chrono::steady_clock::now() < deadline);
+    Require((state.buttons & button) != 0);
+    return state;
+}
+
+static int CountPresses(const PadData* samples, int count, std::uint32_t button) {
+    int presses = 0;
+    std::uint32_t previous = 0;
+    for (int index = 0; index < count; ++index) {
+        if ((samples[index].buttons & button) != 0 && (previous & button) == 0) ++presses;
+        previous = samples[index].buttons;
+    }
+    return presses;
+}
+
+static void CheckInjectedTimelineReplacedBetweenReads(const std::filesystem::path& path) {
+    PadData samples[64]{};
+    Pad::Read(samples, 64);
+    std::ofstream(path) << "APS5_PAD_TIMELINE 1 12 2\n0 40 8192\n80 40 8192\n";
+    WaitForInjectedButton(0x2000);
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    std::ofstream(path) << "13 32768 300\n";
+    WaitForInjectedButton(0x8000);
+    const int count = Pad::Read(samples, 64);
+    Require(CountPresses(samples, count, 0x2000) == 2);
+    Require((samples[count - 1].buttons & 0x8000) != 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(310));
+    Pad::Read(samples, 64);
+}
+
+static void CheckInjectedTimelineSkipsUnchangedBoundaries(const std::filesystem::path& path) {
+    PadData samples[64]{};
+    Pad::Read(samples, 64);
+    std::ofstream(path) << "APS5_PAD_TIMELINE 1 14 3\n0 40 8192\n80 40 0\n160 40 0\n";
+    WaitForInjectedButton(0x2000);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    const int count = Pad::Read(samples, 4);
+    Require(count == 3);
+    Require(CountPresses(samples, count, 0x2000) == 1 && (samples[count - 1].buttons & 0x2000) == 0);
+}
+
 void CheckConcurrentSpecialOpens() {
     constexpr int threads = 8;
     for (int round = 0; round < 200; ++round) {
@@ -1904,6 +1952,8 @@ int main() {
     CheckInjectedState(commandPath);
     CheckInjectedQueueTimes(commandPath);
     CheckInjectedTimelineBetweenReads(commandPath);
+    CheckInjectedTimelineReplacedBetweenReads(commandPath);
+    CheckInjectedTimelineSkipsUnchangedBoundaries(commandPath);
     PadLightBarParam lightBar{255, 128, 64};
     Require(scePadSetLightBar(handle, &lightBar) == PAD_OK);
     Require(scePadSetLightBar(handle, nullptr) == PAD_ERROR_INVALID_ARG);

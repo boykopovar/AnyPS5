@@ -30,7 +30,6 @@ namespace {
     std::uint64_t injectedTimestamp = 0;
     std::uint32_t injectedHeldThroughCapture = 0;
     std::uint64_t injectedHeldAt = 0;
-    std::uint64_t injectedReadAt = 0;
     std::mutex hapticMutex;
     std::condition_variable hapticReady;
     PadHapticBuffer haptics;
@@ -491,12 +490,8 @@ int Pad::Read(PadData* data, int num, int port) {
     auto& slot = slots[port];
     slot.pressedSinceRead = 0;
     const std::uint64_t now = sceKernelGetProcessTime();
-    std::vector<std::pair<std::uint64_t, Pad::InputCommandFile::Input>> changes;
-    if (port == 0) {
-        changes = InjectedCommands().Transitions(injectedReadAt, now);
-        injectedReadAt = now;
-    }
     const auto injected = port == 0 ? InjectedTitleInput(now) : Pad::InputCommandFile::Input{};
+    const auto changes = port == 0 ? InjectedCommands().TakeTransitions(now) : std::vector<std::pair<std::uint64_t, Pad::InputCommandFile::Input>>{};
     if (WithdrawnPort(port, slot)) {
         slot.queue.clear();
         data[0] = WithdrawnData(slot.timestamp);

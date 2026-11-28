@@ -75,6 +75,8 @@ public:
             auto command = read();
             if (command.sequence > lastSequence) {
                 lastSequence = command.sequence;
+                appendTransitions(history, reportedAt, now);
+                if (history.size() > HistoryLimit) history.erase(history.begin(), history.end() - HistoryLimit);
                 events = std::move(command.events);
                 started = now;
             }
@@ -83,18 +85,11 @@ public:
         return InputAt(now - started);
     }
 
-    std::vector<std::pair<std::uint64_t, Input>> Transitions(std::uint64_t since, std::uint64_t now) const {
-        std::vector<std::pair<std::uint64_t, Input>> changes;
-        if (events.empty() || now <= since) return changes;
-        for (const auto& event : events) {
-            for (const std::uint64_t edge : {event.start, event.end}) {
-                const std::uint64_t at = started + edge;
-                if (at <= since || at >= now) continue;
-                const Input input = InputAt(edge);
-                if (!changes.empty() && changes.back().first == at) changes.back().second = input;
-                else changes.emplace_back(at, input);
-            }
-        }
+    std::vector<std::pair<std::uint64_t, Input>> TakeTransitions(std::uint64_t now) {
+        auto changes = std::move(history);
+        history.clear();
+        appendTransitions(changes, reportedAt, now);
+        reportedAt = std::max(reportedAt, now);
         return changes;
     }
 
@@ -129,6 +124,27 @@ private:
         std::uint64_t sequence = 0;
         std::vector<Event> events;
     };
+
+    void appendTransitions(std::vector<std::pair<std::uint64_t, Input>>& changes, std::uint64_t since, std::uint64_t now) const {
+        if (events.empty() || now <= since) return;
+        const std::size_t first = changes.size();
+        for (const auto& event : events) {
+            for (const std::uint64_t edge : {event.start, event.end}) {
+                const std::uint64_t at = started + edge;
+                if (at <= since || at >= now) continue;
+                const Input input = InputAt(edge);
+                if (changes.size() > first && changes.back().first == at) changes.back().second = input;
+                else changes.emplace_back(at, input);
+            }
+        }
+        std::size_t kept = first;
+        for (std::size_t index = first; index < changes.size(); ++index) {
+            const auto& [at, input] = changes[index];
+            const Input before = kept > first ? changes[kept - 1].second : at == started ? Input{} : InputAt(at - started - 1);
+            if (input != before) changes[kept++] = changes[index];
+        }
+        changes.resize(kept);
+    }
 
     Input InputAt(std::uint64_t elapsed) const {
         const auto next = std::upper_bound(events.begin(), events.end(), elapsed,
@@ -303,6 +319,9 @@ private:
     std::uint64_t nextPoll = 0;
     std::uint64_t started = 0;
     std::vector<Event> events;
+    std::vector<std::pair<std::uint64_t, Input>> history;
+    std::uint64_t reportedAt = 0;
+    static constexpr std::size_t HistoryLimit = 64;
 };
 }
 
