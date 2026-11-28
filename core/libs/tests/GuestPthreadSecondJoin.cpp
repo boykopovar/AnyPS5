@@ -7,10 +7,14 @@
 #include <cstdlib>
 #include <cstring>
 #include <thread>
+#include <vector>
+
+extern "C" void APS5_Test_SetFinalThreadReleaseHook(Pthread thread, void (*hook)(Pthread));
 
 static constexpr int SCE_OK = 0;
 static constexpr int GUEST_ESRCH = 3;
 static constexpr std::size_t REUSED_SLOT_ROUNDS = 64;
+static constexpr std::size_t RETAINED_JOINED_THREADS = 100;
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -24,7 +28,39 @@ static void* APS5_VABI WaitForRelease(void* arg) {
     return nullptr;
 }
 
+static std::atomic<bool> oldestReleased{false};
+
+static void MarkOldestReleased(Pthread) {
+    oldestReleased.store(true);
+}
+
+static void CreateAndJoin(Pthread& handle) {
+    Require(scePthreadCreate(&handle, nullptr, Finish, nullptr, "retained") == SCE_OK);
+    Require(scePthreadJoin(handle, nullptr) == SCE_OK);
+}
+
+static void RequireJoinedThreadsAreBounded() {
+    std::vector<Pthread> handles(RETAINED_JOINED_THREADS + 1);
+    CreateAndJoin(handles[0]);
+    APS5_Test_SetFinalThreadReleaseHook(handles[0], MarkOldestReleased);
+    for (std::size_t index = 1; index < RETAINED_JOINED_THREADS; ++index) CreateAndJoin(handles[index]);
+    Require(!oldestReleased.load());
+    Require(scePthreadJoin(handles[0], nullptr) == SCE_KERNEL_ERROR_ESRCH);
+    CreateAndJoin(handles[RETAINED_JOINED_THREADS]);
+    Require(oldestReleased.load());
+    char name[32] = {'x'};
+    int clockId = 0x55;
+    Require(scePthreadJoin(handles[0], nullptr) == SCE_KERNEL_ERROR_ESRCH);
+    Require(scePthreadDetach(handles[0]) == SCE_KERNEL_ERROR_ESRCH);
+    Require(pthread_getname_np_nid_postfix(handles[0], name) == GUEST_ESRCH && name[0] == 'x');
+    Require(pthread_getcpuclockid_nid_postfix(handles[0], &clockId) == GUEST_ESRCH && clockId == 0x55);
+    for (std::size_t index = 1; index <= RETAINED_JOINED_THREADS; ++index)
+        Require(scePthreadJoin(handles[index], nullptr) == SCE_KERNEL_ERROR_ESRCH);
+}
+
 int main() {
+    RequireJoinedThreadsAreBounded();
+
     Pthread thread = nullptr;
     void* result = nullptr;
     Require(scePthreadCreate(&thread, nullptr, Finish, nullptr, "second-join") == SCE_OK);

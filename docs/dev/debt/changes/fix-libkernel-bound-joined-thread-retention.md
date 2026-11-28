@@ -1,0 +1,5 @@
+# libkernel
+
+## change [scePthreadJoin, scePthreadCreate]
+
+- [scePthreadJoin, scePthreadCreate](../../../core/libs/prx/libkernel/Pthread/src/Thread.cpp) (libkernel) - a joined thread is kept until `scePthreadCreate` reuses its handle storage or 100 later joins, as [libthr](https://github.com/freebsd/freebsd-src/blob/49e0c6270c73/lib/libthr/thread/thr_list.c) keeps 100 finished threads; an older handle answers `ESRCH` or names a newer thread at its address, as in libthr. A handle copied to a second storage and joined there retains the object under the original storage key, so a later `scePthreadCreate` over the original storage releases an object the copy still points at, and the copy then answers as an older handle, as does a detached thread joined after it ended. A null entry crashed the payload and throws. Joining the calling thread returns `EDEADLK` and a zeroed attribute creates a default thread, as on the console. PPSA34015 once stopped with `Joining guest thread: Access is denied` before the join and detach checks followed the console
