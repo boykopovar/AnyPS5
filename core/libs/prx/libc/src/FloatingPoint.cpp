@@ -65,11 +65,10 @@ void APS5_VABI _Feraise_nid_postfix(int exceptions) {
     auto raised = static_cast<unsigned>(exceptions);
     if ((raised & ~Exceptions) != 0) throw std::invalid_argument("_Feraise: unsupported exception bits");
     if ((raised & Overflows) != 0) raised |= Inexact;
-    *__error_nid_postfix() = GuestEdom;
+    const int targetErrno = (raised & Invalid) != 0 || (raised & Ranges) == 0 ? GuestEdom : GuestErange;
+    *__error_nid_postfix() = targetErrno;
     ReplaceFlags(raised, raised);
     GuestCpu::X87Wait();
-    if ((raised & Invalid) != 0) *__error_nid_postfix() = GuestEdom;
-    else if ((raised & Ranges) != 0) *__error_nid_postfix() = GuestErange;
 }
 
 int APS5_VABI fesetexceptflag_nid_postfix(const std::uint16_t* flags, int exceptions) {

@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <barrier>
+#include <csignal>
 #include <cstdint>
 #include <cstddef>
 #include <cstdio>
@@ -16,6 +17,10 @@
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#if defined(__linux__) && defined(__x86_64__)
+#include <signal.h>
+#include <ucontext.h>
+#endif
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
@@ -271,6 +276,94 @@ void CheckTraps() {
     WriteEnvironment(seeded);
 }
 
+#if defined(_WIN32) || (defined(__linux__) && defined(__x86_64__))
+struct FeraiseTrapState {
+    volatile std::sig_atomic_t active = 0;
+    volatile std::sig_atomic_t caught = 0;
+    volatile std::sig_atomic_t trappedErrno = 0;
+};
+
+FeraiseTrapState gFeraiseTrap;
+
+#ifdef _WIN32
+LONG CALLBACK FeraiseTrapHandler(PEXCEPTION_POINTERS info) {
+    if (gFeraiseTrap.active == 0 || info == nullptr || info->ExceptionRecord == nullptr || info->ContextRecord == nullptr) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    const DWORD code = info->ExceptionRecord->ExceptionCode;
+    if (code != EXCEPTION_FLT_DIVIDE_BY_ZERO && code != EXCEPTION_FLT_OVERFLOW &&
+        code != EXCEPTION_FLT_UNDERFLOW && code != EXCEPTION_FLT_INVALID_OPERATION) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    gFeraiseTrap.trappedErrno = *__error_nid_postfix();
+    gFeraiseTrap.caught = 1;
+    info->ContextRecord->FltSave.ControlWord |= 0x3fu;
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+#else
+void FeraiseTrapHandler(int, siginfo_t*, void* context) {
+    if (gFeraiseTrap.active == 0) {
+        return;
+    }
+    gFeraiseTrap.trappedErrno = *__error_nid_postfix();
+    gFeraiseTrap.caught = 1;
+    if (auto* uc = static_cast<ucontext_t*>(context); uc != nullptr && uc->uc_mcontext.fpregs != nullptr) {
+        uc->uc_mcontext.fpregs->cwd |= 0x3fu;
+    }
+}
+#endif
+#endif
+
+void CheckFeraiseTrapErrno() {
+#if defined(_WIN32) || (defined(__linux__) && defined(__x86_64__))
+    if (!HostKeepsSseTraps()) return;
+    const auto saved = SeedFlags(0, 0);
+#ifdef _WIN32
+    PVOID handler = AddVectoredExceptionHandler(1, FeraiseTrapHandler);
+    Require(handler != nullptr, "install vectored exception handler");
+#else
+    struct sigaction action{};
+    action.sa_sigaction = FeraiseTrapHandler;
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = SA_SIGINFO;
+    struct sigaction previous{};
+    Require(sigaction(SIGFPE, &action, &previous) == 0, "install SIGFPE handler");
+#endif
+    SeedFlags(0, 0);
+    feenableexcept_nid_postfix(0x04);
+    *__error_nid_postfix() = 0;
+    gFeraiseTrap.caught = 0;
+    gFeraiseTrap.trappedErrno = 0;
+    gFeraiseTrap.active = 1;
+    _Feraise_nid_postfix(0x04);
+    gFeraiseTrap.active = 0;
+    Require(gFeraiseTrap.caught != 0, "_Feraise trapped on unmasked FE_DIVBYZERO");
+    Require(gFeraiseTrap.trappedErrno == 34, "_Feraise sets ERANGE before trapping");
+    Require((ReadEnvironment().x87[1] & 0x3fu) == 0x04u, "_Feraise preserves raised FE_DIVBYZERO flag");
+    Require(*__error_nid_postfix() == 34, "_Feraise preserves ERANGE after trapping");
+
+    SeedFlags(0, 0);
+    feenableexcept_nid_postfix(0x01);
+    *__error_nid_postfix() = 0;
+    gFeraiseTrap.caught = 0;
+    gFeraiseTrap.trappedErrno = 0;
+    gFeraiseTrap.active = 1;
+    _Feraise_nid_postfix(0x01);
+    gFeraiseTrap.active = 0;
+    Require(gFeraiseTrap.caught != 0, "_Feraise trapped on unmasked FE_INVALID");
+    Require(gFeraiseTrap.trappedErrno == 33, "_Feraise sets EDOM before trapping on FE_INVALID");
+    Require((ReadEnvironment().x87[1] & 0x3fu) == 0x01u, "_Feraise preserves raised FE_INVALID flag");
+    Require(*__error_nid_postfix() == 33, "_Feraise preserves EDOM after trapping");
+#ifdef _WIN32
+    Require(RemoveVectoredExceptionHandler(handler) != 0, "remove vectored exception handler");
+#else
+    Require(sigaction(SIGFPE, &previous, nullptr) == 0, "restore SIGFPE handler");
+#endif
+    WriteEnvironment(saved);
+    *__error_nid_postfix() = 0;
+#endif
+}
+
 using HoldExcept = int (APS5_VABI*)(Environment*);
 
 void CheckHold(HoldExcept hold, Environment* saved) {
@@ -380,6 +473,7 @@ int main(int argc, char** argv) {
     CheckEnabledExceptions();
     CheckFlags();
     CheckTraps();
+    CheckFeraiseTrapErrno();
     CheckThreads();
     CheckHoldExcept(hold);
     WriteEnvironment(original);
