@@ -1,5 +1,6 @@
 #include "prx/libSceGnmDriver/include/Api.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -117,11 +118,11 @@ void TestContext400(bool neo) {
 }
 
 int RunSelf(const std::filesystem::path& program, const char* mode) {
-    const std::string arguments = "\"" + program.string() + "\" " + mode;
 #ifdef _WIN32
-    return std::system(("\"" + arguments + "\"").c_str());
+    const std::wstring arguments = L"\"" + program.native() + L"\" " + std::filesystem::path(mode).native();
+    return _wsystem((L"\"" + arguments + L"\"").c_str());
 #else
-    return std::system(arguments.c_str());
+    return std::system(("\"" + program.string() + "\" " + mode).c_str());
 #endif
 }
 
@@ -137,7 +138,7 @@ int main(int argc, char** argv) {
             TestContext400(neo);
             return 0;
         }
-        const auto program = std::filesystem::absolute(argv[0]);
+        const auto program = std::filesystem::absolute(ArgumentPath(argv, 0));
         const auto originalDirectory = std::filesystem::current_path();
         const auto root = std::filesystem::temp_directory_path() / ("gnm_init_modes_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
         for (const auto* mode : {"base", "neo"}) {
