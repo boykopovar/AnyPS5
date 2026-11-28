@@ -9,6 +9,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -17,6 +19,16 @@
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 using namespace FreeType;
 
@@ -689,7 +701,90 @@ static void GlyphBoxes() {
     std::printf("FreeType glyph control boxes: %d native comparisons, %d LP64 expectations, bitmap/outline lifetime and rounding\n", NativeBoxComparisons, WideBoxExpectations);
 }
 
+static void GuardedGuestPointers() {
+    struct GuardedPages {
+        unsigned char* base = nullptr;
+        std::size_t pageSize = 4096;
+
+        GuardedPages() {
+#ifdef _WIN32
+            SYSTEM_INFO info{};
+            GetSystemInfo(&info);
+            pageSize = info.dwPageSize ? static_cast<std::size_t>(info.dwPageSize) : 4096;
+            base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+            Require(base != nullptr);
+            DWORD oldProtect = 0;
+            Require(VirtualProtect(base + pageSize, pageSize, PAGE_READONLY, &oldProtect) != 0);
+            Require(VirtualProtect(base + pageSize * 2, pageSize, PAGE_NOACCESS, &oldProtect) != 0);
+#else
+            const long size = sysconf(_SC_PAGESIZE);
+            pageSize = size > 0 ? static_cast<std::size_t>(size) : 4096;
+            void* mapped = mmap(nullptr, pageSize * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            Require(mapped != MAP_FAILED);
+            base = static_cast<unsigned char*>(mapped);
+            Require(mprotect(base + pageSize, pageSize, PROT_READ) == 0);
+            Require(mprotect(base + pageSize * 2, pageSize, PROT_NONE) == 0);
+#endif
+        }
+
+        ~GuardedPages() {
+            if (!base) return;
+#ifdef _WIN32
+            VirtualFree(base, 0, MEM_RELEASE);
+#else
+            munmap(base, pageSize * 3);
+#endif
+        }
+
+        unsigned char* ReadOnly() const { return base + pageSize; }
+        unsigned char* Guard() const { return base + pageSize * 2; }
+    };
+
+    GuardedPages pages;
+    Fixture fixture;
+    fixture.Load(1, FT_LOAD_NO_BITMAP);
+
+    GuestGlyphRec* validGlyph = nullptr;
+    Require(FT_Get_Glyph_nid_postfix(fixture.face->glyph, &validGlyph) == 0);
+    Require(validGlyph != nullptr);
+
+    auto* guardSlot = reinterpret_cast<GuestGlyphSlotRec*>(pages.Guard());
+    auto* guardTarget = reinterpret_cast<GuestGlyphRec**>(pages.Guard());
+    auto* readOnlyTarget = reinterpret_cast<GuestGlyphRec**>(pages.ReadOnly());
+    auto* guardGlyph = reinterpret_cast<GuestGlyphRec*>(pages.Guard());
+    auto* guardBox = reinterpret_cast<GuestBBox*>(pages.Guard());
+    auto* readOnlyBox = reinterpret_cast<GuestBBox*>(pages.ReadOnly());
+
+    errno = 59;
+    GuestGlyphRec* outGlyph = validGlyph;
+    Require(FT_Get_Glyph_nid_postfix(guardSlot, &outGlyph) == FT_Err_Invalid_Slot_Handle);
+    Require(FT_Get_Glyph_nid_postfix(fixture.face->glyph, guardTarget) == FT_Err_Invalid_Argument);
+    Require(FT_Get_Glyph_nid_postfix(fixture.face->glyph, readOnlyTarget) == FT_Err_Invalid_Argument);
+
+    GuestGlyphSlotRec badLibSlot = *fixture.face->glyph;
+    badLibSlot.library = pages.Guard();
+    Require(FT_Get_Glyph_nid_postfix(&badLibSlot, &outGlyph) == FT_Err_Invalid_Library_Handle);
+
+    GuestGlyphSlotRec badOutlineSlot = *fixture.face->glyph;
+    badOutlineSlot.outline.points = reinterpret_cast<GuestVector*>(pages.Guard());
+    Require(FT_Get_Glyph_nid_postfix(&badOutlineSlot, &outGlyph) == FT_Err_Invalid_Argument);
+
+    Require(FT_Glyph_Copy_nid_postfix(guardGlyph, &outGlyph) == FT_Err_Invalid_Argument);
+    Require(FT_Glyph_Copy_nid_postfix(validGlyph, guardTarget) == FT_Err_Invalid_Argument);
+    Require(FT_Glyph_Copy_nid_postfix(validGlyph, readOnlyTarget) == FT_Err_Invalid_Argument);
+
+    GuestBBox box{11, 22, 33, 44};
+    FT_Glyph_Get_CBox_nid_postfix(guardGlyph, 0, &box);
+    Require(EqualBox(box, {}));
+    FT_Glyph_Get_CBox_nid_postfix(validGlyph, 0, guardBox);
+    FT_Glyph_Get_CBox_nid_postfix(validGlyph, 0, readOnlyBox);
+
+    Require(errno == 59);
+    FT_Done_Glyph_nid_postfix(validGlyph);
+}
+
 int main() {
+    GuardedGuestPointers();
     GlyphBoxes();
     OutlineOwnership();
     BitmapOwnership();
