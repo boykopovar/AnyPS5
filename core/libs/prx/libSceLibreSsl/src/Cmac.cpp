@@ -146,7 +146,7 @@ int InitializeCipher(LibreSslCipherContext& context, const LibreSslCipher* ciphe
         if (incoming.contextSize < 0 || incoming.ivLength < 0) throw std::invalid_argument("CMAC: invalid cipher dimensions");
         if (context.cipher != nullptr) {
             const auto flags = context.flags;
-            Cleanup(context);
+            if (!Cleanup(context)) return 0;
             context.encrypt = 1;
             context.flags = flags;
         }
@@ -368,7 +368,18 @@ int APS5_VABI CMAC_Init_nid_postfix(LibreSslCmac* context, const void* key, std:
             ~StagedGuard() noexcept {
                 if (!armed) return;
                 try {
-                    Cleanup(*ctx);
+                    if (!Cleanup(*ctx) && ctx->cipherData != nullptr) {
+                        if (ctx->cipher != nullptr) {
+                            const auto method = ReadCipher(ctx->cipher, "CMAC: unreadable cipher");
+                            if (method.contextSize > 0) {
+                                const auto size = static_cast<std::size_t>(method.contextSize);
+                                GuestWriteScope dataWrite(ctx->cipherData, size, "CMAC: unwritable cipher data");
+                                Cleanse(ctx->cipherData, size);
+                            }
+                        }
+                        free_nid_postfix(ctx->cipherData);
+                        ctx->cipherData = nullptr;
+                    }
                 } catch (...) {
                 }
             }
@@ -377,8 +388,8 @@ int APS5_VABI CMAC_Init_nid_postfix(LibreSslCmac* context, const void* key, std:
         if (!SetKeyLength(staged.value, keyLength)) return 0;
         if (staged.value.keyLength > 0)
             RequireReadable(key, static_cast<std::size_t>(staged.value.keyLength), "CMAC_Init: unreadable key");
+        if (local.value.cipherContext.cipher != nullptr && !Cleanup(local.value.cipherContext)) return 0;
         sync.dirty = true;
-        if (local.value.cipherContext.cipher != nullptr) Cleanup(local.value.cipherContext);
         local.value.cipherContext = staged.value;
         stagedGuard.armed = false;
         staged.value = {};
