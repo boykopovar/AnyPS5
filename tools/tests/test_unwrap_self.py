@@ -971,6 +971,31 @@ class UnwrapTest(unittest.TestCase):
                     self.assertIn("segment 4 does not fit the file", result.stderr)
                     self.assertFalse(output.exists())
 
+    def test_truncated_unrecorded_segment_is_refused(self):
+        for kind in (SCE_COMMENT, 0x60000042):
+            for stored in (0, 8):
+                with self.subTest(kind=kind, stored=stored):
+                    segments = [(PT_LOAD, 1, 0x800, 0x1000, 0x100, PAGE),
+                                (kind, 4, 0x900, 0, 0x10, 1)]
+                    payloads = {0x800: pattern(1, 0x100) + pattern(13, stored)}
+                    result, output = self.convert(build_container(segments, [], payloads))
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("segment 1 does not fit the file", result.stderr)
+                    self.assertFalse(output.exists())
+
+    def test_truncated_unrecorded_version_keeps_available_bytes(self):
+        for stored in (0, 8):
+            with self.subTest(stored=stored):
+                segments = [(PT_LOAD, 1, 0x800, 0x1000, 0x100, PAGE),
+                            (SCE_VERSION, 4, 0x900, 0, 0x10, 1)]
+                payload = pattern(13, stored)
+                result, output = self.convert(build_container(segments, [], {0x800: bytes(0x100) + payload}))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                data, headers = read_program_headers(output)
+                version = headers[1]
+                self.assertEqual(version[5], stored)
+                self.assertEqual(data[version[2]:version[2] + version[5]], payload)
+
     def test_segments_copied_outside_the_load_segments_keep_their_alignment(self):
         loads = [(PT_LOAD, 1, 0x1234, 0x0, 0x100, PAGE), (PT_LOAD, 4, 0x1500, 0x1000, 0x88, PAGE)]
         records = [(0x2804, 0x800, 0x100), (0x102804, 0xA00, 0x88)]

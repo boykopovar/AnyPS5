@@ -306,6 +306,8 @@ def place_segments(data, headers, records):
             if header["source"] > len(data):
                 header["source"] = len(data)
             keep = max(0, len(data) - header["source"])
+            if header["size"] > keep and header["type"] != PT_SCE_VERSION:
+                raise Refused("segment %d does not fit the file" % header["index"])
             header["size"] = min(header["size"], keep)
             header["memory"] = min(header["memory"], keep)
 
