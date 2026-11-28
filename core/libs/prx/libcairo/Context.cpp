@@ -308,6 +308,16 @@ void APS5_VABI cairo_curve_to(CairoContext* context, double x1, double y1,
     aps5_cairo_curve_to(Backend(context), x1, y1, x2, y2, x3, y3);
 }
 
+void APS5_VABI cairo_arc(CairoContext* context, double xc, double yc, double radius,
+                         double angle1, double angle2) {
+    aps5_cairo_arc(Backend(context), xc, yc, radius, angle1, angle2);
+}
+
+void APS5_VABI cairo_arc_negative(CairoContext* context, double xc, double yc, double radius,
+                                  double angle1, double angle2) {
+    aps5_cairo_arc_negative(Backend(context), xc, yc, radius, angle1, angle2);
+}
+
 void APS5_VABI cairo_close_path(CairoContext* context) {
     aps5_cairo_close_path(Backend(context));
 }

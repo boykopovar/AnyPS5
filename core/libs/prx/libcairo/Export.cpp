@@ -6,10 +6,6 @@ extern "C" {
 
 
 
-int APS5_VABI cairo_arc_negative() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 
 
 
@@ -41,10 +37,6 @@ int APS5_VABI cairo_pattern_create_linear() {
 
 
 
-
-int APS5_VABI cairo_arc() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 
 
