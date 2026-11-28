@@ -38,6 +38,12 @@ int main() {
     Require(sceAgcDriverIsPaDebug() == 0 && sceAgcDriverGetExceptionStatus() == 0 && sceAgcDriverGetTraceInitiator() == 0);
     Require(sceAgcDriverRegisterGpuResetCallbacks() == 0 && sceAgcDriverUnregisterGpuResetCallbacks() == 0);
     Require(sceAgdResetGpu() == static_cast<int>(0x8A6C0045));
+    Require(sceAgcDriverIsCoredumpValid() == 0);
+    Require(sceAgdGetApplicationGpuDebug() == 0 && sceAgdGetSystemGpuDebug() == 0);
+    Require(sceAgdSetApplicationGpuDebug() == static_cast<int>(0x8A6C0047));
+    Require(sceAgcDriverRegisterCaptureInterface() == FeatureUnavailable && sceAgcDriverDeregisterCaptureInterface() == FeatureUnavailable);
+    Require(sceAgcDriverIsSuspendPointInFlightDirect() == FeatureUnavailable && sceAgcDriverReleaseRazorACQ() == FeatureUnavailable);
+    Require(sceAgcDriverSetTFRingDirect() == FeatureUnavailable && sceAgcDriverSdmaCopyLinearBlocking() == FeatureUnavailable);
     Require(sceAgcDriverSysSubmitFlipHandleProxy() == 0);
     Require(sceAgcDriverUserDataImmediateWrite() == 0 && sceAgcDriverUserDataImmediateWritePacket() == 0);
 

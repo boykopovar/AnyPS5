@@ -1602,6 +1602,7 @@ char* APS5_VABI asctime_nid_postfix(const GuestTm* timeptr);
 char* APS5_VABI asctime_r_nid_postfix(const GuestTm* timeptr, char* buffer);
 char* APS5_VABI ctime_nid_postfix(const int64_t* timer);
 size_t APS5_VABI strftime_nid_postfix(char* str, size_t count, const char* format, const GuestTm* timeptr);
+char* APS5_VABI ctermid_nid_postfix(char* s);
 int APS5_VABI fmtmsg_nid_postfix(std::int64_t classification, const char* label, int severity, const char* text, const char* action, const char* tag);
 size_t APS5_VABI wcsftime_nid_postfix(std::uint16_t* str, size_t count, const std::uint16_t* format, const GuestTm* timeptr);
 char* APS5_VABI strptime_nid_postfix(const char* buf, const char* format, GuestTm* timeptr);

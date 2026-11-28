@@ -21,6 +21,8 @@
 #include <net/route.h>
 #endif
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "SceTypes.hpp"
 #include <array>
 #include <cerrno>
@@ -771,9 +773,88 @@ int main() {
     Require(sceNetCtlCheckCallback() == 0);
     auto* const unwritable = reinterpret_cast<int*>(0x10);
     Require(sceNetCtlGetState(nullptr) == kErrInvalidAddr);
+    errno = 71;
     Require(sceNetCtlGetState(unwritable) == kErrInvalidAddr);
+    Require(errno == 71);
     Require(sceNetCtlGetStateV6(nullptr) == kErrInvalidAddr);
+    errno = 71;
     Require(sceNetCtlGetStateV6(unwritable) == kErrInvalidAddr);
+    Require(errno == 71);
+    if (GuestArena::GuestArenaAvailable_nid_postfix()) {
+        constexpr std::size_t kArenaBytes = 0x10000;
+        auto* const mapped = static_cast<unsigned char*>(GuestArena::GuestArenaAllocate_nid_postfix(kArenaBytes, kArenaBytes));
+        Require(mapped != nullptr);
+#ifdef _WIN32
+        const HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, kArenaBytes, nullptr);
+        Require(section != nullptr);
+        GuestArena::GuestArenaMap_nid_postfix(mapped, kArenaBytes, section, 0, PAGE_READWRITE);
+        CloseHandle(section);
+        const bool watchedWrites = GuestArena::GuestArenaWriteWatched_nid_postfix();
+#else
+        GuestArena::GuestArenaCommit_nid_postfix(mapped, kArenaBytes, 0x04, kArenaBytes);
+        const bool watchedWrites = GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix();
+        if (watchedWrites) {
+            GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(mapped, kArenaBytes);
+        }
+#endif
+        const auto collectDirty = [&]() -> bool {
+            if (!watchedWrites) {
+                return true;
+            }
+#ifdef _WIN32
+            std::array<void*, 16> pages{};
+            std::size_t count = pages.size();
+            Require(GuestArena::GuestArenaCollectWrites_nid_postfix(reinterpret_cast<std::uintptr_t>(mapped), kArenaBytes, pages.data(), &count, true));
+            return count != 0;
+#else
+            bool dirty = false;
+            Require(GuestWriteWatch::GuestWriteWatchCollect_nid_postfix(reinterpret_cast<std::uintptr_t>(mapped), kArenaBytes,
+                [](void* context, std::uintptr_t, std::uintptr_t) { *static_cast<bool*>(context) = true; }, &dirty));
+            return dirty;
+#endif
+        };
+        const auto armWatch = [&](void* target) {
+            if (!watchedWrites) {
+                return;
+            }
+            static_cast<void>(collectDirty());
+            Require(!collectDirty());
+#ifdef _WIN32
+            MEMORY_BASIC_INFORMATION mbi{};
+            Require(VirtualQuery(target, &mbi, sizeof(mbi)) == sizeof(mbi) && mbi.Protect == PAGE_READONLY);
+#else
+            static_cast<void>(target);
+#endif
+        };
+        auto* const watched = reinterpret_cast<int*>(mapped);
+        watched[0] = -1;
+        armWatch(watched);
+        errno = 71;
+        Require(sceNetCtlGetState(watched) == 0 && (watched[0] == 0 || watched[0] == kStateIpObtained));
+        Require(errno == 71);
+        Require(collectDirty());
+        watched[0] = -1;
+        armWatch(watched);
+        errno = 71;
+        Require(sceNetCtlGetStateV6(watched) == 0 && (watched[0] == 0 || watched[0] == kStateIpObtained));
+        Require(errno == 71);
+        Require(collectDirty());
+        GuestArena::GuestArenaSetProtection_nid_postfix(reinterpret_cast<std::uintptr_t>(mapped), kArenaBytes, 0x02);
+        errno = 71;
+        Require(sceNetCtlGetState(watched) == kErrInvalidAddr);
+        Require(errno == 71);
+        errno = 71;
+        Require(sceNetCtlGetStateV6(watched) == kErrInvalidAddr);
+        Require(errno == 71);
+        GuestArena::GuestArenaSetProtection_nid_postfix(reinterpret_cast<std::uintptr_t>(mapped), kArenaBytes, 0x04);
+#ifndef _WIN32
+        if (watchedWrites) {
+            GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(mapped, kArenaBytes);
+        }
+#endif
+        GuestArena::GuestArenaReset_nid_postfix(mapped, kArenaBytes);
+        GuestArena::GuestArenaRelease_nid_postfix(mapped, kArenaBytes);
+    }
     Require(sceNetCtlGetInfo(0, nullptr) == kErrInvalidAddr);
     Require(sceNetCtlGetResult(0, nullptr) == kErrInvalidAddr);
     Require(sceNetCtlGetResult(0, unwritable) == kErrInvalidAddr);
