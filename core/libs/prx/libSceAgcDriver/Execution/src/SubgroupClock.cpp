@@ -16,7 +16,7 @@ constexpr std::array<std::string_view, 19> NarrowClockFamilies{
 }
 
 bool NarrowSubgroupClock(VkDriverId driver, std::uint32_t deviceId, std::string_view deviceName) {
-    if (driver == VK_DRIVER_ID_AMD_PROPRIETARY && (deviceId == 0x1114u || deviceId == 0x744cu || deviceId == 0x747eu || deviceId == 0x7480u)) return true;
+    if (driver == VK_DRIVER_ID_AMD_PROPRIETARY && (deviceId == 0x1114u || deviceId == 0x744cu || deviceId == 0x747eu || deviceId == 0x7480u || deviceId == 0x1586u)) return true;
     if (driver != VK_DRIVER_ID_MESA_RADV) return false;
     constexpr std::string_view prefix = "(RADV ";
     const auto start = deviceName.rfind(prefix);

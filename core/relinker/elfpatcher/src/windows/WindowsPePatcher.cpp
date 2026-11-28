@@ -45,7 +45,7 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(std::vector<std::uint8_t> sour
         image.GetRva(originalPltGotVaddr, 8);
     report(500);
     const WindowsRelocationBuilder relocationBuilder;
-    auto relocations = relocationBuilder.Apply(image, dynamicSection, originalHeaders);
+    auto relocations = relocationBuilder.Apply(image, dynamicSection, originalHeaders, true);
     for (const auto& header : originalHeaders) {
         if (header.Type != 7 || header.FileSize == 0) continue;
         const auto templateRva = image.GetRva(header.MappedAddress, header.FileSize);
@@ -55,6 +55,12 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(std::vector<std::uint8_t> sour
             if (import.TargetRva < templateRva || static_cast<std::uint64_t>(import.TargetRva) + 8 > templateEnd)
                 throw Domain::RelinkerException("Runtime-bound executable TLS template relocation is not supported", header.MappedAddress + import.TargetRva - templateRva);
             import.TlsOffset = CheckedRva(import.TargetRva - templateRva);
+        }
+        for (const auto rva : relocations.TlsModuleRelocations) {
+            if (rva >= templateEnd || static_cast<std::uint64_t>(rva) + 8 <= templateRva) continue;
+            if (rva < templateRva || templateEnd - rva < 8)
+                throw Domain::RelinkerException("Executable relocation crosses the TLS template boundary", header.MappedAddress + rva - templateRva);
+            throw Domain::RelinkerException("Runtime-bound executable TLS template relocation is not supported", header.MappedAddress + rva - templateRva);
         }
     }
     report(1000);
@@ -86,6 +92,18 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(std::vector<std::uint8_t> sour
     }
     WindowsTlsLayout tlsLayout;
     directories[9] = WindowsTlsBuilder().Build(sourceElf, originalHeaders, image, sections, relocations.BaseRelocations, nextRva, &tlsLayout, [&](auto completed, auto total) { report(1500 + 6500 * completed / total); }, message, functionSymbolRoots);
+    for (const auto rva : relocations.TlsModuleRelocations) {
+        if (tlsLayout.IndexRva == 0) throw Domain::RelinkerException("Executable TLS relocation has no TLS block", rva);
+        bool written = false;
+        for (auto& section : sections) {
+            if (!section.Writable(rva, 8)) continue;
+            Io::WriteU64(section.Data, rva - section.Rva, image.GetImageBase() + tlsLayout.IndexRva);
+            written = true;
+            break;
+        }
+        if (!written) throw Domain::RelinkerException("Executable TLS target is unmapped", rva);
+        relocations.BaseRelocations.push_back(rva);
+    }
     directories[0] = WindowsExportBuilder().BuildExecutable(dynamicSection, image, originalHeaders, tlsLayout.IndexRva, relocations.BaseRelocations, outputName, sections, nextRva, functionSymbolRoots);
     report(8000);
     WindowsTrampolineBuilder().Build(trampolines, image, sections, nextRva);

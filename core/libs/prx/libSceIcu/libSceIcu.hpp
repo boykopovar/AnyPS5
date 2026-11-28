@@ -39,6 +39,7 @@
 #include "Normalization.hpp"
 #include "ClassIds.hpp"
 #include "Normalizer2Accessors.hpp"
+#include "FilteredNormalizerQueries.hpp"
 #include "CodePoints.hpp"
 #include "Identified.hpp"
 
