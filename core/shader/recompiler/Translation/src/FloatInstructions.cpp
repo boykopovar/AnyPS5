@@ -313,8 +313,17 @@ bool TranslationContext::float16Binary(const RdnaInstruction& inst, IrOpcode opc
     const IrF32 rhs = read(sourceAt(inst, reverse ? 0u : 1u));
     IrF32 result(ir.Emit(opcode, IrType::F32, {&lhs.Value(), &rhs.Value()}));
     if (measured && (floatMode->floatMode & 0x80u) == 0u) result = flushTinyF16Value(result, opcode == IrOpcode::FPMul32 ? 0x387ff000u : 0x38800000u);
-    writeF16(inst.destination, result, {&lhs.Value(), &rhs.Value()});
+    write16Bits(inst.destination, clampF16Bits(inst.destination, float16BinaryNan(inst, opcode, reverse, f16ResultBits(result, {&lhs.Value(), &rhs.Value()}))));
     return true;
+}
+
+IrU32 TranslationContext::float16BinaryNan(const RdnaInstruction& inst, IrOpcode opcode, bool reverse, IrU32 result) {
+    std::array<IrU32, 2> sources{readF16Bits(sourceAt(inst, 0u)), readF16Bits(sourceAt(inst, 1u))};
+    if (opcode == IrOpcode::FPSub32) {
+        IrU32& subtracted = sources[reverse ? 0u : 1u];
+        subtracted = IrU32(ir.BitwiseXor(subtracted.Value(), ir.Constant(0x8000u)));
+    }
+    return nanResultF16(result, {sources[0], sources[1]});
 }
 
 bool TranslationContext::float16Ternary(const RdnaInstruction& inst, IrOpcode opcode, bool accumulator, bool mix) {

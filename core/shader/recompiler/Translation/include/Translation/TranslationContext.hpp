@@ -106,6 +106,7 @@ private:
     IrU32 packHalf2x16(IrF32 low, IrF32 high, bool nanPayloadUnused = false);
     void write16Bits(const RdnaOperand& operand, IrU32 value);
     void writeF16(const RdnaOperand& operand, IrF32 value, std::initializer_list<IrValue*> sources, IrValue* invalid = nullptr);
+    IrU32 f16ResultBits(IrF32 value, std::initializer_list<IrValue*> sources, IrValue* invalid = nullptr);
     bool directedF16Rounding() const;
     std::uint32_t floatRoundMode(std::uint32_t roundShift) const;
     bool keepsDenormalResults(std::uint32_t keepBit) const;
@@ -123,6 +124,7 @@ private:
     IrF32 flushTinyProduct(IrValue* lhs, IrValue* rhs, IrValue* product, IrValue* addend = nullptr, bool afterRounding = true);
     IrU32 quietNan32(IrU32 bits);
     IrU32 quietNan16(IrU32 bits);
+    IrU32 nanResultF16(IrU32 result, std::initializer_list<IrU32> sources);
     void noteNan(IrValue& condition, IrValue& value, std::uint8_t lanes);
     IrU1 anyHalfNan(IrU32 word);
     IrValue* nanResultF32(std::initializer_list<IrValue*> sources, IrValue* result, IrValue* invalidProduct = nullptr, bool multiplication = false);
@@ -263,6 +265,7 @@ private:
     bool float16Binary(const RdnaInstruction& inst, IrOpcode opcode, bool reverse);
     bool float16Ternary(const RdnaInstruction& inst, IrOpcode opcode, bool accumulator, bool mix);
     bool float16Native(const RdnaInstruction& inst, IrOpcode opcode, const RdnaOperand& lhsOperand, const RdnaOperand& rhsOperand);
+    IrU32 float16BinaryNan(const RdnaInstruction& inst, IrOpcode opcode, bool reverse, IrU32 result);
     bool float16NativeFma(const RdnaInstruction& inst, bool accumulator);
     IrF32 fmaF16RoundedToOdd(IrF32 lhs, IrF32 rhs, IrF32 addend);
     IrF32 floatUnaryValue(const RdnaInstruction& inst, IrOpcode opcode);
