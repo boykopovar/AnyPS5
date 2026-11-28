@@ -4,6 +4,8 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -18,9 +20,15 @@
 #include <mbedtls/aes.h>
 #include <mbedtls/des.h>
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 #ifdef ANYPS5_CMAC_DYNAMIC
@@ -424,20 +432,92 @@ void Callbacks() {
 }
 
 void GuestPointerProbes() {
+    struct GuardedPages {
+        unsigned char* base = nullptr;
+        std::size_t pageSize = 4096;
+
+        GuardedPages() {
+#ifdef _WIN32
+            SYSTEM_INFO info{};
+            GetSystemInfo(&info);
+            pageSize = info.dwPageSize ? static_cast<std::size_t>(info.dwPageSize) : 4096;
+            base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+            Require(base != nullptr, "allocate guarded pages");
+            DWORD oldProtect = 0;
+            Require(VirtualProtect(base + pageSize, pageSize, PAGE_READONLY, &oldProtect) != 0, "protect read-only page");
+            Require(VirtualProtect(base + pageSize * 2, pageSize, PAGE_NOACCESS, &oldProtect) != 0, "protect guard page");
+#else
+            const long size = sysconf(_SC_PAGESIZE);
+            pageSize = size > 0 ? static_cast<std::size_t>(size) : 4096;
+            void* mapped = mmap(nullptr, pageSize * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            Require(mapped != MAP_FAILED, "allocate guarded pages");
+            base = static_cast<unsigned char*>(mapped);
+            Require(mprotect(base + pageSize, pageSize, PROT_READ) == 0, "protect read-only page");
+            Require(mprotect(base + pageSize * 2, pageSize, PROT_NONE) == 0, "protect guard page");
+#endif
+        }
+
+        ~GuardedPages() {
+            if (!base) return;
+#ifdef _WIN32
+            VirtualFree(base, 0, MEM_RELEASE);
+#else
+            munmap(base, pageSize * 3);
+#endif
+        }
+
+        unsigned char* ReadOnly() const { return base + pageSize; }
+        unsigned char* Guard() const { return base + pageSize * 2; }
+    };
+
+    GuardedPages pages;
+    auto* guardContext = reinterpret_cast<LibreSslCmac*>(pages.Guard());
+    auto* readOnlyContext = reinterpret_cast<LibreSslCmac*>(pages.ReadOnly());
+    const auto* guardCipher = reinterpret_cast<const LibreSslCipher*>(pages.Guard());
+
     Context context = NewContext();
     const std::array<unsigned char, 16> key{};
     Require(CMAC_Init_nid_postfix(context.get(), key.data(), key.size(), Methods[0], nullptr) == 1, "probe context init");
+    Require(CMAC_Update_nid_postfix(context.get(), "abc", 3) == 1, "seed message before guarded probes");
+
+    Context reference = NewContext();
+    Require(CMAC_Init_nid_postfix(reference.get(), key.data(), key.size(), Methods[0], nullptr) == 1, "reference context init");
+    Require(CMAC_Update_nid_postfix(reference.get(), "abc", 3) == 1, "reference update");
+    const auto expectedTag = Final(reference.get());
+
+    errno = 73;
+    RequireThrows([&] { CMAC_CTX_free_nid_postfix(guardContext); });
+    RequireThrows([&] { CMAC_CTX_free_nid_postfix(readOnlyContext); });
+    RequireThrows([&] { CMAC_Init_nid_postfix(guardContext, key.data(), key.size(), Methods[0], nullptr); });
+    RequireThrows([&] { CMAC_Init_nid_postfix(readOnlyContext, key.data(), key.size(), Methods[0], nullptr); });
+    RequireThrows([&] { CMAC_Init_nid_postfix(context.get(), key.data(), key.size(), guardCipher, nullptr); });
+    RequireThrows([&] { CMAC_Init_nid_postfix(context.get(), pages.Guard(), key.size(), Methods[0], nullptr); });
+    RequireThrows([&] { CMAC_Init_nid_postfix(context.get(), pages.Guard() - 8, key.size(), Methods[0], nullptr); });
+
+    RequireThrows([&] { CMAC_Update_nid_postfix(guardContext, "a", 1); });
+    RequireThrows([&] { CMAC_Update_nid_postfix(readOnlyContext, "a", 1); });
+    RequireThrows([&] { CMAC_Update_nid_postfix(context.get(), pages.Guard(), 16); });
+    RequireThrows([&] { CMAC_Update_nid_postfix(context.get(), pages.Guard() - 8, 24); });
+
+    unsigned char tag[16];
+    std::fill(std::begin(tag), std::end(tag), 0xa5);
+    std::size_t outLength = 99;
+    RequireThrows([&] { CMAC_Final_nid_postfix(guardContext, tag, &outLength); });
+    RequireThrows([&] { CMAC_Final_nid_postfix(readOnlyContext, tag, &outLength); });
+    RequireThrows([&] { CMAC_Final_nid_postfix(context.get(), tag, reinterpret_cast<std::size_t*>(pages.ReadOnly())); });
+    RequireThrows([&] { CMAC_Final_nid_postfix(context.get(), tag, reinterpret_cast<std::size_t*>(pages.Guard())); });
+    RequireThrows([&] { CMAC_Final_nid_postfix(context.get(), pages.ReadOnly(), &outLength); });
+    RequireThrows([&] { CMAC_Final_nid_postfix(context.get(), pages.Guard(), &outLength); });
+    Require(outLength == 99, "rejected final leaves output length unchanged");
+    Require(std::all_of(std::begin(tag), std::end(tag), [](auto value) { return value == 0xa5; }), "rejected final leaves the tag alone");
+    Require(errno == 73, "guest pointer probes preserve errno");
 
     const auto* unreadable = reinterpret_cast<const void*>(0x10);
     RequireThrows([&] { CMAC_Update_nid_postfix(context.get(), unreadable, 16); });
     RequireThrows([&] { CMAC_Update_nid_postfix(context.get(), unreadable, 1); });
-    Require(CMAC_Update_nid_postfix(context.get(), "a", 1) == 1, "context still usable after a rejected update");
-
-    unsigned char tag[16];
-    std::fill(std::begin(tag), std::end(tag), 0xa5);
     RequireThrows([&] { CMAC_Final_nid_postfix(context.get(), tag, reinterpret_cast<std::size_t*>(0x10)); });
     RequireThrows([&] { CMAC_Final_nid_postfix(context.get(), reinterpret_cast<unsigned char*>(0x10), nullptr); });
-    Require(std::all_of(std::begin(tag), std::end(tag), [](auto value) { return value == 0xa5; }), "rejected final leaves the tag alone");
+    Require(Final(context.get()) == expectedTag, "rejected probes preserve CMAC state");
 }
 
 int main(int argc, char** argv) {
