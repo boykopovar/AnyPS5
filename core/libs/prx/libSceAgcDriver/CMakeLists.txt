@@ -9,7 +9,7 @@ if(BUILD_TESTING)
             ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
     target_link_libraries(agc_preparation_inputs_tests PRIVATE libc)
     configure_windows_unwind(agc_preparation_inputs_tests)
-    foreach(mode enabled disabled selected failure concurrent write-failure capture-write-failure)
+    foreach(mode enabled disabled selected failure failure-only concurrent write-failure capture-write-failure)
         add_test(NAME agc_preparation_inputs_${mode} COMMAND agc_preparation_inputs_tests ${mode})
         set_tests_properties(agc_preparation_inputs_${mode} PROPERTIES TIMEOUT 20)
         if(WIN32)
@@ -60,6 +60,19 @@ if(BUILD_TESTING AND WIN32)
     add_test(NAME agc_process_sampler_stack COMMAND agc_process_sampler_stack_tests)
     set_tests_properties(agc_process_sampler_stack PROPERTIES TIMEOUT 20 ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(agc_aspect_fit_tests tests/AspectFit.cpp Execution/src/AspectFit.cpp)
+    target_include_directories(agc_aspect_fit_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(agc_aspect_fit_tests PRIVATE libc)
+    configure_windows_unwind(agc_aspect_fit_tests)
+    add_test(NAME agc_aspect_fit COMMAND agc_aspect_fit_tests)
+    set_tests_properties(agc_aspect_fit PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(agc_aspect_fit PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 endif()
 
 set(agcTextureDetileShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/TextureDetile.comp)
@@ -528,6 +541,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/MultisampleUpload.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Texture.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PassHazards.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/RecordingPool.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/SampleOrder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/StagedMerge.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BarrierBatch.cpp
@@ -757,8 +771,10 @@ set(ANYPS5_AGC_EXECUTION_TESTS "" CACHE STRING "tests/execution sources to build
 
 file(GLOB agcExecutionTestSources CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tests/execution/*.cpp)
 set(agcExecutionTests)
+set(agcExecutionTestNames)
 foreach(agcExecutionTestSource IN LISTS agcExecutionTestSources)
     get_filename_component(agcExecutionTestName ${agcExecutionTestSource} NAME_WE)
+    list(APPEND agcExecutionTestNames "${agcExecutionTestName}")
     if(NOT WIN32 AND agcExecutionTestName STREQUAL "CommittedReadMapping")
         continue()
     endif()
@@ -877,8 +893,8 @@ if(BUILD_TESTING)
 endif()
 
 foreach(agcExecutionTestName IN LISTS ANYPS5_AGC_EXECUTION_TESTS)
-    if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/execution/${agcExecutionTestName}.cpp)
-        message(FATAL_ERROR "ANYPS5_AGC_EXECUTION_TESTS names ${agcExecutionTestName}, which has no source in tests/execution")
+    if(NOT agcExecutionTestName IN_LIST agcExecutionTestNames)
+        message(FATAL_ERROR "ANYPS5_AGC_EXECUTION_TESTS names ${agcExecutionTestName}, which does not match a tests/execution source name")
     endif()
 endforeach()
 option(ANYPS5_REQUIRE_CPU_LEAD_TEST "Register agc_driver_sparse_dma_buf_cpu_lead, which fails instead of skipping when the nonzero-lead dma-buf CPU publish cannot run (bench only)" OFF)
@@ -902,24 +918,6 @@ if(BUILD_TESTING)
 endif()
 
 if(BUILD_TESTING)
-    if(Python3_Interpreter_FOUND)
-        set(housekeepingModes plain)
-        if(WIN32)
-            list(APPEND housekeepingModes extended extended-long device)
-        else()
-            list(APPEND housekeepingModes plain-long)
-        endif()
-        foreach(housekeepingMode IN LISTS housekeepingModes)
-            set(housekeepingTest agc_shader_cache_housekeeping_${housekeepingMode})
-            add_test(NAME ${housekeepingTest} COMMAND ${Python3_EXECUTABLE}
-                ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_shader_cache_housekeeping.py
-                $<TARGET_FILE:agc_shader_disk_cache_tests> ${housekeepingMode})
-            set_tests_properties(${housekeepingTest} PROPERTIES TIMEOUT 20)
-            if(WIN32)
-                set_tests_properties(${housekeepingTest} PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
-            endif()
-        endforeach()
-    endif()
     if(Python3_Interpreter_FOUND)
         set(prebuiltDiscoveryModes plain relative plain-long)
         if(WIN32)

@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 
 #include "prx/libSceLibcInternal/include/Statvfs.hpp"
 #include "prx/libSceLibcInternal/include/Spawn.hpp"
@@ -57,6 +58,7 @@ void APS5_VABI warnc_nid_postfix(int code, const char* format, ...);
 void APS5_VABI warn_nid_postfix(const char* format, ...);
 void APS5_VABI _warn_nid_postfix(const char* format, ...);
 void APS5_VABI warnx_nid_postfix(const char* format, ...);
+char* APS5_VABI getbsize_nid_postfix(int* headerlenp, std::int64_t* blocksizep);
 const char* APS5_VABI getprogname_nid_postfix();
 const char* APS5_VABI _getprogname_nid_postfix();
 void APS5_VABI setprogname_nid_postfix(const char* name);

@@ -560,8 +560,8 @@ int MutexWake2(void* object, std::uint64_t value) {
     if (protocol == (UMUTEX_PRIO_INHERIT | UMUTEX_PRIO_PROTECT)) {
         return GUEST_EINVAL;
     }
-    if ((flags & UMUTEX_ROBUST) != 0) {
-        NotImplemented_nid_no_patch("_umtx_op MUTEX_WAKE2 on a robust umutex");
+    if ((flags & UMUTEX_ROBUST) != 0 && protocol != 0) {
+        NotImplemented_nid_no_patch("_umtx_op MUTEX_WAKE2 on a robust priority mutex");
     }
     const auto key = reinterpret_cast<std::uintptr_t>(object);
     DeferringDelivery([&] {
