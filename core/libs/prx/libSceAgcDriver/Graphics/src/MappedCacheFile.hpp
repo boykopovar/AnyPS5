@@ -47,12 +47,11 @@ public:
             GetSystemInfo(&system);
             const std::size_t granule = std::max<std::size_t>(system.dwPageSize, 4096u);
             window = (window + granule - 1) / granule * granule;
-            DWORD previous = 0;
-            if (window < bytes && enroll(created.get()) && VirtualProtect(created->view + window, bytes - window, PAGE_NOACCESS, &previous)) {
+            if (window < bytes) {
+                DWORD previous = 0;
+                if (!enroll(created.get()) || refuseProtection().load(std::memory_order_relaxed) || !VirtualProtect(created->view + window, bytes - window, PAGE_NOACCESS, &previous)) return nullptr;
                 created->window = window;
                 created->opened.store(window, std::memory_order_release);
-            } else {
-                withdraw(created.get());
             }
         }
         if (startThread && bytes >= TrimmedFromBytes) {
@@ -114,8 +113,15 @@ public:
         return committed;
     }
 
+    friend struct MappedCacheFileTestAccess;
+
 private:
     MappedCacheFile() = default;
+
+    static std::atomic<bool>& refuseProtection() {
+        static std::atomic<bool> refuse{false};
+        return refuse;
+    }
 
     struct Registry {
         SRWLOCK lock = SRWLOCK_INIT;
@@ -247,6 +253,12 @@ private:
     std::atomic<bool> stop{false};
     std::atomic<std::uint64_t> windowsOpened{0};
     std::thread trimmer;
+};
+
+struct MappedCacheFileTestAccess {
+    static void RefuseWindowProtection(bool refuse) {
+        MappedCacheFile::refuseProtection().store(refuse, std::memory_order_relaxed);
+    }
 };
 
 }

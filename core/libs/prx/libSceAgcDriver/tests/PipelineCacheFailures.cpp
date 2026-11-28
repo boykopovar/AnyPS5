@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineCache.hpp"
+#include "prx/libSceAgcDriver/Graphics/src/MappedCacheFile.hpp"
 #include "AllocationFailure.hpp"
 #include "ShaderCacheDirectory.hpp"
 #include <array>
@@ -132,15 +133,87 @@ bool HasTemporary(const std::filesystem::path& directory) {
     return false;
 }
 
+void FillLarge(VkPipelineCache cache, std::size_t large) {
+    std::lock_guard lock(mutex);
+    auto& bytes = caches.at(cache);
+    bytes.resize(large);
+    for (std::size_t index = initialBytes; index < large; ++index) bytes[index] = Filler(index);
+}
+
+bool HoldsLarge(const std::filesystem::path& file, std::size_t large) {
+    std::vector<std::byte> saved;
+    if (!ShaderRecompiler::ReadWholeFile(file, saved) || saved.size() != 24 + large) return false;
+    const auto start = Payload();
+    bool same = std::memcmp(saved.data() + 24, start.data(), start.size()) == 0;
+    for (std::size_t index = initialBytes; same && index < large; ++index) same = saved[24 + index] == Filler(index);
+    return same;
+}
+
+std::uint64_t FreeMebibytes() {
+    MEMORYSTATUSEX status{};
+    status.dwLength = sizeof(status);
+    Check(GlobalMemoryStatusEx(&status) != 0, "could not read the host's free memory");
+    return status.ullAvailPhys >> 20u;
+}
+
+int RunUnthrottled(bool enrollment, std::unique_ptr<PipelineCache> cache, const std::filesystem::path& file, const std::filesystem::path& root, const Context& context, const VkPhysicalDeviceProperties& properties) {
+    std::size_t large = (std::size_t{70} << 20u) + 12345u;
+    FillLarge(cache->Handle(), large);
+    _putenv_s("APS5_PIPELINE_CACHE_MAPPED_SAVE_MB", "1");
+    _putenv_s("APS5_PIPELINE_CACHE_SAVE_WINDOW_KIB", "1024");
+    std::vector<std::unique_ptr<MappedCacheFile>> blockers;
+    if (enrollment) {
+        for (int index = 0; index < 4; ++index) {
+            blockers.push_back(MappedCacheFile::Create(root / ("blocker-" + std::to_string(index)), 8192, 4096, {}));
+            Check(blockers.back() != nullptr, "a mapped file that takes a window slot could not be created");
+        }
+    } else MappedCacheFileTestAccess::RefuseWindowProtection(true);
+    const auto mappedBefore = PipelineCache::MappedSaves();
+    bool putOff = false;
+    for (int attempt = 0; attempt < 5 && !putOff; ++attempt) {
+        const auto free = FreeMebibytes();
+        Check(free > 64, "the host has too little free memory for this test");
+        _putenv_s("APS5_PIPELINE_CACHE_SAVE_FREE_MB", std::to_string(free - 8).c_str());
+        const auto before = Read(file);
+        const auto postponedBefore = PipelineCache::PostponedSaves();
+        cache->SaveNow();
+        Check(PipelineCache::MappedSaves() == mappedBefore, "a save whose view could not be opened a window at a time was written through the mapping");
+        Check(!HasTemporary(file.parent_path()), "a rejected mapping left a temporary file");
+        putOff = PipelineCache::PostponedSaves() == postponedBefore + 1 && Read(file) == before;
+        if (!putOff) {
+            Check(HoldsLarge(file, large), "a save that fell back to a buffer wrote another file than the cache");
+            large += 4096;
+            FillLarge(cache->Handle(), large);
+        }
+    }
+    Check(putOff, "a save that fell back to a buffer was not checked against the reserve for the whole cache");
+    _putenv_s("APS5_PIPELINE_CACHE_SAVE_FREE_MB", "0");
+    cache->SaveNow();
+    Check(PipelineCache::MappedSaves() == mappedBefore, "a save whose view could not be opened a window at a time was written through the mapping");
+    Check(HoldsLarge(file, large), "the save that fell back to a buffer does not hold the cache's bytes");
+    Check(!HasTemporary(file.parent_path()), "the save that fell back to a buffer left a temporary file");
+    blockers.clear();
+    MappedCacheFileTestAccess::RefuseWindowProtection(false);
+    large += 4096;
+    FillLarge(cache->Handle(), large);
+    cache->SaveNow();
+    Check(PipelineCache::MappedSaves() == mappedBefore + 1, "a save was not mapped again once its view could be opened a window at a time");
+    Check(HoldsLarge(file, large), "the mapped save after the fallback does not hold the cache's bytes");
+    cache.reset();
+    {
+        PipelineCache reader(context, properties);
+        std::lock_guard lock(mutex);
+        Check(caches.at(reader.Handle()).size() == large, "a second cache did not load the save");
+    }
+    Check(caches.empty(), "the unthrottled mapping test leaked Vulkan objects");
+    std::printf("%s: the save was put off for the whole cache's size, then written from a buffer, and mapped again afterwards\n", enrollment ? "mapped-no-slot" : "mapped-no-protection");
+    return 0;
+}
+
 int RunMapped(bool lowMemory, std::unique_ptr<PipelineCache> cache, const std::filesystem::path& file, const Context& context, const VkPhysicalDeviceProperties& properties) {
     const std::size_t large = (std::size_t{70} << 20u) + 12345u;
     const auto small = Read(file);
-    {
-        std::lock_guard lock(mutex);
-        auto& bytes = caches.at(cache->Handle());
-        bytes.resize(large);
-        for (std::size_t index = initialBytes; index < large; ++index) bytes[index] = Filler(index);
-    }
+    FillLarge(cache->Handle(), large);
     _putenv_s("APS5_PIPELINE_CACHE_MAPPED_SAVE_MB", "1");
     _putenv_s("APS5_PIPELINE_CACHE_SAVE_WINDOW_KIB", "16384");
     _putenv_s("APS5_PIPELINE_CACHE_SAVE_FREE_MB", lowMemory ? "100000000" : "0");
@@ -157,17 +230,12 @@ int RunMapped(bool lowMemory, std::unique_ptr<PipelineCache> cache, const std::f
     Check(PipelineCache::MappedSaves() == mappedBefore + 1, lowMemory ? "the teardown save was put off or was not written through a mapped file" : "the large save was not written through a mapped file");
     const auto windows = PipelineCache::MappedSaveWindows() - windowsBefore;
     Check(windows >= 1 && windows <= 4, "the mapped file was not opened to the driver a window at a time");
-    std::vector<std::byte> saved;
-    Check(ShaderRecompiler::ReadWholeFile(file, saved) && saved.size() == 24 + large, "the large save has another size than the header and the cache");
-    const auto start = Payload();
-    bool same = std::memcmp(saved.data() + 24, start.data(), start.size()) == 0;
-    for (std::size_t index = initialBytes; same && index < large; ++index) same = saved[24 + index] == Filler(index);
-    Check(same, "the large save does not hold the cache's bytes");
+    Check(HoldsLarge(file, large), "the large save does not hold the cache's bytes under its header");
     Check(!HasTemporary(file.parent_path()), "the large save left a temporary file");
     if (cache) {
+        const auto saved = Read(file);
         cache->SaveNow();
-        std::vector<std::byte> again;
-        Check(ShaderRecompiler::ReadWholeFile(file, again) && again == saved, "an idle save after the large one changed the file");
+        Check(Read(file) == saved, "an idle save after the large one changed the file");
         cache.reset();
     }
     {
@@ -184,11 +252,11 @@ int RunMapped(bool lowMemory, std::unique_ptr<PipelineCache> cache, const std::f
 }
 
 int main(int argc, char** argv) {
-    Check(argc == 2, "expected startup, now, busy, destructor, worker, read-retry, first-save, mapped or mapped-low-memory");
+    Check(argc == 2, "expected startup, now, busy, destructor, worker, read-retry, first-save, mapped, mapped-low-memory, mapped-no-slot or mapped-no-protection");
     const std::string_view mode(argv[1]);
-    Check(mode == "startup" || mode == "now" || mode == "busy" || mode == "destructor" || mode == "worker" || mode == "read-retry" || mode == "first-save" || mode == "mapped" || mode == "mapped-low-memory", "unknown mode");
+    Check(mode == "startup" || mode == "now" || mode == "busy" || mode == "destructor" || mode == "worker" || mode == "read-retry" || mode == "first-save" || mode == "mapped" || mode == "mapped-low-memory" || mode == "mapped-no-slot" || mode == "mapped-no-protection", "unknown mode");
 #ifndef _WIN32
-    if (mode == "read-retry" || mode == "mapped" || mode == "mapped-low-memory") return 77;
+    if (mode == "read-retry" || mode.starts_with("mapped")) return 77;
 #endif
     const auto root = std::filesystem::temp_directory_path() / ("aps5-cache-allocation-" + std::to_string(std::random_device{}()));
     Check(std::filesystem::create_directory(root), "test cache directory already exists");
@@ -245,6 +313,7 @@ int main(int argc, char** argv) {
         return 0;
     }
 #ifdef _WIN32
+    if (mode == "mapped-no-slot" || mode == "mapped-no-protection") return RunUnthrottled(mode == "mapped-no-slot", std::move(cache), file, root, context, properties);
     if (mode == "mapped" || mode == "mapped-low-memory") return RunMapped(mode == "mapped-low-memory", std::move(cache), file, context, properties);
     if (mode == "read-retry") {
         {
