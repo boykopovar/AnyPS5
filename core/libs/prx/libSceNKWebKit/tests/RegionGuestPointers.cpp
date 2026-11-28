@@ -140,6 +140,71 @@ int main() {
         "_ZN7WebCore6Region9translateERKNS_7IntSizeE"));
     Require(FaultsAsNotImplemented([&] { _ZN7WebCore6Region5Shape9translateERKNS_7IntSizeE(target.ptr()->m_shape.get(), *unreadableSize); return 0; },
         "_ZN7WebCore6Region5Shape9translateERKNS_7IntSizeE"));
+    auto* unreadableShape = reinterpret_cast<WebCore::Region::Shape*>(0x10);
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore6Region5Shape9translateERKNS_7IntSizeE(unreadableShape, WebCore::IntSize{1, 1}); return 0; },
+        "_ZN7WebCore6Region5Shape9translateERKNS_7IntSizeE"));
+#ifdef _WIN32
+    void* readOnlyShapePage = VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    Require(readOnlyShapePage != nullptr);
+#else
+    void* readOnlyShapePage = mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+    Require(readOnlyShapePage != MAP_FAILED);
+#endif
+    std::memcpy(readOnlyShapePage, shaped.ptr()->m_shape.get(), sizeof(WebCore::Region::Shape));
+    auto* readOnlyShape = static_cast<WebCore::Region::Shape*>(readOnlyShapePage);
+    if (shaped.ptr()->m_shape->m_segments.data() == reinterpret_cast<const int*>(reinterpret_cast<const unsigned char*>(shaped.ptr()->m_shape.get()) + 16)) {
+        int* inlineSegs = reinterpret_cast<int*>(reinterpret_cast<unsigned char*>(readOnlyShape) + 16);
+        std::memcpy(readOnlyShape, &inlineSegs, sizeof(inlineSegs));
+    }
+    if (shaped.ptr()->m_shape->m_spans.data() == reinterpret_cast<const WebCore::Region::Span*>(reinterpret_cast<const unsigned char*>(shaped.ptr()->m_shape.get()) + 160)) {
+        auto* inlineSpans = reinterpret_cast<WebCore::Region::Span*>(reinterpret_cast<unsigned char*>(readOnlyShape) + 160);
+        std::memcpy(reinterpret_cast<unsigned char*>(readOnlyShape) + 144, &inlineSpans, sizeof(inlineSpans));
+    }
+    ProtectPage(readOnlyShapePage, false);
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore6Region5Shape9translateERKNS_7IntSizeE(readOnlyShape, WebCore::IntSize{2, 3}); return 0; },
+        "_ZN7WebCore6Region5Shape9translateERKNS_7IntSizeE"));
+    UnmapPage(readOnlyShapePage);
+
+    RegionHolder badShapeRegion;
+    const WebCore::IntRect badBounds = Rect(0, 0, 20, 20);
+    std::memcpy(badShapeRegion.storage, &badBounds, sizeof(badBounds));
+    std::memcpy(badShapeRegion.storage + 16, &unreadableShape, sizeof(unreadableShape));
+    Require(FaultsAsNotImplemented([&] { return _ZNK7WebCore6Region5rectsEv(badShapeRegion.ptr()); }, "_ZNK7WebCore6Region5rectsEv"));
+    Require(FaultsAsNotImplemented([&] { return _ZNK7WebCore6Region8containsERKNS_8IntPointE(badShapeRegion.ptr(), WebCore::IntPoint{5, 5}); },
+        "_ZNK7WebCore6Region8containsERKNS_8IntPointE"));
+    Require(FaultsAsNotImplemented([&] { return _ZNK7WebCore6Region8containsERKS0_(badShapeRegion.ptr(), *square.ptr()); },
+        "_ZNK7WebCore6Region8containsERKS0_"));
+    Require(FaultsAsNotImplemented([&] { return _ZNK7WebCore6Region10intersectsERKS0_(badShapeRegion.ptr(), *square.ptr()); },
+        "_ZNK7WebCore6Region10intersectsERKS0_"));
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore6Region9translateERKNS_7IntSizeE(badShapeRegion.ptr(), WebCore::IntSize{1, 1}); return 0; },
+        "_ZN7WebCore6Region9translateERKNS_7IntSizeE"));
+    Require(FaultsAsNotImplemented([&] { return _ZNK7WebCore6Region9totalAreaEv(badShapeRegion.ptr()); },
+        "_ZNK7WebCore6Region9totalAreaEv"));
+    Require(FaultsAsNotImplemented([&] { _ZN7WebCore6RegionC1ERKS0_(target.ptr(), *badShapeRegion.ptr()); return 0; },
+        "_ZN7WebCore6RegionC1ERKS0_"));
+
+    auto* unreadableStream = reinterpret_cast<NKWebKit::WtfAbi::TextStream*>(0x10);
+    Require(FaultsAsNotImplemented([&] { return &_ZN7WebCorelsERN3WTF10TextStreamERKNS_6RegionE(*unreadableStream, *square.ptr()); },
+        "_ZN7WebCorelsERN3WTF10TextStreamERKNS_6RegionE"));
+    NKWebKit::WtfAbi::TextStream localStream{};
+    Require(FaultsAsNotImplemented([&] { return &_ZN7WebCorelsERN3WTF10TextStreamERKNS_6RegionE(localStream, *unreadable); },
+        "_ZN7WebCorelsERN3WTF10TextStreamERKNS_6RegionE"));
+    Require(localStream.indent == 0 && localStream.text.length == 0);
+    Require(FaultsAsNotImplemented([&] { return &_ZN7WebCorelsERN3WTF10TextStreamERKNS_6RegionE(localStream, *badShapeRegion.ptr()); },
+        "_ZN7WebCorelsERN3WTF10TextStreamERKNS_6RegionE"));
+    Require(localStream.indent == 0 && localStream.text.length == 0);
+#ifdef _WIN32
+    void* readOnlyStreamPage = VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    Require(readOnlyStreamPage != nullptr);
+#else
+    void* readOnlyStreamPage = mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+    Require(readOnlyStreamPage != MAP_FAILED);
+#endif
+    std::memset(readOnlyStreamPage, 0, sizeof(NKWebKit::WtfAbi::TextStream));
+    ProtectPage(readOnlyStreamPage, false);
+    Require(FaultsAsNotImplemented([&] { return &_ZN7WebCorelsERN3WTF10TextStreamERKNS_6RegionE(*static_cast<NKWebKit::WtfAbi::TextStream*>(readOnlyStreamPage), *square.ptr()); },
+        "_ZN7WebCorelsERN3WTF10TextStreamERKNS_6RegionE"));
+    UnmapPage(readOnlyStreamPage);
     Require(SameRegion(target.ptr(), untouched) && SameRegion(readOnlyShaped, shaped.storage));
     const WTF::Vector<WebCore::IntRect, 1> afterRects = _ZNK7WebCore6Region5rectsEv(readOnlyShaped);
     Require(afterRects.size() == shapedRects.size());
