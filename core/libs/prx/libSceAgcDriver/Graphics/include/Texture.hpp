@@ -1067,6 +1067,9 @@ struct LookupOutcomes {
 };
 LookupOutcomes& ThreadLookupOutcomes();
 
+bool FlushTableKeys(std::span<const std::pair<std::uint64_t, std::uint64_t>> keyRanges);
+bool TableKeyFlushEnabled();
+
 }
 
 #endif

@@ -6491,6 +6491,28 @@ bool StorageTexture::AnyPendingOverlaps(std::span<const std::pair<std::uint64_t,
     return false;
 }
 
+bool TableKeyFlushEnabled() {
+    static const bool enabled = std::getenv("APS5_NO_TABLE_KEY_FLUSH") == nullptr;
+    return enabled;
+}
+
+bool FlushTableKeys(std::span<const std::pair<std::uint64_t, std::uint64_t>> keyRanges) {
+    if (!TableKeyFlushEnabled() || !GuestMemory::GpuMutex().HeldByThisThread()) return false;
+    bool flushed = false;
+    for (const auto& [begin, end] : keyRanges) {
+        if (end <= begin) continue;
+        const auto bytes = static_cast<std::size_t>(end - begin);
+        if (!GuestMemory::Accessible(reinterpret_cast<const void*>(begin), bytes)) continue;
+        bool published = false;
+        if (StorageTexture::FlushPending(begin, bytes, nullptr, "image table keys", PublishScope::Whole, &published) || published) flushed = true;
+    }
+    if (!flushed) return false;
+    auto* recorder = Recorder::Active();
+    if (recorder == nullptr) return false;
+    recorder->Submit();
+    return true;
+}
+
 void StorageTexture::AppendPendingRanges(std::uint64_t address, std::size_t bytes, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges) {
     if (bytes == 0) return;
     GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Flush);

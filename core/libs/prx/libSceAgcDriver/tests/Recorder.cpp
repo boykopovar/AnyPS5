@@ -7789,6 +7789,90 @@ bool unitShadowTests(const Device& device, Recorder& recorder) {
     return true;
 }
 
+bool tableKeyFlushTests(const Device& device, Recorder& recorder) {
+    using namespace AgcDriver::GuestMemory;
+    const auto& context = device.GetContext();
+    if (!UnitShadowEnabled() || context.hostImportAlignment == 0) {
+        std::cout << "unit shadows or host imports unavailable: the table key flush is not tested\n";
+        return false;
+    }
+    if (!TableKeyFlushEnabled()) {
+        Require(!FlushTableKeys({}), "the table key flush is off but submitted");
+        std::cout << "table key flush off (APS5_NO_TABLE_KEY_FLUSH): not tested\n";
+        return true;
+    }
+    constexpr std::uint64_t unit = 65536;
+    constexpr std::size_t bytes = 8u * unit;
+    void* block = AllocateWatched(bytes, 65536);
+    Require(block != nullptr, "unit shadows are on without write watching");
+    struct Release {
+        void* block;
+        ~Release() { ReleaseWatched(block, bytes); }
+    } release{block};
+    std::memset(block, 0x11, bytes);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        void* block;
+        std::uint64_t address;
+        ~Unregister() {
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+            HostImportFor(context, address, bytes);
+        }
+    } unregister{context, block, address};
+    const auto* import = HostImportFor(context, address, bytes);
+    if (import == nullptr || !Watched(address, bytes)) {
+        std::cout << "the table key flush test block is not imported and watched: not tested\n";
+        return false;
+    }
+    CollectWritesUncached(address, bytes);
+    const auto* words = static_cast<const std::uint8_t*>(block);
+    const auto unit2 = address + 2 * unit;
+    auto destination = ShadowDestinationFor(context, *import, unit2, unit2 + unit);
+    Require(destination.has_value() && destination->seedUnits.empty(), "unit 2 has no whole-unit shadow destination");
+    {
+        auto pattern = std::make_shared<Buffer>(context, static_cast<std::size_t>(unit), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        std::memset(pattern->Bytes().data(), 0x5a, pattern->Bytes().size());
+        const auto commands = recorder.Commands();
+        recorder.Keep(pattern);
+        recorder.Keep(destination->slab);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        const VkBufferCopy piece{0, SlabOffset(*import, *destination->slab, unit2), unit};
+        context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer")(commands, pattern->Handle(), destination->buffer, 1, &piece);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        recorder.MarkCovered(VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        const ShadowedRange range{unit2, unit2 + unit, destination->slab};
+        MarkShadowed(*import, std::span(&range, 1), TrackerGeneration());
+    }
+    constexpr std::size_t keyBytes = 0x200;
+    const auto keys = unit2 + 0x400;
+    const auto quiet = address + 5 * unit;
+    Require(AnyShadowedOverlaps(keys, keyBytes) && !AnyShadowedOverlaps(quiet, keyBytes), "the key ranges' shadow state is not what the test set up");
+    std::lock_guard gpu(GpuMutex());
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 2> ranges{{{quiet, quiet + keyBytes}, {keys, keys + keyBytes}}};
+    const auto submittedBefore = recorder.NewestSubmitted();
+    Require(FlushTableKeys(ranges), "a key prepass over a shadowed key range did not submit");
+    Require(!AnyShadowedOverlaps(keys, keyBytes), "the key prepass did not publish the shadow over the keys");
+    const auto pending = recorder.DescribePendingWrite(keys, keyBytes);
+    Require(pending.has_value(), "the publish over the keys noted no pending write");
+    Require(!pending->open, "the publish over the keys is still in the open batch: the submit did not follow the flush");
+    Require(recorder.NewestSubmitted() > submittedBefore && pending->serial <= recorder.NewestSubmitted(), "the submitted serial does not cover the publish over the keys");
+    Require(!recorder.PendingWriteOverlaps(quiet, keyBytes), "the quiet key range got a pending write");
+    recorder.Sync();
+    Require(words[keys - address] == 0x5a && words[keys - address + keyBytes - 1] == 0x5a && words[quiet - address] == 0x11, "the keys do not hold the published bytes");
+    const auto submittedAfter = recorder.NewestSubmitted();
+    Require(!FlushTableKeys(ranges), "a key prepass with nothing to flush reported a submit");
+    Require(recorder.NewestSubmitted() == submittedAfter, "a key prepass with nothing to flush submitted the open batch");
+    return true;
+}
+
 bool idlePublishDmaBufWaitTests(const Device& device, Recorder& recorder) {
 #ifndef __linux__
     static_cast<void>(device);
@@ -20259,6 +20343,17 @@ int main(int argc, char** argv) {
             }
 #endif
             idlePublishWaitTests(device, recorder);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--table-key-flush-only") {
+            if (!AgcDriver::Graphics::UnitShadowEnabled() || device.GetContext().hostImportAlignment == 0) {
+                std::cout << "skipped, unit shadows or host imports are unavailable\n";
+                return 77;
+            }
+            if (!tableKeyFlushTests(device, recorder)) {
+                std::cout << "skipped, the device does not import watched host memory for unit shadows\n";
+                return 77;
+            }
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--unit-shadow-only") {
