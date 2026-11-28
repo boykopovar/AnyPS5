@@ -14,6 +14,16 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFios2>")
     endif()
 
+    add_test_executable(guest_fios2_printf_tests ${LIBS_INCLUDE_DIR}/tests/GuestFios2Printf.cpp)
+    target_include_directories(guest_fios2_printf_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_fios2_printf_tests PRIVATE libSceFios2 libkernel libc)
+    configure_windows_unwind(guest_fios2_printf_tests)
+    add_test(NAME guest_fios2_printf COMMAND guest_fios2_printf_tests)
+    if(WIN32)
+        set_tests_properties(guest_fios2_printf PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFios2>")
+    endif()
+
     add_test_executable(guest_fios2_cache_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestFios2CacheBounds.cpp)
     target_include_directories(guest_fios2_cache_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_fios2_cache_bounds_tests PRIVATE libSceFios2 libkernel libc)
