@@ -7,7 +7,30 @@
 struct TlsConfig;
 struct TlsContext;
 
+struct TlsTransportConfig {
+    const std::uint8_t* ca;
+    std::size_t caLength;
+    const std::uint8_t* cert;
+    std::size_t certLength;
+    const std::uint8_t* key;
+    std::size_t keyLength;
+    const char* ciphers;
+    std::uint32_t protocols;
+    bool client;
+    bool verifyName;
+};
+
 extern "C" {
+
+bool TlsTransportGetConfig_nid_no_patch(TlsContext* context, TlsTransportConfig* config);
+void TlsTransportSetError_nid_no_patch(TlsContext* context, const char* error);
+void TlsTransportClearError_nid_no_patch(TlsContext* context);
+void TlsTransportFree_nid_no_patch(TlsContext* context);
+int TlsTransportClose_nid_no_patch(TlsContext* context);
+int TlsTransportConnect_nid_no_patch(TlsContext* context, int socket, const char* servername);
+int TlsTransportHandshake_nid_no_patch(TlsContext* context);
+std::int64_t TlsTransportRead_nid_no_patch(TlsContext* context, void* buffer, std::size_t length);
+std::int64_t TlsTransportWrite_nid_no_patch(TlsContext* context, const void* buffer, std::size_t length);
 
 TlsConfig* APS5_VABI tls_config_new_nid_postfix();
 void APS5_VABI tls_config_free_nid_postfix(TlsConfig* config);
