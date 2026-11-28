@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include <algorithm>
 #include <chrono>
@@ -181,6 +182,12 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
         {0, 0, pushOffset, pushBytes},
         ShaderRecompiler::GraphicsCompileContext{program.firstUserSgpr, linked, Graphics::StageMeshConfiguration(graphics.stages, program.binary.stage), graphics.stages.tessellation, {drawParameters.indexAddress, drawParameters.indexCount, drawParameters.indexSize, drawParameters.instanceCount}, program.binary.stage == Stage::Mesh ? meshBarycentrics : std::nullopt, emulateBarycentrics && program.binary.stage == Stage::Fragment}
     };
+    const bool meshShader = request.target.mesh.has_value();
+    const bool forceMeshCompute = meshShader && request.target.meshAsCompute;
+    if (program.binary.stage == Stage::Mesh && Graphics::MeshDrawRunsAsCompute(meshShader, forceMeshCompute, graphics)) {
+        request.target.meshAsCompute = true;
+        request.target.meshWindowBuffer = false;
+    }
     const auto waitedBefore = traceCapSync() || profile ? Graphics::Recorder::ThreadWaitedMs() : 0.0;
     auto invocation = [&] {
         try {

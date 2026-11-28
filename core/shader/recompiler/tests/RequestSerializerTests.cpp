@@ -200,7 +200,18 @@ void VerifyTessellationInstancePatches() {
 
 }
 
+std::vector<std::uint8_t> Version64Bytes(std::vector<std::uint8_t> bytes) {
+    Require(bytes.size() > 17u && bytes[4] == 65u);
+    const auto replay = ShaderRecompiler::RequestSerializer{}.Deserialize(EncodeBase64(bytes));
+    Require(!replay.request.target.meshAsCompute);
+    const std::size_t barycentrics = replay.request.graphics.has_value() && replay.request.graphics->emulateBarycentrics ? 1u : 0u;
+    bytes.erase(bytes.end() - static_cast<std::ptrdiff_t>(1u + barycentrics));
+    bytes[4] = 64u;
+    return bytes;
+}
+
 std::vector<std::uint8_t> Version63Bytes(std::vector<std::uint8_t> bytes) {
+    bytes = Version64Bytes(std::move(bytes));
     Require(bytes.size() > 16u && bytes[4] == 64u);
     const auto replay = ShaderRecompiler::RequestSerializer{}.Deserialize(EncodeBase64(bytes));
     Require(replay.request.context.splitState.empty());
@@ -796,7 +807,7 @@ int VerifyVersion56Compatibility() {
         version40[4] = 40u;
         const auto replay40 = serializer.Deserialize(EncodeBase64(version40));
         Require(!replay40.request.target.float32DenormPreserve && replay40.request.target.float32FlushToZero == !preserve);
-        for (const std::uint8_t unwritten : {58u, 59u, 60u, 61u, 65u}) {
+        for (const std::uint8_t unwritten : {58u, 59u, 60u, 61u, 66u}) {
             auto future = bytes;
             future[4] = unwritten;
             bool futureRejected = false;
@@ -1186,6 +1197,14 @@ int VerifyVersion56Compatibility() {
     }
     request.target.float16WidenNans = false;
     request.target.float16NarrowNans = false;
+    for (const bool spanned : {false, true}) {
+        for (const bool meshAsCompute : {false, true}) {
+            request.target.spannedWaves = spanned;
+            request.target.meshAsCompute = meshAsCompute;
+            const auto replay = serializer.Deserialize(serializer.Serialize(request));
+            Require(replay.request.target.spannedWaves == spanned && replay.request.target.meshAsCompute == meshAsCompute);
+        }
+    }
 
     return 0;
 }
@@ -1248,7 +1267,7 @@ void VerifySingleSampleVersion63() {
             Require(replay.request.target.maxImageArrayLayers == (version >= 57u ? 4097u : 0u) && replay.request.target.fixedPushSlots == (version >= 57u) && replay.request.target.spannedAnySubgroup == (version >= 62u));
         }
     }
-    for (const auto [version, dither] : {std::pair{63u, 5u}, std::pair{65u, 3u}}) {
+    for (const auto [version, dither] : {std::pair{63u, 5u}, std::pair{66u, 3u}}) {
         auto invalid = first;
         invalid[4] = version;
         invalid[ditherByte] = dither;
@@ -1269,7 +1288,7 @@ void VerifySplitState() {
     request.context.splitState = state;
     const auto encoded = serializer.Serialize(request);
     auto bytes = DecodeBase64(encoded);
-    Require(bytes[4] == 64u);
+    Require(bytes[4] == 65u);
     const auto replay = serializer.Deserialize(encoded);
     Require(std::ranges::equal(replay.request.context.splitState, state));
     Require(serializer.Serialize(replay.request) == encoded);
@@ -1284,7 +1303,7 @@ void VerifySplitState() {
         }
         Require(rejected);
     }
-    bytes.resize(bytes.size() - 8u - 4u * state.size());
+    bytes.resize(bytes.size() - 9u - 4u * state.size());
     bytes[4] = 63u;
     Require(serializer.Deserialize(EncodeBase64(bytes)).request.context.splitState.empty());
 }

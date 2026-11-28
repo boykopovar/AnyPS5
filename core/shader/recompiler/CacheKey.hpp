@@ -405,6 +405,7 @@ private:
         append(key, value.spannedShuffleThroughMemory);
         append(key, value.spannedUnreachableStays);
         append(key, value.spannedUnreachableVerify);
+        append(key, value.meshAsCompute);
     }
 };
 

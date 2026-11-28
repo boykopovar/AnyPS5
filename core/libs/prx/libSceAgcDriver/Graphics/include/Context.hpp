@@ -279,6 +279,8 @@ struct Context {
     bool mixedAttachmentSamples = false;
     bool conservativeRasterization = false;
     bool meshWave32 = false;
+    bool computeWave32 = false;
+    std::uint32_t maxComputeSubgroupSize = 0;
     bool pixelWave32 = false;
     VkBuffer emptyBuffer = VK_NULL_HANDLE;
     VkBuffer oversizedBuffer = VK_NULL_HANDLE;
