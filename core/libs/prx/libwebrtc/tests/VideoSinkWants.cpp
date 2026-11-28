@@ -2,6 +2,13 @@
 #include "prx/libc/libc.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 #include <array>
 #include <cstdio>
 #include <cstdlib>
@@ -135,6 +142,48 @@ void TestDestructor() {
     try { _ZN3rtc14VideoSinkWantsD1Ev_nid_postfix(nullptr); }
     catch (const std::invalid_argument&) { threw = true; }
     Require(threw);
+
+#ifdef _WIN32
+    SYSTEM_INFO sys{};
+    GetSystemInfo(&sys);
+    const std::size_t pageSize = sys.dwPageSize;
+    void* page = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(page != nullptr);
+    DWORD oldProtect = 0;
+    Require(VirtualProtect(page, pageSize, PAGE_READONLY, &oldProtect) != 0);
+#else
+    const std::size_t pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED);
+    Require(mprotect(page, pageSize, PROT_READ) == 0);
+#endif
+    auto expectInvalid = [](auto call) {
+        bool caught = false;
+        try { call(); }
+        catch (const std::invalid_argument&) { caught = true; }
+        Require(caught);
+    };
+    WebRtcVideoSinkWants validSource{};
+    expectInvalid([&] { _ZN3rtc14VideoSinkWantsC1Ev_nid_postfix(static_cast<WebRtcVideoSinkWants*>(page)); });
+    expectInvalid([&] { _ZN3rtc14VideoSinkWantsC1ERKS0__nid_postfix(static_cast<WebRtcVideoSinkWants*>(page), &validSource); });
+    expectInvalid([&] { _ZN3rtc14VideoSinkWantsD1Ev_nid_postfix(static_cast<WebRtcVideoSinkWants*>(page)); });
+#ifdef _WIN32
+    Require(VirtualProtect(page, pageSize, PAGE_NOACCESS, &oldProtect) != 0);
+#else
+    Require(mprotect(page, pageSize, PROT_NONE) == 0);
+#endif
+    WebRtcVideoSinkWants dst{};
+    expectInvalid([&] { _ZN3rtc14VideoSinkWantsC1ERKS0__nid_postfix(&dst, static_cast<const WebRtcVideoSinkWants*>(page)); });
+    validSource.resolutionsBegin = static_cast<WebRtcVideoSinkFrameSize*>(page);
+    validSource.resolutionsEnd = validSource.resolutionsBegin + 1;
+    validSource.resolutionsCapacity = validSource.resolutionsEnd;
+    expectInvalid([&] { _ZN3rtc14VideoSinkWantsC1ERKS0__nid_postfix(&dst, &validSource); });
+    Require(allocations.empty());
+#ifdef _WIN32
+    VirtualFree(page, 0, MEM_RELEASE);
+#else
+    munmap(page, pageSize);
+#endif
 }
 
 }

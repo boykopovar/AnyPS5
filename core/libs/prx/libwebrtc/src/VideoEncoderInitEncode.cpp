@@ -41,21 +41,34 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
-#include <cstring>
+#include <cerrno>
 #include <stdexcept>
 
 extern "C" {
 
 int APS5_VABI _ZN6webrtc12VideoEncoder10InitEncodeEPKNS_10VideoCodecEim_nid_postfix(WebRtcVideoEncoder* encoder, const WebRtcVideoCodec* codecSettings, int numberOfCores, std::size_t maxPayloadSize) {
     if (!encoder) throw std::invalid_argument("null VideoEncoder");
-    const unsigned char* vtable;
-    std::memcpy(&vtable, encoder, sizeof(vtable));
-    if (!vtable) throw std::invalid_argument("null VideoEncoder vtable");
     using InitEncode = int (APS5_VABI *)(WebRtcVideoEncoder*, const WebRtcVideoCodec*, const WebRtcVideoEncoderSettings*);
-    InitEncode callback;
-    std::memcpy(&callback, vtable + 4 * sizeof(callback), sizeof(callback));
-    if (!callback) throw std::invalid_argument("null VideoEncoder InitEncode");
+    const unsigned char* vtable = nullptr;
+    InitEncode callback = nullptr;
+    {
+        const int savedErrno = errno;
+        const bool vtableOk = GuestPtr<const unsigned char*>(encoder).CopyIn(vtable);
+        if (!vtableOk) {
+            errno = savedErrno;
+            throw std::invalid_argument("null VideoEncoder");
+        }
+        if (!vtable) {
+            errno = savedErrno;
+            throw std::invalid_argument("null VideoEncoder vtable");
+        }
+        const bool callbackOk = GuestCopyIn_nid_no_patch(&callback, vtable + 4 * sizeof(callback), sizeof(callback));
+        errno = savedErrno;
+        if (!callbackOk || !callback)
+            throw std::invalid_argument("null VideoEncoder InitEncode");
+    }
     const WebRtcVideoEncoderSettings settings{false, numberOfCores, maxPayloadSize, {}, false};
     return callback(encoder, codecSettings, &settings);
 }

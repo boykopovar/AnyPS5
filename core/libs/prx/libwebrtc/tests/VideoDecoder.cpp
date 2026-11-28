@@ -2,6 +2,13 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/GuestStringStorage.hpp"
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -124,6 +131,35 @@ void TestInvalidArgumentsThrow() {
     FakeDecoder empty {nullptr, "unknown", nullptr};
     RequireInvalidArgument([&] { GetDecoderInfo(&info, empty); });
     Require(info.isHardwareAccelerated);
+
+#ifdef _WIN32
+    SYSTEM_INFO sys{};
+    GetSystemInfo(&sys);
+    const std::size_t pageSize = sys.dwPageSize;
+    void* page = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(page != nullptr);
+    DWORD oldProtect = 0;
+    Require(VirtualProtect(page, pageSize, PAGE_READONLY, &oldProtect) != 0);
+#else
+    const std::size_t pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED);
+    Require(mprotect(page, pageSize, PROT_READ) == 0);
+#endif
+    RequireInvalidArgument([&] { GetDecoderInfo(static_cast<WebRtcVideoDecoderInfo*>(page), fake); });
+#ifdef _WIN32
+    Require(VirtualProtect(page, pageSize, PAGE_NOACCESS, &oldProtect) != 0);
+#else
+    Require(mprotect(page, pageSize, PROT_NONE) == 0);
+#endif
+    RequireInvalidArgument([&] { _ZNK6webrtc12VideoDecoder14GetDecoderInfoEv_nid_postfix(&info, static_cast<const WebRtcVideoDecoder*>(page)); });
+    FakeDecoder badName {vtable.data(), static_cast<const char*>(page), nullptr};
+    RequireInvalidArgument([&] { GetDecoderInfo(&info, badName); });
+#ifdef _WIN32
+    VirtualFree(page, 0, MEM_RELEASE);
+#else
+    munmap(page, pageSize);
+#endif
 }
 
 }

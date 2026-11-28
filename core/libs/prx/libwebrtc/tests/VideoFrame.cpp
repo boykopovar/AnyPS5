@@ -1,5 +1,12 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -136,6 +143,34 @@ void TestInvalid() {
     frame.videoFrameBuffer = &broken;
     RequireThrows<std::invalid_argument>([&] { _ZN6webrtc10VideoFrameD1Ev_nid_postfix(&frame); });
     Require(addRefs == 0 && releases == 0);
+
+#ifdef _WIN32
+    SYSTEM_INFO sys{};
+    GetSystemInfo(&sys);
+    const std::size_t pageSize = sys.dwPageSize;
+    void* page = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(page != nullptr);
+    DWORD oldProtect = 0;
+    Require(VirtualProtect(page, pageSize, PAGE_READONLY, &oldProtect) != 0);
+#else
+    const std::size_t pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED);
+    Require(mprotect(page, pageSize, PROT_READ) == 0);
+#endif
+    RequireThrows<std::invalid_argument>([&] { _ZN6webrtc10VideoFrameC1ERKNS_13scoped_refptrINS_16VideoFrameBufferEEEjlNS_13VideoRotationE_nid_postfix(static_cast<WebRtcVideoFrame*>(page), &none, 0, 0, 0); });
+#ifdef _WIN32
+    Require(VirtualProtect(page, pageSize, PAGE_NOACCESS, &oldProtect) != 0);
+#else
+    Require(mprotect(page, pageSize, PROT_NONE) == 0);
+#endif
+    RequireThrows<std::invalid_argument>([&] { _ZN6webrtc10VideoFrameC1ERKNS_13scoped_refptrINS_16VideoFrameBufferEEEjlNS_13VideoRotationE_nid_postfix(&frame, static_cast<void* const*>(page), 0, 0, 0); });
+    RequireThrows<std::invalid_argument>([&] { _ZN6webrtc10VideoFrameD1Ev_nid_postfix(static_cast<WebRtcVideoFrame*>(page)); });
+#ifdef _WIN32
+    VirtualFree(page, 0, MEM_RELEASE);
+#else
+    munmap(page, pageSize);
+#endif
 }
 
 }

@@ -41,17 +41,53 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
+#include <cerrno>
 #include <cstring>
 #include <stdexcept>
+
+namespace {
+
+struct ErrnoGuard {
+    int savedErrno = errno;
+    ~ErrnoGuard() { errno = savedErrno; }
+};
+
+void CopyConfig(WebRtcEchoCanceller3Config* config, const WebRtcEchoCanceller3Config* other, const char* targetMessage, const char* sourceMessage) {
+    if (!config)
+        throw std::invalid_argument(targetMessage);
+    if (!other)
+        throw std::invalid_argument(sourceMessage);
+    ErrnoGuard guard;
+    if (config == other) {
+        if (!GuestWritable_nid_no_patch(config, sizeof(*config)))
+            throw std::invalid_argument(targetMessage);
+        return;
+    }
+    WebRtcEchoCanceller3Config host{};
+    if (!GuestPtr<const WebRtcEchoCanceller3Config>(other).CopyIn(host))
+        throw std::invalid_argument(sourceMessage);
+    if (!GuestPtr<WebRtcEchoCanceller3Config>(config).CopyOut(host))
+        throw std::invalid_argument(targetMessage);
+}
+
+}
 
 extern "C" {
 
 void APS5_VABI _ZN6webrtc20EchoCanceller3ConfigC1Ev_nid_postfix(WebRtcEchoCanceller3Config* config) {
     if (!config)
         throw std::invalid_argument("EchoCanceller3Config constructor requires a config");
-    const auto store = [config]<typename TValue>(unsigned offset, TValue value) {
-        std::memcpy(config->bytes + offset, &value, sizeof(value));
+    WebRtcEchoCanceller3Config host{};
+    {
+        ErrnoGuard guard;
+        if (!GuestWritable_nid_no_patch(config, sizeof(*config)) ||
+            !GuestPtr<const WebRtcEchoCanceller3Config>(config).CopyIn(host))
+            throw std::invalid_argument("EchoCanceller3Config constructor requires a writable config");
+    }
+    const auto store = [&host]<typename TValue>(unsigned offset, TValue value) {
+        std::memcpy(host.bytes + offset, &value, sizeof(value));
     };
     using namespace WebRtcEchoCanceller3ConfigOffset;
     store(BufferingExcessRenderDetectionIntervalBlocks, static_cast<std::size_t>(250));
@@ -188,22 +224,17 @@ void APS5_VABI _ZN6webrtc20EchoCanceller3ConfigC1Ev_nid_postfix(WebRtcEchoCancel
     store(MultiChannelStereoDetectionThreshold, static_cast<float>(0.0f));
     store(MultiChannelStereoDetectionTimeoutThresholdSeconds, static_cast<int>(300));
     store(MultiChannelStereoDetectionHysteresisSeconds, static_cast<float>(2.0f));
+    ErrnoGuard guard;
+    if (!GuestPtr<WebRtcEchoCanceller3Config>(config).CopyOut(host))
+        throw std::invalid_argument("EchoCanceller3Config constructor requires a writable config");
 }
 
 void APS5_VABI _ZN6webrtc20EchoCanceller3ConfigC1ERKS0__nid_postfix(WebRtcEchoCanceller3Config* config, const WebRtcEchoCanceller3Config* other) {
-    if (!config)
-        throw std::invalid_argument("EchoCanceller3Config copy constructor requires a config");
-    if (!other)
-        throw std::invalid_argument("EchoCanceller3Config copy constructor requires a source");
-    std::memmove(config, other, sizeof(WebRtcEchoCanceller3Config));
+    CopyConfig(config, other, "EchoCanceller3Config copy constructor requires a config", "EchoCanceller3Config copy constructor requires a source");
 }
 
 WebRtcEchoCanceller3Config* APS5_VABI _ZN6webrtc20EchoCanceller3ConfigaSERKS0__nid_postfix(WebRtcEchoCanceller3Config* config, const WebRtcEchoCanceller3Config* other) {
-    if (!config)
-        throw std::invalid_argument("EchoCanceller3Config::operator= requires a config");
-    if (!other)
-        throw std::invalid_argument("EchoCanceller3Config::operator= requires a source");
-    std::memmove(config, other, sizeof(WebRtcEchoCanceller3Config));
+    CopyConfig(config, other, "EchoCanceller3Config::operator= requires a config", "EchoCanceller3Config::operator= requires a source");
     return config;
 }
 

@@ -43,10 +43,17 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libc/libc.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
+#include <cerrno>
 #include <stdexcept>
 
 namespace {
+
+struct ErrnoGuard {
+    int savedErrno = errno;
+    ~ErrnoGuard() { errno = savedErrno; }
+};
 
 void APS5_VABI Destroy_nid_no_patch(WebRtcEchoCanceller3Factory*) {
 }
@@ -78,8 +85,12 @@ void APS5_VABI _ZN6webrtc21EchoCanceller3FactoryC1ERKNS_20EchoCanceller3ConfigE_
         throw std::invalid_argument("EchoCanceller3Factory constructor requires a factory");
     if (!config)
         throw std::invalid_argument("EchoCanceller3Factory constructor requires a config");
-    factory->vtable = FactoryVtable + 2;
-    _ZN6webrtc20EchoCanceller3ConfigC1ERKS0__nid_postfix(&factory->config, config);
+    WebRtcEchoCanceller3Factory host{};
+    host.vtable = FactoryVtable + 2;
+    ErrnoGuard guard;
+    if (!GuestPtr<const WebRtcEchoCanceller3Config>(config).CopyIn(host.config) ||
+        !GuestPtr<WebRtcEchoCanceller3Factory>(factory).CopyOut(host))
+        throw std::invalid_argument("EchoCanceller3Factory constructor requires valid guest memory");
 }
 
 }

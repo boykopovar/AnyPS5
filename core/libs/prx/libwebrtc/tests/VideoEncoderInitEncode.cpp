@@ -1,5 +1,12 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 #include <array>
 #include <cstdio>
 #include <cstdlib>
@@ -94,5 +101,24 @@ int main() {
     Vtable vtable{};
     fake.vtable = vtable.data();
     ExpectThrow(reinterpret_cast<WebRtcVideoEncoder*>(&fake));
+#ifdef _WIN32
+    SYSTEM_INFO sys{};
+    GetSystemInfo(&sys);
+    const std::size_t pageSize = sys.dwPageSize;
+    void* page = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_NOACCESS);
+    Require(page != nullptr);
+#else
+    const std::size_t pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* page = mmap(nullptr, pageSize, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED);
+#endif
+    ExpectThrow(static_cast<WebRtcVideoEncoder*>(page));
+    fake.vtable = page;
+    ExpectThrow(reinterpret_cast<WebRtcVideoEncoder*>(&fake));
+#ifdef _WIN32
+    VirtualFree(page, 0, MEM_RELEASE);
+#else
+    munmap(page, pageSize);
+#endif
     return 0;
 }

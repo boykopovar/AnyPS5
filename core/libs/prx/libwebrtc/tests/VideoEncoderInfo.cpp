@@ -3,6 +3,13 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -161,6 +168,28 @@ void TestInvalid() {
 
     _ZN6webrtc12VideoEncoder11EncoderInfoD1Ev_nid_postfix(&info);
     Require(live.empty());
+
+#ifdef _WIN32
+    SYSTEM_INFO sys{};
+    GetSystemInfo(&sys);
+    const std::size_t pageSize = sys.dwPageSize;
+    void* page = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(page != nullptr);
+    DWORD oldProtect = 0;
+    Require(VirtualProtect(page, pageSize, PAGE_READONLY, &oldProtect) != 0);
+#else
+    const std::size_t pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED);
+    Require(mprotect(page, pageSize, PROT_READ) == 0);
+#endif
+    Require(Throws([&] { _ZN6webrtc12VideoEncoder11EncoderInfoC1Ev_nid_postfix(static_cast<WebRtcVideoEncoderInfo*>(page)); }));
+    Require(Throws([&] { _ZN6webrtc12VideoEncoder11EncoderInfoD1Ev_nid_postfix(static_cast<WebRtcVideoEncoderInfo*>(page)); }));
+#ifdef _WIN32
+    VirtualFree(page, 0, MEM_RELEASE);
+#else
+    munmap(page, pageSize);
+#endif
 }
 
 }
