@@ -8,6 +8,7 @@
 #include "SceTypes.hpp"
 #include "prx/libSceSaveDataDialog.native/SaveDataDialog.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 namespace {
 
@@ -64,6 +65,19 @@ int APS5_VABI sceSaveDataDialogGetResult(void* result) {
  constexpr std::size_t writeLen = offsetof(SaveDataDialogResult, user_data) + sizeof(local.user_data);
  if (!CopyInPreservingErrno(&local, result, writeLen)) {
   return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
+ }
+ if (local.dir_name != nullptr) {
+  const std::size_t len = std::strlen(g_dir_name) + 1;
+  const int savedErrno = errno;
+  bool writable = false;
+  {
+   const GuestArena::HostWrite writeDir(local.dir_name, len);
+   writable = writeDir.Open() && GuestWritable_nid_no_patch(local.dir_name, len);
+  }
+  errno = savedErrno;
+  if (!writable) {
+   return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
+  }
  }
  local.mode = g_mode;
  local.result = SAVE_DATA_DIALOG_RESULT_OK;

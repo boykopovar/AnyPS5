@@ -2,8 +2,10 @@
 #include "prx/libSceSaveDataDialog.native/include/Api.hpp"
 #include "prx/libSceSaveDataDialog.native/SaveDataDialog.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <array>
 #include <cerrno>
 #include <cstddef>
 #ifdef _WIN32
@@ -153,6 +155,9 @@ int main() {
         Require(sceSaveDataDialogGetResult(&invalidDirResult) == SAVE_DATA_DIALOG_ERROR_ARG_NULL,
                 "get result with invalid directory name pointer");
         Require(errno == 71, "get result with invalid dir pointer preserved errno");
+        Require(invalidDirResult.mode == 0 && invalidDirResult.result == 0 &&
+                invalidDirResult.button_id == 0 && invalidDirResult.user_data == nullptr,
+                "invalid directory name pointer must leave result unmutated");
         GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
         GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
         SaveDataDialogResult nullDirResult{};
@@ -290,6 +295,97 @@ int main() {
     std::memset(emptySelectionDir.data, 'X', sizeof(emptySelectionDir.data));
     SaveDataDialogResult emptySelectionResult{};
     emptySelectionResult.dir_name = &emptySelectionDir;
+    errno = 71;
+    Require(sceSaveDataDialogGetResult(reinterpret_cast<void*>(0x10)) == SAVE_DATA_DIALOG_ERROR_ARG_NULL, "get result on unmapped pointer");
+    Require(errno == 71, "get result preserved errno on unmapped pointer");
+    SaveDataDialogResult unmappedDirResult{};
+    unmappedDirResult.dir_name = reinterpret_cast<SaveDataDirName*>(0x10);
+    Require(sceSaveDataDialogGetResult(&unmappedDirResult) == SAVE_DATA_DIALOG_ERROR_ARG_NULL, "get result on unmapped dir_name");
+    Require(errno == 71, "get result preserved errno on unmapped dir_name");
+    Require(unmappedDirResult.mode == 0 && unmappedDirResult.result == 0 && unmappedDirResult.button_id == 0 && unmappedDirResult.user_data == nullptr, "refused unmapped dir_name leaves destination result unmutated");
+    if (GuestArena::GuestArenaAvailable_nid_postfix()) {
+        constexpr std::size_t kBlock = 0x10000;
+        constexpr std::size_t kSpan = 2 * kBlock;
+        auto* const watched = static_cast<unsigned char*>(GuestArena::GuestArenaAllocate_nid_postfix(kSpan, kBlock));
+        Require(watched != nullptr, "allocate watched savedata dialog pages");
+#ifdef _WIN32
+        const HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, kSpan, nullptr);
+        Require(section != nullptr, "create watched savedata dialog section");
+        GuestArena::GuestArenaMap_nid_postfix(watched, kSpan, section, 0, PAGE_READWRITE);
+        CloseHandle(section);
+        const bool watchedWrites = GuestArena::GuestArenaWriteWatched_nid_postfix();
+#else
+        GuestArena::GuestArenaCommit_nid_postfix(watched, kSpan, 0x04, kBlock);
+        const bool watchedWrites = GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix();
+        if (watchedWrites) {
+            GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(watched, kSpan);
+        }
+#endif
+        const auto collectDirty = [&](void* base, std::size_t bytes) -> bool {
+            if (!watchedWrites) {
+                return true;
+            }
+#ifdef _WIN32
+            bool any = false;
+            for (;;) {
+                std::array<void*, 64> pages{};
+                std::size_t count = pages.size();
+                Require(GuestArena::GuestArenaCollectWrites_nid_postfix(reinterpret_cast<std::uintptr_t>(base), bytes, pages.data(), &count, true),
+                        "collect watched savedata dialog writes");
+                if (count != 0) {
+                    any = true;
+                }
+                if (count < pages.size()) {
+                    break;
+                }
+            }
+            return any;
+#else
+            bool dirty = false;
+            Require(GuestWriteWatch::GuestWriteWatchCollect_nid_postfix(reinterpret_cast<std::uintptr_t>(base), bytes,
+                [](void* context, std::uintptr_t, std::uintptr_t) { *static_cast<bool*>(context) = true; }, &dirty),
+                "collect watched savedata dialog writes");
+            return dirty;
+#endif
+        };
+        auto* const watchedResult = reinterpret_cast<SaveDataDialogResult*>(watched);
+        auto* const watchedDir = reinterpret_cast<SaveDataDirName*>(watched + kBlock);
+        std::memset(watchedResult, 0, sizeof(*watchedResult));
+        std::memset(watchedDir->data, 'Y', sizeof(watchedDir->data));
+        watchedResult->dir_name = watchedDir;
+        if (watchedWrites) {
+            static_cast<void>(collectDirty(watched, kSpan));
+            Require(!collectDirty(watched, kSpan), "clear watched savedata dialog writes");
+#ifdef _WIN32
+            MEMORY_BASIC_INFORMATION mbi{};
+            Require(VirtualQuery(watchedResult, &mbi, sizeof(mbi)) == sizeof(mbi) && mbi.Protect == PAGE_READONLY, "arm watched result page");
+            Require(VirtualQuery(watchedDir, &mbi, sizeof(mbi)) == sizeof(mbi) && mbi.Protect == PAGE_READONLY, "arm watched dir page");
+#endif
+        }
+        errno = 71;
+        Require(sceSaveDataDialogGetResult(watchedResult) == 0, "get result into write-watched result and dir_name");
+        Require(errno == 71, "write-watched get result preserved errno");
+        Require(watchedDir->data[0] == '\0' && watchedResult->mode == emptySelectionParam.mode &&
+                watchedResult->result == SAVE_DATA_DIALOG_RESULT_OK, "write-watched result populated cleanly");
+        Require(collectDirty(watched, kBlock), "write-watched result did not mark page dirty");
+        Require(collectDirty(watched + kBlock, kBlock), "write-watched dir_name did not mark page dirty");
+
+        GuestArena::GuestArenaSetProtection_nid_postfix(reinterpret_cast<std::uintptr_t>(watchedDir), kBlock, 0x02);
+        SaveDataDialogResult roDirResult{};
+        roDirResult.dir_name = watchedDir;
+        errno = 71;
+        Require(sceSaveDataDialogGetResult(&roDirResult) == SAVE_DATA_DIALOG_ERROR_ARG_NULL, "refuse read-only dir_name");
+        Require(errno == 71, "read-only dir_name preserved errno");
+        Require(roDirResult.mode == 0 && roDirResult.result == 0 && roDirResult.button_id == 0 && roDirResult.user_data == nullptr, "read-only dir_name leaves result unmutated");
+        GuestArena::GuestArenaSetProtection_nid_postfix(reinterpret_cast<std::uintptr_t>(watchedDir), kBlock, 0x04);
+#ifndef _WIN32
+        if (watchedWrites) {
+            GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(watched, kSpan);
+        }
+#endif
+        GuestArena::GuestArenaReset_nid_postfix(watched, kSpan);
+        GuestArena::GuestArenaRelease_nid_postfix(watched, kSpan);
+    }
     Require(sceSaveDataDialogGetResult(&emptySelectionResult) == 0, "read empty selection result");
     Require(emptySelectionDir.data[0] == '\0', "empty selection directory name must be null-terminated");
     Require(emptySelectionResult.mode == emptySelectionParam.mode &&
