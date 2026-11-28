@@ -21,6 +21,7 @@ Uds::Owned<NpUniversalDataSystemEventPropertyArray>& arrays() {
 extern "C" {
 
 int APS5_VABI sceNpUniversalDataSystemCreateEventPropertyArray(NpUniversalDataSystemEventPropertyArray** new_array) {
+    if (!Uds::SystemInitialized()) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NOT_INITIALIZED;
     if (new_array == nullptr) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
     auto* created = arrays().Adopt(std::make_unique<NpUniversalDataSystemEventPropertyArray>());
     const bool copied = GuestCopyOut_nid_no_patch(new_array, &created, sizeof(created));
@@ -32,6 +33,7 @@ int APS5_VABI sceNpUniversalDataSystemCreateEventPropertyArray(NpUniversalDataSy
 }
 
 int APS5_VABI sceNpUniversalDataSystemDestroyEventPropertyArray(NpUniversalDataSystemEventPropertyArray* array) {
+    if (!Uds::SystemInitialized()) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NOT_INITIALIZED;
     arrays().Release(array);
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
@@ -39,6 +41,7 @@ int APS5_VABI sceNpUniversalDataSystemDestroyEventPropertyArray(NpUniversalDataS
 int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetString(
     NpUniversalDataSystemEventPropertyArray* array, const char* value)
 {
+    if (!Uds::SystemInitialized()) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NOT_INITIALIZED;
     if (array == nullptr) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_ARRAY;
     if (value == nullptr) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_VALUE;
     array->Add(std::string(value));
@@ -48,6 +51,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetString(
 int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetInt32(
     NpUniversalDataSystemEventPropertyArray* array, int32_t value)
 {
+    if (!Uds::SystemInitialized()) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NOT_INITIALIZED;
     if (array == nullptr) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_ARRAY;
     array->Add(value);
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
@@ -56,6 +60,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetInt32(
 int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetUInt32(
     NpUniversalDataSystemEventPropertyArray* array, uint32_t value)
 {
+    if (!Uds::SystemInitialized()) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NOT_INITIALIZED;
     if (array == nullptr) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_ARRAY;
     array->Add(value);
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
@@ -64,6 +69,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetUInt32(
 int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetInt64(
     NpUniversalDataSystemEventPropertyArray* array, int64_t value)
 {
+    if (!Uds::SystemInitialized()) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NOT_INITIALIZED;
     if (array == nullptr) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_ARRAY;
     array->Add(value);
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
@@ -72,6 +78,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetInt64(
 int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetUInt64(
     NpUniversalDataSystemEventPropertyArray* array, uint64_t value)
 {
+    if (!Uds::SystemInitialized()) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NOT_INITIALIZED;
     if (array == nullptr) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_ARRAY;
     array->Add(value);
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
@@ -80,6 +87,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetUInt64(
 int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetFloat32(
     NpUniversalDataSystemEventPropertyArray* array, float value)
 {
+    if (!Uds::SystemInitialized()) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NOT_INITIALIZED;
     if (array == nullptr) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_ARRAY;
     array->Add(value);
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
@@ -88,6 +96,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetFloat32(
 int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetFloat64(
 NpUniversalDataSystemEventPropertyArray* array, double value)
 {
+    if (!Uds::SystemInitialized()) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NOT_INITIALIZED;
     if (array == nullptr) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_ARRAY;
     array->Add(value);
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
@@ -96,6 +105,7 @@ NpUniversalDataSystemEventPropertyArray* array, double value)
 int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetBool(
     NpUniversalDataSystemEventPropertyArray* array, bool value)
 {
+    if (!Uds::SystemInitialized()) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NOT_INITIALIZED;
     if (array == nullptr) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_ARRAY;
     array->Add(value);
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
@@ -104,6 +114,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetBool(
 int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetBinary(
     NpUniversalDataSystemEventPropertyArray* array, const void* value, size_t value_size)
 {
+    if (!Uds::SystemInitialized()) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NOT_INITIALIZED;
     if (array == nullptr) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_ARRAY;
     if (value == nullptr) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_VALUE;
     const auto* bytes = static_cast<const std::uint8_t*>(value);
@@ -116,6 +127,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetObject(
     const NpUniversalDataSystemEventPropertyObject* value,
     NpUniversalDataSystemEventPropertyObject** value_ptr)
 {
+    if (!Uds::SystemInitialized()) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NOT_INITIALIZED;
     if (array == nullptr) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_ARRAY;
     auto child = std::make_shared<NpUniversalDataSystemEventPropertyObject>(value != nullptr ? value->Clone() : NpUniversalDataSystemEventPropertyObject{});
     if (value_ptr != nullptr) {
@@ -132,6 +144,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetArray(
     const NpUniversalDataSystemEventPropertyArray* value,
     NpUniversalDataSystemEventPropertyArray** value_ptr)
 {
+    if (!Uds::SystemInitialized()) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NOT_INITIALIZED;
     if (array == nullptr) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_ARRAY;
     auto child = std::make_shared<NpUniversalDataSystemEventPropertyArray>(value != nullptr ? value->Clone() : NpUniversalDataSystemEventPropertyArray{});
     if (value_ptr != nullptr) {

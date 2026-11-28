@@ -440,6 +440,8 @@ void testPostingIgnoredEvents() {
 
 int main() {
     try {
+        const NpUniversalDataSystemInitParam init{sizeof(NpUniversalDataSystemInitParam), 0x10000};
+        call(sceNpUniversalDataSystemInitialize(&init), "UDS was not initialized");
         testObjectSetters();
         testNestedValues();
         testEvents();
