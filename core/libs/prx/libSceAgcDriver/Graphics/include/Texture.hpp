@@ -675,6 +675,9 @@ private:
     static const char* BaselineMissText(BaselineMiss miss);
     BaselineMiss baselineMiss(std::uint32_t unit) const;
     bool unitChangedOutsideWatch(std::uint32_t unit) const;
+    enum class StoreDiscard : std::uint8_t { None, Partial, Whole };
+    std::uint64_t writableBytes(std::span<const std::pair<std::uint64_t, std::uint64_t>> writable, std::uint32_t unit) const;
+    std::vector<StoreDiscard> discardedStores(std::uint32_t first, std::uint32_t last) const;
     std::array<std::uint64_t, 2> unitContentHash(std::uint32_t unit) const;
     void hashBeforeUnwatch(std::uint64_t address, std::size_t bytes, bool proven);
     void forgetUnwatchHash(std::uint32_t first, std::uint32_t count);
@@ -1026,6 +1029,8 @@ private:
     std::vector<bool> layerOriginal;
     std::vector<bool> layerUnmapped;
     std::atomic<bool> anyUnmapped{false};
+    UnitFlags discardingUnits;
+    std::atomic<bool> storesMayDiscard{false};
     std::map<std::uint64_t, std::uint64_t> keptAtUnwatch;
     std::shared_ptr<Buffer> savedBytes;
     std::vector<std::uint64_t> savedTicket;

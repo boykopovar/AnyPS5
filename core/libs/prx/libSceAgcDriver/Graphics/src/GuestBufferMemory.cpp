@@ -5618,6 +5618,20 @@ bool RegisteredReadableCovers(std::uint64_t address, std::size_t bytes, std::vec
     return true;
 }
 
+bool RegisteredAroundUnreadable(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
+    std::vector<std::uint64_t> readable;
+    std::vector<std::uint64_t> unreadable;
+    for (const auto& [begin, end] : ranges) {
+        for (auto at = begin; at < end;) {
+            const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(static_cast<std::uintptr_t>(at), false);
+            if (range == nullptr || range->bytes == 0 || range->address + range->bytes <= at) return false;
+            (range->HostReadable() ? readable : unreadable).push_back(range->allocationAddress);
+            at = range->address + range->bytes;
+        }
+    }
+    return !readable.empty() && std::all_of(unreadable.begin(), unreadable.end(), [&](std::uint64_t allocation) { return std::find(readable.begin(), readable.end(), allocation) != readable.end(); });
+}
+
 std::uint64_t RegisteredReadableEnd(std::uint64_t address) {
     if (address == std::numeric_limits<std::uint64_t>::max()) return 0;
     const auto lease = GuestAllocations::GuestAllocationsAcquireRegistered_nid_postfix();
