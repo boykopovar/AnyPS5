@@ -195,6 +195,7 @@ struct RegisteredPiece {
 // registry lease): a storage image whose memory was freed or re-registered has nothing to store to.
 bool RegisteredReadableCovers(std::uint64_t address, std::size_t bytes, std::vector<RegisteredPiece>* pieces = nullptr);
 std::uint64_t RegisteredReadableEnd(std::uint64_t address);
+std::uint64_t RegisteredReadableRunEnd(std::uint64_t address);
 
 // A persistent device copy of one registered range of the main guest image (which cannot be host
 // imported); see GuestBufferMemory.cpp.
