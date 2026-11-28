@@ -1097,6 +1097,7 @@ DecodedColorFormat DecodeColorFormatRaw(std::uint32_t format, std::uint32_t numb
         throw std::runtime_error("AGC graphics: unsupported color format " + std::to_string(format) + " number type " + std::to_string(number) + " component swap " + std::to_string(swap));
     };
     const bool alternate = swap == 1;
+    const auto rgbaMapping = static_cast<std::uint8_t>(alternate ? 0xc6u : swap == 2 ? 0x1bu : swap == 3 ? 0x93u : 0xe4u);
     const auto single = [&](VkFormat vkFormat, std::uint32_t bytes) { return DecodedColorFormat{vkFormat, bytes, static_cast<std::uint8_t>((0xe4u & ~3u) | swap)}; };
     if (swap > 1 && format != 1 && format != 2 && format != 4 && format != 7 && format != 10 && format != 12 && format != 16 && format != 19) return fail();
     switch (format) {
@@ -1160,14 +1161,12 @@ DecodedColorFormat DecodeColorFormatRaw(std::uint32_t format, std::uint32_t numb
             if (number == floating) return {VK_FORMAT_R32G32_SFLOAT, 8};
             if (number == uint) return {VK_FORMAT_R32G32_UINT, 8};
             return fail();
-        case 12: {
-            const auto reversed = static_cast<std::uint8_t>(alternate ? 0xc6u : swap == 2 ? 0x1bu : swap == 3 ? 0x93u : 0xe4u);
-            if (number == floating) return {VK_FORMAT_R16G16B16A16_SFLOAT, 8, reversed};
-            if (number == unorm) return {VK_FORMAT_R16G16B16A16_UNORM, 8, reversed};
-            if (number == snorm) return {VK_FORMAT_R16G16B16A16_SNORM, 8, reversed};
-            if (number == uint) return {VK_FORMAT_R16G16B16A16_UINT, 8, reversed};
+        case 12:
+            if (number == floating) return {VK_FORMAT_R16G16B16A16_SFLOAT, 8, rgbaMapping};
+            if (number == unorm) return {VK_FORMAT_R16G16B16A16_UNORM, 8, rgbaMapping};
+            if (number == snorm) return {VK_FORMAT_R16G16B16A16_SNORM, 8, rgbaMapping};
+            if (number == uint) return {VK_FORMAT_R16G16B16A16_UINT, 8, rgbaMapping};
             return fail();
-        }
         case 14:
             if (swap != 0) return fail();
             if (number == floating) return {VK_FORMAT_R32G32B32A32_SFLOAT, 16};
@@ -1180,8 +1179,8 @@ DecodedColorFormat DecodeColorFormatRaw(std::uint32_t format, std::uint32_t numb
             if (swap != 0 || number != unorm) return fail();
             return {VK_FORMAT_A1R5G5B5_UNORM_PACK16, 2, 0xc6u};
         case 19:
-            if (swap != 2 || number != unorm) return fail();
-            return {VK_FORMAT_R16_UINT, 2, 0x1bu, ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4};
+            if (swap > 3 || number != unorm) return fail();
+            return {VK_FORMAT_R16_UINT, 2, rgbaMapping, ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4};
         default:
             return fail();
     }
@@ -2088,9 +2087,24 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         }
         state.blendEnable = ((blend >> 30u) & 1u) != 0 && (read(cx, 0x31c + slot * 0xfu) & 0x10000u) == 0;
         Require(!state.blendEnable || !color.uintExport, "blending into an unsigned integer target is unsupported");
+        const bool nibbles = color.packing == ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4;
+        const bool opaqueDestination = state.blendEnable && (read(cx, 0x31d + slot * 0xfu) & 0x20000u) != 0;
+        const auto alpha = (blend & 0x20000000u) != 0 ? blend >> 16u : blend;
+        if (state.blendEnable && nibbles) {
+            const auto replaces = [opaqueDestination](std::uint32_t equation, auto opaqueFactor) {
+                auto source = blendFactor(equation & 0x1fu);
+                auto destination = blendFactor((equation >> 8u) & 0x1fu);
+                if (opaqueDestination) {
+                    source = opaqueFactor(source);
+                    destination = opaqueFactor(destination);
+                }
+                return source == VK_BLEND_FACTOR_ONE && destination == VK_BLEND_FACTOR_ZERO && blendOp((equation >> 5u) & 7u) == VK_BLEND_OP_ADD;
+            };
+            if (((exportedMask & 7u) == 0u || replaces(blend, colorFactorWithOpaqueDestination)) &&
+                ((exportedMask & 8u) == 0u || replaces(alpha, alphaFactorWithOpaqueDestination))) state.blendEnable = VK_FALSE;
+        }
         const bool reversed = mapping == 0x1bu || mapping == 0x93u;
         if (state.blendEnable) {
-            const bool opaqueDestination = (read(cx, 0x31d + slot * 0xfu) & 0x20000u) != 0;
             const auto recordBlendConstant = [&](std::uint32_t channel, float value) {
                 Require((requiredBlendMask & (1u << channel)) == 0 || requiredBlendConstants[channel] == value, "color targets require conflicting blend constants after component swap");
                 requiredBlendConstants[channel] = value;
@@ -2113,7 +2127,6 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
                 state.srcColorBlendFactor = blendFactor(blend & 0x1fu);
                 state.dstColorBlendFactor = blendFactor((blend >> 8u) & 0x1fu);
                 state.colorBlendOp = blendOp((blend >> 5u) & 7u);
-                const auto alpha = (blend & 0x20000000u) != 0 ? blend >> 16u : blend;
                 state.srcAlphaBlendFactor = blendFactor(alpha & 0x1fu);
                 state.dstAlphaBlendFactor = blendFactor((alpha >> 8u) & 0x1fu);
                 state.alphaBlendOp = blendOp((alpha >> 5u) & 7u);
@@ -2155,14 +2168,13 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
             const std::string packed = std::string(color.packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 ? "an " : "a ") + PackedColorTargetName(color.packing);
             const auto slotExport = (exportFormat >> (4u * color.exportIndex)) & 0xfu;
             if (slotExport == 5 || slotExport == 6) throw std::runtime_error("AGC graphics: color export format " + std::to_string(slotExport) + " into " + packed + " target is unsupported");
-            if (state.srcColorBlendFactor == VK_BLEND_FACTOR_ONE && state.dstColorBlendFactor == VK_BLEND_FACTOR_ZERO && state.colorBlendOp == VK_BLEND_OP_ADD) state.blendEnable = VK_FALSE;
+            if (!nibbles && state.srcColorBlendFactor == VK_BLEND_FACTOR_ONE && state.dstColorBlendFactor == VK_BLEND_FACTOR_ZERO && state.colorBlendOp == VK_BLEND_OP_ADD) state.blendEnable = VK_FALSE;
             const bool floating = color.packing == ShaderRecompiler::ColorExportPacking::Float11_11_10;
             if (floating && state.blendEnable) {
                 color.mergeBlend = PackedBlendControl(blend);
                 state.blendEnable = VK_FALSE;
             }
             Require(!state.blendEnable, "blending into " + packed + " color target is unsupported");
-            const bool nibbles = color.packing == ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4;
             const std::uint32_t packedMask = nibbles ? 0xfu : 7u;
             Require(nibbles || floating || (exportedMask & packedMask) == packedMask, "partial writes of " + packed + " color target are unsupported");
             if ((exportedMask & packedMask) != packedMask || color.mergeBlend != 0u) {

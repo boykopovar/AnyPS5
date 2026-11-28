@@ -12608,6 +12608,51 @@ void unorm4_4_4_4TargetTests() {
     const auto packings = AgcDriver::Graphics::ExportPackings(state);
     Require(packings[0] == ColorExportPacking::Unorm4_4_4_4 && std::all_of(packings.begin() + 1, packings.end(), [](ColorExportPacking packing) { return packing == ColorExportPacking::None; }), "export 0 did not carry the 4_4_4_4 unorm packing");
     Require(state.color.partialWriteMask == 0u && state.blends[0].colorWriteMask == 0xfu && AgcDriver::Graphics::ExportTargetMerges(state).empty(), "a full write of a 4_4_4_4 unorm target merged into the target");
+
+    {
+        auto blending = queue;
+        blending.context[0x31c] = (blending.context.at(0x31c) & ~((3u << 11u) | 0x10000u)) | (1u << 11u);
+        blending.context[0x8e] = 0xfu;
+        blending.context[0x1e0] = 0x61010001u;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(blending); }, "blending into a 4_4_4_4 unorm color target is unsupported");
+
+        blending.context[0x8e] = 7u;
+        const auto rgbOnly = AgcDriver::Graphics::DecodeState(blending);
+        Require(!rgbOnly.blend.blendEnable && rgbOnly.color.partialWriteMask == 0x0fffu, "a 4_4_4_4 write that excludes alpha must replace RGB and preserve the alpha nibble");
+
+        blending.context[0x8e] = 0xfu;
+        blending.context[0x1e0] = 0x60010001u;
+        Require(!AgcDriver::Graphics::DecodeState(blending).blend.blendEnable, "a 4_4_4_4 replacement equation must disable blending");
+
+        blending.context[0x31d] = 0x20000u;
+        blending.context[0x1e0] = 0x67060001u;
+        Require(!AgcDriver::Graphics::DecodeState(blending).blend.blendEnable, "a 4_4_4_4 replacement equation with an opaque destination must disable blending");
+    }
+
+    {
+        auto alphaOnly = queue;
+        alphaOnly.context[0x31c] &= ~((3u << 11u) | 0x10000u);
+        alphaOnly.context[0x8e] = 8u;
+        alphaOnly.context[0x1e0] = 0x60010504u;
+        const auto result = AgcDriver::Graphics::DecodeState(alphaOnly);
+        Require(!result.blend.blendEnable && result.color.partialWriteMask == 0xf000u, "an alpha-only 4_4_4_4 replacement must ignore the RGB blend equation");
+
+        alphaOnly.context[0x8e] = 0xfu;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(alphaOnly); }, "blending into a 4_4_4_4 unorm color target is unsupported");
+    }
+
+    {
+        auto replacement = queue;
+        replacement.context[0x1e0] = 0x40000001u;
+        for (const auto& [swap, mapping] : {std::pair{2u, 0x1bu}, std::pair{3u, 0x93u}}) {
+            replacement.context[0x31c] = (replacement.context.at(0x31c) & ~((3u << 11u) | 0x10000u)) | (swap << 11u);
+            const auto result = AgcDriver::Graphics::DecodeState(replacement);
+            Require(!result.blend.blendEnable && result.color.componentMapping == mapping, "a reversed 4_4_4_4 replacement must keep its component order and bypass blending");
+        }
+        replacement.context[0x1e0] = 0x61010001u;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(replacement); }, "blending into a color target with a reversed component order");
+    }
+
     auto changed = queue;
     for (const auto& [targetMask, wordMask] : {std::pair{1u, 0xf000u}, std::pair{7u, 0xfff0u}, std::pair{8u, 0x000fu}, std::pair{0xau, 0x0f0fu}}) {
         changed.context[0x8e] = targetMask;
@@ -12898,10 +12943,17 @@ void unorm4_4_4_4TargetTests() {
         unmergedCounting.context.pixel->targetMerges = {};
         static_cast<void>(ShaderRecompiler::Recompile(unmergedCounting));
     }
-    for (const auto& [number, swap] : {std::pair{1u, 2u}, std::pair{4u, 2u}, std::pair{0u, 0u}, std::pair{0u, 1u}, std::pair{0u, 3u}}) {
+    for (const auto& [swap, redMask] : {std::pair{0u, 0x000fu}, std::pair{1u, 0x0f00u}, std::pair{2u, 0xf000u}, std::pair{3u, 0x00f0u}}) {
         changed = queue;
-        changed.context[0x31c] = (changed.context[0x31c] & ~((7u << 8u) | (3u << 11u))) | (number << 8u) | (swap << 11u);
-        expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "unsupported color format 19 number type " + std::to_string(number) + " component swap " + std::to_string(swap));
+        changed.context[0x31c] = (changed.context[0x31c] & ~(3u << 11u)) | (swap << 11u);
+        changed.context[0x8e] = 1u;
+        const auto partial = AgcDriver::Graphics::DecodeState(changed);
+        Require(partial.color.partialWriteMask == redMask, "a red-only 4_4_4_4 write selected the wrong nibble for component swap " + std::to_string(swap));
+    }
+    for (const auto number : {1u, 4u}) {
+        changed = queue;
+        changed.context[0x31c] |= number << 8u;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "unsupported color format 19 number type " + std::to_string(number) + " component swap 2");
     }
     changed = queue;
     changed.context[0x31c] |= 0x10000000u;
