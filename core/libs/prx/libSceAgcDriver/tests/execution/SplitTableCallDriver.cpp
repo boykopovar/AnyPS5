@@ -16,6 +16,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -120,9 +121,16 @@ void Dispatch(std::uint64_t code, const std::vector<std::uint32_t>& userData) {
 
 int main(int argc, char** argv) {
     try {
-        Require(argc <= 2 && (argc == 1 || std::string_view(argv[1]) == "--cpu-rounds"), "usage: [--cpu-rounds]");
+        bool cpuRounds = false;
+        bool typedLoads = false;
+        for (int argument = 1; argument < argc; ++argument) {
+            const std::string_view option(argv[argument]);
+            if (option == "--cpu-rounds") cpuRounds = true;
+            else if (option == "--typed-loads") typedLoads = true;
+            else throw std::runtime_error("usage: [--cpu-rounds] [--typed-loads]");
+        }
         setenv("APS5_SPLIT_TABLE_CALLS", "1", 1);
-        if (argc == 2) setenv("APS5_SPLIT_CPU_ROUNDS", "1", 1);
+        if (cpuRounds) setenv("APS5_SPLIT_CPU_ROUNDS", "1", 1);
         if (!OpenVulkanTestDevice()) return VulkanTestSkipped;
         auto* block = NewBlock();
         const auto caller = LoopCaller();
@@ -130,7 +138,11 @@ int main(int argc, char** argv) {
         std::array<std::uint64_t, 3> targets{};
         for (std::size_t index = 0; index < Callees().size(); ++index) {
             const auto offset = CalleeOffset + index * 0x100u;
-            std::memcpy(block + offset, Callees()[index].code.data(), Callees()[index].code.size() * sizeof(std::uint32_t));
+            auto code = Callees()[index].code;
+            if (typedLoads && index < 2u) {
+                code.insert(code.begin(), {0xbe8303ffu, index == 0u ? 0x91016facu : 0xd1016facu, 0xe0301000u, 0x80000102u, 0xbf8c3f70u, 0xbe8303ffu, 0x31016facu});
+            }
+            std::memcpy(block + offset, code.data(), code.size() * sizeof(std::uint32_t));
             targets[index] = Address(block + offset);
         }
         auto* input = reinterpret_cast<std::uint32_t*>(block + InputOffset);
@@ -161,7 +173,7 @@ int main(int argc, char** argv) {
             }
         }
         AgcDriverShutdown_nid_postfix();
-        std::puts("split table call driver test passed");
+        std::puts(typedLoads ? "split table call driver typed-load test passed" : "split table call driver test passed");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

@@ -33,7 +33,8 @@ static_assert(PipelineSpecialization::GatherLodBiasBase + ShaderInfo::MaxSampler
 static_assert(PipelineSpecialization::GatherImageMinLodBase + ShaderInfo::MaxImages <= PipelineSpecialization::FmaskFormatBase);
 static_assert(PipelineSpecialization::FmaskFormatBase + ShaderInfo::MaxImages <= PipelineSpecialization::VolumeGatherBase);
 static_assert(PipelineSpecialization::VolumeGatherBase + ShaderInfo::MaxImages <= PipelineSpecialization::GatherImageShapeBase);
-static_assert(PipelineSpecialization::GatherImageShapeBase + ShaderInfo::MaxImages <= PipelineSpecialization::ImageComponentBase);
+static_assert(PipelineSpecialization::GatherImageShapeBase + ShaderInfo::MaxImages <= PipelineSpecialization::BufferKeepsDestinationBase);
+static_assert(PipelineSpecialization::BufferKeepsDestinationBase + PipelineSpecialization::ImageBase / PipelineSpecialization::BufferWords <= PipelineSpecialization::ImageComponentBase);
 static_assert(PipelineSpecialization::ImageComponentBase + ShaderInfo::MaxImages <= PipelineSpecialization::NormalizedImageBase);
 static_assert(PipelineSpecialization::NormalizedImageBase + ShaderInfo::MaxImages <= PipelineSpecialization::D16TowardZeroBase);
 
@@ -532,6 +533,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
             plan.specialization.push_back({first + 2u, fields.tail});
             plan.specialization.push_back({first + 3u, misalignment});
         }
+        if (buffer.typedLoads) plan.specialization.push_back({PipelineSpecialization::BufferKeepsDestinationBase + index, index < snapshot.keepsDestination.size() ? snapshot.keepsDestination[index] : 0u});
         if (buffer.formattedReadMask != 0u) {
             for (std::uint32_t component = 0; component < 4u; ++component) {
                 if ((buffer.formattedReadMask & (1u << component)) == 0u) continue;

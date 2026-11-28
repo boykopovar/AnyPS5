@@ -893,6 +893,10 @@ void ReportPreparedAtUse(const ShaderSnapshot& snapshot, const ShaderRecompiler:
         APS5_LOG_OUT_DEBUG("Shader 0x%llx samples a 1D array past maxImageArrayLayers; preparing its layer-row variant at use", static_cast<unsigned long long>(request.shader.codeAddress));
         return;
     }
+    if (request.context.typedBufferLoads) {
+        APS5_LOG_OUT_DEBUG("Shader 0x%llx loads through a TYPE 2 or 3 buffer descriptor; preparing its typed-buffer variant at use", static_cast<unsigned long long>(request.shader.codeAddress));
+        return;
+    }
     if (snapshot.codeAddress == NullPixelProgramAddress() && request.shader.stage == ShaderRecompiler::ShaderStage::Fragment && request.context.waveSize == 32u) {
         APS5_LOG_ERR("The null pixel program has no wave%u artifact for this draw; preparing it at draw", request.context.waveSize);
         return;
@@ -1372,6 +1376,7 @@ struct SplitTableCallParts {
     std::mutex mutex;
     std::vector<std::shared_ptr<const ShaderRecompiler::SourceHandle>> handles;
     std::vector<std::pair<bool, bool>> samples;
+    std::vector<char> typedBufferLoads;
 };
 
 namespace {
@@ -1482,6 +1487,7 @@ std::shared_ptr<SplitTableCallParts> SplitTableCallPartsFor(const ShaderRecompil
     parts->vectorCount = built.stateVectors;
     parts->handles.resize(parts->programs.size());
     parts->samples.resize(parts->programs.size());
+    parts->typedBufferLoads.resize(parts->programs.size(), 0);
     std::lock_guard lock(mutex);
     if (known.size() >= 256u) known.clear();
     return known.emplace(std::move(key), std::move(parts)).first->second;
@@ -1517,23 +1523,30 @@ ShaderRecompiler::PreparedShaderInvocation SplitTableCallPartInvocation(SplitTab
     source.shader.code = parts.programs[part].code;
     source.context.splitState = parts.programs[part].plan;
     source.context.linkedCallFallbacks = {};
-    std::shared_ptr<const ShaderRecompiler::SourceHandle> handle;
-    {
-        std::lock_guard lock(parts.mutex);
-        source.context.convertedSamples = parts.samples[part].first;
-        source.context.layerRowSamples = parts.samples[part].second;
-        handle = parts.handles[part];
+    while (true) {
+        std::shared_ptr<const ShaderRecompiler::SourceHandle> handle;
+        {
+            std::lock_guard lock(parts.mutex);
+            source.context.convertedSamples = parts.samples[part].first;
+            source.context.layerRowSamples = parts.samples[part].second;
+            source.context.typedBufferLoads = parts.typedBufferLoads[part] != 0;
+            handle = parts.handles[part];
+        }
+        if (handle == nullptr) {
+            auto prepared = PrepareShaderWithDiagnostics(source);
+            std::lock_guard lock(parts.mutex);
+            if (source.context.convertedSamples != parts.samples[part].first ||
+                source.context.layerRowSamples != parts.samples[part].second ||
+                source.context.typedBufferLoads != (parts.typedBufferLoads[part] != 0)) continue;
+            if (parts.handles[part] == nullptr) parts.handles[part] = std::move(prepared);
+            handle = parts.handles[part];
+        }
+        auto invocationRequest = source;
+        invocationRequest.shader.code = ShaderRecompiler::GetPreparedCode(*handle);
+        auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(invocationRequest, handle);
+        if (!invocation.has_value()) throw std::runtime_error("AGC driver: a split table call part does not match its prepared shader");
+        return std::move(*invocation);
     }
-    if (handle == nullptr) {
-        handle = PrepareShaderWithDiagnostics(source);
-        std::lock_guard lock(parts.mutex);
-        parts.handles[part] = handle;
-    }
-    auto invocationRequest = source;
-    invocationRequest.shader.code = ShaderRecompiler::GetPreparedCode(*handle);
-    auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(invocationRequest, handle);
-    if (!invocation.has_value()) throw std::runtime_error("AGC driver: a split table call part does not match its prepared shader");
-    return std::move(*invocation);
 }
 
 constexpr std::size_t ParallelStackBytes = 64u << 20u;
@@ -1596,14 +1609,25 @@ SplitTableCallPart CompileSplitTableCallPart(ShaderMemory& memory, SplitTableCal
             return {capture, invocation.Materialize(*capture)};
         } catch (const ShaderRecompiler::ConvertedSampleRequired&) {
             std::lock_guard lock(parts.mutex);
-            if (parts.samples[part].first) throw;
-            parts.samples[part].first = true;
-            parts.handles[part] = nullptr;
+            if (invocation.Request().context.convertedSamples) throw;
+            if (!parts.samples[part].first) {
+                parts.samples[part].first = true;
+                parts.handles[part] = nullptr;
+            }
         } catch (const ShaderRecompiler::LayerRowSamplesRequired&) {
             std::lock_guard lock(parts.mutex);
-            if (parts.samples[part].second) throw;
-            parts.samples[part].second = true;
-            parts.handles[part] = nullptr;
+            if (invocation.Request().context.layerRowSamples) throw;
+            if (!parts.samples[part].second) {
+                parts.samples[part].second = true;
+                parts.handles[part] = nullptr;
+            }
+        } catch (const ShaderRecompiler::TypedBufferLoadsRequired&) {
+            std::lock_guard lock(parts.mutex);
+            if (invocation.Request().context.typedBufferLoads) throw;
+            if (parts.typedBufferLoads[part] == 0) {
+                parts.typedBufferLoads[part] = 1;
+                parts.handles[part] = nullptr;
+            }
         }
     }
 }
@@ -1627,6 +1651,9 @@ std::vector<SplitTableCallPart> CompileSplitTableCallParts(std::span<ShaderMemor
         } catch (const ShaderRecompiler::LayerRowSamplesRequired&) {
             retry[part] = 1;
             return;
+        } catch (const ShaderRecompiler::TypedBufferLoadsRequired&) {
+            retry[part] = 1;
+            return;
         } catch (...) {
             failures[part] = std::current_exception();
             return;
@@ -1636,6 +1663,8 @@ std::vector<SplitTableCallPart> CompileSplitTableCallParts(std::span<ShaderMemor
         } catch (const ShaderRecompiler::ConvertedSampleRequired&) {
             sampled[part] = 1;
         } catch (const ShaderRecompiler::LayerRowSamplesRequired&) {
+            sampled[part] = 1;
+        } catch (const ShaderRecompiler::TypedBufferLoadsRequired&) {
             sampled[part] = 1;
         } catch (...) {
             failures[part] = std::current_exception();
@@ -1674,7 +1703,7 @@ PendingPreparations& pendingPreparations() {
 
 std::shared_ptr<const ShaderRecompiler::SourceHandle> PrepareInBackground(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& source, std::span<const std::uint64_t> key) {
     const auto keyWords = std::span<const std::uint32_t>(reinterpret_cast<const std::uint32_t*>(key.data()), key.size() * 2u);
-    const auto flags = (source.context.convertedSamples ? 1u : 0u) | (source.context.layerRowSamples ? 2u : 0u);
+    const auto flags = (source.context.convertedSamples ? 1u : 0u) | (source.context.layerRowSamples ? 2u : 0u) | (source.context.typedBufferLoads ? 4u : 0u);
     const std::tuple id{&snapshot, codeOffset, ShaderRecompiler::HashSpirvWords(source.shader.code, ShaderRecompiler::HashSpirvWords(keyWords, flags))};
     auto& pending = pendingPreparations();
     std::shared_ptr<PendingPreparation> job;
@@ -1738,6 +1767,7 @@ ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& s
     AwaitRegisteredPreparation(*snapshot.prepared, lock);
     if (std::ranges::find(snapshot.prepared->convertedSamples, codeOffset) != snapshot.prepared->convertedSamples.end()) source.context.convertedSamples = true;
     if (std::ranges::find(snapshot.prepared->layerRowSamples, codeOffset) != snapshot.prepared->layerRowSamples.end()) source.context.layerRowSamples = true;
+    if (std::ranges::find(snapshot.prepared->typedBufferLoads, codeOffset) != snapshot.prepared->typedBufferLoads.end()) source.context.typedBufferLoads = true;
     auto invocationRequest = source;
     struct PreparedKeyStorage {};
     auto& key = HostThreadLocal<std::vector<std::uint64_t>, PreparedKeyStorage>();
@@ -1787,6 +1817,9 @@ std::shared_ptr<const ShaderRecompiler::ResourceCapture> CaptureInvocation(Shade
         } catch (const ShaderRecompiler::LayerRowSamplesRequired&) {
             if (invocation.Request().context.layerRowSamples) { abandon(); throw; }
             record(snapshot.prepared->layerRowSamples);
+        } catch (const ShaderRecompiler::TypedBufferLoadsRequired&) {
+            if (invocation.Request().context.typedBufferLoads) { abandon(); throw; }
+            record(snapshot.prepared->typedBufferLoads);
         } catch (const ShaderRecompiler::NanSpeculationRetry&) {
             retry.Retried();
         } catch (...) {

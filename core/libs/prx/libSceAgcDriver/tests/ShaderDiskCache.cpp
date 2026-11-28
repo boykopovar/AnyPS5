@@ -343,6 +343,7 @@ CompiledVariant sampleVariant() {
     buffer.descriptorFormatted = true;
     buffer.formattedReadMask = 5u;
     buffer.typedAlignment = 2u;
+    buffer.typedLoads = true;
     info.info.buffers = {buffer, BufferResource{}};
     ImageResource image{};
     image.source = 5;
