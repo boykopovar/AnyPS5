@@ -109,10 +109,7 @@ namespace AgcDriver::Graphics {
         info.borderColor = descriptor.borderColor;
         opaqueBlackBorder = ReadsOpaqueBlackBorder(descriptor);
         info.unnormalizedCoordinates = descriptor.unnormalizedCoordinates ? VK_TRUE : VK_FALSE;
-        if (descriptor.nonSeamlessCube) {
-            if (context.nonSeamlessCubeMap) info.flags |= VK_SAMPLER_CREATE_NON_SEAMLESS_CUBE_MAP_BIT_EXT;
-            else requiresNonSeamlessCube = true;
-        }
+        if (descriptor.nonSeamlessCube && context.nonSeamlessCubeMap) info.flags |= VK_SAMPLER_CREATE_NON_SEAMLESS_CUBE_MAP_BIT_EXT;
         Check(context.Function<PFN_vkCreateSampler>("vkCreateSampler")(context.device, &info, nullptr, &sampler), "vkCreateSampler");
     }
 
@@ -188,11 +185,6 @@ namespace AgcDriver::Graphics {
         return disablesDegamma;
     }
 
-
-    bool Sampler::RequiresNonSeamlessCube() const {
-        return requiresNonSeamlessCube;
-    }
-
     bool ForcesDegammaOn(std::uint32_t guestFormat, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers) {
         if (IsSrgbTextureFormat(guestFormat) || IgnoresForcedDegamma(guestFormat)) return false;
         for (auto mask = samplerMask; mask != 0u; mask &= mask - 1u) {
@@ -259,13 +251,6 @@ namespace AgcDriver::Graphics {
         return true;
     }
 
-    void RequireNonSeamlessCube(bool cube, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers) {
-        if (!cube) return;
-        for (auto mask = samplerMask; mask != 0u; mask &= mask - 1u) {
-            const auto element = static_cast<std::uint32_t>(std::countr_zero(mask));
-            if (element < samplers.size() && samplers[element]->RequiresNonSeamlessCube()) Require(false, "a cube texture is sampled through a sampler that disables seamless cube filtering, which needs VK_EXT_non_seamless_cube_map");
-        }
-    }
     void RequireDisablesDegammaOn(std::uint32_t guestFormat, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers) {
         if (!IsSrgbTextureFormat(guestFormat)) return;
         for (auto mask = samplerMask; mask != 0u; mask &= mask - 1u) {

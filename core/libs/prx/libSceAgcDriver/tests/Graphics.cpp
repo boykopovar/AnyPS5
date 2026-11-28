@@ -8559,19 +8559,16 @@ void samplerTableNonSeamlessCubeTests() {
                 const auto& bytes = bufferBytes(findWrite(map.binding).buffers.at(0).buffer);
                 std::vector<std::uint32_t> actual(bytes.size() / sizeof(std::uint32_t));
                 std::memcpy(actual.data(), bytes.data(), bytes.size());
-                Require(actual[Abi::HeaderSamplerCount] == count, "non-seamless sampler rejection changed the guest table domain");
-                Require(actual[Abi::HeaderPoisonCount] == (supported ? 0u : 1u), "non-seamless sampler table has the wrong deferred poison count");
+                Require(actual[Abi::HeaderSamplerCount] == count, "a non-seamless sampler changed the guest table domain");
+                Require(actual[Abi::HeaderPoisonCount] == 0u, "a non-seamless sampler table entry was poisoned");
                 for (std::uint32_t entry = 0; entry < 2u; ++entry) {
-                    const auto expected = !supported && entry == flaggedEntry ? Abi::PoisonCode(0u) : 0u;
-                    Require(actual[Abi::HeaderWords + entry] == expected, "non-seamless sampler rejection poisoned the wrong entry");
+                    Require(actual[Abi::HeaderWords + entry] == 0u, "a non-seamless sampler table entry was poisoned");
                 }
                 const auto& write = findWrite(samplerBinding);
-                const auto first = supported ? 0u : (1u - flaggedEntry) * Abi::SamplerEntryElements;
-                const auto written = supported ? count : Abi::SamplerEntryElements;
-                Require(findLayoutBinding(samplerBinding).descriptorCount == count && write.type == VK_DESCRIPTOR_TYPE_SAMPLER && write.arrayElement == first && write.count == written && write.images.size() == written, "non-seamless sampler rejection compacted or truncated descriptor indices");
-                Require(mock.samplerFlags.size() == written, "a rejected sampler table entry allocated a Vulkan sampler");
-                for (std::uint32_t index = 0; index < written; ++index) {
-                    const auto expected = supported && (first + index) / Abi::SamplerEntryElements == flaggedEntry ? VK_SAMPLER_CREATE_NON_SEAMLESS_CUBE_MAP_BIT_EXT : 0u;
+                Require(findLayoutBinding(samplerBinding).descriptorCount == count && write.type == VK_DESCRIPTOR_TYPE_SAMPLER && write.arrayElement == 0u && write.count == count && write.images.size() == count, "a non-seamless sampler table entry was left out of the descriptor writes");
+                Require(mock.samplerFlags.size() == count, "a non-seamless sampler table entry was not created");
+                for (std::uint32_t index = 0; index < count; ++index) {
+                    const auto expected = supported && index / Abi::SamplerEntryElements == flaggedEntry ? VK_SAMPLER_CREATE_NON_SEAMLESS_CUBE_MAP_BIT_EXT : 0u;
                     Require(mock.samplerFlags.at(write.images[index].sampler) == expected, "a sampler table variant has the wrong non-seamless cube creation flag");
                 }
             }

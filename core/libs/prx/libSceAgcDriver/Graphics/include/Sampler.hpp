@@ -37,7 +37,6 @@ public:
     bool RequiresFilterMinmax() const;
     bool ReadsOpaqueBlackBorder() const;
     const std::optional<BorderComponentMapping>& BorderMapping() const { return borderMapping; }
-    bool RequiresNonSeamlessCube() const;
     static void Validate(const Context& context, const GuestSamplerResource& descriptor);
     static bool ShaderAppliesLodBias(const GuestSamplerResource& descriptor);
     static bool ReadsOpaqueBlackBorder(const GuestSamplerResource& descriptor);
@@ -52,7 +51,6 @@ private:
     bool requiresFilterMinmax = false;
     bool opaqueBlackBorder = false;
     std::optional<BorderComponentMapping> borderMapping;
-    bool requiresNonSeamlessCube = false;
 };
 
 // One VkSampler per distinct S# (its 4 words plus the shader's depth-compare use and the
@@ -90,7 +88,6 @@ void RequireBorderSwizzle(std::uint32_t bcSwizzle, std::uint64_t samplerMask, st
 std::uint32_t BorderMappingKey(const std::optional<BorderComponentMapping>& mapping);
 std::optional<BorderComponentMapping> OpaqueBlackBorderMapping(const Context& context, std::span<const OpaqueBlackPairing> pairings);
 bool CheckOpaqueBlackPairing(const Context& context, const OpaqueBlackPairing& pairing, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers);
-void RequireNonSeamlessCube(bool cube, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers);
 void RequireDisablesDegammaOn(std::uint32_t guestFormat, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers);
 
 }
