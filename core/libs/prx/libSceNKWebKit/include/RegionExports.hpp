@@ -537,6 +537,19 @@ static_assert(std::is_trivially_copyable_v<TransformOperationRef>);
 
 class Region {
 public:
+    // Declared but not defined here: Region is materialised by the exports in
+    // src/Region.cpp through guest memory, so the ABI shims below own the only
+    // out-of-line definitions of these. Leaving them implicit made every
+    // translation unit that uses a Region by value emit its own COMDAT copy,
+    // which current binutils reports as a multiple definition against the
+    // strong definition in Region.cpp.
+    Region();
+    Region(const Region&);
+    Region(Region&&);
+    Region& operator=(const Region&);
+    Region& operator=(Region&&);
+    ~Region();
+
     struct Span {
         int y{0};
         std::size_t segmentIndex{0};
