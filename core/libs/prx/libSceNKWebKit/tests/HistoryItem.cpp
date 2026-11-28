@@ -2,10 +2,22 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include <string>
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 using NKWebKit::WebCoreAbi::HistoryItem;
 using NKWebKit::WebCoreAbi::CachedPage;
@@ -653,6 +665,163 @@ static void TestAddChildItem() {
     first.impl = nullptr;
 }
 
+struct GuardedPages {
+    unsigned char* base{nullptr};
+    std::size_t pageSize{0};
+
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 4, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(base + pageSize, pageSize, PAGE_READONLY, &previous) != 0);
+        Require(VirtualProtect(base + pageSize * 3, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0);
+        pageSize = static_cast<std::size_t>(size);
+        void* mapped = mmap(nullptr, pageSize * 4, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        base = static_cast<unsigned char*>(mapped);
+        Require(mprotect(base + pageSize, pageSize, PROT_READ) == 0);
+        Require(mprotect(base + pageSize * 3, pageSize, PROT_NONE) == 0);
+#endif
+    }
+
+    ~GuardedPages() {
+        if (!base) return;
+#ifdef _WIN32
+        Require(VirtualFree(base, 0, MEM_RELEASE) != 0);
+#else
+        Require(munmap(base, pageSize * 4) == 0);
+#endif
+    }
+
+    unsigned char* ReadOnly() const { return base + pageSize; }
+    unsigned char* WritableBeforeGuard() const { return base + pageSize * 2; }
+    unsigned char* Guard() const { return base + pageSize * 3; }
+};
+
+template <typename Action>
+static bool ThrowsNotImplemented(Action action, const char* symbol) {
+    try {
+        action();
+    } catch (const std::runtime_error& error) {
+        return std::string(error.what()) == std::string(symbol) + " not implemented";
+    }
+    return false;
+}
+
+static void TestGuestPointers() {
+    GuardedPages pages;
+    auto* guardItem = reinterpret_cast<HistoryItem*>(pages.Guard());
+    auto* splitItem = reinterpret_cast<HistoryItem*>(pages.Guard() - 16);
+    auto* readOnlyItem = reinterpret_cast<HistoryItem*>(pages.ReadOnly());
+    auto* guardString = reinterpret_cast<String*>(pages.Guard());
+    auto* guardPoint = reinterpret_cast<IntPoint*>(pages.Guard());
+    auto* guardVector = reinterpret_cast<HistoryItemVectorStorage*>(pages.Guard());
+    auto* guardRef = reinterpret_cast<HistoryItem**>(pages.Guard());
+    auto* readOnlyRef = reinterpret_cast<HistoryItem**>(pages.ReadOnly());
+    auto* guardVoidRef = reinterpret_cast<void**>(pages.Guard());
+    auto* readOnlyVoidRef = reinterpret_cast<void**>(pages.ReadOnly());
+
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZNK7WebCore11HistoryItem9urlStringEv(guardItem)); }, "_ZNK7WebCore11HistoryItem9urlStringEv"));
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZNK7WebCore11HistoryItem17originalURLStringEv(splitItem)); }, "_ZNK7WebCore11HistoryItem17originalURLStringEv"));
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZNK7WebCore11HistoryItem5titleEv(guardItem)); }, "_ZNK7WebCore11HistoryItem5titleEv"));
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZNK7WebCore11HistoryItem14alternateTitleEv(guardItem)); }, "_ZNK7WebCore11HistoryItem14alternateTitleEv"));
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZNK7WebCore11HistoryItem8referrerEv(guardItem)); }, "_ZNK7WebCore11HistoryItem8referrerEv"));
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZNK7WebCore11HistoryItem6targetEv(guardItem)); }, "_ZNK7WebCore11HistoryItem6targetEv"));
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZNK7WebCore11HistoryItem14scrollPositionEv(guardItem)); }, "_ZNK7WebCore11HistoryItem14scrollPositionEv"));
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZNK7WebCore11HistoryItem15pageScaleFactorEv(guardItem)); }, "_ZNK7WebCore11HistoryItem15pageScaleFactorEv"));
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZNK7WebCore11HistoryItem12isTargetItemEv(guardItem)); }, "_ZNK7WebCore11HistoryItem12isTargetItemEv"));
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZNK7WebCore11HistoryItem27shouldRestoreScrollPositionEv(guardItem)); }, "_ZNK7WebCore11HistoryItem27shouldRestoreScrollPositionEv"));
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZNK7WebCore11HistoryItem28shouldOpenExternalURLsPolicyEv(guardItem)); }, "_ZNK7WebCore11HistoryItem28shouldOpenExternalURLsPolicyEv"));
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZNK7WebCore11HistoryItem13documentStateEv(guardItem)); }, "_ZNK7WebCore11HistoryItem13documentStateEv"));
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZNK7WebCore11HistoryItem8childrenEv(guardItem)); }, "_ZNK7WebCore11HistoryItem8childrenEv"));
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZNK7WebCore11HistoryItem15formContentTypeEv(guardItem)); }, "_ZNK7WebCore11HistoryItem15formContentTypeEv"));
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZNK7WebCore11HistoryItem11hasChildrenEv(guardItem)); }, "_ZNK7WebCore11HistoryItem11hasChildrenEv"));
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZNK7WebCore11HistoryItem20hasCachedPageExpiredEv(guardItem)); }, "_ZNK7WebCore11HistoryItem20hasCachedPageExpiredEv"));
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZN7WebCore11HistoryItem8formDataEv(guardItem)); }, "_ZN7WebCore11HistoryItem8formDataEv"));
+
+    HistoryItem item;
+    item.cachedPage = pages.Guard();
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZNK7WebCore11HistoryItem20hasCachedPageExpiredEv(&item)); }, "_ZNK7WebCore11HistoryItem20hasCachedPageExpiredEv"));
+    item.cachedPage = nullptr;
+
+    item.formContentType.impl = reinterpret_cast<StringImpl*>(pages.ReadOnly());
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZNK7WebCore11HistoryItem15formContentTypeEv(&item)); }, "_ZNK7WebCore11HistoryItem15formContentTypeEv"));
+    item.formContentType.impl = nullptr;
+
+    String empty;
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem12setURLStringERKN3WTF6StringE(readOnlyItem, &empty); }, "_ZN7WebCore11HistoryItem12setURLStringERKN3WTF6StringE"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem12setURLStringERKN3WTF6StringE(&item, guardString); }, "_ZN7WebCore11HistoryItem12setURLStringERKN3WTF6StringE"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem20setOriginalURLStringERKN3WTF6StringE(readOnlyItem, &empty); }, "_ZN7WebCore11HistoryItem20setOriginalURLStringERKN3WTF6StringE"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem11setReferrerERKN3WTF6StringE(readOnlyItem, &empty); }, "_ZN7WebCore11HistoryItem11setReferrerERKN3WTF6StringE"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem8setTitleERKN3WTF6StringE(readOnlyItem, &empty); }, "_ZN7WebCore11HistoryItem8setTitleERKN3WTF6StringE"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem17setAlternateTitleERKN3WTF6StringE(readOnlyItem, &empty); }, "_ZN7WebCore11HistoryItem17setAlternateTitleERKN3WTF6StringE"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem18setFormContentTypeERKN3WTF6StringE(readOnlyItem, &empty); }, "_ZN7WebCore11HistoryItem18setFormContentTypeERKN3WTF6StringE"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem9setTargetERKN3WTF6StringE(readOnlyItem, &empty); }, "_ZN7WebCore11HistoryItem9setTargetERKN3WTF6StringE"));
+
+    StringImpl terminatingImpl{2, 0, nullptr, 16};
+    item.urlString.impl = &terminatingImpl;
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem12setURLStringERKN3WTF6StringE(&item, &empty); }, "_ZN7WebCore11HistoryItem12setURLStringERKN3WTF6StringE"));
+    Require(item.urlString.impl == &terminatingImpl && terminatingImpl.refCount == 2);
+    item.urlString.impl = nullptr;
+
+    IntPoint point{1, 2};
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem17setScrollPositionERKNS_8IntPointE(readOnlyItem, &point); }, "_ZN7WebCore11HistoryItem17setScrollPositionERKNS_8IntPointE"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem17setScrollPositionERKNS_8IntPointE(&item, guardPoint); }, "_ZN7WebCore11HistoryItem17setScrollPositionERKNS_8IntPointE"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem18setPageScaleFactorEf(readOnlyItem, 1.0f); }, "_ZN7WebCore11HistoryItem18setPageScaleFactorEf"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem15setIsTargetItemEb(readOnlyItem, true); }, "_ZN7WebCore11HistoryItem15setIsTargetItemEb"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem30setShouldRestoreScrollPositionEb(readOnlyItem, false); }, "_ZN7WebCore11HistoryItem30setShouldRestoreScrollPositionEb"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem31setShouldOpenExternalURLsPolicyENS_28ShouldOpenExternalURLsPolicyE(readOnlyItem, 1); }, "_ZN7WebCore11HistoryItem31setShouldOpenExternalURLsPolicyENS_28ShouldOpenExternalURLsPolicyE"));
+
+    NKWebKit::WebCoreAbi::BackForwardItemIdentifier identifier{1, 2};
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItemC1ERKN3WTF6StringES4_S4_NS_25BackForwardItemIdentifierE(readOnlyItem, &empty, &empty, &empty, identifier); }, "_ZN7WebCore11HistoryItemC1ERKN3WTF6StringES4_S4_NS_25BackForwardItemIdentifierE"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItemC2ERKN3WTF6StringES4_S4_NS_25BackForwardItemIdentifierE(&item, guardString, &empty, &empty, identifier); }, "_ZN7WebCore11HistoryItemC2ERKN3WTF6StringES4_S4_NS_25BackForwardItemIdentifierE"));
+
+    item.children = {pages.Guard(), 1, 1};
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6StringE(&item, &empty)); }, "_ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6StringE"));
+    HistoryItem* badChildren[1] = {guardItem};
+    item.children = {badChildren, 1, 1};
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6StringE(&item, &empty)); }, "_ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6StringE"));
+    item.children = {badChildren, 1, 2};
+    Require(ThrowsNotImplemented([&] { static_cast<void>(_ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6StringE(&item, &empty)); }, "_ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6StringE"));
+    item.children = {};
+
+    HistoryItemVectorStorage badSource{pages.Guard(), 1, 1};
+    HistoryItemVectorStorage hugeBadSource{pages.Guard(), 1000000000u, 1000000000u};
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem16setDocumentStateERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE(readOnlyItem, &badSource); }, "_ZN7WebCore11HistoryItem16setDocumentStateERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem16setDocumentStateERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE(&item, guardVector); }, "_ZN7WebCore11HistoryItem16setDocumentStateERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem16setDocumentStateERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE(&item, &badSource); }, "_ZN7WebCore11HistoryItem16setDocumentStateERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem16setDocumentStateERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE(&item, &hugeBadSource); }, "_ZN7WebCore11HistoryItem16setDocumentStateERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE"));
+
+    HistoryItem child;
+    HistoryItem* childRef = &child;
+    HistoryItem* badChildRef = guardItem;
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem12addChildItemEON3WTF3RefIS0_NS1_13DumbPtrTraitsIS0_EEEE(readOnlyItem, &childRef); }, "_ZN7WebCore11HistoryItem12addChildItemEON3WTF3RefIS0_NS1_13DumbPtrTraitsIS0_EEEE"));
+    Require(childRef == &child);
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem12addChildItemEON3WTF3RefIS0_NS1_13DumbPtrTraitsIS0_EEEE(&item, &badChildRef); }, "_ZN7WebCore11HistoryItem12addChildItemEON3WTF3RefIS0_NS1_13DumbPtrTraitsIS0_EEEE"));
+    Require(badChildRef == guardItem && item.children.size == 0);
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem12addChildItemEON3WTF3RefIS0_NS1_13DumbPtrTraitsIS0_EEEE(&item, guardRef); }, "_ZN7WebCore11HistoryItem12addChildItemEON3WTF3RefIS0_NS1_13DumbPtrTraitsIS0_EEEE"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem12addChildItemEON3WTF3RefIS0_NS1_13DumbPtrTraitsIS0_EEEE(&item, readOnlyRef); }, "_ZN7WebCore11HistoryItem12addChildItemEON3WTF3RefIS0_NS1_13DumbPtrTraitsIS0_EEEE"));
+
+    int dummy = 0;
+    void* obj = &dummy;
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem14setStateObjectEON3WTF6RefPtrINS_21SerializedScriptValueENS1_13DumbPtrTraitsIS3_EEEE(readOnlyItem, &obj); }, "_ZN7WebCore11HistoryItem14setStateObjectEON3WTF6RefPtrINS_21SerializedScriptValueENS1_13DumbPtrTraitsIS3_EEEE"));
+    Require(obj == &dummy);
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem14setStateObjectEON3WTF6RefPtrINS_21SerializedScriptValueENS1_13DumbPtrTraitsIS3_EEEE(&item, guardVoidRef); }, "_ZN7WebCore11HistoryItem14setStateObjectEON3WTF6RefPtrINS_21SerializedScriptValueENS1_13DumbPtrTraitsIS3_EEEE"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem14setStateObjectEON3WTF6RefPtrINS_21SerializedScriptValueENS1_13DumbPtrTraitsIS3_EEEE(&item, readOnlyVoidRef); }, "_ZN7WebCore11HistoryItem14setStateObjectEON3WTF6RefPtrINS_21SerializedScriptValueENS1_13DumbPtrTraitsIS3_EEEE"));
+
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem11setFormDataEON3WTF6RefPtrINS_8FormDataENS1_13DumbPtrTraitsIS3_EEEE(readOnlyItem, &obj); }, "_ZN7WebCore11HistoryItem11setFormDataEON3WTF6RefPtrINS_8FormDataENS1_13DumbPtrTraitsIS3_EEEE"));
+    Require(obj == &dummy);
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem11setFormDataEON3WTF6RefPtrINS_8FormDataENS1_13DumbPtrTraitsIS3_EEEE(&item, guardVoidRef); }, "_ZN7WebCore11HistoryItem11setFormDataEON3WTF6RefPtrINS_8FormDataENS1_13DumbPtrTraitsIS3_EEEE"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore11HistoryItem11setFormDataEON3WTF6RefPtrINS_8FormDataENS1_13DumbPtrTraitsIS3_EEEE(&item, readOnlyVoidRef); }, "_ZN7WebCore11HistoryItem11setFormDataEON3WTF6RefPtrINS_8FormDataENS1_13DumbPtrTraitsIS3_EEEE"));
+}
+
 int main() {
     TestStrings();
     TestScalars();
@@ -665,5 +834,6 @@ int main() {
     TestStateObjectAndFormData();
     TestSetDocumentState();
     TestAddChildItem();
+    TestGuestPointers();
     return 0;
 }
