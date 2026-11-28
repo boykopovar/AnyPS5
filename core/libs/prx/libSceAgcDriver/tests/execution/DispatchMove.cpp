@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
@@ -17,6 +18,8 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <chrono>
+#include <thread>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -145,7 +148,7 @@ ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, const
     return ShaderRecompiler::Recompile(request);
 }
 
-void Run(AgcDriver::VulkanDevice& device, const ShaderRecompiler::RecompileResult& compiled, const std::uint32_t* input, std::uint32_t inputBytes, const std::uint32_t* output, bool wait) {
+ShaderRecompiler::RecompileResult Relocate(const ShaderRecompiler::RecompileResult& compiled, const std::uint32_t* input, std::uint32_t inputBytes, const std::uint32_t* output) {
     auto result = compiled;
     std::size_t elements = 0;
     for (auto& binding : result.bindings) {
@@ -157,7 +160,12 @@ void Run(AgcDriver::VulkanDevice& device, const ShaderRecompiler::RecompileResul
         }
     }
     Require(elements == 2, "dispatch move: the program does not bind an input and an output");
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(Code.data()));
+    return result;
+}
+
+void Run(AgcDriver::VulkanDevice& device, const ShaderRecompiler::RecompileResult& compiled, const std::uint32_t* input, std::uint32_t inputBytes, const std::uint32_t* output, bool wait, std::shared_ptr<AgcDriver::PreparedDispatch> prepared = nullptr) {
+    const auto result = Relocate(compiled, input, inputBytes, output);
+    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(Code.data()), std::move(prepared));
     if (wait) device.WaitIdle();
 }
 
@@ -166,6 +174,106 @@ void Expect(const std::uint32_t* input, const std::uint32_t* output, std::uint32
         const auto expected = input[tid] + added;
         Require(output[tid] == expected, "dispatch move: " + what + ": lane " + std::to_string(tid) + " is " + Hex(output[tid]) + ", expected " + Hex(expected));
     }
+}
+
+void StoreOldInput(AgcDriver::VulkanDevice& device, std::uint32_t* target) {
+    alignas(256) static constexpr std::array<std::uint32_t, 5> code{
+        0x7e3c0300u, 0x7e3e0280u, 0xf0201108u, 0x0000001eu, 0xbf810000u,
+    };
+    const auto address = reinterpret_cast<std::uintptr_t>(target);
+    const std::vector<std::uint32_t> userData{
+        static_cast<std::uint32_t>(address >> 8u),
+        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (20u << 20u) | (((Threads - 1u) & 3u) << 30u),
+        (Threads - 1u) >> 2u, 0x900003acu, 0u, 0u, 0u, 0u,
+    };
+    const std::span<const std::uint32_t> words(code);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(words)}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {true, false, false}, false, 1};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), words, 0, {}},
+        {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        device.Target(),
+        {0, 0, 0, 128}
+    };
+    request.useCache = false;
+    const auto compiled = ShaderRecompiler::Recompile(request);
+    device.Dispatch(compiled, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.WaitIdle();
+}
+
+enum class Preparation { None, BeforeStore, AfterStore };
+
+void ProbeOldInput(AgcDriver::VulkanDevice& device, GuestBlock& guest, Preparation preparation) {
+    Fill(guest.InputA(), 0x1000u);
+    Fill(guest.InputB(), 0x2000u);
+    Reset(guest.OutputO());
+    const auto compiled = Compile(device, guest.InputA(), Bytes, guest.OutputO());
+    Run(device, compiled, guest.InputA(), Bytes, guest.OutputO(), true);
+    Expect(guest.InputA(), guest.OutputO(), Constant, "old-input probe warmup");
+    const auto relocated = Relocate(compiled, guest.InputB(), Bytes, guest.OutputO());
+    const auto start = AgcDriver::VulkanDevice::DispatchMoveCounts();
+    auto prepared = preparation == Preparation::BeforeStore ? device.PrepareDispatch(relocated, {}, Threads, reinterpret_cast<std::uintptr_t>(Code.data())) : nullptr;
+    StoreOldInput(device, guest.InputA());
+    if (preparation == Preparation::AfterStore) prepared = device.PrepareDispatch(relocated, {}, Threads, reinterpret_cast<std::uintptr_t>(Code.data()));
+    Require(preparation == Preparation::None || prepared != nullptr, "old-input preparation did not exercise stage A");
+    const auto address = reinterpret_cast<std::uintptr_t>(guest.InputA());
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> range{{{address, address + Bytes}}};
+    Require(AgcDriver::Graphics::StorageTexture::AnyPendingOverlaps(range), "old-input probe has no pending storage result");
+    const auto before = AgcDriver::VulkanDevice::DispatchMoveCounts();
+    Run(device, compiled, guest.InputB(), Bytes, guest.OutputO(), true, std::move(prepared));
+    Expect(guest.InputB(), guest.OutputO(), Constant, "old-input probe relocated input");
+    const auto after = AgcDriver::VulkanDevice::DispatchMoveCounts();
+    std::printf("old-input probe: pending after moved dispatch=%u moved=%llu exact=%llu refused=%llu\n",
+        AgcDriver::Graphics::StorageTexture::AnyPendingOverlaps(range) ? 1u : 0u,
+        static_cast<unsigned long long>(after.moved - before.moved),
+        static_cast<unsigned long long>(after.exact - before.exact),
+        static_cast<unsigned long long>(after.refused - before.refused));
+    const bool retained = AgcDriver::Graphics::StorageTexture::AnyPendingOverlaps(range);
+    Run(device, compiled, guest.InputB(), Bytes, guest.OutputO(), true);
+    Expect(guest.InputB(), guest.OutputO(), Constant, "old-input repeated relocated input");
+    const bool retainedOnRepeat = AgcDriver::Graphics::StorageTexture::AnyPendingOverlaps(range);
+    Run(device, compiled, guest.InputA(), Bytes, guest.OutputO(), true);
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        Require(guest.OutputO()[tid] == tid + Constant, "old-input return read stale image values");
+        Require(guest.InputA()[tid] == tid, "old-input storage result changed");
+    }
+    Require(!AgcDriver::Graphics::StorageTexture::AnyPendingOverlaps(range), "old-input return did not publish the required image");
+    StoreOldInput(device, guest.InputA());
+    Require(AgcDriver::Graphics::StorageTexture::AnyPendingOverlaps(range), "old-input alias has no pending storage result");
+    Run(device, compiled, guest.InputA() + 1, (Threads - 1u) * sizeof(std::uint32_t), guest.OutputO(), true);
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        const auto expected = (tid + 1u < Threads ? tid + 1u : 0u) + Constant;
+        Require(guest.OutputO()[tid] == expected, "old-input live alias read stale image values");
+    }
+    Require(!AgcDriver::Graphics::StorageTexture::AnyPendingOverlaps(range), "old-input live alias did not publish the required image");
+    Require(retained && retainedOnRepeat, "moved dispatch published an unused old input image");
+    Require(after.moved == start.moved && after.refused + after.filtered == start.refused + start.filtered + 1, "old-input probe: the moved dispatch was not refused once");
+}
+
+void ProbeRegionNeighbour(AgcDriver::VulkanDevice& device, GuestBlock& guest) {
+    auto* const input = guest.OutputP();
+    auto* const output = input + Threads;
+    auto* const neighbour = input + 2u * Threads;
+    Fill(input, 0x3000u);
+    Reset(output);
+    Fill(guest.InputB(), 0x4000u);
+    const auto compiled = Compile(device, input, Bytes, output);
+    Run(device, compiled, input, Bytes, output, true);
+    Expect(input, output, Constant, "region probe warmup");
+    StoreOldInput(device, neighbour);
+    const auto address = reinterpret_cast<std::uintptr_t>(input);
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> element{{{address, address + Bytes}}};
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> stored{{{address + Bytes, address + Bytes + Threads * 4u}}};
+    Require(AgcDriver::Graphics::StorageTexture::AnyPendingOverlaps(stored), "region probe has no pending storage result");
+    Require(!AgcDriver::Graphics::StorageTexture::AnyPendingOverlaps(element), "region probe stored into the moved input");
+    const auto before = AgcDriver::VulkanDevice::DispatchMoveCounts();
+    Run(device, compiled, guest.InputB(), Bytes, output, true);
+    Expect(guest.InputB(), output, Constant, "region probe relocated input");
+    const auto after = AgcDriver::VulkanDevice::DispatchMoveCounts();
+    Require(after.moved == before.moved + 1 && after.refused == before.refused && after.filtered == before.filtered, "region probe: a pending result beside the moved input refused the move");
+    AgcDriver::Graphics::StorageTexture::FlushPending(address + Bytes, Threads * 4u, nullptr, "probe cleanup");
+    device.WaitIdle();
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) Require(neighbour[tid] == tid, "region probe storage result changed");
 }
 
 struct Step {
@@ -270,12 +378,21 @@ bool RunTests(AgcDriver::VulkanDevice& device, const GuestBlock& guest) {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
         GuestBlock guest;
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (argc == 2 && (std::string(argv[1]) == "--old-input-storage" || std::string(argv[1]) == "--old-input-storage-prepared" || std::string(argv[1]) == "--old-input-storage-late-prepared")) {
+            ProbeOldInput(*device, guest, std::string(argv[1]) == "--old-input-storage-prepared" ? Preparation::BeforeStore : std::string(argv[1]) == "--old-input-storage-late-prepared" ? Preparation::AfterStore : Preparation::None);
+            if (std::getenv("APS5_CAPTURE_TRACE") != nullptr) std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            return 0;
+        }
         if (!RunTests(*device, guest)) return VulkanTestSkipped;
+        ProbeOldInput(*device, guest, Preparation::None);
+        ProbeOldInput(*device, guest, Preparation::BeforeStore);
+        ProbeOldInput(*device, guest, Preparation::AfterStore);
+        ProbeRegionNeighbour(*device, guest);
         std::puts("dispatch move tests passed");
         return 0;
     } catch (const std::exception& error) {
