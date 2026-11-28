@@ -241,6 +241,7 @@ private:
             case IrOpcode::UMin32: return operation(Op::UMin32, value, context, depth, 2);
             case IrOpcode::ConvertF32U32: return operation(Op::ConvertF32U32, value, context, depth, 1);
             case IrOpcode::ConvertU32F32: return operation(Op::ConvertU32F32, value, context, depth, 1);
+            case IrOpcode::ConvertS32F32: return operation(Op::ConvertS32F32, value, context, depth, 1);
             case IrOpcode::FPMul32: return operation(Op::FPMul32, value, context, depth, 2);
             case IrOpcode::FPTrunc32: return operation(Op::FPTrunc32, value, context, depth, 1);
             case IrOpcode::FPIsNan32: return operation(Op::FPIsNan32, value, context, depth, 1);
@@ -471,6 +472,12 @@ bool SrtTape::compute(Frame& frame, const Node& node, std::uint64_t& result) con
             const auto value = float32(a);
             if (!std::isfinite(value) || value < 0.0f || static_cast<double>(value) > 4294967295.0) return false;
             result = static_cast<std::uint32_t>(value);
+            return true;
+        }
+        case Op::ConvertS32F32: {
+            const auto value = float32(a);
+            if (!std::isfinite(value) || value < -2147483648.0f || value > 2147483520.0f) return false;
+            result = static_cast<std::uint32_t>(static_cast<std::int32_t>(value));
             return true;
         }
         case Op::FPMul32: result = float32Bits(float32(a) * float32(b)); return true;
