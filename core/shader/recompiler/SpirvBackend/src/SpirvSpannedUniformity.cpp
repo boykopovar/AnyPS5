@@ -589,7 +589,12 @@ private:
                         varying = true;
                         root = "a read of an image the shader writes";
                     }
-                    if (!varying) VisitIdOperands(instruction, 1u, [&](std::size_t operand) { inherit(instruction[operand]); });
+                    if (!varying) {
+                        const auto use = [&](std::size_t operand) { inherit(instruction[operand]); };
+                        if (!VisitIdOperands(instruction, 1u, use)) {
+                            for (std::size_t operand = 1u; operand < instruction.size(); ++operand) use(operand);
+                        }
+                    }
                     break;
                 }
                 if (!varying) continue;

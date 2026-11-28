@@ -411,10 +411,13 @@ public:
                 const auto* selectorType = resultTypes.find(instruction[1]);
                 if (selectorType != nullptr && types.contains(*selectorType) && types.at(*selectorType).width == 64u) switchLiteralWords = 2u;
             }
-            VisitIdOperands(instruction, switchLiteralWords, [&](std::size_t index) {
+            const auto escape = [&](std::size_t index) {
                 privateTables.erase(instruction[index]);
                 if (const auto* table = tablePointers.find(instruction[index])) privateTables.erase(*table);
-            });
+            };
+            if (!VisitIdOperands(instruction, switchLiteralWords, escape)) {
+                for (std::size_t index = 1; index < instruction.size(); ++index) escape(index);
+            }
         }
     }
 
@@ -789,7 +792,11 @@ private:
                 const auto* selectorType = resultTypes.find(instruction[1]);
                 if (selectorType != nullptr && types.contains(*selectorType) && types.at(*selectorType).width == 64u) switchLiteralWords = 2u;
             }
-            VisitIdOperands(instruction, switchLiteralWords, [&](std::size_t index) { referenced.insert(instruction[index]); });
+            if (!VisitIdOperands(instruction, switchLiteralWords, [&](std::size_t index) { referenced.insert(instruction[index]); })) {
+                for (std::size_t index = 1; index < instruction.size(); ++index) {
+                    if (instruction[index] < bound) referenced.insert(instruction[index]);
+                }
+            }
         }
         return referenced;
     }
@@ -977,6 +984,182 @@ private:
 
 std::vector<std::uint32_t> SpecializeSpirv(std::span<const std::uint32_t> words) {
     return Specialization(words).Run();
+}
+
+std::vector<std::uint32_t> NormalizeSpirvConstants(std::span<const std::uint32_t> words) {
+    if (words.size() < 5u || words[0] != spv::MagicNumber) throw std::runtime_error("invalid specialized SPIR-V header");
+    const auto bound = words[3];
+    constexpr std::uint32_t none = UINT32_MAX;
+    struct Line {
+        std::size_t at;
+        std::uint32_t count;
+        spv::Op op;
+        bool function;
+        bool exact;
+        std::size_t result;
+    };
+    std::vector<Line> lines;
+    std::vector<std::uint32_t> resultTypes(bound, 0u);
+    std::vector<std::uint32_t> intWidths(bound, 0u);
+    std::vector<bool> decorated(bound, false);
+    const auto checkId = [&](std::uint32_t id) {
+        if (id >= bound) throw std::runtime_error("a specialized SPIR-V id reaches its bound");
+        return id;
+    };
+    bool function = false;
+    for (std::size_t cursor = 5; cursor < words.size();) {
+        const auto count = words[cursor] >> 16u;
+        const auto op = static_cast<spv::Op>(words[cursor] & 0xffffu);
+        if (count == 0u || count > words.size() - cursor) throw std::runtime_error("truncated specialized SPIR-V instruction");
+        if (op == spv::OpFunction) function = true;
+        bool hasResult = false;
+        bool hasType = false;
+        spv::HasResultAndType(op, &hasResult, &hasType);
+        const std::size_t result = hasResult ? (hasType ? 2u : 1u) : 0u;
+        if (result != 0u && result >= count) throw std::runtime_error("truncated specialized SPIR-V instruction");
+        if ((op == spv::OpName || op == spv::OpMemberName || op == spv::OpDecorate || op == spv::OpDecorateId || op == spv::OpDecorateString) && count < 2u) throw std::runtime_error("truncated specialized SPIR-V instruction");
+        lines.push_back({cursor, count, op, function, true, result});
+        if (hasResult && hasType) resultTypes[checkId(words[cursor + 2u])] = words[cursor + 1u];
+        if (op == spv::OpTypeInt && count >= 3u) intWidths[checkId(words[cursor + 1u])] = words[cursor + 2u];
+        if (op == spv::OpDecorate || op == spv::OpDecorateId || op == spv::OpDecorateString) decorated[checkId(words[cursor + 1u])] = true;
+        if (op == spv::OpGroupDecorate) for (std::uint32_t index = 2u; index < count; ++index) decorated[checkId(words[cursor + index])] = true;
+        if (op == spv::OpFunctionEnd) function = false;
+        cursor += count;
+    }
+    const auto visit = [&](const Line& line, const auto& certain, const auto& possible) {
+        const std::span<const std::uint32_t> instruction(words.data() + line.at, line.count);
+        std::uint32_t switchLiteralWords = 1u;
+        if (line.op == spv::OpSwitch && line.count > 1u && intWidths[checkId(resultTypes[checkId(instruction[1])])] == 64u) switchLiteralWords = 2u;
+        const bool exact = VisitIdOperands(instruction, switchLiteralWords, [&](std::size_t index) {
+            if (index != line.result) certain(line.at + index);
+        });
+        if (exact) return true;
+        for (std::size_t index = 1; index < line.count; ++index) {
+            if (index != line.result && instruction[index] < bound) possible(instruction[index]);
+        }
+        return false;
+    };
+    const auto removable = [](spv::Op op) {
+        return op == spv::OpConstant || op == spv::OpConstantTrue || op == spv::OpConstantFalse || op == spv::OpConstantNull || op == spv::OpConstantComposite;
+    };
+    std::vector<std::uint32_t> uses(bound, 0u);
+    std::vector<std::uint32_t> definitions(bound, none);
+    for (std::size_t index = 0; index < lines.size(); ++index) {
+        auto& line = lines[index];
+        line.exact = visit(line, [&](std::size_t at) { ++uses[checkId(words[at])]; }, [&](std::uint32_t id) { ++uses[id]; });
+        if (!line.function && removable(line.op)) definitions[words[line.at + line.result]] = static_cast<std::uint32_t>(index);
+    }
+    std::vector<bool> dropped(lines.size(), false);
+    std::vector<std::uint32_t> dead;
+    const auto unused = [&](std::uint32_t id) {
+        return uses[id] == 0u && definitions[id] != none && !decorated[id] && !dropped[definitions[id]];
+    };
+    for (std::uint32_t id = 0; id < bound; ++id) {
+        if (unused(id)) dead.push_back(id);
+    }
+    while (!dead.empty()) {
+        const auto id = dead.back();
+        dead.pop_back();
+        if (!unused(id)) continue;
+        dropped[definitions[id]] = true;
+        visit(lines[definitions[id]], [&](std::size_t at) {
+            const auto operand = words[at];
+            if (--uses[operand] == 0u && unused(operand)) dead.push_back(operand);
+        }, [](std::uint32_t) {});
+    }
+    std::vector<bool> pinned(bound, false);
+    std::vector<bool> usedInFunctions(bound, false);
+    for (std::size_t index = 0; index < lines.size(); ++index) {
+        const auto& line = lines[index];
+        if (dropped[index]) continue;
+        visit(line, [&](std::size_t at) {
+            if (line.function) usedInFunctions[words[at]] = true;
+            else pinned[words[at]] = true;
+        }, [&](std::uint32_t id) { pinned[id] = true; });
+    }
+    const auto scalar = [](spv::Op op) {
+        return op == spv::OpConstant || op == spv::OpConstantTrue || op == spv::OpConstantFalse;
+    };
+    const auto keyOf = [&](const Line& line) {
+        std::vector<std::uint32_t> key{words[line.at + 1u], static_cast<std::uint32_t>(line.op)};
+        key.insert(key.end(), words.begin() + static_cast<std::ptrdiff_t>(line.at + 3u), words.begin() + static_cast<std::ptrdiff_t>(line.at + line.count));
+        return key;
+    };
+    std::map<std::vector<std::uint32_t>, std::uint32_t> canonical;
+    for (std::size_t index = 0; index < lines.size(); ++index) {
+        const auto& line = lines[index];
+        if (dropped[index] || line.function || !scalar(line.op)) continue;
+        const auto id = words[line.at + line.result];
+        if (decorated[id] || !pinned[id]) continue;
+        const auto [found, created] = canonical.emplace(keyOf(line), id);
+        if (!created) found->second = std::min(found->second, id);
+    }
+    std::vector<bool> moved(lines.size(), false);
+    std::vector<std::pair<std::uint32_t, std::vector<std::uint32_t>>> remapped;
+    std::map<std::vector<std::uint32_t>, std::uint32_t> allocated;
+    for (std::size_t index = 0; index < lines.size(); ++index) {
+        const auto& line = lines[index];
+        if (dropped[index] || line.function || !scalar(line.op)) continue;
+        const auto id = words[line.at + line.result];
+        if (decorated[id] || !usedInFunctions[id]) continue;
+        auto key = keyOf(line);
+        if (!canonical.contains(key)) allocated.emplace(key, 0u);
+        remapped.emplace_back(id, std::move(key));
+        moved[index] = !pinned[id];
+    }
+    std::vector<bool> occupied(bound, false);
+    for (std::size_t index = 0; index < lines.size(); ++index) {
+        const auto& line = lines[index];
+        if (dropped[index]) continue;
+        if (!moved[index] && line.result != 0u) occupied[words[line.at + line.result]] = true;
+        if (line.exact) continue;
+        for (std::size_t word = 1; word < line.count; ++word) {
+            if (words[line.at + word] < bound) occupied[words[line.at + word]] = true;
+        }
+    }
+    std::uint32_t free = 1u;
+    for (auto& [key, id] : allocated) {
+        while (free < bound && occupied[free]) ++free;
+        if (free >= bound) throw std::runtime_error("normalized specialized SPIR-V has no free id for a constant");
+        id = free++;
+        canonical.emplace(key, id);
+    }
+    std::vector<std::uint32_t> remap(bound, 0u);
+    for (const auto& [id, key] : remapped) {
+        if (const auto target = canonical.at(key); target != id) remap[id] = target;
+    }
+    std::vector<bool> gone(bound, false);
+    for (std::size_t index = 0; index < lines.size(); ++index) {
+        if (dropped[index] || moved[index]) gone[words[lines[index].at + lines[index].result]] = true;
+    }
+    std::vector<std::uint32_t> normalized(words.begin(), words.begin() + 5);
+    normalized.reserve(words.size());
+    std::uint32_t highest = 0u;
+    bool inserted = false;
+    for (std::size_t index = 0; index < lines.size(); ++index) {
+        const auto& line = lines[index];
+        if (dropped[index] || moved[index]) continue;
+        if ((line.op == spv::OpName || line.op == spv::OpMemberName) && gone[checkId(words[line.at + 1u])]) continue;
+        if (!inserted && line.op == spv::OpFunction) {
+            for (const auto& [key, id] : allocated) {
+                normalized.push_back((static_cast<std::uint32_t>(key.size() + 1u) << 16u) | key[1]);
+                normalized.push_back(key[0]);
+                normalized.push_back(id);
+                normalized.insert(normalized.end(), key.begin() + 2, key.end());
+                highest = std::max(highest, id);
+            }
+            inserted = true;
+        }
+        if (line.result != 0u) highest = std::max(highest, words[line.at + line.result]);
+        const auto start = normalized.size();
+        normalized.insert(normalized.end(), words.begin() + static_cast<std::ptrdiff_t>(line.at), words.begin() + static_cast<std::ptrdiff_t>(line.at + line.count));
+        if (line.function && line.exact) visit(line, [&](std::size_t at) {
+            if (remap[words[at]] != 0u) normalized[start + (at - line.at)] = remap[words[at]];
+        }, [](std::uint32_t) {});
+    }
+    if (!inserted && !allocated.empty()) throw std::runtime_error("specialized SPIR-V uses constants outside a function");
+    normalized[3] = highest + 1u;
+    return normalized;
 }
 
 }

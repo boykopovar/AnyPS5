@@ -8,6 +8,7 @@
 namespace ShaderRecompiler {
 
 [[nodiscard]] std::vector<std::uint32_t> SpecializeSpirv(std::span<const std::uint32_t> words);
+[[nodiscard]] std::vector<std::uint32_t> NormalizeSpirvConstants(std::span<const std::uint32_t> words);
 
 }
 

@@ -1557,6 +1557,33 @@ void verifyFailureMemoSwitch(const std::filesystem::path& self) {
     require(RunSelf(self, "--no-failure-memo") == 0, "the process with APS5_NO_FAILURE_MEMO=1 failed");
 }
 
+std::string computeEntryName() {
+    ComputeRequest request(false);
+    std::vector<std::byte> key;
+    ShaderDiskCache::BuildKey(request.request, 32u, key);
+    return ShaderDiskCache::EntryName(key);
+}
+
+void verifyTraceSwitchKeepsKey(const char* self) {
+    clearEnvironment("APS5_TRACE_SPECIALIZATION_VARIANTS");
+    const auto expected = computeEntryName();
+    setEnvironment("APS5_TRACE_SPECIALIZATION_VARIANTS", "1");
+    const std::string command = "\"" + std::string(self) + "\" --entry-name " + expected;
+    const auto status = std::system(command.c_str());
+    clearEnvironment("APS5_TRACE_SPECIALIZATION_VARIANTS");
+    require(status == 0, "APS5_TRACE_SPECIALIZATION_VARIANTS=1 changed the shader disk-cache key");
+}
+
+void verifyPartialDwordTail() {
+    ComputeRequest request(true);
+    const auto original = request.userData;
+    request.userData[2] = (original[2] & ~3u) | 1u;
+    const auto oneTailByte = Recompile(request.request);
+    request.userData[2] = (original[2] & ~3u) | 2u;
+    const auto twoTailBytes = Recompile(request.request);
+    require(oneTailByte.spirv.data() == twoTailBytes.spirv.data() && oneTailByte.PipelineVariantId() == twoTailBytes.PipelineVariantId(), "byte buffers whose partial last dword holds a different number of bytes made different specialized modules");
+}
+
 void verifyInvocationIsolation() {
     ComputeRequest request(true);
     const auto first = Recompile(request.request);
@@ -1589,10 +1616,6 @@ void verifyInvocationIsolation() {
         require(changed.cacheHit && first.variantId == changed.variantId, "buffer metadata changed the compiled variant");
         if ((descriptor[0] & 3u) == (original[0] & 3u) && (descriptor[1] & 0xffff0000u) == (original[1] & 0xffff0000u) && descriptor[3] == original[3] && (descriptor[0] != 0u || (descriptor[1] & 0xffffu) != 0u)) {
             require(first.spirv.data() == changed.spirv.data() && first.PipelineVariantId() == changed.PipelineVariantId(), "buffer address or size rebuilt the specialized module");
-        }
-        if (descriptor[2] == 0u) {
-            require(first.spirv.data() == changed.spirv.data() && first.PipelineVariantId() == changed.PipelineVariantId(), "a null V# did not specialize with the bound slot's substitute");
-            continue;
         }
         ComputeRequest fresh(false);
         fresh.userData = descriptor;
@@ -3161,6 +3184,8 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--no-failure-memo") return runWithoutFailureMemo();
         if (argc == 2 && std::string_view(argv[1]) == "--specialized-switch") return runSwitchedSpecialized();
         if (argc == 2 && std::string_view(argv[1]).starts_with("--load-plan")) return runPlanLoadingProcess(argv[1]);
+        if (argc == 3 && std::string_view(argv[1]) == "--entry-name") return computeEntryName() == argv[2] ? 0 : 1;
+        verifyTraceSwitchKeepsKey(argv[0]);
         const auto directory = std::filesystem::temp_directory_path() / ("aps5-shader-disk-cache-test-" + std::to_string(std::random_device{}()));
         std::filesystem::remove_all(directory);
         verifyDefaultDirectory(ArgumentPath(argv, 0));
@@ -3190,6 +3215,7 @@ int main(int argc, char** argv) {
         verifyPlanAcrossProcesses(ArgumentPath(argv, 0));
         verifyEmissionFailureMemo();
         verifyFailureMemoSwitch(ArgumentPath(argv, 0));
+        verifyPartialDwordTail();
         verifyInvocationIsolation();
         verifyBufferAlignmentSpecialization();
         verifyBindingPlanSelection();

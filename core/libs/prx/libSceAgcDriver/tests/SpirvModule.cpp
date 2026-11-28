@@ -5,6 +5,8 @@
 #include <array>
 #include <cstdio>
 #include <exception>
+#include <initializer_list>
+#include <iterator>
 #include <map>
 #include <set>
 #include <string>
@@ -686,7 +688,305 @@ void testDeferredPhiValidation() {
     check(threwExcess, "PatchDeferredPhi beyond registered incoming count did not throw");
 }
 
+std::vector<std::uint32_t> constantUseModule(std::uint32_t dead, std::uint32_t operand, std::uint32_t live) {
+    const auto op = [](std::uint32_t count, spv::Op code) { return (count << 16u) | static_cast<std::uint32_t>(code); };
+    return {
+        spv::MagicNumber, 0x00010300u, 0u, 14u, 0u,
+        op(2, spv::OpCapability), spv::CapabilityShader,
+        op(3, spv::OpMemoryModel), spv::AddressingModelLogical, spv::MemoryModelGLSL450,
+        op(5, spv::OpEntryPoint), spv::ExecutionModelGLCompute, 10u, 0x6e69616du, 0u,
+        op(6, spv::OpExecutionMode), 10u, spv::ExecutionModeLocalSize, 1u, 1u, 1u,
+        op(3, spv::OpName), 5u, 0x78u,
+        op(2, spv::OpTypeVoid), 1u,
+        op(4, spv::OpTypeInt), 2u, 32u, 0u,
+        op(4, spv::OpTypePointer), 3u, spv::StorageClassPrivate, 2u,
+        op(3, spv::OpTypeFunction), 4u, 1u,
+        op(4, spv::OpConstant), 2u, 5u, dead,
+        op(4, spv::OpConstant), 2u, 6u, 3u,
+        op(4, spv::OpConstant), 2u, 7u, 3u,
+        op(4, spv::OpConstant), 2u, 8u, live,
+        op(4, spv::OpTypeArray), 13u, 2u, 6u,
+        op(4, spv::OpVariable), 3u, 9u, spv::StorageClassPrivate,
+        op(5, spv::OpFunction), 1u, 10u, 0u, 4u,
+        op(2, spv::OpLabel), 11u,
+        op(5, spv::OpIAdd), 2u, 12u, operand, 8u,
+        op(3, spv::OpStore), 9u, 12u,
+        op(1, spv::OpReturn),
+        op(1, spv::OpFunctionEnd),
+    };
+}
+
+void testNormalizedConstantsIgnoreDeadValuesAndDeclarationOrder() {
+    const auto first = NormalizeSpirvConstants(constantUseModule(7u, 6u, 9u));
+    const auto second = NormalizeSpirvConstants(constantUseModule(1u, 7u, 9u));
+    check(first == second, "modules with the same live code and different dead or duplicate constants were not normalized to the same words");
+    check(NormalizeSpirvConstants(constantUseModule(7u, 6u, 10u)) != first, "modules whose live constants differ were normalized to the same words");
+    std::map<std::uint32_t, std::uint32_t> constants;
+    std::vector<std::uint32_t> addends;
+    bool named = false;
+    bool arrayKept = false;
+    for (std::size_t cursor = 5; cursor < first.size(); cursor += first[cursor] >> 16u) {
+        const auto opcode = first[cursor] & 0xffffu;
+        if (opcode == spv::OpConstant) constants.emplace(first[cursor + 2u], first[cursor + 3u]);
+        if (opcode == spv::OpName) named = true;
+        if (opcode == spv::OpIAdd) addends = {first[cursor + 3u], first[cursor + 4u]};
+        if (opcode == spv::OpTypeArray) arrayKept = first[cursor + 3u] == 6u;
+    }
+    check(first[3] == 14u, "the normalized bound is not one past the highest id the module defines");
+    check(constants.size() == 2u && constants.at(6u) == 3u && constants.at(5u) == 9u, "the normalized module does not hold the pinned constant and one canonical constant per used value in the lowest free id");
+    check(addends == std::vector<std::uint32_t>{6u, 5u}, "a function use was not moved to its canonical constant");
+    check(arrayKept, "a constant used outside a function lost its id");
+    check(!named, "the name of a dropped constant was kept");
+}
+
+constexpr std::uint32_t spirvOp(std::uint32_t count, spv::Op code) {
+    return (count << 16u) | static_cast<std::uint32_t>(code);
+}
+
+std::vector<std::uint32_t> computeModule(std::uint32_t bound, std::initializer_list<std::uint32_t> globals, std::initializer_list<std::uint32_t> body) {
+    std::vector<std::uint32_t> words{
+        spv::MagicNumber, 0x00010300u, 0u, bound, 0u,
+        spirvOp(2, spv::OpCapability), spv::CapabilityShader,
+        spirvOp(3, spv::OpMemoryModel), spv::AddressingModelLogical, spv::MemoryModelGLSL450,
+        spirvOp(5, spv::OpEntryPoint), spv::ExecutionModelGLCompute, 10u, 0x6e69616du, 0u,
+        spirvOp(6, spv::OpExecutionMode), 10u, spv::ExecutionModeLocalSize, 1u, 1u, 1u,
+        spirvOp(2, spv::OpTypeVoid), 1u,
+        spirvOp(4, spv::OpTypeInt), 2u, 32u, 0u,
+        spirvOp(4, spv::OpTypePointer), 3u, spv::StorageClassPrivate, 2u,
+        spirvOp(3, spv::OpTypeFunction), 4u, 1u,
+    };
+    words.insert(words.end(), globals);
+    for (const auto word : {spirvOp(4, spv::OpVariable), 3u, 9u, static_cast<std::uint32_t>(spv::StorageClassPrivate), spirvOp(5, spv::OpFunction), 1u, 10u, 0u, 4u, spirvOp(2, spv::OpLabel), 11u}) words.push_back(word);
+    words.insert(words.end(), body);
+    words.push_back(spirvOp(1, spv::OpReturn));
+    words.push_back(spirvOp(1, spv::OpFunctionEnd));
+    return words;
+}
+
+std::vector<std::vector<std::uint32_t>> instructionsOf(const std::vector<std::uint32_t>& words, spv::Op code) {
+    std::vector<std::vector<std::uint32_t>> found;
+    for (std::size_t cursor = 5; cursor < words.size() && (words[cursor] >> 16u) != 0u; cursor += words[cursor] >> 16u) {
+        if ((words[cursor] & 0xffffu) == static_cast<std::uint32_t>(code)) found.emplace_back(words.begin() + static_cast<std::ptrdiff_t>(cursor), words.begin() + static_cast<std::ptrdiff_t>(cursor + (words[cursor] >> 16u)));
+    }
+    return found;
+}
+
+std::map<std::uint32_t, std::vector<std::uint32_t>> constantsOf(const std::vector<std::uint32_t>& words) {
+    std::map<std::uint32_t, std::vector<std::uint32_t>> constants;
+    for (const auto& constant : instructionsOf(words, spv::OpConstant)) constants.emplace(constant[2], std::vector<std::uint32_t>(constant.begin() + 3, constant.end()));
+    return constants;
+}
+
+std::vector<std::uint32_t> normalizedOrEmpty(const std::vector<std::uint32_t>& words, const char* what) {
+    try {
+        return NormalizeSpirvConstants(words);
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "%s: %s\n", what, error.what());
+        ++failures;
+        return {};
+    }
+}
+
+void testNormalizedIdsStayBelowTheInputBound() {
+    constexpr std::uint32_t limit = 0x3fffffu;
+    const auto module = computeModule(limit, {spirvOp(4, spv::OpConstant), 2u, limit - 1u, 9u}, {spirvOp(5, spv::OpIAdd), 2u, 12u, limit - 1u, limit - 1u, spirvOp(3, spv::OpStore), 9u, 12u});
+    const auto normalized = normalizedOrEmpty(module, "a module at the id limit was not normalized");
+    check(!normalized.empty() && normalized[3] <= limit, "normalizing a module at the SPIR-V id limit raised its bound past the limit");
+}
+
+void testNormalizedWordsIgnoreTheInputBoundAndAreIdempotent() {
+    const auto low = computeModule(20u, {spirvOp(4, spv::OpConstant), 2u, 14u, 7u, spirvOp(4, spv::OpConstant), 2u, 15u, 9u}, {spirvOp(5, spv::OpIAdd), 2u, 12u, 15u, 15u, spirvOp(3, spv::OpStore), 9u, 12u});
+    const auto high = computeModule(40u, {spirvOp(4, spv::OpConstant), 2u, 31u, 9u, spirvOp(4, spv::OpConstant), 2u, 30u, 8u}, {spirvOp(5, spv::OpIAdd), 2u, 12u, 31u, 31u, spirvOp(3, spv::OpStore), 9u, 12u});
+    const auto first = normalizedOrEmpty(low, "the low-bound module was not normalized");
+    const auto second = normalizedOrEmpty(high, "the high-bound module was not normalized");
+    check(!first.empty() && first == second, "modules with the same live code and different input bounds were normalized to different words");
+    for (const auto& module : {low, high, constantUseModule(7u, 6u, 9u), constantUseModule(1u, 7u, 9u)}) {
+        const auto once = normalizedOrEmpty(module, "a module was not normalized");
+        check(!once.empty() && normalizedOrEmpty(once, "a normalized module was not normalized again") == once, "normalizing a normalized module changed its words");
+    }
+}
+
+void testNormalizationKeepsDecoratedConstants() {
+    const auto module = computeModule(20u, {
+        spirvOp(3, spv::OpDecorate), 5u, spv::DecorationRelaxedPrecision,
+        spirvOp(3, spv::OpDecorate), 7u, spv::DecorationRelaxedPrecision,
+        spirvOp(4, spv::OpConstant), 2u, 5u, 3u,
+        spirvOp(4, spv::OpConstant), 2u, 6u, 3u,
+        spirvOp(4, spv::OpConstant), 2u, 7u, 4u,
+    }, {spirvOp(5, spv::OpIAdd), 2u, 12u, 5u, 6u, spirvOp(3, spv::OpStore), 9u, 12u});
+    const auto normalized = normalizedOrEmpty(module, "a module with decorated constants was not normalized");
+    const auto constants = constantsOf(normalized);
+    const auto adds = instructionsOf(normalized, spv::OpIAdd);
+    check(constants.contains(5u) && constants.at(5u) == std::vector<std::uint32_t>{3u}, "a decorated constant used in a function lost its id or value");
+    check(constants.contains(7u) && constants.at(7u) == std::vector<std::uint32_t>{4u}, "an unused decorated constant was dropped");
+    check(adds.size() == 1u && adds[0][3] == 5u && adds[0][4] != 5u && constants.contains(adds[0][4]) && constants.at(adds[0][4]) == std::vector<std::uint32_t>{3u}, "a RelaxedPrecision constant was merged with an undecorated constant of the same value");
+}
+
+void testNormalizationDropsDeadCompositeChains() {
+    constexpr std::uint32_t depth = 200u;
+    std::vector<std::uint32_t> globals{spirvOp(4, spv::OpConstant), 2u, 2000u, 5u};
+    for (std::uint32_t level = 1; level <= depth; ++level) {
+        for (const auto word : {spirvOp(3, spv::OpTypeStruct), 1000u + level, level == 1u ? 2u : 999u + level}) globals.push_back(word);
+        for (const auto word : {spirvOp(4, spv::OpConstantComposite), 1000u + level, 2000u + level, 1999u + level}) globals.push_back(word);
+    }
+    for (const auto word : {spirvOp(4, spv::OpConstant), 2u, 3000u, 6u, spirvOp(4, spv::OpTypeStruct), 3001u, 2u, 2u, spirvOp(5, spv::OpConstantComposite), 3001u, 3002u, 3000u, 3000u}) globals.push_back(word);
+    auto module = computeModule(3100u, {}, {spirvOp(5, spv::OpCompositeExtract), 2u, 12u, 3002u, 1u, spirvOp(3, spv::OpStore), 9u, 12u});
+    const auto at = static_cast<std::ptrdiff_t>(std::distance(module.begin(), std::find(module.begin() + 5, module.end(), spirvOp(4, spv::OpVariable))));
+    module.insert(module.begin() + at, globals.begin(), globals.end());
+    const auto normalized = normalizedOrEmpty(module, "a module with a dead composite chain was not normalized");
+    const auto composites = instructionsOf(normalized, spv::OpConstantComposite);
+    const auto constants = constantsOf(normalized);
+    check(composites.size() == 1u && composites[0][2] == 3002u && composites[0][3] == 3000u && composites[0][4] == 3000u, "the live composite was not kept with its pinned constituent, or a dead composite chain survived");
+    check(constants.size() == 1u && constants.contains(3000u), "the dead chain's scalar survived or the live composite's constituent moved");
+    check(instructionsOf(normalized, spv::OpTypeStruct).size() == depth + 1u, "dropping dead constants dropped a type");
+}
+
+void testNormalizationKeepsFloatBitPatternsApart() {
+    const std::array<std::uint32_t, 4> bits{0x00000000u, 0x80000000u, 0x7fc00000u, 0x7fc00001u};
+    std::vector<std::uint32_t> globals{spirvOp(3, spv::OpTypeFloat), 20u, 32u, spirvOp(4, spv::OpTypePointer), 21u, spv::StorageClassPrivate, 20u, spirvOp(4, spv::OpVariable), 21u, 22u, spv::StorageClassPrivate};
+    for (std::uint32_t index = 0; index < bits.size(); ++index) {
+        for (const auto word : {spirvOp(4, spv::OpConstant), 20u, 30u + index, bits[index]}) globals.push_back(word);
+    }
+    auto module = computeModule(60u, {}, {
+        spirvOp(5, spv::OpFAdd), 20u, 40u, 30u, 31u,
+        spirvOp(5, spv::OpFAdd), 20u, 41u, 32u, 33u,
+        spirvOp(5, spv::OpFAdd), 20u, 42u, 40u, 41u,
+        spirvOp(3, spv::OpStore), 22u, 42u,
+    });
+    const auto at = static_cast<std::ptrdiff_t>(std::distance(module.begin(), std::find(module.begin() + 5, module.end(), spirvOp(4, spv::OpVariable))));
+    module.insert(module.begin() + at, globals.begin(), globals.end());
+    const auto normalized = normalizedOrEmpty(module, "a module with float constants was not normalized");
+    const auto constants = constantsOf(normalized);
+    const auto adds = instructionsOf(normalized, spv::OpFAdd);
+    const auto valueOf = [&](std::uint32_t id) { return constants.contains(id) ? constants.at(id).front() : 0xdeadbeefu; };
+    check(adds.size() == 3u && valueOf(adds[0][3]) == bits[0] && valueOf(adds[0][4]) == bits[1] && valueOf(adds[1][3]) == bits[2] && valueOf(adds[1][4]) == bits[3], "normalizing merged +0.0 with -0.0 or two NaN payloads");
+    check(constants.size() == bits.size(), "normalizing changed the number of distinct float constants");
+}
+
+void testNormalizationDecodesSpecConstantOperations() {
+    const auto module = computeModule(40u, {
+        spirvOp(4, spv::OpTypeVector), 20u, 2u, 2u,
+        spirvOp(4, spv::OpConstant), 2u, 22u, 1u,
+        spirvOp(5, spv::OpConstantComposite), 20u, 21u, 22u, 22u,
+        spirvOp(8, spv::OpSpecConstantOp), 20u, 23u, spv::OpVectorShuffle, 21u, 21u, 0u, 0xffffffffu,
+        spirvOp(6, spv::OpSpecConstantOp), 2u, 24u, spv::OpCompositeExtract, 23u, 25u,
+        spirvOp(4, spv::OpConstant), 2u, 25u, 1u,
+    }, {spirvOp(5, spv::OpIAdd), 2u, 12u, 24u, 25u, spirvOp(3, spv::OpStore), 9u, 12u});
+    const auto normalized = normalizedOrEmpty(module, "a module with spec constant operations was not normalized");
+    const auto operations = instructionsOf(normalized, spv::OpSpecConstantOp);
+    check(operations.size() == 2u && operations[0][7] == 0xffffffffu && operations[1][5] == 25u, "a literal of a spec constant operation was rewritten");
+    const auto adds = instructionsOf(normalized, spv::OpIAdd);
+    check(adds.size() == 1u && adds[0][4] == 22u, "a constant named only by a spec constant operation's literal index was pinned instead of merged");
+    try {
+        static_cast<void>(ShaderRecompiler::SpecializeSpirv(module));
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "specializing an undefined shuffle component threw: %s\n", error.what());
+        ++failures;
+    }
+}
+
+void testNormalizationLeavesUnclassifiedOperandsAlone() {
+    const auto module = computeModule(40u, {
+        spirvOp(4, spv::OpConstant), 2u, 6u, 3u,
+        spirvOp(4, spv::OpConstant), 2u, 7u, 3u,
+        spirvOp(4, spv::OpConstant), 2u, 8u, 4u,
+        spirvOp(4, spv::OpConstant), 2u, 20u, 4u,
+    }, {
+        spirvOp(5, spv::OpIAdd), 2u, 12u, 7u, 6u,
+        spirvOp(6, spv::OpCooperativeMatrixMulAddKHR), 2u, 13u, 7u, 7u, 7u,
+        spirvOp(3, spv::OpLifetimeStart), 9u, 20u,
+        spirvOp(5, spv::OpIAdd), 2u, 14u, 20u, 8u,
+        spirvOp(3, spv::OpStore), 9u, 14u,
+    });
+    const auto normalized = normalizedOrEmpty(module, "a module with unclassified operands was not normalized");
+    const auto constants = constantsOf(normalized);
+    const auto unclassified = instructionsOf(normalized, spv::OpCooperativeMatrixMulAddKHR);
+    const auto lifetime = instructionsOf(normalized, spv::OpLifetimeStart);
+    const auto adds = instructionsOf(normalized, spv::OpIAdd);
+    check(unclassified.size() == 1u && unclassified[0][3] == 7u && constants.contains(7u) && constants.at(7u) == std::vector<std::uint32_t>{3u}, "an instruction whose operands are not classified was rewritten or lost its constant");
+    check(lifetime.size() == 1u && lifetime[0][2] == 20u, "the size literal of OpLifetimeStart was rewritten");
+    check(adds.size() == 2u && adds[0][3] == 7u && adds[0][4] == 7u && !constants.contains(6u) && adds[1][3] == adds[1][4] && adds[1][3] != 20u, "classified uses next to an unclassified one were not merged");
+}
+
+void testCanonicalIdsAvoidUnclassifiedLiterals() {
+    const auto module = computeModule(40u, {
+        spirvOp(4, spv::OpConstant), 2u, 30u, 3u,
+        spirvOp(4, spv::OpConstant), 2u, 31u, 4u,
+    }, {
+        spirvOp(5, spv::OpIAdd), 2u, 12u, 30u, 31u,
+        spirvOp(7, spv::OpCooperativeMatrixMulAddKHR), 2u, 13u, 12u, 12u, 12u, 6u,
+        spirvOp(3, spv::OpStore), 9u, 12u,
+    });
+    const auto once = normalizedOrEmpty(module, "a module with an unclassified literal was not normalized");
+    const auto constants = constantsOf(once);
+    check(!constants.contains(6u), "a canonical constant took the id that an unclassified instruction's literal names");
+    check(!once.empty() && normalizedOrEmpty(once, "a module with an unclassified literal was not normalized again") == once, "an unclassified literal made normalization change a normalized module");
+}
+
+void testNormalizationDecodesEmittedExtensionOpcodes() {
+    const auto module = [](std::uint32_t addend, std::uint32_t scope) {
+        auto words = computeModule(60u, {
+            spirvOp(3, spv::OpTypeFloat), 20u, 32u,
+            spirvOp(4, spv::OpTypeInt), 21u, 64u, 0u,
+            spirvOp(4, spv::OpConstant), 20u, addend, 0x3f800000u,
+            spirvOp(4, spv::OpConstant), 2u, scope, static_cast<std::uint32_t>(spv::ScopeSubgroup),
+        }, {
+            spirvOp(6, spv::OpFmaKHR), 20u, 40u, addend, addend, addend,
+            spirvOp(4, spv::OpReadClockKHR), 21u, 41u, scope,
+        });
+        return words;
+    };
+    const auto first = normalizedOrEmpty(module(30u, 31u), "a module with extension opcodes was not normalized");
+    const auto second = normalizedOrEmpty(module(35u, 36u), "a module with extension opcodes was not normalized");
+    check(!first.empty() && first == second, "modules that differ only in the ids of constants used by OpFmaKHR and OpReadClockKHR were normalized to different words");
+}
+
+void testNormalizationReadsSixtyFourBitSwitchLiterals() {
+    const auto module = computeModule(60u, {
+        spirvOp(4, spv::OpTypeInt), 30u, 64u, 0u,
+        spirvOp(5, spv::OpConstant), 30u, 31u, 5u, 0u,
+        spirvOp(4, spv::OpConstant), 2u, 32u, 3u,
+        spirvOp(4, spv::OpConstant), 2u, 33u, 3u,
+    }, {
+        spirvOp(3, spv::OpSelectionMerge), 40u, 0u,
+        spirvOp(6, spv::OpSwitch), 31u, 40u, 32u, 0u, 41u,
+        spirvOp(2, spv::OpLabel), 41u,
+        spirvOp(5, spv::OpIAdd), 2u, 12u, 33u, 32u,
+        spirvOp(3, spv::OpStore), 9u, 12u,
+        spirvOp(2, spv::OpBranch), 40u,
+        spirvOp(2, spv::OpLabel), 40u,
+    });
+    const auto normalized = normalizedOrEmpty(module, "a module with a 64-bit switch was not normalized");
+    const auto constants = constantsOf(normalized);
+    const auto switches = instructionsOf(normalized, spv::OpSwitch);
+    check(switches.size() == 1u && switches[0][3] == 32u && switches[0][4] == 0u && switches[0][5] == 41u, "a 64-bit OpSwitch case literal or target was rewritten");
+    check(switches.size() == 1u && constants.contains(switches[0][1]) && constants.at(switches[0][1]) == std::vector<std::uint32_t>{5u, 0u}, "the 64-bit switch selector does not name its canonical constant");
+}
+
+void testTruncatedNamesAreRejected() {
+    const auto module = computeModule(20u, {spirvOp(1, spv::OpName), spirvOp(4, spv::OpConstant), 2u, 5u, 1u}, {spirvOp(5, spv::OpIAdd), 2u, 12u, 5u, 5u, spirvOp(3, spv::OpStore), 9u, 12u});
+    bool rejected = false;
+    try {
+        static_cast<void>(NormalizeSpirvConstants(module));
+    } catch (const std::exception&) {
+        rejected = true;
+    }
+    check(rejected, "an OpName without a target was normalized");
+}
+
 int main() {
+    testNormalizedConstantsIgnoreDeadValuesAndDeclarationOrder();
+    testNormalizedIdsStayBelowTheInputBound();
+    testNormalizedWordsIgnoreTheInputBoundAndAreIdempotent();
+    testNormalizationKeepsDecoratedConstants();
+    testNormalizationDropsDeadCompositeChains();
+    testNormalizationKeepsFloatBitPatternsApart();
+    testNormalizationDecodesSpecConstantOperations();
+    testNormalizationLeavesUnclassifiedOperandsAlone();
+    testCanonicalIdsAvoidUnclassifiedLiterals();
+    testNormalizationDecodesEmittedExtensionOpcodes();
+    testNormalizationReadsSixtyFourBitSwitchLiterals();
+    testTruncatedNamesAreRejected();
     testFoldedBitcastsAndNanTests();
     testFoldingLeavesNoDeadBlocksOrConstants();
     testIdsBeyondTheBoundAreRejected();
