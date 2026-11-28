@@ -466,3 +466,50 @@ std::size_t APS5_VABI _ZNK3WTF8JSONImpl9ArrayBase10memoryCostEv(const ArrayBase*
     }
     return cost;
 }
+
+namespace NKWebKit::JsonAbi {
+
+void PushValue(ArrayBase& array, Ref<Value>&& value) {
+    AppendValueVector(array.elements, std::move(value));
+}
+
+void WriteJSON(const Value& value, StringBuilder& output) {
+    value.vptr->writeJSON(&value, output);
+}
+
+void AppendDoubleQuotedString(StringBuilder& output, const StringImpl* string) {
+    NKWebKit::WtfAbi::AppendCharacter(output, '"');
+    EscapeString(output, string);
+    NKWebKit::WtfAbi::AppendCharacter(output, '"');
+}
+
+String ToJSONString(const Value& value) {
+    StringBuilder builder{};
+    builder.shouldCrashOnOverflow = true;
+    builder.is8Bit = true;
+    NKWebKit::WtfAbi::ReserveCapacity(builder, 512U);
+    WriteJSON(value, builder);
+    String result = NKWebKit::WtfAbi::ToString(builder);
+    NKWebKit::WtfAbi::Clear(builder);
+    return result;
+}
+
+}  // namespace NKWebKit::JsonAbi
+
+extern "C" {
+
+void APS5_VABI _ZNK3WTF8JSONImpl5Value9writeJSONERNS_13StringBuilderE(const Value* self, StringBuilder* output) {
+    if (!output) throw std::invalid_argument("null WTF StringBuilder");
+    ValueWriteJSON(self, *output);
+}
+
+void APS5_VABI _ZNK3WTF8JSONImpl9ArrayBase9writeJSONERNS_13StringBuilderE(const ArrayBase* self, StringBuilder* output) {
+    if (!output) throw std::invalid_argument("null WTF StringBuilder");
+    ArrayWriteJSON(self, *output);
+}
+
+String APS5_VABI _ZNK3WTF8JSONImpl5Value12toJSONStringEv(const Value* self) {
+    return NKWebKit::JsonAbi::ToJSONString(Checked(self));
+}
+
+}
