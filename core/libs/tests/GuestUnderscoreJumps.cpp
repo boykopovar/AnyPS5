@@ -194,9 +194,28 @@ static void CheckFloatingPointState() {
     Require((word & 0x0300u) == 0x0200u);
 }
 
+static void CheckFloatingPointLayout() {
+    const unsigned int savedCsr = _mm_getcsr();
+    const unsigned short savedWord = ControlWord();
+    _mm_setcsr((savedCsr & ~0x603fu) | 0x6000u);
+    SetControlWord(static_cast<unsigned short>((savedWord & ~0x0300u) | 0x0200u));
+    std::uint64_t plain[12]{};
+    const int plainResult = setjmp_nid_postfix(plain);
+    std::uint64_t underscore[12]{};
+    const int underscoreResult = _setjmp_nid_postfix(underscore);
+    _mm_setcsr(savedCsr);
+    SetControlWord(savedWord);
+    Require(plainResult == 0 && underscoreResult == 0);
+    for (const std::uint64_t* buffer : {plain, underscore}) {
+        Require((BufferWord(buffer, 64) & 0x0300u) == 0x0200u);
+        Require((BufferWord(buffer, 68) & 0x6000u) == 0x6000u);
+    }
+}
+
 int main() {
     std::uint64_t buffer[12]{};
     Require(UnderscoreJumpKeepingCalleeSaved(buffer) == 42);
     CheckSignalMask();
     CheckFloatingPointState();
+    CheckFloatingPointLayout();
 }

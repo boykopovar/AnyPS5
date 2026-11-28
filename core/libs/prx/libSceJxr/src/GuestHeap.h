@@ -5,6 +5,7 @@
 #include <stdlib.h>
 
 void* JxrGuestCalloc_nid_no_patch(size_t count, size_t size);
+void* JxrGuestMalloc_nid_no_patch(size_t size);
 void JxrGuestFree_nid_no_patch(void* memory);
 
 #define calloc JxrGuestCalloc_nid_no_patch

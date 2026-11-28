@@ -76,6 +76,10 @@ int main() {
     Require(pthread_barrier_init_nid_postfix(nullptr, nullptr, 0) == 22);
     Require(scePthreadBarrierInit(&context.barrier, &attr, 0x80000000u, "over") == SCE_KERNEL_ERROR_EINVAL && context.barrier == nullptr);
     Require(scePthreadBarrierInit(nullptr, &attr, WAITERS, "null") == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadBarrierInit(&context.barrier, &attr, WAITERS, reinterpret_cast<const char*>(0x10)) == SCE_KERNEL_ERROR_EFAULT
+        && context.barrier == nullptr);
+    Require(scePthreadBarrierInit(&context.barrier, &attr, WAITERS, "01234567890123456789012345678901") == SCE_KERNEL_ERROR_ENAMETOOLONG
+        && context.barrier == nullptr);
     Require(scePthreadBarrierInit(&context.barrier, &attr, WAITERS, "barrier") == 0 && context.barrier != nullptr);
     Require(scePthreadBarrierattrDestroy(&attr) == 0 && attr == nullptr);
     Require(scePthreadBarrierattrDestroy(&attr) == SCE_KERNEL_ERROR_EINVAL);
@@ -111,14 +115,28 @@ int main() {
     Require(scePthreadBarrierWait(&single) == BARRIER_SERIAL_THREAD);
     Require(scePthreadBarrierDestroy(&single) == 0);
 
-    int clock = 0;
+    constexpr int ClockThreadCpuTimeId = 14;
+    int clock = -1;
     int posixClock = 0;
-    Require(scePthreadGetcpuclockid(scePthreadSelf(), &clock) == 0);
-    Require(pthread_getcpuclockid_nid_postfix(scePthreadSelf(), &posixClock) == 0 && clock == posixClock);
+    Require(scePthreadGetcpuclockid(scePthreadSelf(), &clock) == 0 && clock == ClockThreadCpuTimeId);
+    Require(pthread_getcpuclockid_nid_postfix(scePthreadSelf(), &posixClock) == 0 && posixClock != ClockThreadCpuTimeId);
     Require(scePthreadGetcpuclockid(scePthreadSelf(), nullptr) == SCE_KERNEL_ERROR_EFAULT);
     Require(scePthreadGetcpuclockid(scePthreadSelf(), reinterpret_cast<int*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
     Require(pthread_getcpuclockid_nid_postfix(scePthreadSelf(), reinterpret_cast<int*>(0x10)) == 14);
     Require(scePthreadGetcpuclockid(nullptr, &clock) == SCE_KERNEL_ERROR_EINVAL);
+
+    Context clockContext;
+    Require(scePthreadBarrierInit(&clockContext.barrier, nullptr, 2, nullptr) == 0);
+    Pthread clockThread = nullptr;
+    Require(scePthreadCreate(&clockThread, nullptr, Waiter, &clockContext, nullptr) == 0);
+    int otherClock = -1;
+    int otherPosixClock = 0;
+    Require(scePthreadGetcpuclockid(clockThread, &otherClock) == 0 && otherClock == ClockThreadCpuTimeId);
+    Require(pthread_getcpuclockid_nid_postfix(clockThread, &otherPosixClock) == 0 && otherPosixClock != ClockThreadCpuTimeId);
+    const int release = scePthreadBarrierWait(&clockContext.barrier);
+    Require(release == 0 || release == BARRIER_SERIAL_THREAD);
+    Require(scePthreadJoin(clockThread, nullptr) == 0);
+    Require(scePthreadBarrierDestroy(&clockContext.barrier) == 0);
 
     Require(pthread_setconcurrency_nid_postfix(3) == 0 && scePthreadGetconcurrency() == static_cast<int>(0x80020003));
     Require(pthread_setconcurrency_nid_postfix(0) == 0 && scePthreadGetconcurrency() == 0);

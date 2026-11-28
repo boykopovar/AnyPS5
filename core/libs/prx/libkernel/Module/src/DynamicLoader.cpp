@@ -14,6 +14,7 @@
 #include <mutex>
 #include <set>
 #include <string>
+#include <string_view>
 #include <stdexcept>
 #include <system_error>
 #include <vector>
@@ -51,6 +52,25 @@ void Error(const char* message) {
     LoaderError() = message;
     pendingError = true;
 }
+struct ModulePaths {
+    std::filesystem::path source;
+    std::filesystem::path resolved;
+};
+
+ModulePaths ResolveModulePaths(const char* path) {
+    ModulePaths paths{ResolvePath_nid_no_patch(path)};
+    paths.resolved = RelinkedModulePath_nid_no_patch(paths.source);
+    std::error_code error;
+    if (std::filesystem::is_regular_file(paths.resolved, error) || std::string_view(path).find_first_of("/\\") != std::string_view::npos) return paths;
+    try {
+        ModulePaths app{ResolvePath_nid_no_patch(("/app0/" + std::string(path)).c_str())};
+        app.resolved = RelinkedModulePath_nid_no_patch(app.source);
+        return std::filesystem::is_regular_file(app.resolved, error) ? app : paths;
+    } catch (const std::filesystem::filesystem_error&) {
+        return paths;
+    }
+}
+
 void LoadFailure(const std::filesystem::path& source, const std::filesystem::path& resolved, const std::string& reason) {
     std::error_code status;
     const auto message = resolved == source && std::filesystem::is_regular_file(source, status)
@@ -63,6 +83,11 @@ void LoadFailure(const std::filesystem::path& source, const std::filesystem::pat
     std::lock_guard lock(reportedLock);
     if (reported.insert(resolved).second) std::fprintf(stderr, "[module] %s\n", message.c_str());
 }
+
+void NotLoaded(const std::filesystem::path& resolved) {
+    std::error_code status;
+    if (!std::filesystem::is_regular_file(resolved, status)) Error(("dlopen: " + resolved.string() + " was not found").c_str());
+}
 #ifdef _WIN32
 HMODULE LoadWithoutErrorDialog(const std::filesystem::path& path) {
     const auto mode = GetThreadErrorMode();
@@ -72,6 +97,12 @@ HMODULE LoadWithoutErrorDialog(const std::filesystem::path& path) {
     SetThreadErrorMode(mode, nullptr);
     SetLastError(error);
     return loaded;
+}
+
+HMODULE LoadedModule(const std::filesystem::path& path) {
+    HMODULE loaded = nullptr;
+    const auto name = path.has_parent_path() ? std::filesystem::absolute(path) : path;
+    return GetModuleHandleExW(0, name.c_str(), &loaded) ? loaded : nullptr;
 }
 #endif
 struct Module {
@@ -100,6 +131,7 @@ std::mutex modulesMutex;
 std::map<std::uintptr_t, std::shared_ptr<Module>> modules;
 std::uintptr_t nextHandle = 0x20000000;
 std::map<const void*, std::uintptr_t> imageIds;
+std::set<const void*> residentImages;
 void* Symbol(Module& module, const char* name) {
 #ifdef _WIN32
     return reinterpret_cast<void*>(GetProcAddress(static_cast<HMODULE>(module.native), name));
@@ -445,9 +477,11 @@ static void InitializeDeferredModule(HMODULE native, const std::string& reason) 
 #endif
 
 void* APS5_VABI dlopen_nid_postfix(const char* path, int flags) {
-    if ((flags & ~0x103) || (flags & 3) == 0 || (flags & 3) == 3) {
+    if ((flags & ~0x3103) || (flags & 3) == 0 || (flags & 3) == 3) {
         Error("dlopen: unsupported flags"); return nullptr;
     }
+    const bool noDelete = (flags & 0x1000) != 0;
+    const bool noLoad = (flags & 0x2000) != 0;
     try {
         auto module = std::make_shared<Module>();
         module->global = (flags & 0x100) != 0 || !path;
@@ -457,13 +491,22 @@ void* APS5_VABI dlopen_nid_postfix(const char* path, int flags) {
             module->owned = false;
         } else {
             if (!*path) { Error("dlopen: empty module path"); return nullptr; }
-            const auto source = ResolvePath_nid_no_patch(path);
-            const auto resolved = RelinkedModulePath_nid_no_patch(source);
-            module->native = LoadWithoutErrorDialog(resolved);
+            const auto [source, resolved] = ResolveModulePaths(path);
+            module->native = noLoad ? LoadedModule(resolved) : LoadWithoutErrorDialog(resolved);
             if (!module->native) {
+                if (noLoad) { NotLoaded(resolved); return nullptr; }
                 const auto error = GetLastError();
                 LoadFailure(source, resolved, "Windows loader error " + std::to_string(error));
                 return nullptr;
+            }
+            if (noDelete) {
+                HMODULE pinned = nullptr;
+                const DWORD pin = GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN;
+                if (!GetModuleHandleExW(pin, static_cast<LPCWSTR>(module->native), &pinned)) {
+                    const auto error = GetLastError();
+                    Error(("dlopen: cannot pin " + resolved.string() + " (Windows loader error " + std::to_string(error) + ")").c_str());
+                    return nullptr;
+                }
             }
             InitializeDeferredModule(static_cast<HMODULE>(module->native));
         }
@@ -473,19 +516,20 @@ void* APS5_VABI dlopen_nid_postfix(const char* path, int flags) {
             Error(message); return nullptr;
         }
 #else
-        const auto source = path ? ResolvePath_nid_no_patch(path) : std::filesystem::path{};
-        const auto resolved = path ? RelinkedModulePath_nid_no_patch(source) : std::filesystem::path{};
+        const auto [source, resolved] = path ? ResolveModulePaths(path) : ModulePaths{};
+        const int nativeFlags = ((flags & 3) == 1 ? RTLD_LAZY : RTLD_NOW) | (noDelete ? RTLD_NODELETE : 0) | (noLoad ? RTLD_NOLOAD : 0) |
 #ifdef __APPLE__
-        const int nativeFlags = ((flags & 3) == 1 ? RTLD_LAZY : RTLD_NOW) | RTLD_GLOBAL;
+            RTLD_GLOBAL;
 #else
-        const int nativeFlags = ((flags & 3) == 1 ? RTLD_LAZY : RTLD_NOW) |
             ((flags & 0x100) ? RTLD_GLOBAL : RTLD_LOCAL);
 #endif
         module->native = ::dlopen(path ? resolved.c_str() : nullptr, nativeFlags);
         if (!module->native) {
-            if (path) LoadFailure(source, resolved, ::dlerror()); else Error(::dlerror());
+            if (path && noLoad) NotLoaded(resolved);
+            else if (path) LoadFailure(source, resolved, ::dlerror()); else Error(::dlerror());
             return nullptr;
         }
+        module->owned = path != nullptr;
 #ifdef __linux__
         if (path) InitializeLinuxGuestModule(module->native);
 #endif
@@ -503,6 +547,7 @@ void* APS5_VABI dlopen_nid_postfix(const char* path, int flags) {
         }
 #endif
         modules.emplace(handle, module);
+        if (noDelete && module->owned) residentImages.insert(module->native);
 #ifdef _WIN32
         for (const auto& [key, entry] : modules) {
             if (entry->native != module->native) continue;
@@ -513,7 +558,10 @@ void* APS5_VABI dlopen_nid_postfix(const char* path, int flags) {
         return reinterpret_cast<void*>(handle);
     } catch (const std::exception& error) { Error(error.what()); return nullptr; }
 }
-void* APS5_VABI dlsym_nid_postfix(void* handle, const char* name) {
+void* APS5_VABI dlsym_nid_postfix(void* handle, const char* guestName) {
+    std::string copied;
+    if (guestName && CopyGuestString_nid_no_patch(guestName, 65536, copied) != 0) { Error("dlsym: unreadable symbol name"); return nullptr; }
+    const char* const name = guestName ? copied.c_str() : nullptr;
     if (!name || !*name) { Error("dlsym: empty symbol name"); return nullptr; }
     try {
         std::vector<std::shared_ptr<Module>> search;
@@ -562,6 +610,7 @@ int APS5_VABI dlclose_nid_postfix(void* handle) {
         auto found = modules.find(key);
         if (found == modules.end()) { Error("dlclose: invalid module handle"); return -1; }
         module = found->second;
+        lastReference = !residentImages.contains(module->native);
         for (const auto& [other, entry] : modules) {
             if (other != key && entry->native == module->native) lastReference = false;
         }
@@ -573,7 +622,9 @@ int APS5_VABI dlclose_nid_postfix(void* handle) {
 #elif defined(__APPLE__)
         mutation.UnregisterImage(module->loadBias);
 #else
-        mutation.UnregisterImage(reinterpret_cast<const void*>(static_cast<link_map*>(module->native)->l_addr));
+        link_map* map = nullptr;
+        if (::dlinfo(module->native, RTLD_DI_LINKMAP, &map) != 0 || map == nullptr) { Error("dlclose: cannot identify the module image"); return -1; }
+        mutation.UnregisterImage(reinterpret_cast<const void*>(map->l_addr));
 #endif
     }
     {

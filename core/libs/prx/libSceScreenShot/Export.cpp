@@ -66,20 +66,13 @@ bool StringFits(const char* text, std::size_t maxLength) {
     throw std::runtime_error(std::string(function) + ": the screenshot service is not available");
 }
 
-std::uint32_t CompiledSdkVersion() {
-    static const auto* processParameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::uint32_t version;
-    std::memcpy(&version, processParameters + 0x10, sizeof(version));
-    return version;
-}
-
 int SetOverlayImage(const char* path, int offsetX, int offsetY) {
-    const bool large = CompiledSdkVersion() >= LargeOverlaySdkVersion;
+    const bool large = ApplicationCompiledSdkVersion() >= LargeOverlaySdkVersion;
     const int maxX = large ? 3839 : 1919;
     const int maxY = large ? 2159 : 1079;
     const std::int64_t maxSize = large ? 8 * 1024 * 1024 : 2 * 1024 * 1024;
     if (!path || offsetX < 0 || offsetX > maxX || offsetY < 0 || offsetY > maxY) return ErrorArgument;
-    if (strnlen(path, MaxOverlayPath) >= MaxOverlayPath) return ErrorArgument;
+    if (!StringFits(path, MaxOverlayPath - 1)) return ErrorArgument;
     const int descriptor = sceKernelOpen(path, 0, 0);
     if (descriptor < 0) return ErrorOverlayFile;
     FileStat stat{};
@@ -117,8 +110,11 @@ int APS5_VABI sceScreenShotEnable() {
 
 int APS5_VABI sceScreenShotIsDisabled(int id, int* isDisabled) {
     if (id == -1 || !isDisabled) return ErrorArgument;
+    const int savedErrno = errno;
     const int value = disabled ? 1 : 0;
-    if (!GuestCopyOut_nid_no_patch(isDisabled, &value, sizeof(value))) return ErrorArgument;
+    const bool copied = GuestCopyOut_nid_no_patch(isDisabled, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) return ErrorArgument;
     return 0;
 }
 

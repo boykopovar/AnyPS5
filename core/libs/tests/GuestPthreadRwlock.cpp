@@ -4,6 +4,7 @@
 #include "prx/libkernel/Pthread/include/Rwlock.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -508,6 +509,7 @@ static void CheckBadPointers() {
         Require(scePthreadRwlockattrDestroy(attrs) == SCE_KERNEL_ERROR_EFAULT);
         Require(pthread_rwlockattr_destroy_nid_postfix(attrs) == GUEST_EFAULT);
         Require(scePthreadRwlockattrInit(attrs) == SCE_KERNEL_ERROR_EFAULT);
+        Require(scePthreadRwlockInit(static_cast<PthreadRwlock*>(pointer), nullptr, nullptr) == SCE_KERNEL_ERROR_EFAULT);
         Require(pthread_rwlockattr_init_nid_postfix(attrs) == GUEST_EFAULT);
     }
     void* const badOut[] = {nullptr, reinterpret_cast<void*>(0x10), guard.Unreadable()};
@@ -522,6 +524,52 @@ static void CheckBadPointers() {
         Require(scePthreadRwlockattrGettype(&attr, out) == SCE_KERNEL_ERROR_EFAULT);
     }
     Require(pthread_rwlockattr_destroy_nid_postfix(&attr) == 0);
+}
+
+static void CheckDestroyGuestSlots() {
+    GuardPage guard;
+    void* const bad[] = {reinterpret_cast<void*>(0x10), guard.Unreadable()};
+    for (void* pointer : bad) {
+        errno = 71;
+        Require(scePthreadRwlockDestroy(static_cast<PthreadRwlock*>(pointer)) == SCE_KERNEL_ERROR_EFAULT && errno == 71);
+    }
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::size_t page = info.dwPageSize;
+    auto* memory = static_cast<char*>(VirtualAlloc(nullptr, page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(memory != nullptr);
+#else
+    const std::size_t page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    auto* memory = static_cast<char*>(mmap(nullptr, page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(memory != MAP_FAILED);
+#endif
+    auto* slots = reinterpret_cast<PthreadRwlock*>(memory);
+    Require(scePthreadRwlockInit(&slots[0], nullptr, "read-only") == SCE_OK && slots[0] != nullptr);
+    const PthreadRwlock live = slots[0];
+#ifdef _WIN32
+    DWORD previous = 0;
+    Require(VirtualProtect(memory, page, PAGE_READONLY, &previous) != 0);
+#else
+    Require(mprotect(memory, page, PROT_READ) == 0);
+#endif
+    errno = 71;
+    Require(scePthreadRwlockDestroy(&slots[0]) == SCE_KERNEL_ERROR_EFAULT && errno == 71);
+    Require(slots[0] == live);
+    Require(scePthreadRwlockDestroy(&slots[1]) == SCE_OK && errno == 71);
+#ifdef _WIN32
+    Require(VirtualProtect(memory, page, PAGE_READWRITE, &previous) != 0);
+#else
+    Require(mprotect(memory, page, PROT_READ | PROT_WRITE) == 0);
+#endif
+    Require(scePthreadRwlockTrywrlock(&slots[0]) == SCE_OK);
+    Require(scePthreadRwlockUnlock(&slots[0]) == SCE_OK);
+    Require(scePthreadRwlockDestroy(&slots[0]) == SCE_OK);
+#ifdef _WIN32
+    VirtualFree(memory, 0, MEM_RELEASE);
+#else
+    munmap(memory, page);
+#endif
 }
 
 static void CheckSceTryLocks() {
@@ -543,6 +591,7 @@ static void CheckSceTryLocks() {
 
 int main() {
     CheckBadPointers();
+    CheckDestroyGuestSlots();
     CheckSceAttrLifecycle();
     CheckSceTryLocks();
     CheckAttrSettype();

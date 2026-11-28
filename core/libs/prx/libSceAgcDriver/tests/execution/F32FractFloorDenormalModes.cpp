@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "ExecutionHelpers.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -173,17 +174,6 @@ constexpr std::uint32_t Mode2Expected[Threads][Results] = {
     {0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u}
 };
 
-std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
-    const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
-}
-
-std::string Hex(std::uint32_t value) {
-    char text[16];
-    std::snprintf(text, sizeof(text), "0x%08x", value);
-    return text;
-}
-
 std::optional<std::string> Run(AgcDriver::VulkanDevice& device, ShaderRecompiler::ShaderFloatMode floatMode) {
     Input.fill(0u);
     for (std::uint32_t tid = 0; tid < Threads; ++tid) Input[tid * Inputs] = Values[tid];
@@ -233,7 +223,7 @@ int main() {
         if (!device) return VulkanTestSkipped;
         const bool keepsDenormals = device->Target().float32DenormPreserve;
         std::uint32_t checked = 0u;
-        for (const std::uint32_t denormals : {1u, 2u}) {
+        for (const std::uint32_t denormals : {0u, 1u, 2u}) {
             for (const bool ieee : {false, true}) {
                 const ShaderRecompiler::ShaderFloatMode floatMode{0xc0u | denormals << 4u, true, ieee, false};
                 const auto refusal = Run(*device, floatMode);
@@ -245,7 +235,7 @@ int main() {
                 Check(denormals, ieee);
             }
         }
-        std::printf("f32 fract, floor, ceil and frexp_mant denormal mode 1 and 2 tests passed (%u of 4 modes run; the others need DenormPreserve 32)\n", checked);
+        std::printf("f32 fract, floor, ceil and frexp_mant denormal mode 0, 1 and 2 tests passed (%u of 6 modes run; the others need DenormPreserve 32)\n", checked);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

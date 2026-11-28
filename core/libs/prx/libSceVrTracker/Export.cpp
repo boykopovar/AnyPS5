@@ -8,6 +8,7 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
 
 static_assert(sizeof(VrTrackerMemoryBlock) == 16);
 static_assert(sizeof(VrTrackerInitConfig) == 32);
@@ -97,8 +98,10 @@ int APS5_VABI sceVrTrackerGetResult(const VrTrackerGetResultParam* param, VrTrac
     return 0;
 }
 int APS5_VABI sceVrTrackerGetTime(std::uint64_t* time) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!g_initialized.load()) return NotInit;
+    if (!time) return ArgumentInvalid;
+    const std::uint64_t now = sceKernelGetProcessTime();
+    return CopyOutGuest(time, now) ? 0 : ArgumentInvalid;
 }
 int APS5_VABI sceVrTrackerGpuSubmit(const VrTrackerGpuSubmitParam* param) {
     NotImplemented_nid_no_patch(__func__);
@@ -180,11 +183,13 @@ int APS5_VABI sceVrTrackerQueryMemory(const void* param, void* result) {
 }
 int APS5_VABI sceVrTrackerRecalibrate(const void* param) {
     if (!g_initialized.load()) return NotInit;
-    const auto* recalibrate = static_cast<const RecalibrateParam*>(param);
-    if (!recalibrate || recalibrate->size != sizeof(RecalibrateParam) || recalibrate->device_type > DeviceGun) return ArgumentInvalid;
-    if (recalibrate->device_type == DeviceHmd) return DeviceNotRegistered;
+    if (!param) return ArgumentInvalid;
+    RecalibrateParam recalibrate{};
+    if (!CopyInGuest(recalibrate, static_cast<const RecalibrateParam*>(param))) return ArgumentInvalid;
+    if (recalibrate.size != sizeof(RecalibrateParam) || recalibrate.device_type > DeviceGun) return ArgumentInvalid;
+    if (recalibrate.device_type == DeviceHmd) return DeviceNotRegistered;
     std::lock_guard lock(g_devicesMutex);
-    return g_deviceHandles[recalibrate->device_type] == -1 ? DeviceNotRegistered : 0;
+    return g_deviceHandles[recalibrate.device_type] == -1 ? DeviceNotRegistered : 0;
 }
 int APS5_VABI sceVrTrackerRegisterDevice(int device_type, int handle) {
     return sceVrTrackerRegisterDeviceInternal(device_type, handle, -1, 0);

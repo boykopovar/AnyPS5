@@ -2,11 +2,29 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { abortAndDiscardOutput, OutputDirectoryTransaction } from "../output-directory.mjs";
 
+const uncontendedLocks = { request: (_name, acquire) => acquire() };
+
 function missingDirectory() {
   const error = new Error("not found");
   error.name = "NotFoundError";
   return error;
 }
+
+test("names an existing file that blocks the output folder", async () => {
+  const parent = {
+    async getDirectoryHandle(name, options) {
+      assert.equal(name, "app-linux");
+      assert.equal(options, undefined);
+      throw new DOMException("Not a directory", "TypeMismatchError");
+    },
+    async removeEntry() { assert.fail("existing file must not be removed"); }
+  };
+
+  await assert.rejects(
+    OutputDirectoryTransaction.create(parent, "app-linux", uncontendedLocks, "es"),
+    { message: "Colisión de ruta de salida: app-linux" }
+  );
+});
 
 test("creates a new output root only after confirming the destination is absent", async () => {
   const directory = {};
@@ -20,7 +38,7 @@ test("creates a new output root only after confirming the destination is absent"
     async removeEntry() {}
   };
 
-  const transaction = await OutputDirectoryTransaction.create(parent, "app-linux");
+  const transaction = await OutputDirectoryTransaction.create(parent, "app-linux", uncontendedLocks);
 
   assert.equal(transaction.directory, directory);
   assert.deepEqual(calls, [["app-linux", undefined], ["app-linux", { create: true }]]);
@@ -33,9 +51,40 @@ test("does not claim or delete a destination that already exists", async () => {
   };
 
   await assert.rejects(
-    OutputDirectoryTransaction.create(parent, "app-linux"),
+    OutputDirectoryTransaction.create(parent, "app-linux", uncontendedLocks),
     /already exists/u
   );
+});
+
+test("concurrent acquisitions cannot both own the same folder", async () => {
+  const pending = new Map();
+  const locks = {
+    request(name, acquire) {
+      const result = (pending.get(name) ?? Promise.resolve()).then(acquire);
+      pending.set(name, result.catch(() => {}));
+      return result;
+    }
+  };
+  const directories = new Map();
+  const parent = {
+    async getDirectoryHandle(name, options) {
+      const key = name.toLowerCase();
+      if (!directories.has(key)) {
+        if (!options?.create) throw missingDirectory();
+        directories.set(key, new Map());
+      }
+      return directories.get(key);
+    },
+    async removeEntry(name) { directories.delete(name.toLowerCase()); }
+  };
+  const first = OutputDirectoryTransaction.create(parent, "APP-linux", locks);
+  const second = OutputDirectoryTransaction.create(parent, "app-linux", locks);
+
+  const owner = await first;
+  owner.directory.set("output.elf", "finished");
+  owner.commit();
+  await assert.rejects(second, /already exists/u);
+  assert.equal(directories.get("app-linux").get("output.elf"), "finished");
 });
 
 test("discards its incomplete output recursively", async () => {
@@ -47,7 +96,7 @@ test("discards its incomplete output recursively", async () => {
     },
     async removeEntry(...args) { removed = args; }
   };
-  const transaction = await OutputDirectoryTransaction.create(parent, "app-linux");
+  const transaction = await OutputDirectoryTransaction.create(parent, "app-linux", uncontendedLocks);
 
   await transaction.discard();
   await transaction.discard();
@@ -67,12 +116,12 @@ test("keeps completed output and reports cleanup failures", async () => {
       throw new Error("permission denied");
     }
   };
-  const completed = await OutputDirectoryTransaction.create(parent, "complete-linux");
+  const completed = await OutputDirectoryTransaction.create(parent, "complete-linux", uncontendedLocks);
   completed.commit();
   await completed.discard();
   assert.equal(removeCount, 0);
 
-  const failed = await OutputDirectoryTransaction.create(parent, "partial-linux");
+  const failed = await OutputDirectoryTransaction.create(parent, "partial-linux", uncontendedLocks);
   await assert.rejects(failed.discard(), /permission denied/u);
   assert.equal(removeCount, 1);
 });
@@ -86,7 +135,7 @@ test("aborts an open file before removing the incomplete output tree", async () 
     },
     async removeEntry(name, options) { calls.push(["remove", name, options]); }
   };
-  const transaction = await OutputDirectoryTransaction.create(parent, "partial-linux");
+  const transaction = await OutputDirectoryTransaction.create(parent, "partial-linux", uncontendedLocks);
   let finishAbort;
   const sink = { abort() { calls.push(["abort"]); return new Promise(resolve => { finishAbort = resolve; }); } };
 
@@ -106,7 +155,7 @@ test("returns sink and folder cleanup failures without hiding either", async () 
     },
     async removeEntry() { throw new Error("directory permission denied"); }
   };
-  const transaction = await OutputDirectoryTransaction.create(parent, "partial-linux");
+  const transaction = await OutputDirectoryTransaction.create(parent, "partial-linux", uncontendedLocks);
   const sink = { async abort() { throw new Error("file is busy"); } };
 
   assert.deepEqual(await abortAndDiscardOutput(transaction, sink), [

@@ -32,6 +32,8 @@ int main() {
     Require(sceSocialScreenDialogClose() == kErrNotInitialized);
     Require(sceSocialScreenDialogGetResult(nullptr) == kErrNotInitialized);
     Require(sceSocialScreenDialogGetResult(result) == kErrNotInitialized);
+    Require(result[0] == kSentinel);
+    Require(result[1] == kSentinel);
     Require(sceSocialScreenDialogGetStatus() == kStatusNone);
     Require(sceSocialScreenDialogUpdateStatus() == kStatusNone);
 
@@ -41,6 +43,9 @@ int main() {
     Require(sceSocialScreenDialogUpdateStatus() == kStatusInitialized);
 
     Require(sceSocialScreenDialogOpen(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(sceSocialScreenDialogOpen(reinterpret_cast<const void*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     std::memset(result, 0x5a, sizeof(result));
     Require(sceSocialScreenDialogGetResult(nullptr) == kErrArgNull);
     Require(sceSocialScreenDialogGetResult(result) == kErrNotFinished);

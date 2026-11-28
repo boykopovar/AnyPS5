@@ -256,6 +256,31 @@ int InitializeWithPriority(int priority) {
     return sceUserServiceInitialize(&param);
 }
 
+void TestEventVshForwarder() {
+    SceUserServiceEvent event{};
+    std::memset(&event, 0xAA, sizeof(event));
+    Require(sceUserServiceGetEventVsh(&event) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(event.user_id == static_cast<int>(0xAAAAAAAAu));
+    Require(InitializeWithPriority(0x100) == USER_SERVICE_OK);
+    Require(sceUserServiceGetEventVsh(&event) == USER_SERVICE_OK);
+    Require(event.event_type == 0 && event.user_id == USER_SERVICE_INITIAL_USER_ID);
+    UserServiceSetUserConnected_nid_postfix(3, true);
+    const auto calls = NotImplementedCalls_nid_no_patch();
+    bool threw = false;
+    try {
+        sceUserServiceGetEventVsh(reinterpret_cast<SceUserServiceEvent*>(0x10));
+    } catch (const std::runtime_error& error) {
+        threw = std::strcmp(error.what(), "sceUserServiceGetEvent not implemented") == 0;
+    }
+    Require(threw);
+    Require(NotImplementedCalls_nid_no_patch() == calls + 1);
+    Require(sceUserServiceGetEventVsh(&event) == USER_SERVICE_OK);
+    Require(event.event_type == 0 && event.user_id == USER_SERVICE_INITIAL_USER_ID + 3);
+    Require(sceUserServiceGetEventVsh(&event) == USER_SERVICE_ERROR_NO_EVENT);
+    UserServiceSetUserConnected_nid_postfix(3, false);
+    Require(sceUserServiceTerminate() == USER_SERVICE_OK);
+}
+
 void TestInitialUserLogout() {
     SceUserServiceEvent event{};
     UserServiceLoginUserIdList list{};
@@ -420,4 +445,5 @@ int main() {
 
     TestThreadPriority();
     TestUnwritablePointers();
+    TestEventVshForwarder();
 }

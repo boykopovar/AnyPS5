@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/DrawInputsInPlace.hpp"
+#include <cstddef>
 #include <cstdio>
 
 namespace {
@@ -25,6 +26,11 @@ int main() {
     for (const auto& item : Cases) {
         if (AgcDriver::DrawInputsInPlaceUsable(item.driver, item.windows) != item.inPlace) {
             std::fprintf(stderr, "driver %d on %s: expected draw inputs %s\n", static_cast<int>(item.driver), item.windows ? "Windows" : "another host", item.inPlace ? "in place" : "copied");
+            ++failures;
+        }
+        const std::size_t below = item.inPlace ? 0 : 1024;
+        if (AgcDriver::DrawInputsInPlaceBelow(item.driver, item.windows) != below) {
+            std::fprintf(stderr, "driver %d on %s: expected draw inputs fetching up to %zu bytes in place where they are copied\n", static_cast<int>(item.driver), item.windows ? "Windows" : "another host", below);
             ++failures;
         }
     }

@@ -2,6 +2,7 @@
 #include "prx/libScePad/include/Pad.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 
@@ -49,9 +50,17 @@ int main() {
     Require(scePadGetVersionInfo(1, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadGetControllerIdleCount(0, &count) == PAD_ERROR_INVALID_ARG && scePadGetControllerIdleCount(1, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadGetActiveTime(1, 0, nullptr) == PAD_ERROR_INVALID_ARG);
+    errno = 71;
+    Require(scePadGetActiveTime(12345, 0, reinterpret_cast<std::uint64_t*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
+    activeTime = 7;
+    Require(scePadGetActiveTime(12345, 0, &activeTime) == PAD_ERROR_INVALID_HANDLE && activeTime == 0);
     for (int type : {1, 3, 4, -1}) Require(scePadGetInfoByPortType(type, reinterpret_cast<PadPortInfo*>(data)) == PAD_ERROR_INVALID_ARG);
     Require(scePadGetInfoByPortType(1, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadGetDeviceId(1, nullptr) == PAD_ERROR_INVALID_ARG);
+    errno = 71;
+    Require(scePadGetDeviceId(12345, reinterpret_cast<std::int32_t*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
     Require(scePadGetDeviceId(12345, &deviceId) == PAD_ERROR_INVALID_HANDLE && deviceId == -1);
     Require(scePadReadStateExt(12345, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadReadStateExt(12345, reinterpret_cast<PadDataExtended*>(data)) == PAD_ERROR_INVALID_HANDLE);

@@ -3,6 +3,7 @@
 
 #include "prx/libSceAgc/Command/include/Memory.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
+#include <array>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -10,9 +11,15 @@
 
 namespace {
 
-void ValidateWriteData(const std::uint32_t* cmd, const char* function) {
+constexpr int InvalidPacket = static_cast<int>(0x8a6c000cu);
+
+bool IsWriteData(const std::uint32_t* cmd, const char* function) {
     Agc::Command::CheckAddress(reinterpret_cast<std::uintptr_t>(cmd), 4, function);
-    Agc::Command::Require(((cmd[0] >> 8u) & 0xffu) == 0x37u, function, "not a WRITE_DATA packet");
+    return ((cmd[0] >> 8u) & 0xffu) == 0x37u;
+}
+
+void ValidateWriteData(const std::uint32_t* cmd, const char* function) {
+    Agc::Command::Require(IsWriteData(cmd, function), function, "not a WRITE_DATA packet");
 }
 
 int SetWriteDataAddress(std::uint32_t* cmd, std::uint64_t address, bool compute, const char* function) {
@@ -45,16 +52,22 @@ int SetWriteDataCachePolicy(std::uint32_t* cmd, std::uint8_t cachePolicy, const 
 extern "C" {
 
 int APS5_VABI sceAgcWaitRegMemPatchAddress(std::uint32_t* cmd, const volatile void* address) {
-    auto* wait = Agc::Command::ValidateWait(cmd, __func__);
+    Agc::Command::CheckAddress(reinterpret_cast<std::uintptr_t>(cmd), 4, __func__);
+    std::array<std::uint32_t, 16> packet{};
+    Agc::Command::Require(GuestCopyIn_nid_no_patch(packet.data(), cmd, 4 * sizeof(packet[0])), __func__, "packet is not readable");
+    const std::size_t words = (packet[2] & 0xffff0000u) == 0xc8010000u ? 14u : 16u;
+    Agc::Command::Require(GuestCopyIn_nid_no_patch(packet.data() + 4, cmd + 4, (words - 4u) * sizeof(packet[0])), __func__, "packet is not readable");
+    auto* wait = Agc::Command::ValidateWait(packet.data(), __func__);
     const auto guestAddress = reinterpret_cast<std::uintptr_t>(address);
     const auto is32Bit = ((wait[0] >> 8u) & 0xffu) == 0x3cu;
     const auto lowMask = is32Bit ? 3u : 7u;
     if (guestAddress != 0) Agc::Command::CheckAddress(guestAddress, is32Bit ? 4 : 8, __func__);
     Agc::Command::CheckBits(guestAddress, 0xffffffffffffull, __func__);
-    cmd[2] =(cmd[2] & 0xffff0000u) | (static_cast<std::uint32_t>(guestAddress >> 32u) & 0xffffu);
-    cmd[3] = static_cast<std::uint32_t>(guestAddress);
+    packet[2] = (packet[2] & 0xffff0000u) | (static_cast<std::uint32_t>(guestAddress >> 32u) & 0xffffu);
+    packet[3] = static_cast<std::uint32_t>(guestAddress);
     wait[2] = (static_cast<std::uint32_t>(guestAddress) & ~lowMask) | (wait[2] & lowMask);
     wait[3] = (static_cast<std::uint32_t>(guestAddress >> 32u) & 0x3ffffu) | (wait[3] & 0xfffc0000u);
+    Agc::Command::Require(GuestCopyOut_nid_no_patch(cmd + 2, packet.data() + 2, 6 * sizeof(packet[0])), __func__, "packet is not writable");
     return 0;
 }
 
@@ -78,6 +91,7 @@ int APS5_VABI sceAgcWaitRegMemPatchCompareFunction(std::uint32_t* cmd, std::uint
 }
 
 int APS5_VABI sceAgcWriteDataPatchSetAddressOrOffset(std::uint32_t* cmd, std::uint64_t address) {
+    if (!IsWriteData(cmd, __func__)) return InvalidPacket;
     return SetWriteDataAddress(cmd, address, false, __func__);
 }
 
@@ -103,10 +117,13 @@ int APS5_VABI sceAgcAsyncWriteDataPatchSetCachePolicy(std::uint32_t* cmd, std::u
 
 int APS5_VABI sceAgcAcquireMemSetEngine(std::uint32_t* packet, std::uint8_t engine) {
     Agc::Command::CheckAddress(reinterpret_cast<std::uintptr_t>(packet), 4, __func__);
-    if (((packet[0] >> 8u) & 0xffu) != 0x58u) {
+    std::array<std::uint32_t, 2> words{};
+    Agc::Command::Require(GuestCopyIn_nid_no_patch(words.data(), packet, sizeof(words)), __func__, "packet is not readable");
+    if (((words[0] >> 8u) & 0xffu) != 0x58u) {
         return static_cast<int>(0x8a6c000c);
     }
-    packet[1] = (packet[1] & 0x7fffffffu) | (static_cast<std::uint32_t>(engine) << 31u);
+    words[1] = (words[1] & 0x7fffffffu) | (static_cast<std::uint32_t>(engine) << 31u);
+    Agc::Command::Require(GuestCopyOut_nid_no_patch(packet + 1, &words[1], sizeof(words[1])), __func__, "packet is not writable");
     return 0;
 }
 

@@ -4,7 +4,11 @@
 #include "prx/libSceXml/src/AttributeList.hpp"
 #include "prx/libSceXml/src/Document.hpp"
 #include "prx/libSceXml/src/DocumentBuilder.hpp"
+#include "prx/libSceXml/src/NodeList.hpp"
+#include "prx/libSceXml/src/SaxParser.hpp"
 #include "prx/libSceXml/src/Node.hpp"
+#include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstdint>
 #include <cstddef>
@@ -14,6 +18,7 @@
 #include <cstring>
 #include <atomic>
 #include <stdexcept>
+#include <string>
 
 namespace {
 
@@ -62,16 +67,86 @@ void XmlEngineRelease() {
     g_xmlEngineState = nullptr;
 }
 
+constexpr std::size_t XmlNodeIdFieldsSize = offsetof(XmlNodeId, flag) + sizeof(std::uint8_t);
+constexpr std::size_t XmlSerializeParameterFieldsSize = offsetof(XmlSerializeParameter, third) + sizeof(std::uint32_t);
+
+template <typename T>
+bool CopyInGuest(T& destination, const T* source, std::size_t bytes = sizeof(T)) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&destination, source, bytes);
+    errno = savedErrno;
+    return copied;
+}
+
+template <typename T>
+bool CopyOutGuest(T* destination, const T& source, std::size_t bytes = sizeof(T)) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, &source, bytes);
+    errno = savedErrno;
+    return copied;
+}
+
+void ClearHandle(XmlHandle* self) {
+    if (self == nullptr) return;
+    const XmlHandle value{nullptr};
+    CopyOutGuest(self, value);
+}
+
+void SetSimpleData(XmlSimpleData* self, const char* data, std::size_t size) {
+    if (self == nullptr) return;
+    const XmlSimpleData value{data, size};
+    CopyOutGuest(self, value);
+}
+
+void SetXmlString(XmlString* self, const char* buffer, std::size_t size) {
+    if (self == nullptr) return;
+    const XmlString value{buffer, size};
+    CopyOutGuest(self, value);
+}
+
+void CopyXmlString(XmlString* self, const XmlString* other) {
+    if (self == nullptr || other == nullptr) return;
+    XmlString local{};
+    if (!CopyInGuest(local, other)) return;
+    CopyOutGuest(self, local);
+}
+
+std::size_t GuestStringLength(const char* buffer) {
+    if (buffer == nullptr) return 0;
+    constexpr std::size_t PageSize = 4096;
+    constexpr std::size_t ChunkSize = 256;
+    std::array<char, ChunkSize> chunk{};
+    std::size_t length = 0;
+    const int savedErrno = errno;
+    while (true) {
+        const auto address = reinterpret_cast<std::uintptr_t>(buffer) + length;
+        const std::size_t pageRemaining = PageSize - (address % PageSize);
+        const std::size_t bytes = std::min(pageRemaining, ChunkSize);
+        if (!GuestCopyIn_nid_no_patch(chunk.data(), buffer + length, bytes)) {
+            errno = savedErrno;
+            return 0;
+        }
+        if (const void* terminator = std::memchr(chunk.data(), '\0', bytes)) {
+            errno = savedErrno;
+            return length + static_cast<std::size_t>(static_cast<const char*>(terminator) - chunk.data());
+        }
+        length += bytes;
+    }
+}
+
 void XmlTerminate(XmlHandle* self) {
-    const auto* impl = static_cast<const XmlInitParameter*>(self->impl);
+    XmlHandle localSelf{};
+    if (!CopyInGuest(localSelf, self) || localSelf.impl == nullptr) return;
+    const auto* impl = static_cast<const XmlInitParameter*>(localSelf.impl);
     XmlEngineRelease();
     if (g_xmlActiveInitializers > 0) --g_xmlActiveInitializers;
     if (g_xmlAllocatorWrapper != nullptr) {
         XmlDeallocate(impl->allocator, g_xmlAllocatorWrapper, impl->userData);
         g_xmlAllocatorWrapper = nullptr;
     }
-    XmlDeallocate(impl->allocator, self->impl, impl->userData);
-    self->impl = nullptr;
+    XmlDeallocate(impl->allocator, localSelf.impl, impl->userData);
+    localSelf.impl = nullptr;
+    CopyOutGuest(self, localSelf);
 }
 
 void APS5_VABI XmlMemAllocatorDestroy_nid_no_patch(XmlMemAllocator*) {
@@ -91,21 +166,29 @@ void APS5_VABI XmlMemAllocatorPureDeallocate_nid_no_patch(XmlMemAllocator*, void
 
 const XmlMemAllocatorVtable g_xmlMemAllocatorVtable{XmlMemAllocatorDestroy_nid_no_patch, XmlMemAllocatorDelete_nid_no_patch, XmlMemAllocatorPureAllocate_nid_no_patch, XmlMemAllocatorPureDeallocate_nid_no_patch};
 
-void AssignNodeId(XmlNodeId* self, const XmlNodeId& value) {
-    self->first = value.first;
-    self->second = value.second;
-    self->flag = value.flag;
+void SetNodeId(XmlNodeId* self, void* first, void* second, std::uint8_t flag) {
+    if (self == nullptr) return;
+    const XmlNodeId value{first, second, flag};
+    CopyOutGuest(self, value, XmlNodeIdFieldsSize);
 }
 
 bool NodeIdIsNull(const XmlNodeId* self) {
-    return self->first == nullptr && self->second == nullptr && self->flag == 0;
+    if (self == nullptr) return true;
+    XmlNodeId local{};
+    if (!CopyInGuest(local, self, XmlNodeIdFieldsSize)) return true;
+    return local.first == nullptr && local.second == nullptr && local.flag == 0;
 }
 
 void CopyNode(XmlNode* self, const XmlNode* other) {
-    AssignNodeId(&self->id, other->id);
-    self->document = other->document;
-    self->node = other->node;
-    for (int i = 0; i < 3; ++i) self->state[i] = other->state[i];
+    if (self == nullptr || other == nullptr) return;
+    XmlNode local{};
+    if (!CopyInGuest(local, other)) return;
+    CopyOutGuest(self, local, XmlNodeIdFieldsSize);
+    const auto* srcTail = reinterpret_cast<const std::uint8_t*>(&local) + offsetof(XmlNode, document);
+    auto* dstTail = reinterpret_cast<std::uint8_t*>(self) + offsetof(XmlNode, document);
+    const int savedErrno = errno;
+    GuestCopyOut_nid_no_patch(dstTail, srcTail, sizeof(XmlNode) - offsetof(XmlNode, document));
+    errno = savedErrno;
 }
 
 }
@@ -113,42 +196,39 @@ void CopyNode(XmlNode* self, const XmlNode* other) {
 extern "C" {
 
 void APS5_VABI _ZN3sce3Xml10SimpleDataC1EPKcm(XmlSimpleData* self, const char* data, std::size_t size) {
-    self->data = data;
-    self->size = size;
+    SetSimpleData(self, data, size);
 }
 
 void APS5_VABI _ZN3sce3Xml10SimpleDataC1Ev(XmlSimpleData* self) {
-    self->data = nullptr;
-    self->size = 0;
+    SetSimpleData(self, nullptr, 0);
 }
 
 void APS5_VABI _ZN3sce3Xml10SimpleDataC2EPKcm(XmlSimpleData* self, const char* data, std::size_t size) {
-    self->data = data;
-    self->size = size;
+    SetSimpleData(self, data, size);
 }
 
 void APS5_VABI _ZN3sce3Xml10SimpleDataC2Ev(XmlSimpleData* self) {
-    self->data = nullptr;
-    self->size = 0;
+    SetSimpleData(self, nullptr, 0);
 }
 
 int APS5_VABI _ZN3sce3Xml11Initializer10initializeEPKNS0_13InitParameterE(XmlHandle* self, const XmlInitParameter* parameter) {
     if (self == nullptr) throw std::invalid_argument("sce::Xml::Initializer::initialize: null object");
-    if (self->impl != nullptr) return XmlAlreadyInitialized;
+    XmlHandle localSelf{};
+    if (!CopyInGuest(localSelf, self)) return XmlErrorInvalidParameter;
+    if (localSelf.impl != nullptr) return XmlAlreadyInitialized;
     if (parameter == nullptr) return XmlErrorInvalidParameter;
     if (g_xmlActiveInitializers > 0) return XmlAlreadyInitialized;
     XmlInitParameter localParam{};
-    const int savedErrno = errno;
-    if (!GuestCopyIn_nid_no_patch(&localParam, parameter, sizeof(localParam))) {
-        errno = savedErrno;
-        return XmlErrorInvalidParameter;
-    }
-    errno = savedErrno;
+    if (!CopyInGuest(localParam, parameter)) return XmlErrorInvalidParameter;
     if (localParam.allocator == nullptr) throw std::invalid_argument("sce::Xml::Initializer::initialize: null allocator");
     void* impl = XmlAllocate(localParam.allocator, XmlInitializerImplSize, localParam.userData);
     if (impl == nullptr) return XmlErrorNoMemory;
     std::memcpy(impl, &localParam, XmlInitializerImplSize);
-    self->impl = impl;
+    localSelf.impl = impl;
+    if (!CopyOutGuest(self, localSelf)) {
+        XmlDeallocate(localParam.allocator, impl, localParam.userData);
+        return XmlErrorInvalidParameter;
+    }
     auto* wrapper = static_cast<XmlAllocatorWrapper*>(XmlAllocate(localParam.allocator, XmlAllocatorWrapperSize, localParam.userData));
     if (wrapper == nullptr) {
         XmlTerminate(self);
@@ -166,22 +246,24 @@ int APS5_VABI _ZN3sce3Xml11Initializer10initializeEPKNS0_13InitParameterE(XmlHan
 
 int APS5_VABI _ZN3sce3Xml11Initializer9terminateEv(XmlHandle* self) {
     if (self == nullptr) throw std::invalid_argument("sce::Xml::Initializer::terminate: null object");
-    if (self->impl == nullptr) return XmlErrorNotInitialized;
+    XmlHandle localSelf{};
+    if (!CopyInGuest(localSelf, self) || localSelf.impl == nullptr) return XmlErrorNotInitialized;
     XmlTerminate(self);
     return 0;
 }
 
 void APS5_VABI _ZN3sce3Xml11InitializerC1Ev(XmlHandle* self) {
-    self->impl = nullptr;
+    ClearHandle(self);
 }
 
 void APS5_VABI _ZN3sce3Xml11InitializerC2Ev(XmlHandle* self) {
-    self->impl = nullptr;
+    ClearHandle(self);
 }
 
 void APS5_VABI _ZN3sce3Xml11InitializerD1Ev(XmlHandle* self) {
     if (self == nullptr) throw std::invalid_argument("sce::Xml::Initializer::~Initializer: null object");
-    if (self->impl == nullptr) return;
+    XmlHandle localSelf{};
+    if (!CopyInGuest(localSelf, self) || localSelf.impl == nullptr) return;
     XmlTerminate(self);
 }
 
@@ -191,7 +273,8 @@ void APS5_VABI _ZN3sce3Xml11InitializerD2Ev(XmlHandle* self) {
 
 void APS5_VABI _ZN3sce3Xml12MemAllocatorC2Ev(XmlMemAllocator* self) {
     if (self == nullptr) throw std::invalid_argument("sce::Xml::MemAllocator::MemAllocator: null object");
-    self->vtable = &g_xmlMemAllocatorVtable;
+    const XmlMemAllocator value{&g_xmlMemAllocatorVtable};
+    CopyOutGuest(self, value);
 }
 
 void APS5_VABI _ZN3sce3Xml12MemAllocatorD0Ev(XmlMemAllocator*) {
@@ -225,7 +308,7 @@ void APS5_VABI _ZN3sce3Xml13AttributeListC1ERKS1_(XmlHandle* self, const XmlHand
 }
 
 void APS5_VABI _ZN3sce3Xml13AttributeListC1Ev(XmlHandle* self) {
-    self->impl = nullptr;
+    ClearHandle(self);
 }
 
 void APS5_VABI _ZN3sce3Xml13AttributeListC2ERKS1_(XmlHandle* self, const XmlHandle* other) {
@@ -233,7 +316,7 @@ void APS5_VABI _ZN3sce3Xml13AttributeListC2ERKS1_(XmlHandle* self, const XmlHand
 }
 
 void APS5_VABI _ZN3sce3Xml13AttributeListC2Ev(XmlHandle* self) {
-    self->impl = nullptr;
+    ClearHandle(self);
 }
 
 void APS5_VABI _ZN3sce3Xml13AttributeListD1Ev(XmlHandle* self) {
@@ -245,15 +328,15 @@ void APS5_VABI _ZN3sce3Xml13AttributeListD2Ev(XmlHandle* self) {
 }
 
 void APS5_VABI _ZN3sce3Xml18SerializeParameterC1Ev(XmlSerializeParameter* self) {
-    self->first = 0;
-    self->second = 0;
-    self->third = 0;
+    if (self == nullptr) return;
+    const XmlSerializeParameter value{};
+    CopyOutGuest(self, value, XmlSerializeParameterFieldsSize);
 }
 
 void APS5_VABI _ZN3sce3Xml18SerializeParameterC2Ev(XmlSerializeParameter* self) {
-    self->first = 0;
-    self->second = 0;
-    self->third = 0;
+    if (self == nullptr) return;
+    const XmlSerializeParameter value{};
+    CopyOutGuest(self, value, XmlSerializeParameterFieldsSize);
 }
 
 int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder10initializeEPKNS0_11InitializerE(XmlHandle* self, const XmlHandle* initializer) {
@@ -285,11 +368,11 @@ int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder9terminateEv(XmlHandle* self) {
 }
 
 void APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilderC1Ev(XmlHandle* self) {
-    self->impl = nullptr;
+    ClearHandle(self);
 }
 
 void APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilderC2Ev(XmlHandle* self) {
-    self->impl = nullptr;
+    ClearHandle(self);
 }
 
 void APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilderD1Ev(XmlHandle* self) {
@@ -342,33 +425,25 @@ XmlNode* APS5_VABI _ZN3sce3Xml3Dom4NodeaSERKS2_(XmlNode* self, const XmlNode* ot
 }
 
 void APS5_VABI _ZN3sce3Xml3Dom6NodeIdC1EPvS3_b(XmlNodeId* self, void* first, void* second, std::uint8_t flag) {
-    self->first = first;
-    self->second = second;
-    self->flag = flag;
+    SetNodeId(self, first, second, flag);
 }
 
 void APS5_VABI _ZN3sce3Xml3Dom6NodeIdC1Ev(XmlNodeId* self) {
-    self->first = nullptr;
-    self->second = nullptr;
-    self->flag = 0;
+    SetNodeId(self, nullptr, nullptr, 0);
 }
 
 void APS5_VABI _ZN3sce3Xml3Dom6NodeIdC2EPvS3_b(XmlNodeId* self, void* first, void* second, std::uint8_t flag) {
-    self->first = first;
-    self->second = second;
-    self->flag = flag;
+    SetNodeId(self, first, second, flag);
 }
 
 void APS5_VABI _ZN3sce3Xml3Dom6NodeIdC2Ev(XmlNodeId* self) {
-    self->first = nullptr;
-    self->second = nullptr;
-    self->flag = 0;
+    SetNodeId(self, nullptr, nullptr, 0);
 }
 
 XmlNodeId APS5_VABI _ZN3sce3Xml3Dom6NodeIdaSES2_(XmlNodeId* self, XmlNodeId value) {
-    AssignNodeId(self, value);
-    XmlNodeId result;
-    std::memcpy(&result, self, sizeof(result));
+    SetNodeId(self, value.first, value.second, value.flag);
+    XmlNodeId result{};
+    if (self != nullptr) CopyInGuest(result, self);
     return result;
 }
 
@@ -377,7 +452,10 @@ void* APS5_VABI _ZN3sce3Xml3Dom6NodeIdcvPvEv(XmlNodeId*) {
 }
 
 bool APS5_VABI _ZN3sce3Xml3Dom6NodeIdeqES2_(const XmlNodeId* self, XmlNodeId other) {
-    return other.first == self->first && other.second == self->second && other.flag == self->flag;
+    if (self == nullptr) return false;
+    XmlNodeId local{};
+    if (!CopyInGuest(local, self, XmlNodeIdFieldsSize)) return false;
+    return other.first == local.first && other.second == local.second && other.flag == local.flag;
 }
 
 bool APS5_VABI _ZN3sce3Xml3Dom6NodeIdeqEi(const XmlNodeId* self, int value) {
@@ -385,7 +463,7 @@ bool APS5_VABI _ZN3sce3Xml3Dom6NodeIdeqEi(const XmlNodeId* self, int value) {
 }
 
 bool APS5_VABI _ZN3sce3Xml3Dom6NodeIdneES2_(const XmlNodeId* self, XmlNodeId other) {
-    return other.first != self->first || other.second != self->second || other.flag != self->flag;
+    return !_ZN3sce3Xml3Dom6NodeIdeqES2_(self, other);
 }
 
 bool APS5_VABI _ZN3sce3Xml3Dom6NodeIdneEi(const XmlNodeId* self, int value) {
@@ -400,72 +478,79 @@ int APS5_VABI _ZN3sce3Xml3Dom8Document10importNodeENS1_6NodeIdES3_PKS2_S3_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom8Document10initializeEPKNS0_11InitializerE() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce3Xml3Dom8Document10initializeEPKNS0_11InitializerE(XmlHandle* self, const XmlHandle* initializer) {
+    return XmlDom::DocumentInitialize(self, initializer);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom8Document10insertNodeENS1_6NodeIdES3_S3_() {
-    NotImplemented_nid_no_patch(__func__);
+XmlNodeId* APS5_VABI _ZN3sce3Xml3Dom8Document10insertNodeENS1_6NodeIdES3_S3_(XmlNodeId* result, XmlHandle* self, XmlNodeId parent, XmlNodeId refChild, XmlNodeId child) {
+    return XmlDom::DocumentInsertNode(result, self, parent, refChild, child);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom8Document11removeChildENS1_6NodeIdES3_() {
-    NotImplemented_nid_no_patch(__func__);
+XmlNodeId* APS5_VABI _ZN3sce3Xml3Dom8Document11removeChildENS1_6NodeIdES3_(XmlNodeId* result, XmlHandle* self, XmlNodeId child, XmlNodeId parent) {
+    return XmlDom::DocumentRemoveChild(result, self, child, parent);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom8Document11resetStatusEv() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN3sce3Xml3Dom8Document11resetStatusEv(XmlHandle* self) {
+    XmlDom::DocumentResetStatus(self);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom8Document11setWritableEv() {
-    NotImplemented_nid_no_patch(__func__);
+XmlNodeId* APS5_VABI _ZN3sce3Xml3Dom8Document11setWritableEv(XmlNodeId* result, XmlHandle* self) {
+    return XmlDom::DocumentSetWritable(result, self);
 }
 
 int APS5_VABI _ZN3sce3Xml3Dom8Document12importParentEPKS2_NS1_6NodeIdE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom8Document12setAttrValueENS1_6NodeIdEPKNS0_6StringES6_() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce3Xml3Dom8Document12setAttrValueENS1_6NodeIdEPKNS0_6StringES6_(XmlHandle* self, XmlNodeId node, const XmlString* name, const XmlString* value) {
+    return XmlDom::DocumentSetAttrValue(self, node, name, value);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom8Document12setAttributeENS1_6NodeIdEPKNS0_6StringES6_() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce3Xml3Dom8Document12setAttributeENS1_6NodeIdEPKNS0_6StringES6_(XmlHandle* self, XmlNodeId node, const XmlString* name, const XmlString* value) {
+    return XmlDom::DocumentSetAttribute(self, node, name, value);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom8Document13createElementEPKNS0_6StringEPKNS0_13AttributeListES5_() {
-    NotImplemented_nid_no_patch(__func__);
+XmlNodeId* APS5_VABI _ZN3sce3Xml3Dom8Document13createElementEPKNS0_6StringEPKNS0_13AttributeListES5_(XmlNodeId* result, XmlHandle* self, const XmlString* name, const XmlHandle* attrs, const XmlString* text) {
+    return XmlDom::DocumentCreateElement(result, self, name, attrs, text);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom8Document13recurseDeleteENS1_6NodeIdE() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce3Xml3Dom8Document13recurseDeleteENS1_6NodeIdE(XmlHandle* self, XmlNodeId node) {
+    return XmlDom::DocumentRecurseDelete(self, node);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom8Document14createTextNodeEPKNS0_6StringE() {
-    NotImplemented_nid_no_patch(__func__);
+XmlNodeId* APS5_VABI _ZN3sce3Xml3Dom8Document14createTextNodeEPKNS0_6StringE(XmlNodeId* result, XmlHandle* self, const XmlString* text) {
+    return XmlDom::DocumentCreateTextNode(result, self, text);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom8Document15addElementChildENS1_6NodeIdEPKNS0_6StringEPKNS0_13AttributeListES6_() {
-    NotImplemented_nid_no_patch(__func__);
+XmlNodeId* APS5_VABI _ZN3sce3Xml3Dom8Document15addElementChildENS1_6NodeIdEPKNS0_6StringEPKNS0_13AttributeListES6_(XmlNodeId* result, XmlHandle* self, XmlNodeId parent, const XmlString* name, const XmlHandle* attrs, const XmlString* text) {
+    return XmlDom::DocumentAddElementChild(result, self, parent, name, attrs, text);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom8Document15removeAttributeENS1_6NodeIdEPKNS0_6StringE() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce3Xml3Dom8Document15removeAttributeENS1_6NodeIdEPKNS0_6StringE(XmlHandle* self, XmlNodeId node, const XmlString* name) {
+    return XmlDom::DocumentRemoveAttribute(self, node, name);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom8Document16removeAttributesENS1_6NodeIdE() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce3Xml3Dom8Document16removeAttributesENS1_6NodeIdE(XmlHandle* self, XmlNodeId node) {
+    return XmlDom::DocumentRemoveAttributes(self, node);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom8Document16setAttributeListENS1_6NodeIdEPKNS0_13AttributeListE() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce3Xml3Dom8Document16setAttributeListENS1_6NodeIdEPKNS0_13AttributeListE(XmlHandle* self, XmlNodeId node, const XmlHandle* attrs) {
+    return XmlDom::DocumentSetAttributeList(self, node, attrs);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom8Document7setTextENS1_6NodeIdEPKNS0_6StringE() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce3Xml3Dom8Document7setTextENS1_6NodeIdEPKNS0_6StringE(XmlHandle* self, XmlNodeId node, const XmlString* text) {
+    return XmlDom::DocumentSetText(self, node, text);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom8Document9serializeEPKNS0_18SerializeParameterEPNS0_6StringE() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce3Xml3Dom8Document9serializeEPKNS0_18SerializeParameterEPNS0_6StringE(XmlHandle* self, const XmlSerializeParameter* parameter, XmlString* result) {
+    if (!XmlDom::DocumentIsAvailable(self)) return XmlErrorNotInitialized;
+    if (result == nullptr) return XmlErrorInvalidParameter;
+    std::uint8_t flags = 0;
+    if (parameter != nullptr && !CopyInGuest(flags, reinterpret_cast<const std::uint8_t*>(parameter))) throw std::logic_error("sce::Xml::Dom::Document::serialize: reading a parameter that is not readable faults in 13.40");
+    const std::string& text = XmlDom::DocumentSerialize(self, (flags & 1) != 0);
+    const XmlString value{text.c_str(), text.size()};
+    if (!CopyOutGuest(result, value)) throw std::logic_error("sce::Xml::Dom::Document::serialize: writing a result that is not writable faults in 13.40");
+    return 0;
 }
 
 int APS5_VABI _ZN3sce3Xml3Dom8Document9terminateEv(XmlHandle* self) {
@@ -477,7 +562,7 @@ void APS5_VABI _ZN3sce3Xml3Dom8DocumentC1ERKS2_(XmlHandle* self, const XmlHandle
 }
 
 void APS5_VABI _ZN3sce3Xml3Dom8DocumentC1Ev(XmlHandle* self) {
-    self->impl = nullptr;
+    ClearHandle(self);
 }
 
 void APS5_VABI _ZN3sce3Xml3Dom8DocumentC2ERKS2_(XmlHandle* self, const XmlHandle* other) {
@@ -485,7 +570,7 @@ void APS5_VABI _ZN3sce3Xml3Dom8DocumentC2ERKS2_(XmlHandle* self, const XmlHandle
 }
 
 void APS5_VABI _ZN3sce3Xml3Dom8DocumentC2Ev(XmlHandle* self) {
-    self->impl = nullptr;
+    ClearHandle(self);
 }
 
 void APS5_VABI _ZN3sce3Xml3Dom8DocumentD1Ev(XmlHandle* self) {
@@ -500,100 +585,100 @@ XmlHandle* APS5_VABI _ZN3sce3Xml3Dom8DocumentaSERKS2_(XmlHandle* self, const Xml
     return XmlDom::DocumentAssign(self, other);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom8NodeList10initializeEPKNS0_11InitializerE() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce3Xml3Dom8NodeList10initializeEPKNS0_11InitializerE(XmlHandle* self, const XmlHandle* initializer) {
+    return XmlDom::NodeListInitialize(self, initializer);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom8NodeList10insertLastENS1_6NodeIdE() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce3Xml3Dom8NodeList10insertLastENS1_6NodeIdE(XmlHandle* self, XmlNodeId item) {
+    return XmlDom::NodeListInsertLast(self, item);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom8NodeList10removeItemENS1_6NodeIdE() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce3Xml3Dom8NodeList10removeItemENS1_6NodeIdE(XmlHandle* self, XmlNodeId item) {
+    return XmlDom::NodeListRemoveItem(self, item);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom8NodeList11insertFirstENS1_6NodeIdE() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce3Xml3Dom8NodeList11insertFirstENS1_6NodeIdE(XmlHandle* self, XmlNodeId item) {
+    return XmlDom::NodeListInsertFirst(self, item);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom8NodeList5clearEv() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce3Xml3Dom8NodeList5clearEv(XmlHandle* self) {
+    return XmlDom::NodeListClear(self);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom8NodeList9terminateEv() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce3Xml3Dom8NodeList9terminateEv(XmlHandle* self) {
+    return XmlDom::NodeListTerminate(self);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom8NodeListC1ERKS2_() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN3sce3Xml3Dom8NodeListC1ERKS2_(XmlHandle* self, const XmlHandle* other) {
+    XmlDom::NodeListCopy(self, other);
 }
 
 void APS5_VABI _ZN3sce3Xml3Dom8NodeListC1Ev(XmlHandle* self) {
-    self->impl = nullptr;
+    ClearHandle(self);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom8NodeListC2ERKS2_() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN3sce3Xml3Dom8NodeListC2ERKS2_(XmlHandle* self, const XmlHandle* other) {
+    XmlDom::NodeListCopy(self, other);
 }
 
 void APS5_VABI _ZN3sce3Xml3Dom8NodeListC2Ev(XmlHandle* self) {
-    self->impl = nullptr;
+    ClearHandle(self);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom8NodeListD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN3sce3Xml3Dom8NodeListD1Ev(XmlHandle* self) {
+    XmlDom::NodeListDestroy(self);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom8NodeListD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN3sce3Xml3Dom8NodeListD2Ev(XmlHandle* self) {
+    XmlDom::NodeListDestroy(self);
 }
 
-int APS5_VABI _ZN3sce3Xml3Sax6Parser10initializeEPKNS0_11InitializerE() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce3Xml3Sax6Parser10initializeEPKNS0_11InitializerE(XmlHandle* self, const XmlHandle* initializer) {
+    return XmlSax::ParserInitialize(self, initializer);
 }
 
-int APS5_VABI _ZN3sce3Xml3Sax6Parser11setUserDataEPv() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN3sce3Xml3Sax6Parser11setUserDataEPv(XmlHandle* self, void* userData) {
+    XmlSax::ParserSetUserData(self, userData);
 }
 
-int APS5_VABI _ZN3sce3Xml3Sax6Parser16setResolveEntityEb() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN3sce3Xml3Sax6Parser16setResolveEntityEb(XmlHandle* self, bool value) {
+    XmlSax::ParserSetOption(self, XmlSax::ParserOption::ResolveEntity, value);
 }
 
-int APS5_VABI _ZN3sce3Xml3Sax6Parser18setDocumentHandlerEPNS1_15DocumentHandlerE() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce3Xml3Sax6Parser18setDocumentHandlerEPNS1_15DocumentHandlerE(XmlHandle* self, void* handler) {
+    return XmlSax::ParserSetDocumentHandler(self, handler);
 }
 
-int APS5_VABI _ZN3sce3Xml3Sax6Parser26setSkipIgnorableWhiteSpaceEb() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN3sce3Xml3Sax6Parser26setSkipIgnorableWhiteSpaceEb(XmlHandle* self, bool value) {
+    XmlSax::ParserSetOption(self, XmlSax::ParserOption::SkipIgnorableWhiteSpace, value);
 }
 
-int APS5_VABI _ZN3sce3Xml3Sax6Parser5parseEPKNS0_6StringEb() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce3Xml3Sax6Parser5parseEPKNS0_6StringEb(XmlHandle* self, const XmlString* text, bool last) {
+    return XmlSax::ParserParse(self, text, last);
 }
 
-int APS5_VABI _ZN3sce3Xml3Sax6Parser5resetEv() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce3Xml3Sax6Parser5resetEv(XmlHandle* self) {
+    return XmlSax::ParserReset(self);
 }
 
-int APS5_VABI _ZN3sce3Xml3Sax6Parser9terminateEv() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce3Xml3Sax6Parser9terminateEv(XmlHandle* self) {
+    return XmlSax::ParserTerminate(self);
 }
 
 void APS5_VABI _ZN3sce3Xml3Sax6ParserC1Ev(XmlHandle* self) {
-    self->impl = nullptr;
+    ClearHandle(self);
 }
 
 void APS5_VABI _ZN3sce3Xml3Sax6ParserC2Ev(XmlHandle* self) {
-    self->impl = nullptr;
+    ClearHandle(self);
 }
 
-int APS5_VABI _ZN3sce3Xml3Sax6ParserD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN3sce3Xml3Sax6ParserD1Ev(XmlHandle* self) {
+    XmlSax::ParserDestroy(self);
 }
 
-int APS5_VABI _ZN3sce3Xml3Sax6ParserD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN3sce3Xml3Sax6ParserD2Ev(XmlHandle* self) {
+    XmlSax::ParserDestroy(self);
 }
 
 int APS5_VABI _ZN3sce3Xml4Attr10initializeEPKNS0_11InitializerE(XmlHandle* self, const XmlHandle* initializer) {
@@ -617,7 +702,7 @@ void APS5_VABI _ZN3sce3Xml4AttrC1ERKS1_(XmlHandle* self, const XmlHandle* other)
 }
 
 void APS5_VABI _ZN3sce3Xml4AttrC1Ev(XmlHandle* self) {
-    self->impl = nullptr;
+    ClearHandle(self);
 }
 
 void APS5_VABI _ZN3sce3Xml4AttrC2ERKS1_(XmlHandle* self, const XmlHandle* other) {
@@ -625,7 +710,7 @@ void APS5_VABI _ZN3sce3Xml4AttrC2ERKS1_(XmlHandle* self, const XmlHandle* other)
 }
 
 void APS5_VABI _ZN3sce3Xml4AttrC2Ev(XmlHandle* self) {
-    self->impl = nullptr;
+    ClearHandle(self);
 }
 
 void APS5_VABI _ZN3sce3Xml4AttrD1Ev(XmlHandle* self) {
@@ -734,48 +819,39 @@ const char* APS5_VABI _ZN3sce3Xml4Util9strResultEi(int result) {
 }
 
 void APS5_VABI _ZN3sce3Xml6StringC1EPKc(XmlString* self, const char* buffer) {
-    self->buffer = buffer;
-    self->size = buffer != nullptr ? std::strlen(buffer) : 0;
+    SetXmlString(self, buffer, GuestStringLength(buffer));
 }
 
 void APS5_VABI _ZN3sce3Xml6StringC1EPKcm(XmlString* self, const char* buffer, std::size_t size) {
-    self->buffer = buffer;
-    self->size = size;
+    SetXmlString(self, buffer, size);
 }
 
 void APS5_VABI _ZN3sce3Xml6StringC1ERKS1_(XmlString* self, const XmlString* other) {
-    self->buffer = other->buffer;
-    self->size = other->size;
+    CopyXmlString(self, other);
 }
 
 void APS5_VABI _ZN3sce3Xml6StringC1Ev(XmlString* self) {
-    self->buffer = nullptr;
-    self->size = 0;
+    SetXmlString(self, nullptr, 0);
 }
 
 void APS5_VABI _ZN3sce3Xml6StringC2EPKc(XmlString* self, const char* buffer) {
-    self->buffer = buffer;
-    self->size = buffer != nullptr ? std::strlen(buffer) : 0;
+    SetXmlString(self, buffer, GuestStringLength(buffer));
 }
 
 void APS5_VABI _ZN3sce3Xml6StringC2EPKcm(XmlString* self, const char* buffer, std::size_t size) {
-    self->buffer = buffer;
-    self->size = size;
+    SetXmlString(self, buffer, size);
 }
 
 void APS5_VABI _ZN3sce3Xml6StringC2ERKS1_(XmlString* self, const XmlString* other) {
-    self->buffer = other->buffer;
-    self->size = other->size;
+    CopyXmlString(self, other);
 }
 
 void APS5_VABI _ZN3sce3Xml6StringC2Ev(XmlString* self) {
-    self->buffer = nullptr;
-    self->size = 0;
+    SetXmlString(self, nullptr, 0);
 }
 
 XmlString* APS5_VABI _ZN3sce3Xml6StringaSERKS1_(XmlString* self, const XmlString* other) {
-    self->buffer = other->buffer;
-    self->size = other->size;
+    CopyXmlString(self, other);
     return self;
 }
 
@@ -804,7 +880,10 @@ std::uint32_t APS5_VABI _ZNK3sce3Xml3Dom4Node11getNodeTypeEv(const XmlNode* self
 }
 
 bool APS5_VABI _ZNK3sce3Xml3Dom4Node11isAvailableEv(const XmlNode* self) {
-    return self->document != nullptr && self->node != nullptr;
+    if (self == nullptr) return false;
+    XmlNode local{};
+    if (!CopyInGuest(local, self)) return false;
+    return local.document != nullptr && local.node != nullptr;
 }
 
 int APS5_VABI _ZNK3sce3Xml3Dom4Node12getLastChildEv() {
@@ -950,12 +1029,12 @@ XmlNodeId _ZN3sce3Xml3Dom13invalidNodeIdE{};
 
 extern "C" {
 
-int APS5_VABI _ZNK3sce3Xml3Dom8Document13getChildNodesENS1_6NodeIdEPNS1_8NodeListE() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZNK3sce3Xml3Dom8Document13getChildNodesENS1_6NodeIdEPNS1_8NodeListE(const XmlHandle* self, XmlNodeId node, XmlHandle* list) {
+    return XmlDom::DocumentChildNodes(self, node, list);
 }
 
-int APS5_VABI _ZNK3sce3Xml3Dom8Document20getElementsByTagNameENS1_6NodeIdEPKNS0_6StringEPNS1_8NodeListE() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZNK3sce3Xml3Dom8Document20getElementsByTagNameENS1_6NodeIdEPKNS0_6StringEPNS1_8NodeListE(const XmlHandle* self, XmlNodeId node, const XmlString* name, XmlHandle* list) {
+    return XmlDom::DocumentElementsByTagName(self, node, name, list);
 }
 
 XmlString* APS5_VABI _ZNK3sce3Xml4Attr7getNameEv(XmlString* result, const XmlHandle* self) {
@@ -966,36 +1045,47 @@ int APS5_VABI _ZNK3sce3Xml3Dom8NodeList8findItemENS1_6NodeIdE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK3sce3Xml3Dom8Document13getAttributesENS1_6NodeIdEPNS1_8NodeListE() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZNK3sce3Xml3Dom8Document13getAttributesENS1_6NodeIdEPNS1_8NodeListE(const XmlHandle* self, XmlNodeId node, XmlHandle* list) {
+    return XmlDom::DocumentAttributes(self, node, list);
 }
 
-int APS5_VABI _ZNK3sce3Xml3Dom8NodeList4itemEj() {
-    NotImplemented_nid_no_patch(__func__);
+XmlNodeId APS5_VABI _ZNK3sce3Xml3Dom8NodeList4itemEj(const XmlHandle* self, std::uint32_t index) {
+    return XmlDom::NodeListItem(self, index);
 }
 
 XmlString* APS5_VABI _ZNK3sce3Xml4Attr8getValueEv(XmlString* result, const XmlHandle* self) {
     return XmlDom::ContainerGetValue(result, self);
 }
 
-int APS5_VABI _ZNK3sce3Xml3Dom8NodeListixEj() {
-    NotImplemented_nid_no_patch(__func__);
+XmlNodeId APS5_VABI _ZNK3sce3Xml3Dom8NodeListixEj(const XmlHandle* self, std::uint32_t index) {
+    return XmlDom::NodeListItem(self, index);
 }
 
-int APS5_VABI _ZNK3sce3Xml3Dom8NodeList8findItemEPKNS0_6StringE() {
-    NotImplemented_nid_no_patch(__func__);
+XmlNodeId APS5_VABI _ZNK3sce3Xml3Dom8NodeList8findItemEPKNS0_6StringE(const XmlHandle* self, const XmlString* name) {
+    XmlHandle list{};
+    if (self == nullptr || !CopyInGuest(list, self)) throw std::invalid_argument("sce::Xml::Dom::NodeList::findItem: null or unreadable object");
+    if (list.impl == nullptr) return XmlNodeId{nullptr, nullptr, 0};
+    XmlString string{};
+    if (name == nullptr || !CopyInGuest(string, name)) throw std::invalid_argument("sce::Xml::Dom::NodeList::findItem: null or unreadable name");
+    char first = 0;
+    if (string.buffer == nullptr || !CopyInGuest(first, string.buffer)) throw std::invalid_argument("sce::Xml::Dom::NodeList::findItem: comparing an unreadable name faults in the module");
+    const std::size_t length = GuestStringLength(string.buffer);
+    if (length == 0 && first != '\0') throw std::invalid_argument("sce::Xml::Dom::NodeList::findItem: comparing an unreadable name faults in the module");
+    std::string wanted(length, '\0');
+    if (!wanted.empty() && !GuestCopyIn_nid_no_patch(wanted.data(), string.buffer, wanted.size())) throw std::logic_error("sce::Xml::Dom::NodeList::findItem: the name changed while it was read");
+    return XmlDom::NodeListFindByName(self, wanted);
 }
 
-int APS5_VABI _ZNK3sce3Xml3Dom8NodeList11isAvailableEv() {
-    NotImplemented_nid_no_patch(__func__);
+bool APS5_VABI _ZNK3sce3Xml3Dom8NodeList11isAvailableEv(const XmlHandle* self) {
+    return XmlDom::NodeListIsAvailable(self);
 }
 
 int APS5_VABI _ZNK3sce3Xml3Dom8Document10getXmlMetaEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK3sce3Xml3Dom8NodeList9getLengthEv() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint32_t APS5_VABI _ZNK3sce3Xml3Dom8NodeList9getLengthEv(const XmlHandle* self) {
+    return XmlDom::NodeListLength(self);
 }
 
 bool APS5_VABI _ZNK3sce3Xml4Attr11isAvailableEv(const XmlHandle* self) {

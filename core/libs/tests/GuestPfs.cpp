@@ -1,6 +1,8 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libScePfs/libScePfs.hpp"
+#include <algorithm>
 #include <array>
+#include <vector>
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -85,6 +87,118 @@ void UncompressedSize() {
 
 void WorkBufferSize() {
     Require(scePfsGetWorkBufferSize() == 0xed0d8);
+}
+
+void Pread() {
+    PfsHeader header = HeaderV2(4, 0x80000, 0x200);
+    std::array<std::uint8_t, 0x1000> buffer{};
+    std::array<std::uint8_t, 0x200> work{};
+    FillBytes(buffer.data(), buffer.size(), 0xa5);
+    errno = 71;
+    Require(scePfsPread(nullptr, 0x1000, 0, &header, work.data()) == InvalidArgument);
+    Require(scePfsPread(nullptr, 0, 0, nullptr, nullptr) == InvalidArgument);
+    Require(scePfsPread(buffer.data(), 0, 0xffffffffffffffffULL, nullptr, nullptr) == 0);
+    Require(scePfsPread(buffer.data(), 0x1000, 0x1000000000000ULL, &header, work.data()) == InvalidArgument);
+    Require(scePfsPread(buffer.data(), 0x1000, 0, nullptr, work.data()) == InvalidArgument);
+    Require(scePfsPread(buffer.data(), 0x1000, 0, &header, nullptr) == InvalidArgument);
+    header.magic = 0;
+    Require(scePfsPread(buffer.data(), 0x1000, 0, &header, work.data()) == UnsupportedFormat);
+    header = HeaderV2(4, 0x80000, 0x200);
+    Require(scePfsPread(buffer.data(), 0x2000, 0x7f000, &header, work.data()) == OutOfRange);
+    Require(scePfsPread(buffer.data(), 0x1000, 0x90000, &header, work.data()) == OutOfRange);
+    Require(scePfsPread(buffer.data(), 0xfffffffffffff000ULL, 0x1000, &header, work.data()) == OutOfRange);
+    Require(errno == 71);
+    for (std::uint8_t byte : buffer) Require(byte == 0xa5);
+}
+
+void StoredReads(std::uint16_t version, bool shortBlocks) {
+    constexpr std::uint64_t half = 0x20000;
+    std::array<std::uint64_t, 5> ends{0, 2 * half, 4 * half, 6 * half, 8 * half};
+    if (shortBlocks && version == 2) ends.back() -= half;
+    if (shortBlocks && version == 3) ends = {0, half, half + 1, 3 * half + 1, 4 * half + 6};
+    const auto dataSize = ends.back();
+    constexpr std::uint64_t tableOffset = 0x100;
+    constexpr std::uint64_t dataOffset = 0x1000;
+    std::vector<std::uint8_t> image(dataOffset + dataSize);
+    std::vector<std::uint8_t> work(scePfsGetWorkBufferSize());
+    const auto put = [&](std::size_t offset, const auto& value) {
+        std::memcpy(image.data() + offset, &value, sizeof(value));
+    };
+    PfsHeader header{};
+    header.magic = PfsMagic;
+    header.version = version;
+    header.blockCount = static_cast<std::uint32_t>(dataSize / half);
+    header.uncompressedSize = dataSize;
+    header.layoutTag = 2;
+    header.tableOffset = tableOffset;
+    if (version == 2) {
+        for (unsigned i = 0; i <= header.blockCount; ++i) put(tableOffset + i * 8, dataOffset + i * half);
+    } else {
+        header.indexCount = 2;
+        put(sizeof(header), IndexEntry{{(tableOffset << 16) | 3, 5ULL << 20}});
+        put(sizeof(header) + sizeof(IndexEntry), IndexEntry{{(dataOffset << 16) | 7, dataSize << 16}});
+        for (unsigned i = 0; i <= 4; ++i) {
+            const auto start = ends[i];
+            const auto firstSizeMinusOne = i == 4 ? 0 : std::min(ends[i + 1] - start, half) - 1;
+            put(tableOffset + i * sizeof(IndexEntry), IndexEntry{{start | (1ULL << 51) | (1ULL << 55), start | (firstSizeMinusOne << 44)}});
+        }
+    }
+    put(0, header);
+    auto* data = image.data() + dataOffset;
+    for (std::uint64_t i = 0; i < dataSize; ++i) data[i] = static_cast<std::uint8_t>(i * 13 + (i >> 8) * 901 + 7);
+
+    struct Read { unsigned block; std::uint64_t offset, count; };
+    const Read reads[] = {{0, 0, ends[1]}, {0, 3, 128}, {1, ends[1], 192},
+                          {2, ends[2] - 5, 20}, {1, 0, ends[2]}, {3, ends[3], ends[4] - ends[3]}};
+    for (const auto& read : reads) {
+        std::array<std::uint64_t, 6> command{};
+        Require(scePfsGetSingleBlockReadCommand(image.data(), image.data() + tableOffset, read.block, command.data()) == 0);
+        std::vector<std::uint8_t> actual(read.count + 2, 0xb5);
+        Require(scePfsPreadDecompressBlock(image.data() + command[1], actual.data() + 1, command.data(), read.count, read.offset, work.data()) == 0);
+        const auto blockStart = ends[read.block];
+        for (std::size_t i = 0; i < read.count; ++i) {
+            const auto position = read.offset + i;
+            Require(actual[i + 1] == (position >= blockStart && position < ends[read.block + 1] ? data[position] : 0xb5));
+        }
+        Require(actual.front() == 0xb5 && actual.back() == 0xb5);
+        std::fill(actual.begin(), actual.end(), 0xb5);
+        Require(scePfsPread(actual.data() + 1, read.count, read.offset, image.data(), work.data()) == 0);
+        Require(std::memcmp(actual.data() + 1, data + read.offset, read.count) == 0);
+        Require(actual.front() == 0xb5 && actual.back() == 0xb5);
+    }
+    if (version == 3) {
+        std::array<std::uint64_t, 2> tableCommand{};
+        Require(scePfsGetBlockTableReadCommand(image.data(), tableCommand.data()) == 0);
+        Require(tableCommand[0] == 5 * sizeof(IndexEntry));
+        const auto first = ends[2] - 1;
+        std::vector<std::uint8_t> throughLast(dataSize - first);
+        Require(scePfsPread(throughLast.data(), throughLast.size(), first, image.data(), work.data()) == 0);
+        Require(std::memcmp(throughLast.data(), data + first, throughLast.size()) == 0);
+        const auto regionIndex = sizeof(header) + sizeof(IndexEntry);
+        put(regionIndex, IndexEntry{{(dataOffset << 16) | 7, (dataSize - 1) << 16}});
+        std::uint8_t byte = 0xb5;
+        Require(scePfsPread(&byte, 1, ends[3], image.data(), work.data()) == InvalidTable);
+        Require(byte == 0xb5);
+        put(regionIndex, IndexEntry{{(dataOffset << 16) | 7, dataSize << 16}});
+        auto extended = header;
+        ++extended.uncompressedSize;
+        put(0, extended);
+        std::array<std::uint8_t, 2> atEnd{};
+        Require(scePfsPread(atEnd.data(), 2, dataSize - 1, image.data(), work.data()) == InvalidTable);
+        put(0, header);
+    }
+    if (version == 2 && shortBlocks) {
+        std::array<std::uint64_t, 6> command{};
+        Require(scePfsGetSingleBlockReadCommand(image.data(), image.data() + tableOffset, 3, command.data()) == 0);
+        std::array<std::uint8_t, 3> output{0xb5, 0xb5, 0xb5};
+        const auto* last = image.data() + command[1];
+        Require(scePfsPreadDecompressBlock(last, output.data(), command.data(), 3, dataSize - 1, work.data()) == 0);
+        Require((output == std::array<std::uint8_t, 3>{data[dataSize - 1], 0xb5, 0xb5}));
+        const auto saved = output;
+        Require(scePfsPreadDecompressBlock(last, output.data(), command.data(), 1, dataSize, work.data()) == OutOfRange);
+        Require(scePfsPreadDecompressBlock(last, output.data(), command.data(), 1, dataSize + 1, work.data()) == OutOfRange);
+        Require(output == saved);
+    }
 }
 
 void HeaderReadCommand() {
@@ -255,7 +369,7 @@ void SingleBlockReadCommandV3() {
     Require(scePfsGetSingleBlockReadCommand(&image, table, 0, command.data()) == 0);
     Require(command[0] == 0x140 - 0x100);
     Require(command[1] == 0x60000 + 0x100);
-    Require(command[2] == (0x2a0 - 0x200) | 0x8000000000000000ULL);
+    Require(command[2] == ((0x2a0 - 0x200) | 0x8000000000000000ULL));
     Require(command[3] == 0x100);
     Require(command[4] == 0x200);
     Require(command[5] == 0);
@@ -323,6 +437,13 @@ void ValidateV3() {
     Require(scePfsValidate(&image, 2) == 0);
     image.table[2].words[0] = 0x30000 + 0x40001;
     Require(scePfsValidate(&image, 2) == InvalidTable);
+    image.index[0].words[1] = 0x80000000ULL << 0x14;
+    Require(scePfsValidate(&image, 2) == InvalidTable);
+    for (const std::uint64_t bound : {0x80000001ULL, 0xffffffffULL, 0ULL, 1ULL}) {
+        image.index[0].words[1] = bound << 0x14;
+        Require(scePfsValidate(&image, 2) == 0);
+    }
+    image.index[0].words[1] = 4ULL << 0x14;
     image.table[2].words[0] = 0x60000;
     image.header.indexCount = 1;
     Require(scePfsValidate(&image, 2) == UnsupportedFormat);
@@ -335,6 +456,11 @@ void ValidateV3() {
 int main() {
     UncompressedSize();
     WorkBufferSize();
+    Pread();
+    for (bool shortBlocks : {false, true}) {
+        StoredReads(2, shortBlocks);
+        StoredReads(3, shortBlocks);
+    }
     HeaderReadCommand();
     BlockTableReadCommand();
     BlockTableReadCommandV3();
@@ -347,15 +473,32 @@ int main() {
     ValidateV3();
     {
         PfsHeader header = HeaderV2(4, 0x80000, 0x200);
+        PfsHeader headerV3 = HeaderV2(0, 0x80000, 0);
+        headerV3.version = 3;
         std::uint64_t table[5] = {0, 0x20000, 0x40000, 0x60000, 0x80000};
+        std::array<std::uint64_t, 6> command{};
+        std::array<std::uint8_t, 0x100> buffer{};
+        std::array<std::uint8_t, 0x100> work{};
+        std::uint64_t size = 0;
         std::uint32_t first = 0;
         std::uint32_t last = 0;
+        void* bad = reinterpret_cast<void*>(std::uintptr_t{0x10});
         errno = 71;
-        Require(scePfsGetUncompressedSize(&header, reinterpret_cast<std::uint64_t*>(std::uintptr_t{0x10})) == InvalidArgument);
-        Require(errno == 71);
-        Require(scePfsGetPreadBlockRange(0x1000, 0, reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10}), &last, &header, table) == InvalidArgument);
-        Require(errno == 71);
-        Require(scePfsGetPreadBlockRange(0x1000, 0, &first, reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10}), &header, table) == InvalidArgument);
+        Require(scePfsGetHeaderReadCommand(bad) == InvalidArgument);
+        Require(scePfsGetBlockTableReadCommand(bad, command.data()) == InvalidArgument);
+        Require(scePfsGetBlockTableReadCommand(&header, bad) == InvalidArgument);
+        Require(scePfsGetSingleBlockReadCommand(bad, table, 0, command.data()) == InvalidArgument);
+        Require(scePfsGetSingleBlockReadCommand(&header, bad, 0, command.data()) == InvalidArgument);
+        Require(scePfsGetSingleBlockReadCommand(&header, table, 0, bad) == InvalidArgument);
+        Require(scePfsGetUncompressedSize(bad, &size) == InvalidArgument);
+        Require(scePfsGetUncompressedSize(&header, reinterpret_cast<std::uint64_t*>(bad)) == InvalidArgument);
+        Require(scePfsGetPreadBlockRange(0x1000, 0, reinterpret_cast<std::uint32_t*>(bad), &last, &header, table) == InvalidArgument);
+        Require(scePfsGetPreadBlockRange(0x1000, 0, &first, reinterpret_cast<std::uint32_t*>(bad), &header, table) == InvalidArgument);
+        Require(scePfsGetPreadBlockRange(0x1000, 0, &first, &last, bad, table) == InvalidArgument);
+        Require(scePfsGetPreadBlockRange(0x1000, 0, &first, &last, &headerV3, bad) == InvalidArgument);
+        Require(scePfsPread(buffer.data(), 0x100, 0, bad, work.data()) == InvalidArgument);
+        Require(scePfsValidate(bad, 1) == InvalidArgument);
+        Require(scePfsValidate(bad, 2) == InvalidArgument);
         Require(errno == 71);
     }
     return 0;

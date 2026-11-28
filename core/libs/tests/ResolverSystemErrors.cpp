@@ -1,9 +1,11 @@
 #include "prx/libScePosixForWebKit/include/Api.hpp"
 #include "prx/libScePosixForWebKit/GuestResolver.hpp"
+#include "prx/libc/include/General.hpp"
 #include <array>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <netdb.h>
 #include <sys/socket.h>
 
@@ -11,6 +13,7 @@ namespace {
 int hostResult = EAI_SYSTEM;
 int hostError = EMFILE;
 int calls = 0;
+int copyError = 0;
 
 void Require(bool condition, const char* operation, int result, int expectedResult, int expectedError) {
     if (condition) return;
@@ -34,6 +37,27 @@ extern "C" int __wrap_getnameinfo(const sockaddr*, socklen_t, char*, socklen_t, 
     return Fail();
 }
 
+extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source, std::size_t bytes) {
+    std::memcpy(destination, source, bytes);
+    return true;
+}
+
+extern "C" bool GuestCopyIn_nid_no_patch(void* destination, const void* source, std::size_t bytes) {
+    std::memcpy(destination, source, bytes);
+    return true;
+}
+
+extern "C" int CopyGuestString_nid_no_patch(const char* source, std::size_t maximum, std::string& destination) {
+    if (copyError != 0) {
+        errno = EINVAL;
+        return copyError;
+    }
+    const auto length = strnlen(source, maximum);
+    if (length == maximum) return 63;
+    destination.assign(source, length);
+    return 0;
+}
+
 int main() {
     struct Scenario {
         int hostResult;
@@ -54,6 +78,8 @@ int main() {
         {EAI_AGAIN, 0, 2, 77},
         {EAI_FAIL, 0, 4, 77},
         {EAI_NONAME, 0, 8, 77},
+        {EAI_ADDRFAMILY, 0, 8, 77},
+        {EAI_NODATA, 0, 8, 77},
     };
     const std::array<unsigned char, 16> address{16, 2, 0, 80, 127, 0, 0, 1};
     for (const auto& scenario : scenarios) {
@@ -79,5 +105,15 @@ int main() {
                 host == originalHost && service == originalService,
                 "getnameinfo", result, scenario.guestResult, scenario.guestError);
     }
-    std::printf("%zu resolver error cases passed\n", std::size(scenarios) * 2);
+    for (const int error : {12, 14, 63}) {
+        copyError = error;
+        auto* output = reinterpret_cast<GuestResolver::AddressInfo*>(std::uintptr_t{1});
+        const int before = calls;
+        errno = 77;
+        const int expected = error == 12 ? 6 : 4;
+        const int result = getaddrinfo_nid_postfix("127.0.0.1", "80", nullptr, &output);
+        Require(result == expected && errno == 77 && !output && calls == before,
+                "getaddrinfo string copy", result, expected, 77);
+    }
+    std::printf("%zu resolver error cases passed\n", std::size(scenarios) * 2 + 3);
 }

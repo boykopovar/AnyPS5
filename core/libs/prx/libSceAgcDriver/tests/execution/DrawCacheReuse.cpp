@@ -37,6 +37,13 @@ alignas(256) constexpr std::array<std::uint32_t, 16> TriangleVertexCode{
     0x7e000d05u, 0x080200f4u, 0x10020300u, 0x100202f4u, 0x060202f3u, 0x060400f3u, 0x10040500u, 0x060404f3u,
     0x7e060280u, 0x7e0802f2u, 0xf80008cfu, 0x04030201u, 0xbf810000u,
 };
+alignas(256) constexpr auto FullPushTriangleVertexCode = [] {
+    std::array<std::uint32_t, TriangleVertexCode.size() + 32> code{};
+    std::copy_n(TriangleVertexCode.begin(), 8, code.begin());
+    for (std::uint32_t word = 0; word < 32; ++word) code[8 + word] = 0x06020208u + word;
+    std::copy(TriangleVertexCode.begin() + 8, TriangleVertexCode.end(), code.begin() + 40);
+    return code;
+}();
 alignas(256) constexpr std::array<std::uint32_t, 16> OffsetTriangleVertexCode{
     0x7e000d05u, 0x080200f4u, 0x10020300u, 0x100202f4u, 0x060202f3u, 0x060400f3u, 0x10040500u, 0x060404f3u,
     0x7e0c0c08u, 0x06020306u, 0x7e060280u, 0x7e0802f2u, 0xf80008cfu, 0x04030201u, 0xbf810000u,
@@ -54,6 +61,7 @@ struct Header {
 alignas(8) Header VertexHeader{};
 alignas(8) Header PixelHeader{};
 alignas(8) Header TriangleVertexHeader{};
+alignas(8) Header FullPushTriangleVertexHeader{};
 alignas(8) Header ConstantPixelHeader{};
 alignas(8) Header OffsetTriangleVertexHeader{};
 alignas(256) std::array<std::uint32_t, 4> IndirectRecord{3, 1, 0, 0};
@@ -81,6 +89,7 @@ std::vector<std::uint32_t> Draws(float scale, const std::uint32_t* vertexCode, s
     const auto color = reinterpret_cast<std::uintptr_t>(ColorMemory.data());
     const auto vertex = reinterpret_cast<std::uintptr_t>(vertexCode);
     const auto pixel = reinterpret_cast<std::uintptr_t>(pixelCode);
+    const auto resources = [](std::uint32_t count) { return ((count & 0x1fu) << 1u) | ((count & 0x20u) << 22u); };
     const std::vector<std::pair<std::uint32_t, std::uint32_t>> context{
         {0x2d5, 0x2000},
         {0x1b6, 0}, {0x207, 0}, {0x200, 0}, {0x203, 0x800},
@@ -104,8 +113,8 @@ std::vector<std::uint32_t> Draws(float scale, const std::uint32_t* vertexCode, s
         {0x2fe, 0}, {0x302, 0}, {0x306, 0}, {0x30a, 0},
     };
     const std::vector<std::pair<std::uint32_t, std::uint32_t>> shader{
-        {0xc8, static_cast<std::uint32_t>(vertex >> 8u)}, {0xc9, static_cast<std::uint32_t>(vertex >> 40u)}, {0x8b, vertexUserSgprs << 1u}, {0x8c, 0},
-        {0x008, static_cast<std::uint32_t>(pixel >> 8u)}, {0x009, static_cast<std::uint32_t>(pixel >> 40u)}, {0x00b, pixelUserSgprs << 1u},
+        {0xc8, static_cast<std::uint32_t>(vertex >> 8u)}, {0xc9, static_cast<std::uint32_t>(vertex >> 40u)}, {0x8b, resources(vertexUserSgprs)}, {0x8c, 0},
+        {0x008, static_cast<std::uint32_t>(pixel >> 8u)}, {0x009, static_cast<std::uint32_t>(pixel >> 40u)}, {0x00b, resources(pixelUserSgprs)},
     };
     std::vector<std::uint32_t> commands;
     Append(commands, 0x79, {0x242, 4});
@@ -314,6 +323,120 @@ void RecordsKeepThePacketsFragmentWord(bool libraries) {
     }
 }
 
+void SubmitUniformPair(std::vector<std::uint32_t> commands, bool indexed, std::uint64_t expectedRebuilds, const std::string& caseName) {
+    alignas(256) static const std::array<std::uint32_t, 10> indexedRecords{3, 1, 0, 0, 0, 3, 1, 3, 0, 0};
+    alignas(256) static const std::array<std::uint32_t, 8> autoRecords{3, 1, 0, 0, 3, 1, 0, 0};
+    const auto records = reinterpret_cast<std::uintptr_t>(indexed ? indexedRecords.data() : autoRecords.data());
+    Append(commands, 0x11, {1, static_cast<std::uint32_t>(records), static_cast<std::uint32_t>(records >> 32u)});
+    Append(commands, indexed ? 0x38u : 0x2cu, {0, 0x8c, 0x280, 0x280, 2, 0, 0, indexed ? 20u : 16u, indexed ? 0u : 2u});
+    const auto before = AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
+    AgcDriver::Graphics::TakeVkDrawCounts();
+    const auto after = Submit(commands);
+    const auto emitted = AgcDriver::Graphics::TakeVkDrawCounts();
+    Require((indexed ? emitted.indexed : emitted.direct) == 2, caseName + ": both records must draw");
+    const auto rebuilt = after.recordStagesRecompiled - before.recordStagesRecompiled;
+    Require(rebuilt == expectedRebuilds, caseName + ": expected " + std::to_string(expectedRebuilds) + " per-record stage rebuilds, got " + std::to_string(rebuilt));
+}
+
+void CheckIndirectPixelLds() {
+    alignas(256) static constexpr std::array<std::uint32_t, 13> pixel{
+        0x7e2202ffu, 32000u, 0x7e2402f2u, 0xd8340000u, 0x00001211u, 0xbf8cc07fu,
+        0xd8d80000u, 0x05000011u, 0xbf8cc07fu, 0x7e0c0280u, 0xf800180fu, 0x05060605u, 0xbf810000u,
+    };
+    static Header header{};
+    Registered(header, pixel.data(), sizeof(pixel), 1);
+    ColorMemory.fill(std::byte{0});
+    auto commands = Draws(32.0f, OffsetTriangleVertexCode.data(), 1, pixel.data(), 0, {});
+    SubmitUniformPair(std::move(commands), false, 2, "buffer-backed pixel function LDS");
+    Require(BrightestColorByte() != 0, "the pixel function LDS read did not reach the color target");
+}
+
+void CheckUnusedIndexTail() {
+    struct alignas(256) Memory {
+        std::array<std::uint16_t, 128> indices{0, 1, 2, 0, 1, 2};
+        std::array<std::byte, 1024> color{};
+    };
+    static Memory memory;
+    const auto indices = reinterpret_cast<std::uintptr_t>(memory.indices.data());
+    const auto color = reinterpret_cast<std::uintptr_t>(memory.color.data());
+    auto commands = Draws(32.0f, OffsetTriangleVertexCode.data(), 1, PixelCode.data(), 1, {});
+    Append(commands, 0x69, {0x318, static_cast<std::uint32_t>(color >> 8u)});
+    Append(commands, 0x69, {0x390, static_cast<std::uint32_t>(color >> 40u)});
+    Append(commands, 0x76, {0x00c, std::bit_cast<std::uint32_t>(1.0f)});
+    Append(commands, 0x2a, {0});
+    Append(commands, 0x26, {static_cast<std::uint32_t>(indices), static_cast<std::uint32_t>(indices >> 32u)});
+    Append(commands, 0x13, {static_cast<std::uint32_t>(memory.indices.size() + 1u)});
+    SubmitUniformPair(std::move(commands), true, 2, "unused index tail overlapping the color target");
+    AgcDriver::GuestMemory::FlushGpuWrites(color, memory.color.size());
+    Require(std::ranges::any_of(memory.color, [](std::byte value) { return value != std::byte{0}; }), "the indexed draws did not update the color target");
+}
+
+void CheckIndirectColorFeedback(bool enabled) {
+    alignas(256) static constexpr std::array<std::uint32_t, 9> loadColor{
+        0x7e060280u, 0x7e080280u, 0xf0001108u, 0x00000503u, 0xbf8c3f70u,
+        0x7e0c0280u, 0xf800180fu, 0x05060605u, 0xbf810000u,
+    };
+    static Header header{};
+    Registered(header, loadColor.data(), sizeof(loadColor), 1);
+    alignas(256) static std::array<std::byte, 1024> other{};
+    other.fill(std::byte{0x80});
+    for (bool feedback : {false, true}) {
+        ColorMemory.fill(std::byte{0x80});
+        const auto image = reinterpret_cast<std::uintptr_t>((feedback ? ColorMemory : other).data());
+        const std::array<std::uint32_t, 8> descriptor{
+            static_cast<std::uint32_t>(image >> 8u), static_cast<std::uint32_t>(image >> 40u) | (56u << 20u) | (3u << 30u),
+            15u | (3u << 14u), 0xfacu | (9u << 28u), 0, 0, 0, 0,
+        };
+        auto commands = Draws(32.0f, OffsetTriangleVertexCode.data(), 1, loadColor.data(), 8, {});
+        for (std::uint32_t word = 0; word < descriptor.size(); ++word) Append(commands, 0x76, {0x00cu + word, descriptor[word]});
+        SubmitUniformPair(std::move(commands), false, enabled && !feedback ? 0u : 2u, feedback ? "sampling the bound color target" : "sampling an independent texture");
+        AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(ColorMemory.data()), ColorMemory.size());
+        Require(std::ranges::any_of(ColorMemory, [](std::byte value) { return value == std::byte{0}; }), "indirect color sampling did not change the color target");
+    }
+}
+
+void CheckUniformIndirectRecords(bool bufferBackedPixelLds) {
+    Registered(OffsetTriangleVertexHeader, OffsetTriangleVertexCode.data(), sizeof(OffsetTriangleVertexCode), 2);
+    alignas(256) static std::array<std::uint32_t, 10> records{};
+    alignas(256) static const std::array<std::uint16_t, 6> indices{0, 1, 2, 0, 1, 2};
+    const bool enabled = std::getenv("APS5_UNIFORM_INDIRECT_RECORDS") != nullptr;
+    for (const bool indexed : {false, true}) {
+        const auto check = [&](std::uint32_t initial, std::uint32_t first, std::uint32_t second, bool visible, bool eligible) {
+            ColorMemory.fill(std::byte{0});
+            records = indexed ? std::array<std::uint32_t, 10>{3, 1, 0, first, 0, 3, 1, 3, second, 0}
+                              : std::array<std::uint32_t, 10>{3, 1, first, 0, 3, 1, second, 0};
+            auto commands = Draws(32.0f, OffsetTriangleVertexCode.data(), 1, PixelCode.data(), 1, {});
+            Append(commands, 0x76, {0x08c, initial});
+            Append(commands, 0x76, {0x00c, std::bit_cast<std::uint32_t>(1.0f)});
+            Append(commands, 0x79, {0x24a, 0});
+            const auto arguments = reinterpret_cast<std::uintptr_t>(records.data());
+            Append(commands, 0x11, {1, static_cast<std::uint32_t>(arguments), static_cast<std::uint32_t>(arguments >> 32u)});
+            if (indexed) {
+                const auto indexBase = reinterpret_cast<std::uintptr_t>(indices.data());
+                Append(commands, 0x2a, {0});
+                Append(commands, 0x26, {static_cast<std::uint32_t>(indexBase), static_cast<std::uint32_t>(indexBase >> 32u)});
+                Append(commands, 0x13, {static_cast<std::uint32_t>(indices.size())});
+            }
+            Append(commands, indexed ? 0x38u : 0x2cu, {0, 0x8c, 0x280, 0x280, 2, 0, 0, indexed ? 20u : 16u, indexed ? 0u : 2u});
+            const auto before = AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
+            AgcDriver::Graphics::TakeVkDrawCounts();
+            const auto after = Submit(commands);
+            const auto emitted = AgcDriver::Graphics::TakeVkDrawCounts();
+            Require((indexed ? emitted.indexed : emitted.direct) == 2u, "uniform indirect records: both records must emit a draw");
+            Require((BrightestColorByte() != 0) == visible, "uniform indirect records: a patch to the vertex shader produced the wrong pixels");
+            const auto rebuilt = after.recordStagesRecompiled - before.recordStagesRecompiled;
+            Require(rebuilt == (enabled && eligible ? 0u : 2u), "uniform indirect records: unexpected number of per-record stage rebuilds: " + std::to_string(rebuilt));
+        };
+        check(0, 0, 0, true, true);
+        check(4, 4, 4, false, true);
+        check(4, 0, 0, true, false);
+        check(4, 4, 0, true, false);
+    }
+    CheckIndirectColorFeedback(enabled);
+    CheckUnusedIndexTail();
+    if (bufferBackedPixelLds) CheckIndirectPixelLds();
+}
+
 void RecordWordsReachTheShader(bool libraries) {
     const auto mode = std::string(libraries ? "with" : "without") + " graphics pipeline libraries";
     const bool cached = std::getenv("APS5_DRAW_CACHE_INDIRECT") != nullptr;
@@ -450,16 +573,54 @@ void SightingsKeepCollidingKeys() {
     Require(sightings.SeenBefore(12) && sightings.SeenBefore(13) && sightings.SeenBefore(14), "a full bucket lost a key newer than the one it replaced");
 }
 
+void FullVertexPushDataLeavesRoomForTheFragment(bool libraries) {
+    const auto mode = std::string(libraries ? "with" : "without") + " graphics pipeline libraries";
+    const bool verify = std::getenv("APS5_VERIFY_DRAW_DATA_HITS") != nullptr;
+    Registered(FullPushTriangleVertexHeader, FullPushTriangleVertexCode.data(), sizeof(FullPushTriangleVertexCode), 2);
+    const auto submit = [](std::size_t count, float fragmentWord) {
+        auto commands = Draws(32.0f, FullPushTriangleVertexCode.data(), 32, PixelCode.data(), 1, {});
+        for (std::uint32_t word = 0; word < 32; ++word) Append(commands, 0x76, {0x8c + word, 0});
+        for (std::size_t draw = 0; draw < count; ++draw) {
+            Append(commands, 0x76, {0x00c, std::bit_cast<std::uint32_t>(fragmentWord)});
+            Append(commands, 0x2d, {3, 2});
+        }
+        return Submit(commands);
+    };
+    ColorMemory.fill(std::byte{0});
+    const auto before = AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
+    const auto cached = submit(3, 0.25f);
+    Require(cached.inserts - before.inserts == 1 && cached.hits - before.hits == 1, mode + ": three draws with 32 vertex user words and one fragment word did not insert once and hit once");
+    Require(cached.misses[static_cast<std::size_t>(DrawMiss::Layout)] == before.misses[static_cast<std::size_t>(DrawMiss::Layout)], mode + ": a repeated draw at the push block boundary missed its layout");
+    Require(BrightestColorByte() == 64, mode + ": the fragment word after 32 vertex user words did not draw 0.25");
+    const auto changed = submit(1, 0.75f);
+    Require(changed.dataHits - cached.dataHits == 1, mode + ": changing only the fragment word at the push block boundary did not reuse the draw shape");
+    Require(verify ? changed.dataVerified - cached.dataVerified == 1 : changed.dataStagesReused - cached.dataStagesReused == 1, mode + ": changing the fragment word did not reuse or verify the vertex stage at the push block boundary");
+    Require(BrightestColorByte() == 191, mode + ": the changed fragment word after 32 vertex user words did not draw 0.75");
+}
+
 }
 
 int main(int argc, char** argv) {
+#ifdef _WIN32
+    _putenv_s("APS5_NO_GPU_UNFOLDED_INDIRECT", "1");
+#else
+    setenv("APS5_NO_GPU_UNFOLDED_INDIRECT", "1", 1);
+#endif
     try {
         SightingsKeepCollidingKeys();
         bool libraries = false;
+        bool bufferBackedPixelLds = false;
         {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
             libraries = device->GraphicsPipelineLibraries();
+            bufferBackedPixelLds = device->Target().largePixelFunctionLdsBuffer;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "uniform-records") {
+            CheckUniformIndirectRecords(bufferBackedPixelLds);
+            AgcDriverShutdown_nid_postfix();
+            std::cout << "uniform indirect record tests passed\n";
+            return 0;
         }
         if (argc == 2 && std::string_view(argv[1]).starts_with("--dump-")) {
             GraphicsRequestDumps(argv[1]);
@@ -476,6 +637,7 @@ int main(int argc, char** argv) {
             RetainedPixelCacheTransitions();
             CpuPathIndirectDrawsAreCachedWhenAsked(libraries);
             RecordsKeepThePacketsFragmentWord(libraries);
+            FullVertexPushDataLeavesRoomForTheFragment(libraries);
             RecordWordsReachTheShader(libraries);
             IndirectPointsKeepTheirPointSize(libraries);
         }

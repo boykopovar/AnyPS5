@@ -136,15 +136,17 @@ int APS5_VABI libSceVcodecUnknown_Ipf4PM5PIHE_nid_no_patch(std::uint64_t* result
     const int savedErrno = errno;
     if (result != nullptr) {
         std::uint64_t zero = 0;
-        if (!GuestCopyOut_nid_no_patch(result, &zero, sizeof(zero))) {
-            errno = savedErrno;
+        const bool zeroCopied = GuestCopyOut_nid_no_patch(result, &zero, sizeof(zero));
+        errno = savedErrno;
+        if (!zeroCopied) {
             return ErrorInvalidArgument;
         }
     }
     if (config == nullptr) return ErrorInvalidArgument;
     std::uint32_t fields[5]{};
-    if (!GuestCopyIn_nid_no_patch(fields, config, sizeof(fields))) {
-        errno = savedErrno;
+    const bool configCopied = GuestCopyIn_nid_no_patch(fields, config, sizeof(fields));
+    errno = savedErrno;
+    if (!configCopied) {
         return ErrorInvalidArgument;
     }
     Request request{};
@@ -152,9 +154,11 @@ int APS5_VABI libSceVcodecUnknown_Ipf4PM5PIHE_nid_no_patch(std::uint64_t* result
     request.fields[5] = BudgetClass(fields);
     const int status = Control<ClassCommand>(request);
     if (status >= 0 && result != nullptr) {
+        const int outErrno = errno;
         const std::uint64_t value = request.fields[0];
-        if (!GuestCopyOut_nid_no_patch(result, &value, sizeof(value))) {
-            errno = savedErrno;
+        const bool outCopied = GuestCopyOut_nid_no_patch(result, &value, sizeof(value));
+        errno = outErrno;
+        if (!outCopied) {
             return ErrorInvalidArgument;
         }
     }

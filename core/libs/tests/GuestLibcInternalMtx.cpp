@@ -5,6 +5,7 @@
 #include "SceTypes.hpp"
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 #include <thread>
 
 namespace {
@@ -32,6 +33,17 @@ int TryLock(PthreadMutex* mutex) {
 int LockAndUnlock(PthreadMutex* mutex) {
     if (_Mtxlock_nid_postfix(mutex) != 0) return 1;
     return _Mtxunlock_nid_postfix(mutex);
+}
+
+bool OverrideThrows(const char* name) {
+    void* handle = nullptr;
+    try {
+        _ZNSt8__sce_v236_Mtx_init_with_default_name_overrideEPP13pthread_mutexiPKc_nid_postfix(&handle, 1, name);
+    } catch (...) {
+        return true;
+    }
+    _ZNSt8__sce_v212_Mtx_destroyEPP13pthread_mutex_nid_postfix(&handle);
+    return false;
 }
 
 }
@@ -62,6 +74,10 @@ int main() {
     Require(_Mtxinit_nid_postfix(&longName, "ANameLongerThanTheThirtyTwoByteLabel") == 0, "a long name is truncated");
     Require(_Mtxdst_nid_postfix(&longName) == 0, "a mutex with a long name is destroyed");
 
+    PthreadMutex unreadable = nullptr;
+    Require(_Mtxinit_nid_postfix(&unreadable, reinterpret_cast<const char*>(0x10)) == 1 && unreadable == nullptr,
+        "an unreadable name is refused before the mutex is made");
+
     PthreadMutex zeroed = nullptr;
     Require(_Mtxunlock_nid_postfix(&zeroed) == 1, "unlocking a zeroed mutex fails");
     Require(LockAndUnlock(&zeroed) == 0, "a zeroed mutex is initialized on first lock");
@@ -89,5 +105,11 @@ int main() {
     Require(_ZNSt8__sce_v29_Mtx_lockEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&plainOverride)) == Busy, "a plain override mutex refuses a second lock");
     Require(_ZNSt8__sce_v211_Mtx_unlockEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&plainOverride)) == 0, "the plain override mutex unlocks");
     Require(_ZNSt8__sce_v212_Mtx_destroyEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&plainOverride)) == 0, "the plain override mutex is destroyed");
+    Require(!OverrideThrows(nullptr), "an override init with a null name does not throw");
+    Require(!OverrideThrows(""), "an override init with an empty name does not throw");
+    Require(!OverrideThrows(std::string(31, 'n').c_str()), "an override init with a 31-character name does not throw");
+    Require(OverrideThrows(std::string(32, 'n').c_str()), "an override init with a 32-character name throws");
+    Require(OverrideThrows(std::string(33, 'n').c_str()), "an override init with a 33-character name throws");
+    Require(OverrideThrows(std::string(40, 'n').c_str()), "an override init with a 40-character name throws");
     return 0;
 }

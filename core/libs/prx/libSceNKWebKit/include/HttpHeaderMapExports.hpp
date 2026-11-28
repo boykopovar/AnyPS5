@@ -18,5 +18,6 @@ NKWebKit::WtfAbi::String APS5_VABI _ZNK7WebCore13HTTPHeaderMap3getERKN3WTF6Strin
 NKWebKit::WtfAbi::String APS5_VABI _ZNK7WebCore13HTTPHeaderMap17getUncommonHeaderERKN3WTF6StringE(const NKWebKit::HttpAbi::HTTPHeaderMap* self, const NKWebKit::WtfAbi::String& name);
 bool APS5_VABI _ZNK7WebCore13HTTPHeaderMap8containsENS_14HTTPHeaderNameE(const NKWebKit::HttpAbi::HTTPHeaderMap* self, NKWebKit::HttpAbi::HTTPHeaderName name);
 bool APS5_VABI _ZNK7WebCore13HTTPHeaderMap8containsERKN3WTF6StringE(const NKWebKit::HttpAbi::HTTPHeaderMap* self, const NKWebKit::WtfAbi::String& name);
+NKWebKit::HttpAbi::HTTPHeaderMap APS5_VABI _ZNK7WebCore13HTTPHeaderMap12isolatedCopyEv(const NKWebKit::HttpAbi::HTTPHeaderMap* self);
 
 }

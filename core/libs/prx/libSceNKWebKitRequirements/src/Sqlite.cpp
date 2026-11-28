@@ -3,10 +3,12 @@
 
 #include <sqlite3.h>
 
+#include <cerrno>
 #include <cstring>
 #include <filesystem>
 #include <new>
 #include <string>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -88,9 +90,14 @@ int RegisterGuestVfs() {
     if (guest.iVersion >= 2) guest.xCurrentTimeInt64 = ForwardVfs<&sqlite3_vfs::xCurrentTimeInt64>;
 
     auto* memory = sqlite3_vfs_find("memdb");
-    while (auto* registered = sqlite3_vfs_find(nullptr)) sqlite3_vfs_unregister(registered);
-    if (memory) sqlite3_vfs_register(memory, 0);
-    return sqlite3_vfs_register(&guest, 1);
+    std::vector<sqlite3_vfs*> replaced;
+    for (auto* registered = native; registered; registered = registered->pNext) {
+        if (registered != memory) replaced.push_back(registered);
+    }
+    const int result = sqlite3_vfs_register(&guest, 1);
+    if (result != SQLITE_OK) return result;
+    for (auto* registered : replaced) sqlite3_vfs_unregister(registered);
+    return SQLITE_OK;
 }
 
 int InitializeGuestVfs() {
@@ -437,12 +444,24 @@ sqlite3_stmt* APS5_VABI sqlite3_next_stmt_nid_postfix(sqlite3* db, sqlite3_stmt*
 
 int APS5_VABI sqlite3_open_v2_nid_postfix(const char* filename, sqlite3** db, int flags, const char* vfs) {
     static_cast<void>(vfs);
+    if (!db) return SQLITE_MISUSE;
+    sqlite3* localDb = nullptr;
+    const bool writable = GuestWritable_nid_no_patch(db, sizeof(localDb));
+    if (!writable) return SQLITE_MISUSE;
     const int ready = InitializeGuestVfs();
     if (ready != SQLITE_OK) {
-        *db = nullptr;
+        const int copyErrno = errno;
+        GuestCopyOut_nid_no_patch(db, &localDb, sizeof(localDb));
+        errno = copyErrno;
         return ready;
     }
-    return sqlite3_open_v2(filename, db, flags, nullptr);
+    const int result = sqlite3_open_v2(filename, &localDb, flags, nullptr);
+    const bool copiedOut = GuestCopyOut_nid_no_patch(db, &localDb, sizeof(localDb));
+    if (!copiedOut) {
+        if (localDb) sqlite3_close(localDb);
+        return SQLITE_MISUSE;
+    }
+    return result;
 }
 
 int APS5_VABI sqlite3_prepare_v2_nid_postfix(sqlite3* db, const char* sql, int size, sqlite3_stmt** statement,

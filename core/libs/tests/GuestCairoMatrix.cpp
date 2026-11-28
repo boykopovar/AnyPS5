@@ -119,7 +119,8 @@ void TestInverse() {
     Require(cairo_matrix_invert(&m) == 5);
     Matches(m, {0, 0, 0, 1, -3, -4});
     m = CairoMatrix{1, 1, 0, std::numeric_limits<double>::infinity(), 1, 1};
-    Require(cairo_matrix_invert(&m) == 5);
+    Require(cairo_matrix_invert(&m) == 0);
+    Require(std::isnan(m.xx) && m.yx == 0 && m.xy == 0 && m.yy == 0 && std::isnan(m.x0) && m.y0 == 0);
 
     m = CairoMatrix{2, -0.0, -0.0, 4, 6, 8};
     Require(cairo_matrix_invert(&m) == 0);

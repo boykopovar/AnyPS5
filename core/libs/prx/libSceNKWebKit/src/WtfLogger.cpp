@@ -25,6 +25,7 @@
  */
 
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -34,6 +35,7 @@
 namespace {
 
 constexpr std::size_t MaxLength = 0x7FFFFFFF;
+constexpr std::size_t NameLimit = 65536;
 
 std::string Hex(std::uintptr_t value) {
     static constexpr char digits[] = "0123456789ABCDEF";
@@ -49,6 +51,12 @@ std::string Hex(std::uintptr_t value) {
     return text;
 }
 
+std::string GuestName(const char* name) {
+    std::string copied;
+    if (CopyGuestString_nid_no_patch(name, NameLimit, copied) != 0) throw std::invalid_argument("WTF::Logger::LogSiteIdentifier::toString: unreadable name");
+    return copied;
+}
+
 NKWebKit::WtfAbi::String ToString(const std::string& text) {
     if (text.size() > MaxLength) throw std::length_error("WTF::Logger: string exceeds maximum length");
     return _ZN3WTF10StringImpl6createEPKhj(reinterpret_cast<const unsigned char*>(text.data()), static_cast<unsigned>(text.size()));
@@ -61,8 +69,11 @@ extern "C" NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF11LogArgumentIPKvE8toString
 }
 
 extern "C" NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF6Logger17LogSiteIdentifier8toStringEv(const NKWebKit::WtfAbi::LogSiteIdentifier* self) {
-    if (!self || !self->methodName) throw std::invalid_argument("WTF::Logger::LogSiteIdentifier::toString: null argument");
+    if (!self) throw std::invalid_argument("WTF::Logger::LogSiteIdentifier::toString: null argument");
+    NKWebKit::WtfAbi::LogSiteIdentifier site;
+    if (!GuestCopyIn_nid_no_patch(&site, self, sizeof(site))) throw std::invalid_argument("WTF::Logger::LogSiteIdentifier::toString: unreadable identifier");
+    if (!site.methodName) throw std::invalid_argument("WTF::Logger::LogSiteIdentifier::toString: null argument");
     std::string text;
-    if (self->className) text = std::string(self->className) + "::";
-    return ToString(text + self->methodName + "(" + Hex(self->objectPtr) + ") ");
+    if (site.className) text = GuestName(site.className) + "::";
+    return ToString(text + GuestName(site.methodName) + "(" + Hex(site.objectPtr) + ") ");
 }

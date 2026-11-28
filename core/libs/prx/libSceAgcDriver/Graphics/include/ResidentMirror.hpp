@@ -45,6 +45,7 @@ public:
     void Store(std::uint64_t guest, std::span<const std::byte> bytes);
     std::shared_ptr<Buffer> RecordReadback(VkCommandBuffer commands, std::uint64_t guest, std::uint64_t bytes) const;
     void ReadDevice(std::uint64_t guest, std::span<std::byte> out);
+    std::uint64_t UploadSerial(std::uint64_t begin, std::uint64_t end) const;
     static void FlushChanged(const Context& context);
 
 private:
@@ -70,6 +71,8 @@ private:
     std::uint64_t size = 0;
     std::uint64_t bound = 0;
     std::vector<Slot> slots;
+    std::vector<std::uint64_t> uploads;
+    std::uint64_t uploadCounter = 0;
     std::mutex changedMutex;
     GuestRuns changed;
 };

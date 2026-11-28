@@ -6,7 +6,7 @@ import unittest
 import test_symbol_versions as symbols_module
 from test_symbol_versions import build_image, patch, read_dynsym, DEFINITIONS, SHN_UNDEF, STT_FUNC, PATCHER
 
-SCE_IMPORTS = ["_ZN3sce4Json5Value3setEl", "_ZNK3sce4Json5Value3getEv", "_ZN3Sce4Json6StringC1EPKc"]
+SCE_IMPORTS = ["_ZN3sce4Json5Value3setEl", "_ZNK3sce4Json5Value3getEv", "_ZN3Sce4Json6StringC1EPKc", "_ZNR3sce3Foo6lvalueEv", "_ZNO3sce3Foo6rvalueEv", "_ZNKR3sce3Foo11constLvalueEv", "_ZNKO3sce3Foo11constRvalueEv"]
 OTHER_IMPORTS = ["_ZN4demo3FooEv", "_ZN5scene3BarEv", "_ZNSt6vectorIiE4sizeEv", "_ZN3scx3BazEv", "_Z3sce"]
 PLAIN_IMPORT = "sceKernelPlainImportName"
 

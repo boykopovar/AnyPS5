@@ -36,6 +36,7 @@ def main():
                 result = subprocess.run([str(relinker), *options, str(source), str(output)],
                                         capture_output=True, text=True, timeout=20)
                 assert result.returncode == 0, (result.stdout, result.stderr)
+                assert ("  |-- libs/\n" in result.stdout) == (label in ("default", "list-bare")), result.stdout
                 for relative in (Path(module_directory) / "needed.prx.guest.prx", Path("sce_module/standard.prx.guest.prx")):
                     artifact = output.parent / "app0" / relative
                     tags, strings = dynamic_strings(artifact.read_bytes())
@@ -52,14 +53,15 @@ def main():
                     if resolved != expected or (label.startswith("absolute") and actual != run_path):
                         failures.append((str(relative), label, actual, str(resolved), str(expected)))
                     checked += 1
-        for index, run_path in enumerate(("relative/libs", "C:/host/libs", "C:\\host\\libs", "\\\\server\\share",
-                                          "$ORIGIN/libs:", "$ORIGIN::/opt/libs", "$ORIGIN:relative/libs", "/opt/libs:")):
-            output = work / f"invalid-{index}.elf"
-            result = subprocess.run([str(relinker), "--rpath", run_path, str(source), str(output)],
-                                    capture_output=True, text=True, timeout=20)
-            assert result.returncode == 2 and "run path must be absolute or begin with $ORIGIN" in result.stderr, (
-                run_path, result.returncode, result.stdout, result.stderr)
-            assert not output.exists()
+        for target in ([], ["--macos"]):
+            for index, run_path in enumerate(("relative/libs", "C:/host/libs", "C:\\host\\libs", "\\\\server\\share",
+                                              "$ORIGIN/libs:", "$ORIGIN::/opt/libs", "$ORIGIN:relative/libs", "/opt/libs:")):
+                output = work / f"invalid-{len(target)}-{index}.elf"
+                result = subprocess.run([str(relinker), *target, "--rpath", run_path, str(source), str(output)],
+                                        capture_output=True, text=True, timeout=20)
+                assert result.returncode == 2 and "FAIL: Guest run path must be absolute or begin with $ORIGIN" in result.stderr.splitlines(), (
+                    target, run_path, result.returncode, result.stdout, result.stderr)
+                assert not output.exists()
         output = work / "repeated.elf"
         result = subprocess.run([str(relinker), "--rpath", "$ORIGIN/a", "--rpath", "$ORIGIN/b", str(source), str(output)],
                                 capture_output=True, text=True, timeout=20)

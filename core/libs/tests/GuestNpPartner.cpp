@@ -94,12 +94,18 @@ int main() {
     Require(Throws([] { sceNpEAAccessTerminate(); }));
     Require(Throws([&] { sceNpHasEAAccessSubscription(1, &subscribed); }));
     Require(sceNpEAAccessInitialize() == 0);
+    Require(sceNpHasEAAccessSubscriptionAbortRequest() == 0);
     Require(Throws([] { sceNpEAAccessInitialize(); }));
     Require(ThrowsMessage([] { sceNpHasEAAccessSubscription(1, nullptr); }, "null result"));
     Require(sceNpHasEAAccessSubscription(1, &subscribed) == 0);
     Require(!subscribed);
     subscribed = true;
     Require(sceNpHasEAAccessSubscription(0, &subscribed) == 0);
+    Require(!subscribed);
+    Require(sceNpHasEAAccessSubscriptionAbortRequest() == 0);
+    Require(sceNpHasEAAccessSubscriptionAbortRequest() == 0);
+    subscribed = true;
+    Require(sceNpHasEAAccessSubscription(1, &subscribed) == 0);
     Require(!subscribed);
     const ReadOnlyPage readOnly;
     Require(ThrowsMessage([&] { sceNpHasEAAccessSubscription(1, readOnly.Result()); }, "unwritable result"));

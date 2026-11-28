@@ -60,6 +60,24 @@ class Tests(unittest.TestCase):
         self.assertEqual(r.returncode,2)
         self.assertEqual(r.stdout,"")
 
+    def test_missing_database_reports_usage_error(self):
+        r=self.run_main(self.root/"absent.csv")
+        self.assertEqual(r.returncode,2)
+        self.assertEqual(r.stdout,"")
+        self.assertIn("absent.csv",r.stderr)
+
+    def test_missing_argument_is_usage_error(self):
+        r=self.run_main()
+        self.assertEqual(r.returncode,2)
+        self.assertEqual(r.stdout,"")
+
+    def test_entries_sorted_by_nid_with_computed_nid(self):
+        path=self.root/"db"
+        path.write_text("BBBBBBBBBBB beta\n6OkOa1SOKuY sceAmprUnknown00\n",encoding="utf-8")
+        data=json.loads(self.run_main(path).stdout)
+        self.assertEqual([x["nid"] for x in data["entries"]],["6OkOa1SOKuY","BBBBBBBBBBB"])
+        self.assertEqual(data["entries"][1]["computed_nid"],audit_nid_names.compute_nid("beta"))
+
 
 if __name__ == "__main__":
     unittest.main()

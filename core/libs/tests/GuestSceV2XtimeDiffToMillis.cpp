@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <stdexcept>
 
 namespace {
 
@@ -51,6 +52,26 @@ int main() {
         const std::int64_t millis = _ZNSt8__sce_v222_Xtime_diff_to_millis2EPK8timespecS2__nid_postfix(&target, &now);
         if (millis == entry.millis && target.sec == entry.target[0] && target.nsec == entry.target[1] && now.sec == entry.now[0] && now.nsec == entry.now[1]) continue;
         std::fprintf(stderr, "sce v2 xtime diff to millis: %s: %lld\n", entry.label, static_cast<long long>(millis));
+        return EXIT_FAILURE;
+    }
+    const auto throws = [](auto call) {
+        try {
+            call();
+        } catch (const std::invalid_argument&) {
+            return true;
+        }
+        return false;
+    };
+    const auto* const unmapped = reinterpret_cast<const Xtime*>(std::uintptr_t{0x10});
+    const Xtime valid {1, 0};
+    if (!throws([&] { _ZNSt8__sce_v222_Xtime_diff_to_millis2EPK8timespecS2__nid_postfix(unmapped, &valid); })
+        || !throws([&] { _ZNSt8__sce_v222_Xtime_diff_to_millis2EPK8timespecS2__nid_postfix(&valid, unmapped); })
+        || !throws([&] { _Xtime_diff_to_ts_nid_postfix(unmapped); })) {
+        std::fprintf(stderr, "sce v2 xtime diff to millis: an unmapped time did not throw std::invalid_argument\n");
+        return EXIT_FAILURE;
+    }
+    if (_ZNSt8__sce_v222_Xtime_diff_to_millis2EPK8timespecS2__nid_postfix(&valid, &valid) != 0) {
+        std::fprintf(stderr, "sce v2 xtime diff to millis: equal times no longer give 0\n");
         return EXIT_FAILURE;
     }
     return EXIT_SUCCESS;

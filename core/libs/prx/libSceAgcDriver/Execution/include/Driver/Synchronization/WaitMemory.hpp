@@ -17,8 +17,10 @@ inline constexpr std::chrono::microseconds PollTryInterval{1000};
 
 struct LabelStore {
     std::uint64_t stamp = 0;
+    std::uint64_t generation = 0;
     std::uint32_t value = 0;
     std::uint32_t queue = 0xffffffffu;
+    bool ordered = true;
 };
 
 struct WriteRecord {
@@ -26,6 +28,9 @@ struct WriteRecord {
     std::uint64_t length;
     std::uint32_t queue;
     std::uint32_t opcode;
+    std::uint64_t order = 0;
+    std::uint64_t value = 0;
+    bool valued = false;
 };
 
 struct PollStats {
@@ -43,7 +48,7 @@ struct WaitOutcomes {
 };
 
 struct EpochBumps {
-    std::uint64_t submissions = 0, waits = 0, drains = 0, reaps = 0, packets = 0;
+    std::uint64_t submissions = 0, waits = 0, drains = 0, reaps = 0, packets = 0, waitsOrdered = 0;
 };
 
 void PollSleep();

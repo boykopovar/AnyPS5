@@ -59,6 +59,11 @@ class GnuHashTests(unittest.TestCase):
                 struct.pack_into("<Q", image, SHOFF + 3 * 64 + 32, size)
                 self.reject(image)
 
+    def test_symbol_table_link_is_checked(self):
+        image = self.image()
+        struct.pack_into("<I", image, SHOFF + 3 * 64 + 40, 2)
+        self.reject(image)
+
     def reject(self, image):
         result, after = patch(PATCHER, bytes(image), "geometry.so")
         self.assertEqual(result.returncode, 2, (result.returncode, result.stderr))

@@ -11,6 +11,7 @@
 #include <arpa/inet.h>
 #endif
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libc/include/HostErrno.hpp"
@@ -25,9 +26,29 @@
 #include <string>
 #include <type_traits>
 #include <vector>
+#include <limits>
+#include <charconv>
+#include <mutex>
 #include "GuestResolver.hpp"
 
 namespace {
+struct SavedErrno {
+    int value = errno;
+    ~SavedErrno() { errno = value; }
+};
+
+bool CopyResolverString(const char* source, std::string& destination) {
+    const SavedErrno savedErrno;
+    const int error = CopyGuestString_nid_no_patch(source, 1024, destination);
+    if (error == 12) throw std::bad_alloc();
+    return error == 0;
+}
+
+template<typename TValue>
+void WriteResolverValue(TValue* destination, TValue value) {
+    if (!GuestCopyOut_nid_no_patch(destination, &value, sizeof(value))) APS5_INVALID_ARG_EX;
+}
+
 struct HostLookup {
     GuestResolver::HostEntry entry{};
     std::string name;
@@ -148,6 +169,58 @@ bool Ready() {
     return true;
 #endif
 }
+
+bool NumericService(const char* text, std::uint32_t& port) {
+    while (*text == ' ' || *text == '\t' || *text == '\n' || *text == '\r' || *text == '\f' || *text == '\v') ++text;
+    const bool negative = *text == '-';
+    if (*text == '+' || negative) ++text;
+    if (*text < '0' || *text > '9') return false;
+    std::uint64_t value = 0;
+    for (; *text >= '0' && *text <= '9'; ++text) {
+        const auto digit = static_cast<unsigned>(*text - '0');
+        if (value > (std::numeric_limits<std::uint64_t>::max() - digit) / 10) return false;
+        value = value * 10 + digit;
+    }
+    if (*text != 0) return false;
+    if (negative) value = std::uint64_t{0} - value;
+    if (value > std::numeric_limits<std::uint32_t>::max()) return false;
+    port = static_cast<std::uint32_t>(value);
+    return true;
+}
+
+bool NamedServicePort(const char* name, int protocol, std::uint16_t& port) {
+    const SavedErrno savedErrno;
+    const char* transport = nullptr;
+    switch (protocol) {
+        case IPPROTO_TCP: transport = "tcp"; break;
+        case IPPROTO_UDP: transport = "udp"; break;
+        case 132: transport = "sctp"; break;
+        case 136: transport = "udplite"; break;
+    }
+#if defined(__linux__)
+    servent entry{};
+    servent* found = nullptr;
+    std::vector<char> storage(1024);
+    for (;;) {
+        const auto error = ::getservbyname_r(name, transport, &entry, storage.data(), storage.size(), &found);
+        if (error != ERANGE) {
+            if (error != 0 || !found) return false;
+            port = ntohs(static_cast<std::uint16_t>(found->s_port));
+            return true;
+        }
+        if (storage.size() > storage.max_size() / 2) throw std::bad_alloc();
+        storage.resize(storage.size() * 2);
+    }
+#else
+    static std::mutex serviceLock;
+    const std::lock_guard lock(serviceLock);
+    const auto* entry = ::getservbyname(name, transport);
+    if (!entry) return false;
+    port = ntohs(static_cast<std::uint16_t>(entry->s_port));
+    return true;
+#endif
+}
+
 #ifndef _WIN32
 void SetGuestSystemError(int hostError) {
     const int guestError = GuestErrnoFromHost_nid_no_patch(hostError);
@@ -161,7 +234,7 @@ int GuestError(int error) {
     if (error == EAI_BADFLAGS) return 3;
     if (error == EAI_FAMILY) return 5;
     if (error == EAI_MEMORY) return 6;
-    if (error == EAI_NONAME) return 8;
+    if (error == EAI_NONAME || error == EAI_NODATA) return 8;
     if (error == EAI_SERVICE) return 9;
     if (error == EAI_SOCKTYPE) return 10;
 #ifdef _WIN32
@@ -172,6 +245,7 @@ int GuestError(int error) {
         return 11;
     }
     if (error == EAI_OVERFLOW) return 14;
+    if (error == EAI_ADDRFAMILY) return 8;
 #endif
     return 4;
 }
@@ -180,6 +254,9 @@ template<typename TLookupTag>
 GuestResolver::HostEntry* ResolveHost(const char* name) {
     if (!name || !Ready()) { *sceNetErrnoLoc() = 3; return nullptr; }
     try {
+        std::string nameCopy;
+        if (!CopyResolverString(name, nameCopy)) APS5_INVALID_ARG_EX;
+        name = nameCopy.c_str();
         std::array<unsigned char, 4> numericAddress{};
         char* numericAliases[]{nullptr};
         char* numericAddresses[]{reinterpret_cast<char*>(numericAddress.data()), nullptr};
@@ -252,24 +329,41 @@ bool CopyHostEntry(const GuestResolver::HostEntry& source, GuestResolver::HostEn
     const std::size_t addressBytes = addressCount * static_cast<std::size_t>(source.length);
     if (padding + pointers + addressBytes + nameBytes + aliasBytes > length) return false;
     if (!buffer || !entry) APS5_INVALID_ARG_EX;
-    auto** pointer = reinterpret_cast<char**>(buffer + padding);
-    char* text = buffer + padding + pointers;
-    const auto copy = [&text](const void* data, std::size_t size) {
-        char* start = text;
-        std::memcpy(start, data, size);
+    const SavedErrno savedErrno;
+    const auto bytes = pointers + addressBytes + nameBytes + aliasBytes;
+    const auto address = reinterpret_cast<std::uintptr_t>(buffer);
+    if (bytes + padding > std::numeric_limits<std::uintptr_t>::max() - address) APS5_INVALID_ARG_EX;
+    char* const base = reinterpret_cast<char*>(address + padding);
+    std::vector<unsigned char> output(bytes);
+    std::size_t pointer = 0;
+    std::size_t text = pointers;
+    const auto copy = [&](const void* data, std::size_t size) {
+        char* start = base + text;
+        std::memcpy(output.data() + text, data, size);
         text += size;
         return start;
     };
-    entry->family = source.family;
-    entry->length = source.length;
-    entry->addresses = pointer;
-    for (std::size_t i = 0; i < addressCount; ++i) *pointer++ = copy(source.addresses[i], source.length);
-    *pointer++ = nullptr;
-    entry->name = copy(source.name, nameBytes);
-    entry->aliases = pointer;
+    const auto appendPointer = [&](char* value) {
+        std::memcpy(output.data() + pointer, &value, sizeof(value));
+        pointer += sizeof(value);
+    };
+    GuestResolver::HostEntry converted{};
+    converted.family = source.family;
+    converted.length = source.length;
+    converted.addresses = reinterpret_cast<char**>(base);
+    for (std::size_t i = 0; i < addressCount; ++i) appendPointer(copy(source.addresses[i], source.length));
+    appendPointer(nullptr);
+    converted.name = copy(source.name, nameBytes);
+    converted.aliases = reinterpret_cast<char**>(base + pointer);
     for (std::size_t i = 0; i < aliasCount; ++i)
-        *pointer++ = copy(source.aliases[i], std::strlen(source.aliases[i]) + 1);
-    *pointer = nullptr;
+        appendPointer(copy(source.aliases[i], std::strlen(source.aliases[i]) + 1));
+    appendPointer(nullptr);
+    const GuestArena::HostWrite bufferAccess(base, bytes);
+    const GuestArena::HostWrite entryAccess(entry, sizeof(converted));
+    if (!bufferAccess.Open() || !entryAccess.Open() ||
+        !GuestWritable_nid_no_patch(base, bytes) || !GuestWritable_nid_no_patch(entry, sizeof(converted))) APS5_INVALID_ARG_EX;
+    if (!GuestCopyOut_nid_no_patch(base, output.data(), bytes) ||
+        !GuestCopyOut_nid_no_patch(entry, &converted, sizeof(converted))) APS5_INVALID_ARG_EX;
     return true;
 }
 }
@@ -283,11 +377,11 @@ GuestResolver::HostEntry* APS5_VABI gethostbyname_nid_postfix(const char* name) 
 int APS5_VABI scePosixForWebKit_gethostbyname_r(const char* name, GuestResolver::HostEntry* entry, char* buffer,
     std::size_t length, GuestResolver::HostEntry** result, int* hostError) {
     if (!name || !result) APS5_INVALID_ARG_EX;
-    *result = nullptr;
+    WriteResolverValue(result, static_cast<GuestResolver::HostEntry*>(nullptr));
     struct LookupTag {};
     const auto* source = ResolveHost<LookupTag>(name);
     if (source && CopyHostEntry(*source, entry, buffer, length)) {
-        *result = entry;
+        WriteResolverValue(result, entry);
         return 0;
     }
     if (!hostError) APS5_INVALID_ARG_EX;
@@ -295,12 +389,19 @@ int APS5_VABI scePosixForWebKit_gethostbyname_r(const char* name, GuestResolver:
         *sceNetErrnoLoc() = -1;
         errno = ERANGE;
     }
-    *hostError = *sceNetErrnoLoc();
-    return *hostError == -1 && errno != 0 ? errno : -1;
+    const auto error = *sceNetErrnoLoc();
+    WriteResolverValue(hostError, error);
+    return error == -1 && errno != 0 ? errno : -1;
 }
 
-GuestResolver::ServiceEntry* APS5_VABI getservbyname_nid_postfix(const char* name, const char* protocol) {
-    if (!name) return nullptr;
+GuestResolver::ServiceEntry* APS5_VABI getservbyname_nid_postfix(const char* guestName, const char* guestProtocol) {
+    if (!guestName) return nullptr;
+    std::string nameText;
+    std::string protocolText;
+    if (CopyGuestString_nid_no_patch(guestName, 64, nameText) != 0) return nullptr;
+    if (guestProtocol && CopyGuestString_nid_no_patch(guestProtocol, 64, protocolText) != 0) return nullptr;
+    const char* const name = nameText.c_str();
+    const char* const protocol = guestProtocol ? protocolText.c_str() : nullptr;
     for (const auto& service : Services) {
         bool named = std::strcmp(name, service.name) == 0;
         for (const char* alias : service.aliases)
@@ -322,20 +423,26 @@ GuestResolver::ServiceEntry* APS5_VABI getservbyname_nid_postfix(const char* nam
 }
 
 void APS5_VABI freeaddrinfo_nid_postfix(GuestResolver::AddressInfo* first) {
+    const SavedErrno savedErrno;
     while (first) {
-        auto* next = first->next;
-        std::free(first->canonicalName);
-        std::free(first->address);
+        GuestResolver::AddressInfo entry{};
+        if (!GuestCopyIn_nid_no_patch(&entry, first, sizeof(entry))) break;
+        std::free(entry.canonicalName);
+        std::free(entry.address);
         std::free(first);
-        first = next;
+        first = entry.next;
     }
 }
 
 int APS5_VABI getaddrinfo_nid_postfix(const char* node, const char* service,
-    const GuestResolver::AddressInfo* hints, GuestResolver::AddressInfo** output) {
+    const GuestResolver::AddressInfo* guestHints, GuestResolver::AddressInfo** output) {
     if (!output) return 4;
-    *output = nullptr;
+    GuestResolver::AddressInfo* const none = nullptr;
+    if (!GuestCopyOut_nid_no_patch(output, &none, sizeof(none))) return 4;
     if (!node && !service) return 8;
+    GuestResolver::AddressInfo hintsCopy{};
+    if (guestHints && !GuestCopyIn_nid_no_patch(&hintsCopy, guestHints, sizeof(hintsCopy))) return 4;
+    const GuestResolver::AddressInfo* const hints = guestHints ? &hintsCopy : nullptr;
     addrinfo nativeHints{};
     const bool rawQuery = hints && hints->socketType == 3;
     if (hints) {
@@ -343,6 +450,9 @@ int APS5_VABI getaddrinfo_nid_postfix(const char* node, const char* service,
         if ((hints->flags & ~0xd0f) != 0) return 3;
         if (hints->family != 0 && hints->family != 2 && hints->family != 28) return 5;
         if (hints->socketType != 0 && hints->socketType != 1 && hints->socketType != 2 && hints->socketType != 3) return 10;
+        if (hints->protocol != 0 &&
+            ((hints->socketType == 1 && hints->protocol != 6 && hints->protocol != 132) ||
+             (hints->socketType == 2 && hints->protocol != 17 && hints->protocol != 136))) return 12;
         nativeHints.ai_family = hints->family == 28 ? AF_INET6 : hints->family == 2 ? AF_INET : AF_UNSPEC;
         nativeHints.ai_socktype = hints->socketType == 1 ? SOCK_STREAM : (hints->socketType == 2 || rawQuery) ? SOCK_DGRAM : 0;
         nativeHints.ai_protocol = rawQuery ? IPPROTO_UDP : hints->protocol;
@@ -356,6 +466,19 @@ int APS5_VABI getaddrinfo_nid_postfix(const char* node, const char* service,
     }
     if (rawQuery && service) return 9;
     if (!Ready()) return 4;
+    std::string nodeCopy;
+    std::string serviceCopy;
+    try {
+        if ((node && !CopyResolverString(node, nodeCopy)) || (service && !CopyResolverString(service, serviceCopy))) return 4;
+    } catch (const std::bad_alloc&) {
+        return 6;
+    }
+    if (node) node = nodeCopy.c_str();
+    if (service) service = serviceCopy.c_str();
+    std::uint32_t port = 0;
+    const bool numericService = service && NumericService(service, port);
+    if (numericService && port > std::numeric_limits<std::uint16_t>::max()) return 9;
+    if (service && !numericService && hints && (hints->flags & 8)) return 8;
     const char* numericName = nullptr;
     if (node && hints && (hints->flags & 2)) {
         std::array<unsigned char, 4> v4{};
@@ -393,8 +516,29 @@ int APS5_VABI getaddrinfo_nid_postfix(const char* node, const char* service,
     int failure = 0;
     int lookupFailure = 0;
     for (std::size_t query = 0; query < queryCount; ++query) {
+        std::array<char, 6> numericPort{};
+        const char* nativeService = nullptr;
+        if (service) {
+            auto resolvedPort = static_cast<std::uint16_t>(port);
+            if (!numericService) {
+                try {
+                    if (!NamedServicePort(service, queries[query].ai_protocol, resolvedPort)) {
+                        lookupFailure = 9;
+                        continue;
+                    }
+                } catch (const std::bad_alloc&) {
+                    failure = 6;
+                    break;
+                }
+            }
+            const auto converted = std::to_chars(numericPort.data(), numericPort.data() + numericPort.size() - 1, resolvedPort);
+            if (converted.ec != std::errc{}) APS5_INVALID_ARG_EX;
+            *converted.ptr = 0;
+            nativeService = numericPort.data();
+            queries[query].ai_flags |= AI_NUMERICSERV;
+        }
         addrinfo* native = nullptr;
-        const auto error = ::getaddrinfo(node, service, &queries[query], &native);
+        const auto error = ::getaddrinfo(node, nativeService, &queries[query], &native);
         if (error) {
             if (error == EAI_SERVICE) { lookupFailure = 9; continue; }
             failure = GuestError(error);
@@ -429,7 +573,7 @@ int APS5_VABI getaddrinfo_nid_postfix(const char* node, const char* service,
                 std::memcpy(bytes + 8, &v6->sin6_addr, 16);
                 std::memcpy(bytes + 24, &v6->sin6_scope_id, 4);
             }
-            if (const char* canonical = item->ai_canonname ? item->ai_canonname : numericName) {
+            if (const char* canonical = numericName ? numericName : item->ai_canonname) {
                 const auto size = std::strlen(canonical) + 1;
                 converted->canonicalName = static_cast<char*>(std::malloc(size));
                 if (!converted->canonicalName) { failure = 6; break; }
@@ -441,7 +585,10 @@ int APS5_VABI getaddrinfo_nid_postfix(const char* node, const char* service,
     }
     if (failure) { freeaddrinfo_nid_postfix(first); return failure; }
     if (!first) return lookupFailure ? lookupFailure : 4;
-    *output = first;
+    if (!GuestCopyOut_nid_no_patch(output, &first, sizeof(first))) {
+        freeaddrinfo_nid_postfix(first);
+        return 4;
+    }
     return 0;
 }
 

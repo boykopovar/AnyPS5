@@ -1,0 +1,5 @@
+# libkernel_sys
+
+## change [fstatat]
+
+- [fstatat](../../../core/libs/prx/libkernel_sys/Export.cpp) (libkernel_sys) passes `AT_FDCWD` (-100) and absolute paths to `stat`, or to `lstat` with `AT_SYMLINK_NOFOLLOW` (0x200). Any other relative path is joined to the descriptor's host directory, found the same way as for `fchdir`, so guest path aliases and case-insensitive name matching do not apply to it, and a `..` component is not kept inside the guest root. It returns `EBADF` for a descriptor that is not open and `ENOTDIR` for one that is not a directory, and flags other than `AT_SYMLINK_NOFOLLOW` return `EINVAL`. PPSA74126 imports it. On PS5 firmware 11.60 a payload process got `stat`'s mode and inode for `/dev/null` via `AT_FDCWD`, `AT_SYMLINK_NOFOLLOW` and descriptor -1, and via a directory descriptor for `.` (its own) and `..` (the parent's, by absolute path); `ENOENT`, `EBADF` for descriptors -1 and 999 with a relative path, `ENOTDIR` for a `/dev/null` descriptor; other flags, symlinks and a title process are unmeasured.

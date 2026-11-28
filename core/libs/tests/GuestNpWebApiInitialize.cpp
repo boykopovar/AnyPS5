@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <initializer_list>
 #include <stdexcept>
 #include <string>
@@ -19,6 +20,7 @@ constexpr int InvalidArgument = static_cast<int>(0x80552902u);
 constexpr int LibContextNotFound = static_cast<int>(0x80552904u);
 constexpr int UserContextNotFound = static_cast<int>(0x80552905u);
 constexpr int InvalidContentParameter = static_cast<int>(0x80552908u);
+constexpr int NpInvalidArgument = static_cast<int>(0x80550003u);
 const char onlineId[20] = "player";
 
 using IntCreateRequestFn = decltype(&sceNpWebApiIntCreateRequest);
@@ -63,6 +65,7 @@ int main() {
     const auto registerNotification = Resolve<decltype(&sceNpWebApiRegisterNotificationCallback)>("sceNpWebApiRegisterNotificationCallback");
     const auto unregisterNotification = Resolve<decltype(&sceNpWebApiUnregisterNotificationCallback)>("sceNpWebApiUnregisterNotificationCallback");
     const auto intCreateRequest = Resolve<IntCreateRequestFn>("sceNpWebApiIntCreateRequest");
+    const auto parseNpId = Resolve<decltype(&sceNpWebApiUtilityParseNpId)>("sceNpWebApiUtilityParseNpId");
 
     const int presence = initializeForPresence(1, 0x10000);
     Require(presence > 0, "the presence library context was not created");
@@ -99,6 +102,7 @@ int main() {
     NpWebApiContentParameter typeless{8, nullptr, {}};
     Require(intCreateRequest(user, nullptr, "/v1", 0, nullptr, nullptr, &request) == InvalidArgument && intCreateRequest(user, "group", nullptr, 0, nullptr, nullptr, &request) == InvalidArgument, "an internal request without a group or path was taken");
     Require(intCreateRequest(user, "group", "/v1", 5, &typeless, nullptr, &request) == InvalidArgument, "a method past PATCH was not refused before the content parameter");
+    Require(intCreateRequest(user, "group", "/v1", -1, &typeless, nullptr, &request) == InvalidArgument && request == 77, "a negative method was not refused");
     Require(intCreateRequest(user, "group", "/v1", 0, &typeless, nullptr, &request) == InvalidContentParameter, "content without a type was taken");
     Require(intCreateRequest(user + 1, "group", "/v1", 4, nullptr, nullptr, &request) == UserContextNotFound && request == 77, "an internal request for an unknown user context was taken");
     Require(intCreateRequest(user, "group", "/v1", 4, nullptr, nullptr, &request) == 0 && (request >> 32) == user, "a PATCH internal request was not created in the user context");
@@ -114,6 +118,15 @@ int main() {
     Require(registerNotification(user, callback, nullptr) == UserContextNotFound, "a deleted user context was taken");
     Require(sceNpWebApiTerminate(context) == 0, "the library context could not be terminated");
     Require(unregisterNotification(user) == LibContextNotFound, "a terminated library context was taken");
+
+    NpId parsedNpId{};
+    std::memset(&parsedNpId, 0xA5, sizeof(parsedNpId));
+    Require(parseNpId(nullptr, &parsedNpId) == NpInvalidArgument, "a null jsonNpId was taken");
+    Require(parseNpId("cGxheWVyQGEuYi9j", nullptr) == 0, "valid jsonNpId with null npId failed");
+    Require(parseNpId("cGxheWVyQGEuYi9j", &parsedNpId) == 0, "parsing a multi-block base64 NP ID failed");
+    Require(std::memcmp(parsedNpId.handle.data, "player", 7) == 0, "parsed NP ID handle did not match");
+    Require(std::memcmp(parsedNpId.opt, "abc", 4) == 0, "parsed NP ID opt did not match");
+    Require(parsedNpId.reserved[0] == 0x01, "parsed NP ID reserved[0] was not set");
 
     std::puts("NpWebApi initialize and notification tests passed");
     return 0;

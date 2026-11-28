@@ -40,6 +40,8 @@ alignas(256) constexpr std::array<std::array<float, 4>, 6> Vertices{{
 
 alignas(256) constexpr std::array<std::uint16_t, 10> Indices{0, 0xffff, 3, 4, 5, 0, 1, 2, 3, 4};
 
+alignas(256) constexpr std::array<std::uint16_t, 6> RightIndices{5, 4, 0xffff, 3, 4, 5};
+
 alignas(256) constexpr std::array<std::uint32_t, 10> IndirectRecords{
     4u, 1u, 1u, 0u, 0u,
     5u, 1u, 5u, 0u, 0u,
@@ -142,11 +144,14 @@ void Check(const std::string& what, bool left, bool right) {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         std::cout << "device list restart: " << (device->PrimitiveListRestart() ? "yes" : "no") << '\n';
+        Require(argc < 2 || std::string(argv[1]) != "--compacted" || !device->PrimitiveListRestart(), "the device kept list restart, so the draws are not compacted");
+        Draw(*device, AgcDriver::Pm4::DrawParameters{reinterpret_cast<std::uintptr_t>(RightIndices.data()), static_cast<std::uint32_t>(RightIndices.size()), 2, 1, 0, true});
+        Check("direct triangle list whose kept indices start at vertex 3", false, true);
         const auto indexAddress = reinterpret_cast<std::uintptr_t>(Indices.data());
         Draw(*device, AgcDriver::Pm4::DrawParameters{indexAddress, static_cast<std::uint32_t>(Indices.size()), 2, 1, 0, true});
         Check("direct triangle list with a restart and an incomplete tail", true, true);

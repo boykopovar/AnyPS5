@@ -1,0 +1,9 @@
+# libc
+
+## change [qsort_s]
+
+- [qsort_s](../../../core/libs/prx/libc/src/FileAndHeap.cpp) (libc) sorts as `qsort` with the context as the comparator's third argument, as in FreeBSD 13's [`qsort_s`](https://github.com/freebsd/freebsd-src/blob/release/13.0.0/lib/libc/stdlib/qsort.c#L97-L127). It returns `EINVAL` after calling the handler with "qsort_s: bad argument" and a null pointer when `n` or `es` exceeds `SIZE_MAX >> 3`, or nonzero `n` has a null base or comparator; a zero element size throws `std::invalid_argument` for 33 or more elements. Measured in a PS5 payload process (firmware 11.60), the console's `qsort_s` agrees in these cases: eight ints in 23 comparator calls, `n` or `es` of `(SIZE_MAX >> 3) + 1` gives 22 after one handler call, `n` of 0 or 1 calls no comparator, `es` 0 with `n` up to 2 returns 0. One PPSA07923 `libc.prx` faults with `SIGFPE` for `n = SIZE_MAX >> 3`, `es = 0` in a Linux CPU-native call. On the console that case, `es` 0 with `n` above 2 and a title process are unmeasured.
+
+## change [bsearch_s]
+
+- [bsearch_s](../../../core/libs/prx/libc/src/BoundsChecking.cpp) (libc) accepts a zero element size: a nonempty search calls the comparator with the base address, while a zero count calls no comparator. Argument validation, callback counts, unchanged errno and lack of a constraint violation for zero stride match CPU-only executions of the converted PPSA03766 and PPSA07923 bundled `libc.prx` modules. A payload process on a PS5 (firmware 11.60) calling the console's `libSceLibcInternal` `bsearch_s` agrees: the key 7 in eight sorted ints was found at index 5 after 3 comparator calls, each given the context, the key 6 returned null, `es` of 0 with `n` of 3 returned the base address after one comparator call, and `n` of 0 returned null without one, with no handler call in any of them. A title process, other SDK versions and the default constraint handler remain unmeasured.

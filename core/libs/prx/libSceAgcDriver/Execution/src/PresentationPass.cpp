@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/AspectFit.hpp"
 #include "prx/libSceAgcDriver/Execution/include/DisplayFormat.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PqToSdr.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/shaders/PresentationPassFrag_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/PresentationPassVert_spv.h"
@@ -360,10 +361,11 @@ void PresentationPass::draw(VkCommandBuffer commands, const Slot& slot, const Ta
     begin.framebuffer = framebuffer;
     begin.renderArea = {{0, 0}, extent};
     context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
-    context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, entry.pipeline);
-    const VkViewport viewport{0.0f, 0.0f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.0f, 1.0f};
-    context.Function<PFN_vkCmdSetViewport>("vkCmdSetViewport")(commands, 0, 1, &viewport);
-    context.Function<PFN_vkCmdSetScissor>("vkCmdSetScissor")(commands, 0, 1, &scissor);
+    Graphics::CommandState state;
+    state.Begin(commands, false);
+    state.BindPipeline(context, entry.pipeline, 0);
+    state.SetViewport(context, {0.0f, 0.0f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.0f, 1.0f});
+    state.SetScissor(context, scissor);
     context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &slot.set, 0, nullptr);
     context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(parameters), parameters);
     context.Function<PFN_vkCmdDraw>("vkCmdDraw")(commands, 3, 1, 0, 0);
@@ -392,7 +394,7 @@ VkFramebuffer PresentationPass::destinationFramebuffer(Slot& slot, const Target&
 void PresentationPass::RecordPresent(VkCommandBuffer commands, std::size_t index, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout finalLayout) {
     Graphics::Require(index < slots.size() && slots[index].source != VK_NULL_HANDLE, "presentation pass slot has no source");
     Graphics::Require(destination != VK_NULL_HANDLE && extent.width != 0 && extent.height != 0, "presentation pass destination is unavailable");
-    recordInto(commands, index, destination, format, colorSpace, extent, finalLayout, ComputeContainRect_nid_postfix(slots[index].width, slots[index].height, extent.width, extent.height));
+    recordInto(commands, index, destination, format, colorSpace, extent, finalLayout, ComputePresentationRect_nid_postfix(slots[index].width, slots[index].height, extent.width, extent.height));
 }
 
 void PresentationPass::RecordStage(VkCommandBuffer commands, std::size_t index, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout finalLayout) {
@@ -412,7 +414,7 @@ void PresentationPass::recordInto(VkCommandBuffer commands, std::size_t index, V
     draw(commands, slot, entry, framebuffer, extent, {{0, 0}, extent}, parameters);
 }
 
-void PresentationPass::RecordOverlay(VkCommandBuffer commands, std::size_t index, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout initialLayout, VkImageLayout finalLayout) {
+void PresentationPass::RecordOverlay(VkCommandBuffer commands, std::size_t index, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout initialLayout, VkImageLayout finalLayout, bool capture) {
     Graphics::Require(index < slots.size() && slots[index].source != VK_NULL_HANDLE, "presentation pass slot has no source");
     Graphics::Require(destination != VK_NULL_HANDLE && extent.width != 0 && extent.height != 0, "presentation pass destination is unavailable");
     Graphics::Require(initialLayout != VK_IMAGE_LAYOUT_UNDEFINED, "an overlay is blended over a destination whose contents are kept");
@@ -421,7 +423,7 @@ void PresentationPass::RecordOverlay(VkCommandBuffer commands, std::size_t index
     Graphics::Require(colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, "an overlay plane is blended only into an SDR destination");
     const auto& entry = target(format, finalLayout, initialLayout);
     const auto framebuffer = destinationFramebuffer(slot, entry, destination, format, extent, initialLayout, finalLayout);
-    const auto rect = ComputeContainRect_nid_postfix(slot.width, slot.height, extent.width, extent.height);
+    const auto rect = capture ? ComputeContainRect_nid_postfix(slot.width, slot.height, extent.width, extent.height) : ComputePresentationRect_nid_postfix(slot.width, slot.height, extent.width, extent.height);
     const std::int32_t parameters[9] = {rect.x, rect.y, static_cast<std::int32_t>(rect.width), static_cast<std::int32_t>(rect.height), static_cast<std::int32_t>(slot.width), static_cast<std::int32_t>(slot.height), 1, static_cast<std::int32_t>(slot.mode), std::bit_cast<std::int32_t>(slot.whiteNits)};
     draw(commands, slot, entry, framebuffer, extent, {{rect.x, rect.y}, {rect.width, rect.height}}, parameters);
 }

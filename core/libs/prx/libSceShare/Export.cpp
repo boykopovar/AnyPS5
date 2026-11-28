@@ -4,8 +4,11 @@
 #include <cstdint>
 #include <cerrno>
 #include <cstddef>
+#include <algorithm>
 #include <cstring>
+#include <mutex>
 #include <string>
+#include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -23,10 +26,20 @@ constexpr std::int32_t ERROR_INVALID_PARAM = static_cast<std::int32_t>(0x8196000
 constexpr std::int32_t ERROR_NOT_SUPPORTED = static_cast<std::int32_t>(0x81960007);
 constexpr std::int32_t REQUEST_ID_INVALID = -1;
 
+std::mutex uploadCallbacksMutex;
+std::vector<void*> uploadCallbacks;
+
 bool WriteRequestIdInvalid(std::int32_t* requestId) {
     const std::int32_t invalid = REQUEST_ID_INVALID;
     const auto savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(requestId, &invalid, sizeof(invalid));
+    errno = savedErrno;
+    return copied;
+}
+
+bool CopyInPreservingErrno(void* dst, const void* src, std::size_t size) {
+    const auto savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(dst, src, size);
     errno = savedErrno;
     return copied;
 }
@@ -119,7 +132,7 @@ int APS5_VABI sceShareUnregisterContentEventCallback(void* callback) {
 
 int APS5_VABI sceShareCaptureScreenshotExtended(const ShareScreenshotParamExtended* param, std::int32_t* requestId) {
     ShareScreenshotParamExtended copy{};
-    if (param == nullptr || !GuestCopyIn_nid_no_patch(&copy, param, sizeof(copy))) return ERROR_INVALID_PARAM;
+    if (param == nullptr || !CopyInPreservingErrno(&copy, param, sizeof(copy))) return ERROR_INVALID_PARAM;
     if (copy.size != sizeof(copy)) return ERROR_INVALID_PARAM;
     if (requestId != nullptr && !WriteRequestIdInvalid(requestId)) return ERROR_INVALID_PARAM;
     return ERROR_NOT_SUPPORTED;
@@ -127,7 +140,7 @@ int APS5_VABI sceShareCaptureScreenshotExtended(const ShareScreenshotParamExtend
 
 int APS5_VABI sceShareCaptureVideoClipExtended(const ShareVideoClipParamExtended* param, std::int32_t* requestId) {
     ShareVideoClipParamExtended copy{};
-    if (param == nullptr || !GuestCopyIn_nid_no_patch(&copy, param, sizeof(copy))) return ERROR_INVALID_PARAM;
+    if (param == nullptr || !CopyInPreservingErrno(&copy, param, sizeof(copy))) return ERROR_INVALID_PARAM;
     if (copy.size != sizeof(copy)) return ERROR_INVALID_PARAM;
     if (requestId != nullptr && !WriteRequestIdInvalid(requestId)) return ERROR_INVALID_PARAM;
     if (copy.reserved != 0 || (copy.mode == 0 && copy.value16 != 0)) return ERROR_INVALID_PARAM;
@@ -151,7 +164,10 @@ int APS5_VABI sceShareGetRunningStatus(uint32_t* status) {
 int APS5_VABI sceShareSetContentParamForApplicationTitle(const char* applicationTitle) {
     if (applicationTitle == nullptr) return ERROR_INVALID_PARAM;
     std::string title;
-    if (CopyGuestString_nid_no_patch(applicationTitle, 5120, title) != 0 || title.empty()) return ERROR_INVALID_PARAM;
+    const auto savedErrno = errno;
+    const int copied = CopyGuestString_nid_no_patch(applicationTitle, 5120, title);
+    errno = savedErrno;
+    if (copied != 0 || title.empty()) return ERROR_INVALID_PARAM;
     return 0;
 }
 
@@ -160,20 +176,30 @@ int APS5_VABI sceShareSetContentParamForApplicationTitle(const char* application
 
 extern "C" {
 
-int APS5_VABI sceShareFeatureExPermit() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceShareFeatureExPermit(uint32_t feature_flags) {
+    return sceShareFeaturePermit(feature_flags);
 }
 
-int APS5_VABI sceShareFeatureExProhibit() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceShareFeatureExProhibit(uint32_t feature_flags) {
+    return sceShareFeatureProhibit(feature_flags);
 }
 
-int APS5_VABI sceShareRegisterUploadCallback() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceShareRegisterUploadCallback(void* callback, void* user_data) {
+    (void)user_data;
+    if (callback == nullptr) return ERROR_INVALID_PARAM;
+    std::lock_guard lock(uploadCallbacksMutex);
+    if (std::find(uploadCallbacks.begin(), uploadCallbacks.end(), callback) != uploadCallbacks.end()) return ERROR_INVALID_PARAM;
+    uploadCallbacks.push_back(callback);
+    return 0;
 }
 
-int APS5_VABI sceShareUnregisterUploadCallback() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceShareUnregisterUploadCallback(void* callback) {
+    if (callback == nullptr) return ERROR_INVALID_PARAM;
+    std::lock_guard lock(uploadCallbacksMutex);
+    const auto found = std::find(uploadCallbacks.begin(), uploadCallbacks.end(), callback);
+    if (found == uploadCallbacks.end()) return ERROR_INVALID_PARAM;
+    uploadCallbacks.erase(found);
+    return 0;
 }
 
 int APS5_VABI libSceShareUnknown_YPIiGz4uKOU_nid_no_patch() {

@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "ExecutionHelpers.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -40,11 +41,6 @@ auto Code(std::uint32_t waveSize, std::uint32_t offset, std::uint32_t destinatio
         0xd9d80000u, 0x16000006u, 0xd9d80008u, 0x18000006u, 0xd9d80010u, 0x1a000006u,
         0xbf8cc07fu, 0xe0781000u, 0x80011401u, 0xe0781010u, 0x80011801u, 0xbf810000u,
     });
-}
-
-std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
-    const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
 template<typename TUse>
@@ -92,7 +88,7 @@ void CheckRejections(AgcDriver::VulkanDevice& device) {
     constexpr std::array<std::uint32_t, 3> gds{0xd9fa0000u, 0x02000400u, 0xbf810000u};
     ExpectError([&] { translate(sourceOverflow); }, "DS conditional exchange source register range overflow");
     ExpectError([&] { translate(destinationOverflow); }, "DS conditional exchange destination register range overflow");
-    ExpectError([&] { translate(gds); }, "DS conditional exchange GDS mode is not supported");
+    translate(gds);
 }
 
 void Fill(std::uint32_t threads, std::uint32_t offset, bool contended) {

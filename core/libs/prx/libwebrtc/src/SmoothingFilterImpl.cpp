@@ -1,3 +1,4 @@
+/* Derived from common_audio/smoothing_filter.cc@8d78f5de6c27b2c793039989ea381f1428fb0100 */
 /*
  *  Copyright (c) 2016 The WebRTC project authors. All Rights Reserved.
  *
@@ -41,8 +42,119 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/libc.hpp"
+#include "prx/libc/include/General.hpp"
+
+#include <cerrno>
+#include <stdexcept>
+#include <string>
+
+namespace {
+
+WebRtcSmoothingFilterImpl LoadFilter(const WebRtcSmoothingFilterImpl* filter, const char* function) {
+    WebRtcSmoothingFilterImpl local{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&local, filter, sizeof(local));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument(std::string(function) + ": an unreadable SmoothingFilterImpl");
+    return local;
+}
+
+void StoreFilter(WebRtcSmoothingFilterImpl* filter, const WebRtcSmoothingFilterImpl& local, const char* function) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(filter, &local, sizeof(local));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument(std::string(function) + ": an unwritable SmoothingFilterImpl");
+}
+
+void UpdateAlpha(WebRtcSmoothingFilterImpl* filter, int timeConstantMilliseconds) {
+    filter->alpha = timeConstantMilliseconds == 0 ? 0.0f : expf_nid_postfix(-1.0f / timeConstantMilliseconds);
+}
+
+void ExtrapolateLastSample(WebRtcSmoothingFilterImpl* filter, std::int64_t timeMilliseconds) {
+    float multiplier = 0.0f;
+    if (timeMilliseconds <= filter->initEndTimeMilliseconds) {
+        if (filter->initTimeMilliseconds == 0) {
+            multiplier = 0.0f;
+        } else if (filter->initTimeMilliseconds == 1) {
+            multiplier = static_cast<float>(exp_nid_postfix(static_cast<double>(filter->lastStateTimeMilliseconds - timeMilliseconds)));
+        } else {
+            multiplier = expf_nid_postfix(
+                -(powf_nid_postfix(filter->initFactor, static_cast<float>(filter->lastStateTimeMilliseconds - filter->initEndTimeMilliseconds)) -
+                  powf_nid_postfix(filter->initFactor, static_cast<float>(timeMilliseconds - filter->initEndTimeMilliseconds))) /
+                filter->initConst);
+        }
+    } else {
+        if (filter->lastStateTimeMilliseconds < filter->initEndTimeMilliseconds) ExtrapolateLastSample(filter, filter->initEndTimeMilliseconds);
+        multiplier = powf_nid_postfix(filter->alpha, static_cast<float>(timeMilliseconds - filter->lastStateTimeMilliseconds));
+    }
+    filter->state = multiplier * filter->state + (1.0f - multiplier) * filter->lastSample;
+    filter->lastStateTimeMilliseconds = timeMilliseconds;
+}
+
+void APS5_VABI DeleteSmoothingFilterImpl_nid_no_patch(WebRtcSmoothingFilterImpl* filter) {
+    _ZN6webrtc19SmoothingFilterImplD1Ev_nid_postfix(filter);
+    _ZdlPv_nid_postfix(filter);
+}
+
+void APS5_VABI AddSample_nid_no_patch(WebRtcSmoothingFilterImpl* filter, float sample) {
+    auto local = LoadFilter(filter, "SmoothingFilterImpl::AddSample");
+    const std::int64_t now = _ZN3rtc10TimeMillisEv_nid_postfix();
+    if (!local.hasInitEndTime) {
+        local.state = local.lastSample = sample;
+        local.initEndTimeMilliseconds = now + local.initTimeMilliseconds;
+        local.hasInitEndTime = true;
+        local.lastStateTimeMilliseconds = now;
+    } else {
+        ExtrapolateLastSample(&local, now);
+        local.lastSample = sample;
+    }
+    StoreFilter(filter, local, "SmoothingFilterImpl::AddSample");
+}
+
+WebRtcOptionalFloat APS5_VABI GetAverage_nid_no_patch(WebRtcSmoothingFilterImpl* filter) {
+    WebRtcOptionalFloat average{};
+    auto local = LoadFilter(filter, "SmoothingFilterImpl::GetAverage");
+    if (!local.hasInitEndTime) return average;
+    ExtrapolateLastSample(&local, _ZN3rtc10TimeMillisEv_nid_postfix());
+    StoreFilter(filter, local, "SmoothingFilterImpl::GetAverage");
+    average.storage.value = local.state;
+    average.engaged = true;
+    return average;
+}
+
+bool APS5_VABI SetTimeConstantMs_nid_no_patch(WebRtcSmoothingFilterImpl* filter, int timeConstantMilliseconds) {
+    auto local = LoadFilter(filter, "SmoothingFilterImpl::SetTimeConstantMs");
+    if (!local.hasInitEndTime || local.lastStateTimeMilliseconds < local.initEndTimeMilliseconds) return false;
+    UpdateAlpha(&local, timeConstantMilliseconds);
+    StoreFilter(filter, local, "SmoothingFilterImpl::SetTimeConstantMs");
+    return true;
+}
+
+void* const Vtable[] = {
+    nullptr, nullptr,
+    reinterpret_cast<void*>(&_ZN6webrtc19SmoothingFilterImplD1Ev_nid_postfix),
+    reinterpret_cast<void*>(&DeleteSmoothingFilterImpl_nid_no_patch),
+    reinterpret_cast<void*>(&AddSample_nid_no_patch),
+    reinterpret_cast<void*>(&GetAverage_nid_no_patch),
+    reinterpret_cast<void*>(&SetTimeConstantMs_nid_no_patch),
+};
+
+}
 
 extern "C" {
+
+void APS5_VABI _ZN6webrtc19SmoothingFilterImplC1Ei_nid_postfix(WebRtcSmoothingFilterImpl* filter, int initTimeMilliseconds) {
+    auto local = LoadFilter(filter, "SmoothingFilterImpl::SmoothingFilterImpl");
+    local.vtable = Vtable + 2;
+    local.initTimeMilliseconds = initTimeMilliseconds;
+    local.initFactor = initTimeMilliseconds == 0 ? 0.0f : powf_nid_postfix(static_cast<float>(initTimeMilliseconds), -1.0f / initTimeMilliseconds);
+    local.initConst = initTimeMilliseconds == 0 ? 0.0f
+        : initTimeMilliseconds - powf_nid_postfix(static_cast<float>(initTimeMilliseconds), 1.0f - 1.0f / initTimeMilliseconds);
+    local.hasInitEndTime = false;
+    UpdateAlpha(&local, initTimeMilliseconds);
+    StoreFilter(filter, local, "SmoothingFilterImpl::SmoothingFilterImpl");
+}
 
 void APS5_VABI _ZN6webrtc19SmoothingFilterImplD1Ev_nid_postfix(void*) {}
 

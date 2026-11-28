@@ -46,8 +46,9 @@ std::error_code RenameNative_nid_no_patch(const std::filesystem::path& source, c
         info->flags = replaceExisting | posixSemantics | (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_READONLY) ? ignoreReadOnly : 0);
         info->nameBytes = static_cast<DWORD>(nameBytes);
         std::memcpy(info->name, target.c_str(), nameBytes);
-        const auto sourcePath = NativeVerbatimPath_nid_no_patch(source, error);
-        const auto& openSource = error ? source : sourcePath;
+        std::error_code sourceError;
+        const auto sourcePath = NativeVerbatimPath_nid_no_patch(source, sourceError);
+        const auto& openSource = sourceError ? source : sourcePath;
         const auto handle = CreateFileW(openSource.c_str(), DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr);
         if (handle == INVALID_HANDLE_VALUE) return std::error_code(static_cast<int>(GetLastError()), std::system_category());
         constexpr auto renameInfoEx = static_cast<FILE_INFO_BY_HANDLE_CLASS>(22);
@@ -107,11 +108,12 @@ static int RenamePath_nid_no_patch(const std::filesystem::path& source, const st
     namespace fs = std::filesystem;
     std::error_code error;
 #ifdef _WIN32
-    std::error_code verbatimError;
-    const auto verbatimSource = NativeVerbatimPath_nid_no_patch(source, verbatimError);
-    const auto& actualSource = verbatimError ? source : verbatimSource;
-    const auto verbatimDest = NativeVerbatimPath_nid_no_patch(destination, verbatimError);
-    const auto& actualDest = verbatimError ? destination : verbatimDest;
+    std::error_code sourceVerbatimError;
+    const auto verbatimSource = NativeVerbatimPath_nid_no_patch(source, sourceVerbatimError);
+    const auto& actualSource = sourceVerbatimError ? source : verbatimSource;
+    std::error_code destVerbatimError;
+    const auto verbatimDest = NativeVerbatimPath_nid_no_patch(destination, destVerbatimError);
+    const auto& actualDest = destVerbatimError ? destination : verbatimDest;
 #else
     const auto& actualSource = source;
     const auto& actualDest = destination;
@@ -120,7 +122,7 @@ static int RenamePath_nid_no_patch(const std::filesystem::path& source, const st
     if (error && error != std::errc::no_such_file_or_directory) return FilesystemError(error);
     if (sourceStatus.type() == fs::file_type::not_found) return GuestEnoent;
 
-    const bool sourceIsDirectory = fs::is_directory(sourceStatus) && !IsWindowsLink(source);
+    const bool sourceIsDirectory = fs::is_directory(sourceStatus) && !IsWindowsLink(actualSource);
     fs::path strippedDest = actualDest;
     if (sourceIsDirectory) {
         while (!strippedDest.has_filename() && strippedDest != strippedDest.parent_path()) strippedDest = strippedDest.parent_path();
@@ -138,7 +140,7 @@ static int RenamePath_nid_no_patch(const std::filesystem::path& source, const st
     const auto destinationStatus = LinkStatus(checkedDest, error);
     if (error && error != std::errc::no_such_file_or_directory) return FilesystemError(error);
     const bool destinationExists = destinationStatus.type() != fs::file_type::not_found;
-    const bool destinationIsDirectory = destinationExists && fs::is_directory(destinationStatus) && !IsWindowsLink(destination);
+    const bool destinationIsDirectory = destinationExists && fs::is_directory(destinationStatus) && !IsWindowsLink(checkedDest);
     bool sameFile = false;
     if (destinationExists) {
         error.clear();
@@ -160,12 +162,14 @@ static int RenamePath_nid_no_patch(const std::filesystem::path& source, const st
         const auto relative = canonicalDestination.lexically_relative(canonicalSource);
         if (!relative.empty() && *relative.begin() != "..") return GuestEinval;
     }
+#ifdef _WIN32
     if (destinationExists && !sameFile && destinationIsDirectory) {
         error.clear();
         if (!fs::is_empty(checkedDest, error)) {
             return error ? FilesystemError(error) : GuestEnotempty;
         }
     }
+#endif
     error = RenameNative_nid_no_patch(actualSource, checkedDest, destinationExists && (!sourceIsDirectory || !sameFile));
     return error ? FilesystemError(error) : 0;
 }

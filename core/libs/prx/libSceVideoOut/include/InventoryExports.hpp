@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include <cstdint>
 
 extern "C" {
 
@@ -9,7 +10,7 @@ int APS5_VABI sceVideoOutAddBuffer4k2kPrivilege();
 int APS5_VABI sceVideoOutAddBufferAnisoPrivilege();
 int APS5_VABI sceVideoOutAddBufferHdrPrivilege();
 int APS5_VABI sceVideoOutAddBufferYccPrivilege();
-int APS5_VABI sceVideoOutAddDisplayPositionEvent();
+int APS5_VABI sceVideoOutAddDisplayPositionEvent(KernelEqueue eq, int handle, void* udata);
 int APS5_VABI sceVideoOutAddDriver();
 int APS5_VABI sceVideoOutAddS3dHmdPrivilege();
 int APS5_VABI sceVideoOutAddStereoBuffer();
@@ -20,7 +21,7 @@ int APS5_VABI sceVideoOutConfigureOptionsInitialize_();
 int APS5_VABI sceVideoOutConfigureOutputEx();
 int APS5_VABI sceVideoOutConfigureOutputModeExSubmitDoneUnsafe_();
 int APS5_VABI sceVideoOutConfigureOutputModeEx_();
-int APS5_VABI sceVideoOutConfigureOutputMode_();
+int APS5_VABI sceVideoOutConfigureOutputMode_(int handle, std::uint32_t reserved, const void* mode, std::uint64_t forwarded, std::uint64_t unused, std::uint32_t size);
 int APS5_VABI sceVideoOutControlHdcpEncryption();
 int APS5_VABI sceVideoOutCursorIsUpdatePending();
 int APS5_VABI sceVideoOutCursorSetPositionStereo();
@@ -31,7 +32,7 @@ int APS5_VABI sceVideoOutDebugReadCrc();
 int APS5_VABI sceVideoOutDebugSetDrr();
 int APS5_VABI sceVideoOutDebugSetGlobalAlpha();
 int APS5_VABI sceVideoOutDebugTriggerRefresh();
-int APS5_VABI sceVideoOutDeleteDisplayPositionEvent();
+int APS5_VABI sceVideoOutDeleteDisplayPositionEvent(KernelEqueue eq, int handle);
 int APS5_VABI sceVideoOutDeleteDriver();
 int APS5_VABI sceVideoOutDriverAddEvent();
 int APS5_VABI sceVideoOutDriverDecrementBufferLabel();
@@ -47,7 +48,7 @@ int APS5_VABI sceVideoOutGetBufferInformation();
 int APS5_VABI sceVideoOutGetCoredumpOutputMode();
 int APS5_VABI sceVideoOutGetCurrentOutputMode_(std::uint64_t bus, void* mode);
 int APS5_VABI sceVideoOutGetDeviceInfoExOts_();
-int APS5_VABI sceVideoOutGetDeviceInfoEx_();
+int APS5_VABI sceVideoOutGetDeviceInfoEx_(int handle, const void* reserved, void* info, std::uint32_t size);
 int APS5_VABI sceVideoOutGetHdmiKsvList_();
 int APS5_VABI sceVideoOutGetHdmiMonitorInfoNoMask_();
 int APS5_VABI sceVideoOutGetHdmiMonitorInfo_();
@@ -69,12 +70,12 @@ int APS5_VABI sceVideoOutRazorRemoveCallback();
 int APS5_VABI sceVideoOutRegisterBufferAttribute();
 int APS5_VABI sceVideoOutRegisterStereoBuffers();
 int APS5_VABI sceVideoOutRemoveBuffer();
-int APS5_VABI sceVideoOutSetAlphaControl();
+int APS5_VABI sceVideoOutSetAlphaControl(int handle, int enable, std::uint32_t alpha, const std::uint32_t* control, void* reserved);
 int APS5_VABI sceVideoOutSetBlankAfterResume();
-int APS5_VABI sceVideoOutSetContentType();
+int APS5_VABI sceVideoOutSetContentType(std::uint32_t type, void* record);
 int APS5_VABI sceVideoOutSetDisplayEventPosition();
 int APS5_VABI sceVideoOutSetGamutMetadata_();
-int APS5_VABI sceVideoOutSetGlobalAlpha();
+int APS5_VABI sceVideoOutSetGlobalAlpha(int handle, int enable, std::uint32_t alpha);
 int APS5_VABI sceVideoOutSetToneMap_();
 int APS5_VABI sceVideoOutSetVrrMaster();
 int APS5_VABI sceVideoOutSysAddSetModeEvent2(KernelEqueue eq, int index, void* udata);

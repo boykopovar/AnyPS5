@@ -1,0 +1,5 @@
+# shader
+
+## change Flat and global 64-bit atomics still need
+
+- [64-bit buffer, global and flat atomics without `shaderBufferInt64Atomics`](../../../core/shader/recompiler/SpirvBackend/src/SpirvRuntimeBuffer.cpp) (`buffer_atomic_*_x2`, `global_atomic_*_x2` and device-address `flat_atomic_*_x2`, as on MoltenVK) load and store their two dwords with 32-bit atomics under a word of the lock table of 64-bit image atomics, chosen by a hash of the guest address of their 8-byte word. Every 32-bit buffer, global and device-address flat atomic of such a program takes that word too, so both widths stay ordered within the program. A 32-bit atomic of another program running at the same time does not take it and can be lost under a concurrent 64-bit one, and plain loads and stores never take it. On an Apple M3 Max (MoltenVK 1.4.2), 2,048 contended `buffer_atomic_swap_x2` return a permutation of the swapped values, and `buffer_atomic_or` mixed with `buffer_atomic_or_x2` on one 8-byte word keeps every bit; the throughput cost was not measured.

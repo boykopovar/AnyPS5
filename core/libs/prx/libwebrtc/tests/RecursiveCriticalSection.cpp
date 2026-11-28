@@ -7,6 +7,12 @@
 #include <thread>
 #include <vector>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
+
 namespace {
 
 constexpr int Ebusy = 16;
@@ -106,6 +112,42 @@ void CheckNull() {
     Require(ThrowsInvalidArgument([] { _ZN3rtc9CritScopeD1Ev_nid_postfix(nullptr); }), "a null CritScope destructor did not throw");
 }
 
+class GuardedPage {
+public:
+    GuardedPage() {
+#ifdef _WIN32
+        address_ = VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_NOACCESS);
+        Require(address_ != nullptr, "VirtualAlloc failed");
+#else
+        void* mapped = mmap(nullptr, 4096, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED, "mmap failed");
+        address_ = mapped;
+#endif
+    }
+    ~GuardedPage() {
+        if (!address_)
+            return;
+#ifdef _WIN32
+        VirtualFree(address_, 0, MEM_RELEASE);
+#else
+        munmap(address_, 4096);
+#endif
+    }
+    template<typename T>
+    T* As() const {
+        return static_cast<T*>(address_);
+    }
+
+private:
+    void* address_ = nullptr;
+};
+
+void CheckGuarded() {
+    GuardedPage guard;
+    Require(ThrowsInvalidArgument([&] { _ZN3rtc24RecursiveCriticalSectionC1Ev_nid_postfix(guard.As<WebRtcRecursiveCriticalSection>()); }), "guarded constructor target did not throw");
+    Require(ThrowsInvalidArgument([&] { _ZN3rtc24RecursiveCriticalSectionD1Ev_nid_postfix(guard.As<WebRtcRecursiveCriticalSection>()); }), "guarded destructor target did not throw");
+}
+
 }
 
 int main() {
@@ -113,6 +155,7 @@ int main() {
     CheckScope();
     CheckExclusion();
     CheckNull();
+    CheckGuarded();
     std::puts("rtc::RecursiveCriticalSection and rtc::CritScope tests passed");
     return 0;
 }

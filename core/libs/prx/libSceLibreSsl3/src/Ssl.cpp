@@ -1,8 +1,10 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libSceLibreSsl3/include/Reference.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <algorithm>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -62,14 +64,31 @@ int SetVersionBound(const LibreSsl3SslMethod& method, std::uint16_t version, boo
     return 1;
 }
 
+template <typename T>
+bool CopyGuestInPreservingErrno(T& destination, const T* source) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(&destination, source, sizeof(T));
+    errno = savedErrno;
+    return ok;
+}
+
+template <typename T>
+int RetainGuest(T* object, const char* function) {
+    std::int32_t* const references = &object->references;
+    std::int32_t current{};
+    if (!CopyGuestInPreservingErrno(current, references) || !GuestWritable_nid_no_patch(references, sizeof(current)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return Retain_nid_no_patch(*references);
+}
+
 } // namespace
 
 extern "C" {
 
-int APS5_VABI SSL_up_ref_nid_postfix(LibreSsl3Ssl* ssl) {
+int APS5_VABI SSL_up_ref_nid_postfix(LibreSslSsl* ssl) {
     if (!ssl)
         throw std::invalid_argument("SSL_up_ref requires an SSL");
-    return Retain_nid_no_patch(ssl->references);
+    return RetainGuest(ssl, __func__);
 }
 
 const LibreSsl3SslMethod* APS5_VABI TLS_method_nid_postfix() {
@@ -80,6 +99,14 @@ const LibreSsl3SslMethod* APS5_VABI TLS_method_nid_postfix() {
 const LibreSsl3SslMethod* APS5_VABI TLS_server_method_nid_postfix() {
     return TLS_method_nid_postfix();
 }
+
+void* LibreSslNewContext_nid_no_patch(const void* method);
+
+void* APS5_VABI libreSsl3NewContext_nid_no_patch(const void* method) {
+    if (method == TLS_method_nid_postfix()) NotImplemented_nid_no_patch("SSL_CTX_new with the libSceLibreSsl3 TLS_method");
+    return LibreSslNewContext_nid_no_patch(method);
+}
+APS5_EXPORT("lhgt7StD7RM", libreSsl3NewContext_nid_no_patch);
 
 void APS5_VABI SSL_set_info_callback_nid_postfix(LibreSsl3Ssl* ssl, LibreSsl3InfoCallback callback) {
     if (!ssl)
@@ -111,7 +138,7 @@ int APS5_VABI SSL_set_alpn_protos_nid_postfix(LibreSsl3Ssl* ssl, const std::uint
 int APS5_VABI SSL_SESSION_up_ref_nid_postfix(LibreSsl3SslSession* session) {
     if (!session)
         throw std::invalid_argument("SSL_SESSION_up_ref requires a session");
-    return Retain_nid_no_patch(session->references);
+    return RetainGuest(session, __func__);
 }
 
 const char* APS5_VABI SSL_get_version_nid_postfix(const LibreSsl3Ssl* ssl) {
@@ -147,6 +174,14 @@ std::int64_t APS5_VABI SSL_CTX_set_timeout_nid_postfix(LibreSsl3SslCtx* context,
     const auto previous = context->sessionTimeout;
     context->sessionTimeout = timeout;
     return previous;
+}
+
+int APS5_VABI SSL_CTX_set_quic_method_nid_postfix(LibreSsl3SslCtx* context, const void* quicMethod) {
+    if (!context || !context->method)
+        throw std::invalid_argument("SSL_CTX_set_quic_method requires a context with a method");
+    if (static_cast<const LibreSsl3SslMethod*>(context->method)->dtls) return 0;
+    context->quicMethod = quicMethod;
+    return 1;
 }
 
 std::size_t APS5_VABI SSL_get_client_random_nid_postfix(const LibreSsl3Ssl* ssl, unsigned char* out, std::size_t maxOut) {

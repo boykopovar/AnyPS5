@@ -2,11 +2,15 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <bit>
 #include <cerrno>
+#include <cfenv>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#if defined(__SSE__) || defined(__x86_64__) || defined(_M_X64)
+#include <xmmintrin.h>
+#endif
 
 static void Require(bool value, const char* message) {
     if (!value) {
@@ -69,6 +73,21 @@ static void CheckHexadecimal() {
     CheckBoth("0x1.fffffffffffff8p-1023", 0x0010000000000000ull, 7, "hexadecimal rounding up to the smallest normal");
     CheckBoth(" 0x0000000000000000001.8P-1075", 1, ERANGE, "hexadecimal leading zeros");
     CheckBoth("0x1p+1100", 0x7ff0000000000000ull, ERANGE, "hexadecimal overflow");
+    CheckBoth("0x3ffffffffffff5p-1077", 0x0007ffffffffffffull, 7, "hexadecimal subnormal rounding up from dropped bits");
+    CheckBoth("0xae36e0ad5656440p-1085", 0x00015c6dc15aacadull, 7, "long hexadecimal subnormal rounding up from dropped bits");
+    CheckBoth("-0x8b20853a068504p-1083", 0x80004590429d0343ull, 7, "negative hexadecimal subnormal rounding up from dropped bits");
+    CheckBoth("0x3ffffffffffff4p-1077", 0x0007fffffffffffeull, 7, "hexadecimal subnormal tie rounding to even");
+}
+
+static void CheckHexadecimalRoundingModes() {
+    const int saved = std::fegetround();
+    Require(std::fesetround(FE_DOWNWARD) == 0, "set downward rounding");
+    CheckBoth("0x3ffffffffffff5p-1077", 0x0007fffffffffffeull, 7, "downward hexadecimal subnormal");
+    CheckBoth("-0x3ffffffffffff5p-1077", 0x8007ffffffffffffull, 7, "downward negative hexadecimal subnormal");
+    Require(std::fesetround(FE_UPWARD) == 0, "set upward rounding");
+    CheckBoth("0x3ffffffffffff5p-1077", 0x0007ffffffffffffull, 7, "upward hexadecimal subnormal");
+    CheckBoth("-0x3ffffffffffff5p-1077", 0x8007fffffffffffeull, 7, "upward negative hexadecimal subnormal");
+    Require(std::fesetround(saved) == 0, "restore rounding");
 }
 
 static void CheckHexadecimalExponentSaturation() {
@@ -94,6 +113,29 @@ static void CheckLongHexadecimalDigitRuns() {
     CheckBoth(fraction + "+99999999999999999999", 0x7ff0000000000000ull, ERANGE, "long fraction digit run with a saturated exponent");
 }
 
+#if defined(__SSE__) || defined(__x86_64__) || defined(_M_X64)
+static std::uint32_t ReadMxcsr() {
+    return _mm_getcsr();
+}
+
+static void WriteMxcsr(std::uint32_t mxcsr) {
+    _mm_setcsr(mxcsr);
+}
+#endif
+
+#if defined(__x86_64__) || defined(__i386__)
+static void CheckFlushToZero() {
+    const std::uint32_t saved = ReadMxcsr();
+    WriteMxcsr(0x9fc0);
+    Check("1e-310", 0, ERANGE, "FTZ flushes an inexact decimal subnormal");
+    Check("4.9406564584124654e-324", 0, ERANGE, "FTZ flushes the smallest decimal subnormal");
+    Check("2.4703282292062328e-324", 0, ERANGE, "FTZ flushes a decimal half below the smallest subnormal");
+    Check("0x1p-1074", 1, 7, "FTZ keeps a hexadecimal subnormal");
+    Check("-0.0", 0x8000000000000000ull, 7, "FTZ keeps negative zero");
+    WriteMxcsr(saved);
+}
+#endif
+
 int main() {
     const std::string exact = ExactSmallestSubnormalDecimal();
     Check("1e-310", std::bit_cast<std::uint64_t>(1e-310), ERANGE, "inexact decimal subnormal errno");
@@ -104,6 +146,10 @@ int main() {
     Check("0x1p-1074", 1, 7, "hexadecimal subnormal errno preservation");
     Check("1e-330", 0, ERANGE, "decimal underflow-to-zero errno");
     CheckHexadecimal();
+    CheckHexadecimalRoundingModes();
     CheckHexadecimalExponentSaturation();
     CheckLongHexadecimalDigitRuns();
+#if defined(__x86_64__) || defined(__i386__)
+    CheckFlushToZero();
+#endif
 }

@@ -9,14 +9,17 @@
 #include <cstdarg>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <vector>
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
+#include <windows.h>
 #else
 #include <fcntl.h>
+#include <sys/mman.h>
 #include <unistd.h>
 #endif
 
@@ -27,9 +30,36 @@ void Require(bool value) {
 }
 
 bool failAllocation = false;
+std::size_t allocations = 0;
+std::size_t releases = 0;
+std::uintptr_t lastAllocated = 0;
+std::uintptr_t lastReleased = 0;
+bool clobberFreeErrno = false;
+int writeCalls = 0;
+int failureCall = 0;
+struct WriteFailure {};
 
-void* APS5_VABI Allocate(std::size_t size) { return failAllocation ? nullptr : std::malloc(size); }
-void APS5_VABI Free(void* ptr) { std::free(ptr); }
+void* APS5_VABI Allocate(std::size_t size) {
+    void* pointer = failAllocation ? nullptr : std::malloc(size);
+    if (pointer) {
+        ++allocations;
+        lastAllocated = reinterpret_cast<std::uintptr_t>(pointer);
+    }
+    return pointer;
+}
+void APS5_VABI Free(void* ptr) {
+    if (ptr) {
+        ++releases;
+        lastReleased = reinterpret_cast<std::uintptr_t>(ptr);
+    }
+    std::free(ptr);
+    if (clobberFreeErrno) *__error_nid_postfix() = 77;
+}
+
+std::int64_t APS5_VABI ThrowingWrite(int, const void*, std::size_t count) {
+    if (++writeCalls == failureCall) throw WriteFailure{};
+    return count > 5 ? 5 : static_cast<std::int64_t>(count);
+}
 void* APS5_VABI Reallocate(void* ptr, std::size_t size) { return std::realloc(ptr, size); }
 void* APS5_VABI Calloc(std::size_t count, std::size_t size) { return std::calloc(count, size); }
 void* APS5_VABI Align(std::size_t, std::size_t size) { return std::malloc(size); }
@@ -88,7 +118,17 @@ static int APS5_VABI CallVdprintf(int descriptor, const char* format, ...) {
     std::va_list args;
     va_start(args, format);
 #endif
-    const int result = vdprintf_nid_postfix(descriptor, format, reinterpret_cast<VaList*>(args));
+    int result;
+    try {
+        result = vdprintf_nid_postfix(descriptor, format, reinterpret_cast<VaList*>(args));
+    } catch (...) {
+#ifdef _WIN32
+        __builtin_sysv_va_end(args);
+#else
+        va_end(args);
+#endif
+        throw;
+    }
 #ifdef _WIN32
     __builtin_sysv_va_end(args);
 #else
@@ -123,7 +163,62 @@ int main() {
     Require(*__error_nid_postfix() == 22);
     Require(allocated == nullptr);
 
+    *__error_nid_postfix() = 0;
+    auto* inaccessibleDestination = reinterpret_cast<char**>(0x10);
+    const auto allocationsBeforeBadDestination = allocations;
+    Require(CallVasprintf(inaccessibleDestination, "value=%d", 42) == -1);
+    Require(*__error_nid_postfix() == 22);
+    Require(allocations == allocationsBeforeBadDestination);
+
     InitializeHeap();
+
+#ifdef _WIN32
+    SYSTEM_INFO guardInfo{};
+    GetSystemInfo(&guardInfo);
+    const std::size_t guardPage = guardInfo.dwPageSize;
+    auto* guard = static_cast<unsigned char*>(VirtualAlloc(nullptr, guardPage * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(guard != nullptr);
+    DWORD previousProtect{};
+    Require(VirtualProtect(guard + guardPage * 2, guardPage, PAGE_NOACCESS, &previousProtect) != 0);
+#else
+    const std::size_t guardPage = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    auto* guard = static_cast<unsigned char*>(mmap(nullptr, guardPage * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(guard != MAP_FAILED);
+    Require(mprotect(guard + guardPage * 2, guardPage, PROT_NONE) == 0);
+#endif
+    std::memset(guard + guardPage, 'a', guardPage);
+    std::memcpy(guard, "hello world", sizeof("hello world") - 1);
+
+    *__error_nid_postfix() = 7;
+    char* guarded = strndup_nid_postfix(reinterpret_cast<const char*>(guard), guardPage);
+    Require(guarded != nullptr);
+    Require(std::strcmp(guarded, "hello world") == 0);
+    free_nid_postfix(guarded);
+    Require(*__error_nid_postfix() == 7);
+
+    *__error_nid_postfix() = 0;
+    char* unreadable = strndup_nid_postfix(reinterpret_cast<const char*>(guard + guardPage), guardPage + 8);
+    Require(unreadable == nullptr);
+    Require(*__error_nid_postfix() == 14);
+
+    *__error_nid_postfix() = 0;
+    char* unreadableFull = strdup_nid_postfix(reinterpret_cast<const char*>(guard + guardPage));
+    Require(unreadableFull == nullptr);
+    Require(*__error_nid_postfix() == 14);
+
+    std::memcpy(guard + guardPage * 2 - 4, "abc\0", 4);
+    *__error_nid_postfix() = 7;
+    char* pageEnd = strndup_nid_postfix(reinterpret_cast<const char*>(guard + guardPage * 2 - 4), guardPage + 8);
+    Require(pageEnd != nullptr);
+    Require(std::strcmp(pageEnd, "abc") == 0);
+    free_nid_postfix(pageEnd);
+    Require(*__error_nid_postfix() == 7);
+
+#ifdef _WIN32
+    Require(VirtualFree(guard, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(guard, guardPage * 3) == 0);
+#endif
 
     *__error_nid_postfix() = 0;
     char* empty = strndup_nid_postfix(nullptr, 0);
@@ -210,7 +305,13 @@ int main() {
     Require(dprintf_nid_postfix(32767, "invalid") == -1);
     Require(*__error_nid_postfix() == 9);
 
+    *__error_nid_postfix() = 55;
     Require(dprintf_nid_postfix(1, "") == 0);
+    Require(*__error_nid_postfix() == 55);
+    *__error_nid_postfix() = 55;
+    Require(CallVdprintf(1, "") == 0);
+    Require(*__error_nid_postfix() == 55);
+    *__error_nid_postfix() = 0;
     Require(dprintf_nid_postfix(2, "") == 0);
 
     const char guestFile[] = "guest_allocating_strings_guest.tmp";
@@ -278,7 +379,65 @@ int main() {
     Require(CallVdprintf(1, "deadlock %s", "va") == -1);
     Require(*__error_nid_postfix() == 11);
 
+    for (const bool useVaList : {false, true}) {
+        LibcSetGuestWriteHook_nid_no_patch(ThrowingWrite);
+        for (const int failAt : {1, 2}) {
+            failureCall = failAt;
+            writeCalls = 0;
+            const auto allocatedBefore = allocations;
+            const auto releasedBefore = releases;
+            bool caught = false;
+            try {
+                if (useVaList) CallVdprintf(1, "abcdefghijk");
+                else dprintf_nid_postfix(1, "abcdefghijk");
+            } catch (const WriteFailure&) {
+                caught = true;
+            }
+            if (!caught || writeCalls != failAt || allocations != allocatedBefore + 1 || releases != releasedBefore + 1 || lastReleased != lastAllocated) {
+                std::fprintf(stderr, "vdprintf cleanup failed: va=%d write=%d caught=%d allocations=%zu releases=%zu\n",
+                    useVaList, failAt, caught, allocations - allocatedBefore, releases - releasedBefore);
+                Require(false);
+            }
+        }
+        LibcSetGuestWriteHook_nid_no_patch(+[](int, const void*, std::size_t) APS5_VABI -> std::int64_t {
+            *__error_nid_postfix() = 35;
+            return -1;
+        });
+        const auto allocatedBefore = allocations;
+        const auto releasedBefore = releases;
+        clobberFreeErrno = true;
+        const int error = useVaList ? CallVdprintf(1, "nonblocking") : dprintf_nid_postfix(1, "nonblocking");
+        clobberFreeErrno = false;
+        Require(error == -1 && *__error_nid_postfix() == 35);
+        Require(allocations == allocatedBefore + 1 && releases == releasedBefore + 1 && lastReleased == lastAllocated);
+    }
     LibcSetGuestWriteHook_nid_no_patch(origHook);
+
+    {
+        const auto beforeSuccessHook = LibcGetGuestWriteHook_nid_no_patch();
+        LibcSetGuestWriteHook_nid_no_patch(ThrowingWrite);
+        failureCall = 0;
+        writeCalls = 0;
+        clobberFreeErrno = true;
+        *__error_nid_postfix() = 42;
+        const int successResult = dprintf_nid_postfix(1, "ok");
+        clobberFreeErrno = false;
+        Require(successResult == 2);
+        Require(*__error_nid_postfix() == 42);
+        clobberFreeErrno = true;
+        *__error_nid_postfix() = 43;
+        const int vaSuccessResult = CallVdprintf(1, "ok %d", 7);
+        clobberFreeErrno = false;
+        Require(vaSuccessResult == 4);
+        Require(*__error_nid_postfix() == 43);
+        clobberFreeErrno = true;
+        *__error_nid_postfix() = 44;
+        const int emptySuccessResult = dprintf_nid_postfix(1, "");
+        clobberFreeErrno = false;
+        Require(emptySuccessResult == 0);
+        Require(*__error_nid_postfix() == 44);
+        LibcSetGuestWriteHook_nid_no_patch(beforeSuccessHook);
+    }
 
 #ifndef _WIN32
     LibcSetGuestWriteHook_nid_no_patch(nullptr);

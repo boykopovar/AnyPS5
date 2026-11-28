@@ -2,8 +2,11 @@
 #define RELINKER_OUTPUT_CALLREGISTRYWRITER_HPP
 
 #include <relinker/domain/ICallRegistryWriter.hpp>
+#include <string_view>
 
 namespace Relinker {
+
+std::string EncodeJsonString(std::string_view value, std::string_view context);
 
 class CallRegistryWriter : public ICallRegistryWriter {
 public:

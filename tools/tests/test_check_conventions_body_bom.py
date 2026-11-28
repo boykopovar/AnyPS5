@@ -77,10 +77,10 @@ class BodyBomTests(unittest.TestCase):
 
     def test_excessively_nested_event_is_a_usage_error(self):
         depth = sys.getrecursionlimit() + 64
+        probe = "import json, sys\ntry:\n    json.loads(sys.stdin.read())\nexcept RecursionError:\n    sys.exit(3)\n"
         for _ in range(8):
-            try:
-                json.loads("[" * depth + "]" * depth)
-            except RecursionError:
+            if subprocess.run([sys.executable, "-c", probe], input="[" * depth + "]" * depth, text=True,
+                              encoding="utf-8", capture_output=True).returncode == 3:
                 break
             depth *= 2
         else:
@@ -89,6 +89,20 @@ class BodyBomTests(unittest.TestCase):
         result = self.run_checker(BODY.encode("utf-8"), ["--event", "event.json"], nested)
         self.assertUsageError(result, "--event")
         self.assertNotIn("not a JSON object", result.stderr)
+
+    def test_event_pull_request_without_a_title_or_body_is_a_usage_error(self):
+        for pull_request in ({"body": BODY}, {"title": "fix: x"}, {"title": None, "body": BODY}, {"title": "fix: x", "body": 1}, "fix: x", [1], None, {}, "", []):
+            with self.subTest(pull_request=pull_request):
+                event = json.dumps({"pull_request": pull_request}).encode("utf-8")
+                result = self.run_checker(b"", ["--event", "event.json"], event)
+                self.assertUsageError(result, "--event")
+
+    def test_event_pull_request_with_a_null_body_is_checked(self):
+        event = json.dumps({"pull_request": {"title": "fix: x", "body": None}}).encode("utf-8")
+        result = self.run_checker(b"", ["--event", "event.json"], event)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("[pr-template]", result.stdout)
+        self.assertNotIn("Traceback", result.stderr)
 
     def test_event_pull_request_body_is_checked(self):
         event = json.dumps({"pull_request": {"title": "fix: x", "body": BODY}}).encode("utf-8")

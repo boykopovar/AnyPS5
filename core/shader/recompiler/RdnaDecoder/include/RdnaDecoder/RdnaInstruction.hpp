@@ -144,6 +144,7 @@ struct RdnaInstruction {
     std::uint32_t imageDmask = 0;
     RdnaImageDimension imageDimension = RdnaImageDimension::Unknown;
     bool imageR128 = false;
+    bool imageSampler = false;
     bool imageGlc = false;
     bool imageSlc = false;
     bool imageA16 = false;
@@ -173,6 +174,7 @@ struct RdnaInstruction {
     bool slc = false;
     bool idxen = false;
     bool offen = false;
+    bool lds = false;
     std::uint32_t branchTarget = 0;
     bool exportValidMask = false;
     std::string_view unsupportedReason{};

@@ -97,7 +97,7 @@ struct DrawEntryCounters {
     std::array<std::uint64_t, MaxDispatchVariants> variantHitsByRank{};
     double validateUs = 0;
 
-    std::uint64_t registerKeyLookups = 0, registerKeyHits = 0, decodeSkipped = 0, decodePartial = 0, facadeMismatches = 0, verifyDecodes = 0, verifyDecodeMismatches = 0;
+    std::uint64_t registerKeyLookups = 0, registerKeyHits = 0, decodeSkipped = 0, decodePartial = 0, facadeMismatches = 0, verifyDecodes = 0, verifyDecodeMismatches = 0, restartPatchSkipped = 0;
     double keyUs = 0;
     std::uint64_t absentNewRegisters = 0, absentUserWords = 0, absentEvicted = 0, absentNeverInserted = 0, evictions = 0, byteEvictions = 0;
     std::array<std::uint64_t, 6> registerKeyMissChanges{};
@@ -154,6 +154,7 @@ struct DrawUserPatch {
 
 struct DrawRelocationPending {
     std::uint64_t key = 0, alias = 0, identity = 0;
+    std::weak_ptr<const DrawEntry> donor;
 };
 
 struct DrawRelocationTrial {

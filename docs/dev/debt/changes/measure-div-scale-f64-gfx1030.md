@@ -1,0 +1,5 @@
+# shader
+
+## change [v_div_scale_f64 in denormal modes 0, 1 and 2]
+
+- [v_div_scale_f64](../../../core/shader/recompiler/Translation/src/Float64Instructions.cpp) is not measured on the PS5's gfx1013. Scaling by 2^-128, the recompiler gives a subnormal or a signed zero for a value exponent field below 117 or a kept denormal, where RDNA2 (gfx1030) returns the overflow result of the f64 round mode: an infinity at round to nearest even, as RDNA3 (gfx1101) does, the largest finite value toward zero, and by sign one of the two toward an infinity. With bit 1 of the `FLOAT_MODE` f16/f64 denormal field clear, the hardware flushes a result that is tiny before rounding; the recompiler keeps one rounded up to the smallest normal. The recompiler is not checked in directed round modes. Measured with the hardware oracle on gfx1030 (RX 6900 XT, AMD Windows driver 32.0.21045.29003) over 6,767,680 rows, every f64 denormal and round mode, and on gfx1101 and gfx1036; flushing and the VCC otherwise match. Shaders without a known float mode keep the previous lowering.

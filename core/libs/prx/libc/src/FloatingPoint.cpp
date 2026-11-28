@@ -1,10 +1,12 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <stdexcept>
 
 #include "prx/libc/include/GuestCpu.hpp"
+#include "prx/libc/include/General.hpp"
 
 namespace {
 
@@ -47,7 +49,13 @@ int APS5_VABI fetestexcept_nid_postfix(int exceptions) {
 
 int APS5_VABI fegetexceptflag_nid_postfix(std::uint16_t* flags, int exceptions) {
     if (flags == nullptr) throw std::invalid_argument("fegetexceptflag: null flags");
-    *flags = static_cast<std::uint16_t>(fetestexcept_nid_postfix(exceptions));
+    const int savedErrno = errno;
+    const auto result = static_cast<std::uint16_t>(fetestexcept_nid_postfix(exceptions));
+    if (!GuestCopyOut_nid_no_patch(flags, &result, sizeof(result))) {
+        errno = savedErrno;
+        throw std::invalid_argument("fegetexceptflag: unwritable flags");
+    }
+    errno = savedErrno;
     return 0;
 }
 
@@ -55,10 +63,10 @@ void APS5_VABI _Feraise_nid_postfix(int exceptions) {
     constexpr unsigned Invalid = 0x01, Ranges = 0x1c, Overflows = 0x18, Inexact = 0x20;
     constexpr int GuestEdom = 33, GuestErange = 34;
     auto raised = static_cast<unsigned>(exceptions);
+    if ((raised & ~Exceptions) != 0) throw std::invalid_argument("_Feraise: unsupported exception bits");
     if ((raised & Overflows) != 0) raised |= Inexact;
     *__error_nid_postfix() = GuestEdom;
-    GuestCpu::SetX87Status(static_cast<std::uint16_t>((GuestCpu::X87Status() & ~raised) | (raised & 0xffff)));
-    GuestCpu::SetMxcsr((GuestCpu::Mxcsr() & ~raised) | (raised & 0xffff));
+    ReplaceFlags(raised, raised);
     GuestCpu::X87Wait();
     if ((raised & Invalid) != 0) *__error_nid_postfix() = GuestEdom;
     else if ((raised & Ranges) != 0) *__error_nid_postfix() = GuestErange;
@@ -66,7 +74,14 @@ void APS5_VABI _Feraise_nid_postfix(int exceptions) {
 
 int APS5_VABI fesetexceptflag_nid_postfix(const std::uint16_t* flags, int exceptions) {
     if (flags == nullptr) throw std::invalid_argument("fesetexceptflag: null flags");
-    ReplaceFlags(static_cast<unsigned>(exceptions) & Exceptions, *flags);
+    const int savedErrno = errno;
+    std::uint16_t flagValue = 0;
+    if (!GuestCopyIn_nid_no_patch(&flagValue, flags, sizeof(flagValue))) {
+        errno = savedErrno;
+        throw std::invalid_argument("fesetexceptflag: unreadable flags");
+    }
+    errno = savedErrno;
+    ReplaceFlags(static_cast<unsigned>(exceptions) & Exceptions, flagValue);
     return 0;
 }
 

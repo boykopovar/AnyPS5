@@ -1,11 +1,19 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 struct alignas(8) RawCipher {
     std::array<std::byte, 80> prefix;
@@ -25,6 +33,65 @@ static void Require(bool value, const char* message) {
 
 static void RequireString(const char* actual, const char* expected) {
     Require(actual && std::strcmp(actual, expected) == 0, expected);
+}
+
+class ReadOnlyPage {
+public:
+    ReadOnlyPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        bytes = info.dwPageSize;
+        data = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        Require(data != nullptr, "page alloc");
+#else
+        const long page = sysconf(_SC_PAGESIZE);
+        Require(page > 0, "page size");
+        bytes = static_cast<std::size_t>(page);
+        data = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(data != nullptr && data != MAP_FAILED, "page mmap");
+#endif
+    }
+
+    ~ReadOnlyPage() {
+#ifdef _WIN32
+        VirtualFree(data, 0, MEM_RELEASE);
+#else
+        munmap(data, bytes);
+#endif
+    }
+
+    template <typename T>
+    T* Set(const T& value) {
+        Require(sizeof(value) <= bytes, "value fits page");
+        std::memcpy(data, &value, sizeof(value));
+        return static_cast<T*>(data);
+    }
+
+    void Protect() {
+#ifdef _WIN32
+        DWORD previous{};
+        Require(VirtualProtect(data, bytes, PAGE_READONLY, &previous) != 0, "VirtualProtect");
+#else
+        Require(mprotect(data, bytes, PROT_READ) == 0, "mprotect");
+#endif
+    }
+
+private:
+    void* data = nullptr;
+    std::size_t bytes = 0;
+};
+
+template <typename TCall>
+static void Rejects(TCall call) {
+    errno = 71;
+    bool rejected = false;
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        rejected = errno == 71;
+    }
+    Require(rejected, "faulting guest pointer throws preserving errno");
 }
 
 int main() {
@@ -93,5 +160,54 @@ int main() {
     Require(SSL_CIPHER_get_name_nid_postfix(&cipher) == customName, "valid flag does not gate name access");
     Require(SSL_CIPHER_get_bits_nid_postfix(&cipher, nullptr) == 128, "valid flag does not gate strength access");
     Require(guarded.before == snapshot.before && guarded.after == snapshot.after, "input guards remain intact");
+
+    const void* badCipher = reinterpret_cast<const void*>(0x10);
+    auto* badBits = reinterpret_cast<std::int32_t*>(0x10);
+    std::int32_t bits = 999;
+    ReadOnlyPage page;
+    std::int32_t* readOnlyBits = page.Set<std::int32_t>(555);
+    page.Protect();
+
+    Rejects([&] { SSL_CIPHER_get_bits_nid_postfix(badCipher, &bits); });
+    Rejects([&] { SSL_CIPHER_get_bits_nid_postfix(badCipher, nullptr); });
+    Rejects([&] { SSL_CIPHER_get_bits_nid_postfix(&cipher, badBits); });
+    Rejects([&] { SSL_CIPHER_get_bits_nid_postfix(&cipher, readOnlyBits); });
+    Rejects([&] { SSL_CIPHER_get_name_nid_postfix(badCipher); });
+    Rejects([&] { SSL_CIPHER_get_version_nid_postfix(badCipher); });
+    Require(bits == 999 && *readOnlyBits == 555, "faulting calls leave outputs untouched");
+
+    {
+        std::size_t pageSize = 0;
+        unsigned char* mappedBase = nullptr;
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        mappedBase = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(mappedBase != nullptr, "straddling VirtualAlloc");
+        DWORD prevProtect = 0;
+        Require(VirtualProtect(mappedBase, pageSize, PAGE_NOACCESS, &prevProtect) != 0, "straddling VirtualProtect");
+#else
+        const long pageBytes = sysconf(_SC_PAGESIZE);
+        Require(pageBytes > 0, "straddling page size");
+        pageSize = static_cast<std::size_t>(pageBytes);
+        void* mapped = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != nullptr && mapped != MAP_FAILED, "straddling mmap");
+        mappedBase = static_cast<unsigned char*>(mapped);
+        Require(mprotect(mappedBase, pageSize, PROT_NONE) == 0, "straddling mprotect");
+#endif
+        unsigned char* readablePage = mappedBase + pageSize;
+        constexpr std::int32_t expectedAlgorithmBits = 256;
+        std::memcpy(readablePage, &expectedAlgorithmBits, sizeof(expectedAlgorithmBits));
+        const void* partialCipher = readablePage - offsetof(RawCipher, algorithm);
+        std::int32_t partialOut = 0x12345678;
+        Rejects([&] { SSL_CIPHER_get_bits_nid_postfix(partialCipher, &partialOut); });
+        Require(partialOut == 0x12345678, "partial cipher fault leaves algorithmBits unchanged");
+#ifdef _WIN32
+        VirtualFree(mappedBase, 0, MEM_RELEASE);
+#else
+        munmap(mappedBase, pageSize * 2);
+#endif
+    }
     return 0;
 }

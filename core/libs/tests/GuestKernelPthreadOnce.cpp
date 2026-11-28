@@ -4,10 +4,17 @@
 #include "SceTypes.hpp"
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <thread>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static void Require(bool condition) {
     if (!condition) {
@@ -16,7 +23,63 @@ static void Require(bool condition) {
 }
 
 static constexpr unsigned THREAD_COUNT = 16;
+static constexpr int POSIX_EFAULT = 14;
 static constexpr int POSIX_EINVAL = 22;
+
+class OnceFaultPages {
+public:
+    OnceFaultPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        size = info.dwPageSize;
+        memory = static_cast<char*>(VirtualAlloc(nullptr, 2 * size, MEM_RESERVE | MEM_COMMIT, PAGE_READONLY));
+        Require(memory != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(memory + size, size, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long pageSize = sysconf(_SC_PAGESIZE);
+        Require(pageSize > 0);
+        size = static_cast<std::size_t>(pageSize);
+        memory = static_cast<char*>(mmap(nullptr, 2 * size, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        Require(memory != MAP_FAILED);
+        Require(mprotect(memory + size, size, PROT_NONE) == 0);
+#endif
+    }
+
+    ~OnceFaultPages() {
+#ifdef _WIN32
+        VirtualFree(memory, 0, MEM_RELEASE);
+#else
+        munmap(memory, 2 * size);
+#endif
+    }
+
+    void ProtectReadOnly() {
+#ifdef _WIN32
+        DWORD previous = 0;
+        Require(VirtualProtect(memory, size, PAGE_READONLY, &previous) != 0);
+#else
+        Require(mprotect(memory, size, PROT_READ) == 0);
+#endif
+    }
+
+    void ProtectReadWrite() {
+#ifdef _WIN32
+        DWORD previous = 0;
+        Require(VirtualProtect(memory, size, PAGE_READWRITE, &previous) != 0);
+#else
+        Require(mprotect(memory, size, PROT_READ | PROT_WRITE) == 0);
+#endif
+    }
+
+    void* ReadOnly() const { return memory; }
+    void* Unreadable() const { return memory + size; }
+
+private:
+    char* memory = nullptr;
+    std::size_t size = 0;
+};
 
 static void APS5_VABI DummyInit() {}
 
@@ -128,14 +191,10 @@ static void TestInvalidArguments() {
     GuestOnce invalidState3{3, nullptr};
     Require(pthread_once_nid_postfix(&invalidState3, DummyInit) == POSIX_EINVAL);
 
-    GuestOnce invalidState42{42, nullptr};
-    Require(pthread_once_nid_postfix(&invalidState42, DummyInit) == POSIX_EINVAL);
-
-    GuestOnce invalidStateNeg{-1, nullptr};
-    Require(pthread_once_nid_postfix(&invalidStateNeg, DummyInit) == POSIX_EINVAL);
-
-    GuestOnce invalidStateLarge{9999, nullptr};
-    Require(pthread_once_nid_postfix(&invalidStateLarge, DummyInit) == POSIX_EINVAL);
+    for (const int state : {-1000, -50, -1, 3, 4, 10, 42, 100, 9999}) {
+        GuestOnce badOnce{state, nullptr};
+        Require(pthread_once_nid_postfix(&badOnce, DummyInit) == POSIX_EINVAL);
+    }
 
     Require(scePthreadOnce(nullptr, DummyInit) == SCE_KERNEL_ERROR_EINVAL);
     int32_t validSce = 0;
@@ -226,8 +285,43 @@ static void TestExceptionRetry() {
     Require(gRetryControl.state == 1);
 }
 
+static int gFaultInitCalls = 0;
+static void APS5_VABI FaultInit() {
+    ++gFaultInitCalls;
+}
+
+static void TestFaultArguments() {
+    OnceFaultPages pages;
+    errno = 71;
+    Require(pthread_once_nid_postfix(reinterpret_cast<GuestOnce*>(0x10), FaultInit) == POSIX_EFAULT);
+    Require(errno == 71);
+
+    errno = 71;
+    Require(pthread_once_nid_postfix(static_cast<GuestOnce*>(pages.Unreadable()), FaultInit) == POSIX_EFAULT);
+    Require(errno == 71);
+
+    auto* const control = static_cast<GuestOnce*>(pages.ReadOnly());
+    errno = 71;
+    Require(pthread_once_nid_postfix(control, FaultInit) == POSIX_EFAULT);
+    Require(errno == 71);
+    Require(gFaultInitCalls == 0);
+
+    pages.ProtectReadWrite();
+    Require(pthread_once_nid_postfix(control, FaultInit) == 0);
+    Require(gFaultInitCalls == 1);
+    Require(control->state == 1);
+
+    pages.ProtectReadOnly();
+    errno = 71;
+    Require(pthread_once_nid_postfix(control, FaultInit) == 0);
+    Require(errno == 71);
+    Require(gFaultInitCalls == 1);
+    pages.ProtectReadWrite();
+}
+
 int main() {
     TestInvalidArguments();
+    TestFaultArguments();
     TestSingleThreadExecution();
     TestPosixConcurrency();
     TestSceConcurrency();

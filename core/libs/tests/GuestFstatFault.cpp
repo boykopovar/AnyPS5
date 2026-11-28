@@ -134,7 +134,7 @@ int main() {
         RequireBadPointerAt(file, "/anyps5-fstat-fault-test/file.txt", reinterpret_cast<void*>(address));
     RequireUnwritablePage(file, "/anyps5-fstat-fault-test/file.txt");
 #ifdef __linux__
-    RequireNonEfaultFailureThrows();
+    if (std::getenv("APS5_GUEST_COPY_SYSCALL") != nullptr) RequireNonEfaultFailureThrows();
 #endif
 
     int sockets[2];

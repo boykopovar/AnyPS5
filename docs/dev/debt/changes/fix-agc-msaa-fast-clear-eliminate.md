@@ -1,0 +1,5 @@
+# libSceAgcDriver
+
+## change [Multisampled targets in CB passes]
+
+- [Multisampled targets in CB passes](../../../core/libs/prx/libSceAgcDriver/Graphics/src/State.cpp) (libSceAgcDriver) - a CB DCC decompress over a multisampled target throws, since its texels are on the host and only a CB resolve, an FMASK decompress (`CB_COLOR_CONTROL` mode 5) and a fast-clear eliminate (mode 2) are modeled. The FMASK decompress and the fast-clear eliminate only apply the pending CMASK fast clear to the host image; they require a CMASK address, the guest CMASK is left as it was (the console's eliminate rewrites it as expanded; that a later read of it is not affected is assumed, not measured), and the target's FMASK contents are not interpreted. In those passes as elsewhere, multisampled DCC is accepted only as a native multisampled DCC fast clear or comp-to-single clear. A CB resolve into a fast-clear destination throws: the resolve writes the destination's texels but not its CMASK, which would still read as cleared.

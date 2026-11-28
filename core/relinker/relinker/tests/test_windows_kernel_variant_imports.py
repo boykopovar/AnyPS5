@@ -1,3 +1,4 @@
+import ctypes
 import os
 import subprocess
 import sys
@@ -10,6 +11,7 @@ from test_windows_import_modules import provider
 
 def main():
     assert os.name == 'nt', 'This test executes Windows startup stubs'
+    ctypes.windll.kernel32.SetErrorMode(0x8003)
     relinker = Path(sys.argv[1]).resolve()
     variant = sys.argv[2]
     assert variant in ('libkernel_sys.prx', 'libkernel_web.prx')
@@ -18,8 +20,8 @@ def main():
         modules = work / 'helpers' / 'prx'
         modules.mkdir(parents=True)
         for name, value in (('variant', 11), ('canonical', 22), ('runtime', 33), ('guest', 44)):
-            (modules / (name + '.prx')).write_bytes(provider(value))
-        empty = provider(0)
+            (modules / (name + '.prx')).write_bytes(provider(value, main_stack_entry=name == 'runtime'))
+        empty = provider(0, main_stack_entry=True)
         empty[0x800:0x80c] = b'\0other#A#B\0\0'
         (modules / 'empty.prx').write_bytes(empty)
         source = modules.parent / 'input.elf'

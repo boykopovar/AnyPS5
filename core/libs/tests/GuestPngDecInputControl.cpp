@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "Decoder/Png.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -97,6 +98,20 @@ std::int32_t APS5_VABI ReadChunk(PngDecInputChunk* chunk, void* argument) {
     return 0;
 }
 
+struct UnreadableChunk {
+    const void* data = nullptr;
+    std::size_t calls = 0;
+};
+
+std::int32_t APS5_VABI UnmappedChunk(PngDecInputChunk* chunk, void* argument) {
+    auto* source = static_cast<UnreadableChunk*>(argument);
+    ++source->calls;
+    chunk->data = source->data;
+    chunk->size = 16;
+    chunk->reserved = 0;
+    return 0;
+}
+
 struct TestDecoder {
     std::vector<std::uint8_t> work;
     void* handle = nullptr;
@@ -142,6 +157,38 @@ void DecodeDirect(void* handle, const std::vector<std::uint8_t>& png, std::vecto
     param.alpha_value = 0x77;
     const std::int32_t result = scePngDecDecode(handle, &param, &info);
     Require(result == static_cast<std::int32_t>((IMAGE_WIDTH << 16) | IMAGE_HEIGHT));
+}
+
+void CheckShortIdat() {
+    constexpr auto decodeError = static_cast<std::int32_t>(0x80690012);
+    const std::vector<std::uint8_t> rgb = {1, 2, 3, 4, 5, 6};
+    auto png = Decoder::Png::Encode(rgb, 1, 2, 3, {0, Decoder::Png::FILTER_NONE});
+    constexpr std::size_t idatStart = 8 + 12 + 13 + 8;
+    constexpr std::size_t storedBlockHeader = 2 + 5;
+    constexpr std::size_t filteredRowSize = 4;
+    Require(png.size() > idatStart + storedBlockHeader + filteredRowSize);
+    png.resize(idatStart + storedBlockHeader + filteredRowSize);
+    TestDecoder decoder(1);
+    Source source{&png};
+    PngDecInputControlParam param{};
+    param.input = &ReadChunk;
+    param.input_argument = &source;
+    param.operation = 0x10;
+    PngDecImageInfo info{};
+    Require(scePngDecDecodeWithInputControl(decoder.handle, &param, &info) == 0);
+    Require(info.image_width == 1 && info.image_height == 2);
+
+    std::vector<std::uint8_t> output(16, 0xCC);
+    param.operation = 0x20;
+    param.image_mem_addr = output.data();
+    param.image_mem_size = static_cast<std::uint32_t>(output.size());
+    param.image_pitch = 8;
+    param.pixel_format = 1;
+    param.alpha_value = 0x77;
+    Require(scePngDecDecodeWithInputControl(decoder.handle, &param, nullptr) == decodeError);
+    const std::vector<std::uint8_t> expected = {3, 2, 1, 0x77, 0xCC, 0xCC, 0xCC, 0xCC,
+                                                0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC};
+    Require(output == expected);
 }
 
 void CheckGuestMemory(const std::vector<std::uint8_t>& png, const std::vector<std::uint8_t>& expectedImage) {
@@ -287,6 +334,27 @@ void CheckIncompleteBoundary(const std::vector<std::uint8_t>& png, bool callback
         == (callbackError ? -123 : static_cast<std::int32_t>(0x80690012)));
 }
 
+void CheckUnreadableChunk(const std::vector<std::uint8_t>& png) {
+    constexpr auto invalidAddr = static_cast<std::int32_t>(0x80690001);
+    GuardedPage page;
+    std::memcpy(page.End(8), png.data(), 8);
+    for (const void* address : {reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x10)), static_cast<const void*>(page.End(8))}) {
+        TestDecoder decoder(IMAGE_WIDTH);
+        UnreadableChunk source{address};
+        PngDecInputControlParam param{};
+        param.input = &UnmappedChunk;
+        param.input_argument = &source;
+        param.operation = 0x10;
+        PngDecImageInfo info{};
+        errno = 71;
+        Require(scePngDecDecodeWithInputControl(decoder.handle, &param, &info) == invalidAddr);
+        Require(errno == 71);
+        Require(source.calls == 1);
+        Require(scePngDecDelete(decoder.handle) == 0);
+        decoder.handle = nullptr;
+    }
+}
+
 }
 
 int main() {
@@ -313,6 +381,8 @@ int main() {
     Require(expectedInfo.color_space == 3 && expectedInfo.bit_depth == 8 && expectedInfo.image_flag == 0);
 
     CheckGuestMemory(png, expectedImage);
+    CheckShortIdat();
+    CheckUnreadableChunk(png);
 
     TestDecoder decoder(width);
     std::vector<std::uint8_t> image(width * height * 4, 0);
@@ -355,6 +425,21 @@ int main() {
         Require(paletteInfo.image_width == 2 && paletteInfo.image_height == 2);
         Require(paletteInfo.color_space == 4 && paletteInfo.bit_depth == 2);
         Require(paletteInfo.image_flag == 2);
+
+        constexpr std::size_t paletteSize = 256 * 4;
+        std::vector<std::uint8_t> indexedImage(paletteSize + 10, 0xCC);
+        param.operation = 0x20;
+        param.image_mem_addr = indexedImage.data();
+        param.image_mem_size = static_cast<std::uint32_t>(indexedImage.size());
+        param.image_pitch = 5;
+        param.pixel_format = 132;
+        Require(scePngDecDecodeWithInputControl(paletteDecoder.handle, &param, &paletteInfo) == (2 << 16 | 2));
+        const std::uint8_t indexedPalette[] = {255, 0, 0, 255, 0, 255, 0, 0, 0, 0, 255, 255, 255, 255, 0, 128};
+        Require(std::equal(std::begin(indexedPalette), std::end(indexedPalette), indexedImage.begin()));
+        Require(std::all_of(indexedImage.begin() + sizeof(indexedPalette), indexedImage.begin() + paletteSize,
+                            [](std::uint8_t byte) { return byte == 0xCC; }));
+        const std::uint8_t paddedIndices[] = {0, 1, 0xCC, 0xCC, 0xCC, 2, 3, 0xCC, 0xCC, 0xCC};
+        Require(std::equal(std::begin(paddedIndices), std::end(paddedIndices), indexedImage.begin() + paletteSize));
     }
 
     {

@@ -180,8 +180,19 @@ void* Pkcs8ToKey(const LibreSsl::Pkcs8Key& info, const char* function) {
     return pkey;
 }
 
+void* ReadGuestKeySlot(void** slot, const char* function) {
+    void* value = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&value, slot, sizeof(value))) NotImplemented_nid_no_patch(function);
+    return value;
+}
+
+void WriteGuestKeySlot(void** slot, void* value, const char* function) {
+    if (!GuestCopyOut_nid_no_patch(slot, &value, sizeof(value))) NotImplemented_nid_no_patch(function);
+}
+
 void* DecodeRsaPrivateKey(void** reuse, const unsigned char** input, long length, const char* function) {
-    void* pkey = reuse ? *reuse : nullptr;
+    void* const existing = reuse ? ReadGuestKeySlot(reuse, function) : nullptr;
+    void* pkey = existing;
     if (!pkey) {
         pkey = EVP_PKEY_new_nid_postfix();
         if (!pkey) {
@@ -193,13 +204,13 @@ void* DecodeRsaPrivateKey(void** reuse, const unsigned char** input, long length
     if (!DecodeOldRsaKey(pkey, input, length, function)) {
         LibreSsl::Pkcs8Key info;
         if (!LibreSsl::DecodePkcs8(input, length, info, function)) {
-            if (!reuse || *reuse != pkey) EVP_PKEY_free_nid_postfix(pkey);
+            if (existing != pkey) EVP_PKEY_free_nid_postfix(pkey);
             return nullptr;
         }
         EVP_PKEY_free_nid_postfix(pkey);
         pkey = Pkcs8ToKey(info, function);
     }
-    if (reuse) *reuse = pkey;
+    if (reuse) WriteGuestKeySlot(reuse, pkey, function);
     return pkey;
 }
 
@@ -222,8 +233,8 @@ void* APS5_VABI PEM_read_bio_PrivateKey_nid_postfix(LibreSsl::Bio* bio, void** k
         if (LibreSsl::DecodePkcs8(&data, length, info, __func__)) {
             result = Pkcs8ToKey(info, __func__);
             if (key) {
-                EVP_PKEY_free_nid_postfix(*key);
-                *key = result;
+                EVP_PKEY_free_nid_postfix(ReadGuestKeySlot(key, __func__));
+                WriteGuestKeySlot(key, result, __func__);
             }
         }
     } else if (!std::strcmp(name, "ENCRYPTED PRIVATE KEY")) {

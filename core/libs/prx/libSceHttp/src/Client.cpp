@@ -437,7 +437,12 @@ struct HttpClientState : Aps5HttpClient {
             int status;
             for (;;) {
                 const auto line = connection.Line();
-                if (line.size() < 12 || (!line.starts_with("HTTP/1.1 ") && !line.starts_with("HTTP/1.0 "))) throw HttpFailure("invalid HTTP status line");
+                if (line.size() < 12 || (!line.starts_with("HTTP/1.1 ") && !line.starts_with("HTTP/1.0 ")) ||
+                    (line.size() > 12 && line[12] != ' ')) throw HttpFailure("invalid HTTP status line");
+                for (std::size_t index = 13; index < line.size(); ++index) {
+                    const auto byte = static_cast<unsigned char>(line[index]);
+                    if ((byte < 0x20 && byte != '\t') || byte == 0x7f) throw HttpFailure("invalid HTTP status line");
+                }
                 status = static_cast<int>(Number(std::string_view(line).substr(9, 3)));
                 const auto responseTime = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
                 headers.clear();
@@ -448,11 +453,14 @@ struct HttpClientState : Aps5HttpClient {
                     if (name != "content-range" && name != "content-length" && name != "content-encoding" && name != "transfer-encoding" && name != "location" && name != "etag" && name != "last-modified" && name != "date") continue;
                     if (name == "last-modified" || name == "date") value = CanonicalDate(std::move(value), responseTime);
                     const auto [found, inserted] = headers.emplace(name, value);
+                    if (!inserted && name == "transfer-encoding") throw HttpFailure("repeated HTTP transfer coding fields");
                     if (!inserted && found->second != value &&
                         (name != "content-length" || ContentLength(found->second) != ContentLength(value))) throw HttpFailure("conflicting HTTP headers");
                 }
                 if (status < 100 || status >= 200) break;
                 if (status == 101) throw HttpFailure("HTTP upgrade is not a media file");
+                if (line.starts_with("HTTP/1.0 ") || headers.contains("transfer-encoding") || headers.contains("content-length"))
+                    throw HttpFailure("invalid HTTP informational response");
             }
             if (status == 203) status = 200;
             if (status == 301 || status == 302 || status == 303 || status == 307 || status == 308) {
@@ -478,6 +486,7 @@ struct HttpClientState : Aps5HttpClient {
             std::vector<std::uint8_t> body;
             std::optional<std::string> trailerEtag;
             if (headers.contains("transfer-encoding")) {
+                if (headers.contains("content-length")) throw HttpFailure("conflicting HTTP message framing");
                 if (Lower(headers.at("transfer-encoding")) != "chunked") NotImplemented_nid_no_patch("HTTP client HTTP transfer coding");
                 for (;;) {
                     const auto chunk = connection.Line();
@@ -615,7 +624,8 @@ std::int32_t APS5_VABI Aps5HttpClient_Read_nid_postfix(Aps5HttpClient* client, s
     const auto offset = static_cast<std::size_t>(state.position - state.cacheStart);
     const auto count = std::min<std::size_t>(static_cast<std::size_t>(capacity), state.cache.size() - offset);
     if (count == 0) throw HttpFailure("HTTP client read made no progress");
-    std::memcpy(destination, state.cache.data() + offset, count);
+    const bool copied = GuestCopyOut_nid_no_patch(destination, state.cache.data() + offset, count);
+    if (!copied) throw std::invalid_argument("HTTP client read destination is not writable");
     state.position += count;
     return static_cast<std::int32_t>(count);
 }

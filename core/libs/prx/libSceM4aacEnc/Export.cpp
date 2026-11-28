@@ -1,7 +1,6 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceM4aacEnc/include/InventoryExports.hpp"
 #include "prx/libSceM4aacEnc/include/Api.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -31,10 +30,8 @@ int32_t CheckEncoderParameters(int32_t channels, int32_t samplingRate, int32_t b
     if (pInternalError == nullptr) {
         return ErrorInvalidPointer;
     }
-    const int savedErrno = errno;
     const int32_t zero = 0;
     if (!GuestCopyOut_nid_no_patch(pInternalError, &zero, sizeof(zero))) {
-        errno = savedErrno;
         return ErrorInvalidPointer;
     }
     if (channels != 1 && channels != 2) {
@@ -60,10 +57,8 @@ int32_t CheckEncode(void* pInput, uint32_t inputByte, void* pOutput, uint32_t* p
     if (pInternalError == nullptr) {
         return ErrorInvalidPointer;
     }
-    const int savedErrno = errno;
     const int32_t zero = 0;
     if (!GuestCopyOut_nid_no_patch(pInternalError, &zero, sizeof(zero))) {
-        errno = savedErrno;
         return ErrorInvalidPointer;
     }
     if (pInput == nullptr || pOutput == nullptr || pOutputByte == nullptr) {
@@ -72,7 +67,6 @@ int32_t CheckEncode(void* pInput, uint32_t inputByte, void* pOutput, uint32_t* p
     uint32_t prevOutputByte = 0;
     if (!GuestCopyIn_nid_no_patch(&prevOutputByte, pOutputByte, sizeof(prevOutputByte)) ||
         !GuestCopyOut_nid_no_patch(pOutputByte, &prevOutputByte, sizeof(prevOutputByte))) {
-        errno = savedErrno;
         return ErrorInvalidPointer;
     }
     if (inputByte > MaximumInputBytes) {
@@ -85,10 +79,8 @@ int32_t CheckFlush(void* pOutput, uint32_t* pOutputByte, int32_t* pInternalError
     if (pInternalError == nullptr) {
         return ErrorInvalidPointer;
     }
-    const int savedErrno = errno;
     const int32_t zero = 0;
     if (!GuestCopyOut_nid_no_patch(pInternalError, &zero, sizeof(zero))) {
-        errno = savedErrno;
         return ErrorInvalidPointer;
     }
     if (pOutput == nullptr || pOutputByte == nullptr) {
@@ -97,7 +89,6 @@ int32_t CheckFlush(void* pOutput, uint32_t* pOutputByte, int32_t* pInternalError
     uint32_t prevOutputByte = 0;
     if (!GuestCopyIn_nid_no_patch(&prevOutputByte, pOutputByte, sizeof(prevOutputByte)) ||
         !GuestCopyOut_nid_no_patch(pOutputByte, &prevOutputByte, sizeof(prevOutputByte))) {
-        errno = savedErrno;
         return ErrorInvalidPointer;
     }
     return 0;
@@ -132,9 +123,7 @@ int32_t APS5_VABI sceM4aacEncCreateEncoderEx(int32_t* context, int32_t channels,
         return ErrorInvalidPointer;
     }
     int32_t localContext[2]{};
-    const int savedErrno = errno;
     if (!GuestCopyIn_nid_no_patch(localContext, context, sizeof(localContext))) {
-        errno = savedErrno;
         return ErrorInvalidPointer;
     }
     if (localContext[1] != NoEncoder) {
@@ -152,10 +141,8 @@ int32_t APS5_VABI sceM4aacEncDeleteEncoder(int32_t m4aacEncHandle, int32_t *pInt
     if (pInternalError == nullptr) {
         return ErrorInvalidPointer;
     }
-    const int savedErrno = errno;
     const int32_t zero = 0;
     if (!GuestCopyOut_nid_no_patch(pInternalError, &zero, sizeof(zero))) {
-        errno = savedErrno;
         return ErrorInvalidPointer;
     }
     NotImplemented_nid_no_patch(__func__);
@@ -166,9 +153,7 @@ int32_t APS5_VABI sceM4aacEncDeleteEncoderEx(int32_t* context, int32_t* pInterna
         return ErrorInvalidPointer;
     }
     int32_t localContext[2]{};
-    const int savedErrno = errno;
     if (!GuestCopyIn_nid_no_patch(localContext, context, sizeof(localContext))) {
-        errno = savedErrno;
         return ErrorInvalidPointer;
     }
     if (localContext[1] == NoEncoder) {
@@ -179,7 +164,6 @@ int32_t APS5_VABI sceM4aacEncDeleteEncoderEx(int32_t* context, int32_t* pInterna
     }
     const int32_t zero = 0;
     if (!GuestCopyOut_nid_no_patch(pInternalError, &zero, sizeof(zero))) {
-        errno = savedErrno;
         return ErrorInvalidPointer;
     }
     NotImplemented_nid_no_patch(__func__);
@@ -297,14 +281,11 @@ int32_t APS5_VABI libSceM4aacEncUnknown_dyjd6gEaAXw_nid_no_patch(const int32_t* 
         return ErrorInvalidPointer;
     }
     int32_t localContext = 0;
-    const int savedErrno = errno;
     if (!GuestCopyIn_nid_no_patch(&localContext, context, sizeof(localContext))) {
-        errno = savedErrno;
         return ErrorInvalidPointer;
     }
     if (value != nullptr) {
         if (!GuestCopyOut_nid_no_patch(value, &localContext, sizeof(localContext))) {
-            errno = savedErrno;
             return ErrorInvalidPointer;
         }
     }

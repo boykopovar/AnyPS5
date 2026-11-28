@@ -2,6 +2,7 @@
 #include "prx/libSceSaveData.native/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -59,7 +60,8 @@ void CheckBackupProgress() {
     Check(progress == 0.0f, "progress reports 0.0f before any backup");
     progress = 0.25f;
     Check(sceSaveDataGetProgress(nullptr) == SaveDataErrorParameter, "null progress pointer is rejected");
-    Check(sceSaveDataGetProgress(reinterpret_cast<float*>(0x10)) == SaveDataErrorParameter, "unwritable progress pointer is rejected");
+    errno = 71;
+    Check(sceSaveDataGetProgress(reinterpret_cast<float*>(0x10)) == SaveDataErrorParameter && errno == 71, "unwritable progress pointer is rejected");
     Check(progress == 0.25f, "a rejected progress query leaves the value untouched");
     Check(sceSaveDataBackup(nullptr) == SaveDataErrorParameter, "null backup pointer is rejected");
     Check(progress == 0.25f, "a rejected backup leaves progress untouched");
@@ -104,7 +106,8 @@ int main() {
     Check(sceSaveDataGetConvertProgress(&progress) == 0, "get convert progress succeeds");
     Check(progress == 0.0f, "convert progress reports 0.0f initially");
     Check(sceSaveDataGetConvertProgress(nullptr) == SaveDataErrorParameter, "null progress pointer is rejected");
-    Check(sceSaveDataGetConvertProgress(reinterpret_cast<float*>(0x10)) == SaveDataErrorParameter, "unwritable progress pointer is rejected");
+    errno = 71;
+    Check(sceSaveDataGetConvertProgress(reinterpret_cast<float*>(0x10)) == SaveDataErrorParameter && errno == 71, "unwritable progress pointer is rejected");
     Check(sceSaveDataConvert(nullptr) == SaveDataErrorParameter, "null convert pointer is rejected");
     Check(sceSaveDataConvert(reinterpret_cast<const SaveDataConvert*>(0x10)) == SaveDataErrorParameter, "unmapped convert pointer is rejected");
     SaveDataConvert nullDir{};

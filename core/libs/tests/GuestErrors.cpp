@@ -121,4 +121,15 @@ int main() {
         threw = true;
     }
     Require(threw);
+    threw = false;
+    try {
+        strerror_r_nid_postfix(22, reinterpret_cast<char*>(0x10), 23);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+    char padded[600];
+    std::memset(padded, 0x5a, sizeof(padded));
+    Require(strerror_r_nid_postfix(2, padded, 599) == 0 && std::strcmp(padded, "No such file or directory") == 0);
+    Require(std::all_of(padded + 25, padded + 599, [](char c) { return c == 0; }) && padded[599] == 0x5a);
 }

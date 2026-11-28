@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import check_conventions
 from nid_names import compute_nid
 
 CHECKER = Path(__file__).resolve().parents[1] / "check_conventions.py"
@@ -56,6 +57,17 @@ class UnknownNidTests(unittest.TestCase):
     def assertPasses(self, result):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertNotIn("[unknown-nid]", result.stdout)
+
+    def test_a_binary_file_that_holds_the_export_macro_does_not_stop_the_check(self):
+        export = "int APS5_VABI sceFooBar(int a) {\n    return a + 1;\n}\n"
+        blob = "\x00\x01APS5_VABI\x00\n"
+        for base in ({"README.md": "base\n"}, {"core/libs/prx/libSceFoo/blob.bin": blob}):
+            with self.subTest(base=sorted(base)):
+                result = self.check(base, {"core/libs/prx/libSceFoo/a.cpp": export, "core/libs/prx/libSceFoo/blob.bin": blob})
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertNotIn("[unknown-nid]", result.stdout)
+                self.assertEqual("[binary]" in result.stdout, "README.md" in base, result.stdout + result.stderr)
+                self.assertEqual(result.returncode, 1 if "README.md" in base else 0, result.stdout + result.stderr)
 
     def test_unknown_export_with_the_nid_of_a_helper_in_another_library_fails(self):
         result = self.check(
@@ -123,6 +135,25 @@ class UnknownNidTests(unittest.TestCase):
             {"core/libs/prx/libSceA/tests/Helper.cpp": 'extern "C" bool Helper_nid_postfix() {\n    return true;\n}\n'},
             {"core/libs/prx/libSceB/Unimplemented.cpp": unknown_export(HELPER_NID)},
         ))
+
+
+class AsmExportTests(unittest.TestCase):
+    def test_asm_exports_keys_valid_names_by_line(self):
+        text = 'int x;\nAPS5_ASM_FUNCTION("sceFoo")\nAPS5_SIGNAL_ASM_FUNCTION("sceBar")\n'
+        self.assertEqual(dict(check_conventions.asm_exports(text)), {2: ["sceFoo"], 3: ["sceBar"]})
+
+    def test_asm_exports_skips_invalid_names_and_comments(self):
+        self.assertEqual(dict(check_conventions.asm_exports('APS5_ASM_FUNCTION("bad name")\n')), {})
+        self.assertEqual(dict(check_conventions.asm_exports('// APS5_ASM_FUNCTION("sceNo")\n')), {})
+
+
+class NidSymbolTests(unittest.TestCase):
+    def test_nid_symbols_lists_exported_names_and_skips_comments(self):
+        text = "int APS5_VABI sceFoo(int a) {}\n// APS5_VABI sceNo(\nAPS5_VABI sceBar(void)\n"
+        self.assertEqual(check_conventions.nid_symbols(text), ["sceFoo", "sceBar"])
+
+    def test_nid_symbols_ignores_a_name_that_is_not_an_identifier(self):
+        self.assertEqual(check_conventions.nid_symbols("APS5_VABI 1bad(\n"), [])
 
 
 if __name__ == "__main__":

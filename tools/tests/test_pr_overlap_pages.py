@@ -1,6 +1,5 @@
 import json
 import sys
-import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -8,11 +7,12 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pr_overlap
 
-URL = "repos/owner/project/pulls?state=open&base=main&per_page=100"
+URL = "repos/owner/project/pulls?state=open&base=main&sort=created&direction=asc&per_page=100"
 
 
 def pull(number):
-    return {"number": number, "user": {"login": f"author{number}"}, "head": {"sha": f"sha{number}"}, "body": None}
+    return {"number": number, "user": {"login": f"author{number}"},
+            "head": {"sha": f"sha{number}", "ref": f"branch{number}"}, "body": None}
 
 
 def response(numbers, last=None, newline="\r\n"):
@@ -28,13 +28,11 @@ class ServedPages:
         self.pages = pages
         self.last = last
         self.requested = []
-        self.lock = threading.Lock()
 
     def __call__(self, *args):
         self.assertion(args)
         number = int(args[2].rsplit("&page=", 1)[1])
-        with self.lock:
-            self.requested.append(number)
+        self.requested.append(number)
         return response(self.pages.get(number, []), self.last if number == 1 else None)
 
     @staticmethod
@@ -43,7 +41,7 @@ class ServedPages:
             raise AssertionError(f"unexpected gh call {args}")
 
 
-class ParallelPageTests(unittest.TestCase):
+class PaginationTests(unittest.TestCase):
     def open_prs(self, served):
         with patch.object(pr_overlap, "REPO", "owner/project", create=True), \
                 patch.object(pr_overlap, "gh", side_effect=served), \
@@ -55,8 +53,8 @@ class ParallelPageTests(unittest.TestCase):
         served = ServedPages(pages, last=3)
         found = self.open_prs(served)
         self.assertEqual(set(found), set(range(1, 251)))
-        self.assertCountEqual(served.requested, [1, 2, 3])
-        self.assertEqual(found[250], {"ref": "refs/pr/250", "sha": "sha250", "author": "author250", "title": "", "depends": set()})
+        self.assertEqual(served.requested, [1, 3, 2, 1])
+        self.assertEqual(found[250], {"ref": "refs/pr/250", "sha": "sha250", "branch": "branch250", "author": "author250", "title": "", "depends": set(), "fixes": set()})
 
     def test_a_single_page_needs_one_request(self):
         served = ServedPages({1: range(1, 43)}, last=None)
@@ -77,7 +75,7 @@ class ParallelPageTests(unittest.TestCase):
 
         found = self.open_prs(next_only)
         self.assertEqual(set(found), set(range(1, 6)))
-        self.assertEqual(served.requested, [1, 2, 3])
+        self.assertEqual(served.requested, [1, 2, 3, 2, 1])
 
     def test_next_only_full_final_page_checks_for_a_new_following_page(self):
         pages = {1: range(1, 101), 2: range(101, 201), 3: range(201, 202)}
@@ -92,10 +90,10 @@ class ParallelPageTests(unittest.TestCase):
             return result
 
         self.assertEqual(set(self.open_prs(next_only)), set(range(1, 202)))
-        self.assertEqual(served.requested, [1, 2, 3])
+        self.assertEqual(served.requested, [1, 2, 3, 2, 1])
 
     def test_invalid_or_repeated_next_pages_are_rejected(self):
-        for query in ("per_page=100", "page=one", "page=0", "page=1", "page=2&page=3", "page=&page=2"):
+        for query in ("per_page=100", "page=one", "page=0", "page=1", "page=3", "page=2&page=3", "page=&page=2"):
             with self.subTest(query=query):
                 link = f'Link: <https://api.github.com/repositories/1/pulls?{query}>; rel="next"'
                 output = response(range(1, 3)).replace("\r\n\r\n", "\r\n" + link + "\r\n\r\n", 1)
@@ -108,17 +106,31 @@ class ParallelPageTests(unittest.TestCase):
         pages = {1: range(1, 101), 2: range(101, 201), 3: range(201, 202)}
         served = ServedPages(pages, last=2)
         self.assertEqual(set(self.open_prs(served)), set(range(1, 202)))
-        self.assertEqual(sorted(served.requested), [1, 2, 3])
+        self.assertEqual(served.requested, [1, 2, 3, 2, 1])
 
     def test_a_full_last_page_followed_by_an_empty_one_stops(self):
         served = ServedPages({1: range(1, 101), 2: range(101, 201)}, last=2)
         self.assertEqual(set(self.open_prs(served)), set(range(1, 201)))
-        self.assertEqual(sorted(served.requested), [1, 2, 3])
+        self.assertEqual(served.requested, [1, 2, 3, 1])
 
-    def test_a_pull_request_shifted_onto_two_pages_is_kept_once(self):
-        served = ServedPages({1: range(1, 101), 2: range(100, 150)}, last=2)
-        found = self.open_prs(served)
-        self.assertEqual(len(found), 149)
+    def test_a_pull_request_shifted_onto_two_pages_retries_the_scan(self):
+        served = ServedPages({1: range(1, 101), 2: range(101, 151)}, last=2)
+
+        def duplicate_once(*args):
+            result = served(*args)
+            if served.requested == [1, 2]:
+                return response(range(100, 150))
+            return result
+
+        self.assertEqual(set(self.open_prs(duplicate_once)), set(range(1, 151)))
+        self.assertEqual(served.requested, [1, 2, 1, 1, 2, 1])
+
+    def test_a_short_intermediate_page_fails_after_one_retry_without_duplicates(self):
+        pages = {1: range(1, 101), 2: range(102, 201), 3: range(201, 251)}
+        served = ServedPages(pages, last=3)
+        with self.assertRaisesRegex(ValueError, "after one retry: unexpected length for pull request page 2"):
+            self.open_prs(served)
+        self.assertEqual(served.requested, [1, 3, 2, 1, 3, 2])
 
     def test_headers_with_plain_newlines_are_split_from_the_body(self):
         with patch.object(pr_overlap, "gh", return_value=response(range(1, 3), newline="\n")):

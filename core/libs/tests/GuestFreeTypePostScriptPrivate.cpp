@@ -20,6 +20,8 @@
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 using namespace FreeType;
@@ -115,6 +117,47 @@ static void Compare(const GuestPSPrivate& output, const PS_PrivateRec& native) {
     Require(std::equal(std::begin(output.minFeature), std::end(output.minFeature), std::begin(native.min_feature)));
 }
 
+static void CheckOutputProtection(const Api& api, GuestFaceRec* face) {
+#ifdef _WIN32
+    SYSTEM_INFO information;
+    GetSystemInfo(&information);
+    const std::size_t page = information.dwPageSize;
+    auto* memory = static_cast<unsigned char*>(VirtualAlloc(nullptr, page * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(memory != nullptr);
+#else
+    const std::size_t page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    auto* memory = static_cast<unsigned char*>(mmap(nullptr, page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(memory != MAP_FAILED);
+#endif
+    std::memset(memory, 0xA5, page * 2);
+    const std::vector<unsigned char> before(memory, memory + page * 2);
+    for (const std::size_t offset : {std::size_t{0}, page - sizeof(GuestPSPrivate) / 2, page}) {
+        const bool readOnly = offset == 0;
+        void* protectedPage = memory + (readOnly ? 0 : page);
+#ifdef _WIN32
+        DWORD previous;
+        Require(VirtualProtect(protectedPage, page, readOnly ? PAGE_READONLY : PAGE_NOACCESS, &previous) != 0);
+#else
+        Require(mprotect(protectedPage, page, readOnly ? PROT_READ : PROT_NONE) == 0);
+#endif
+        const int error = api.getPrivate(face, reinterpret_cast<GuestPSPrivate*>(memory + offset));
+#ifdef _WIN32
+        Require(VirtualProtect(protectedPage, page, PAGE_READWRITE, &previous) != 0);
+#else
+        Require(mprotect(protectedPage, page, PROT_READ | PROT_WRITE) == 0);
+#endif
+        Require(error == FT_Err_Invalid_Argument);
+        Require(std::memcmp(memory, before.data(), before.size()) == 0);
+    }
+    auto* writable = reinterpret_cast<GuestPSPrivate*>(memory + page - sizeof(GuestPSPrivate));
+    Require(api.getPrivate(face, writable) == 0);
+#ifdef _WIN32
+    Require(VirtualFree(memory, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(memory, page * 2) == 0);
+#endif
+}
+
 static void CheckFont(const Api& api, GuestLibrary* library, FT_Library nativeLibrary, const std::vector<unsigned char>& font, int profile) {
     const auto fontBefore = font;
     FT_Face nativeFace = nullptr;
@@ -138,7 +181,10 @@ static void CheckFont(const Api& api, GuestLibrary* library, FT_Library nativeLi
     Require(output.before == 0xA5A5A5A5A5A5A5A5ull && output.after == output.before);
     Require(api.getPrivate(face, nullptr) == FT_Get_PS_Font_Private(nativeFace, nullptr));
     if (expected == 0) {
+        CheckOutputProtection(api, face);
         Compare(output.value, native);
+        const auto* bytes = reinterpret_cast<const unsigned char*>(&output.value);
+        for (const std::size_t offset : {108, 109, 110, 111, 188, 189, 190, 191, 220, 221, 222, 223}) Require(bytes[offset] == 0xA5);
         Require(output.value.lenIV == -1);
         if (profile != 0) {
             Require(output.value.uniqueId == 1234567 && output.value.blueValues[0] == -50);

@@ -10,6 +10,8 @@
 #include "prx/libc/include/RunReport.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <cstdio>
 #include <exception>
 #ifdef __APPLE__
 #include <cstring>
@@ -19,6 +21,9 @@ namespace AgcDriver::Graphics {
 void WriteCheckpointSentinel(const Context& context, VkCommandBuffer commands);
 
 namespace {
+
+std::atomic<std::uint64_t> stalledWaits{0};
+std::atomic<std::uint64_t> stalledSlices{0};
 
 #ifdef __APPLE__
 void ClearPooledTail(void* mapping, std::size_t size, VkDeviceSize mappedBytes, VkMemoryPropertyFlags properties) {
@@ -274,32 +279,34 @@ void FillDeviceFunctions(const Context& context, DeviceFunctions& functions) {
     functions.cmdCopyBuffer = context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer");
     functions.cmdUpdateBuffer = context.Function<PFN_vkCmdUpdateBuffer>("vkCmdUpdateBuffer");
     functions.cmdFillBuffer = context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer");
-    functions.cmdBindPipeline = context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline");
+    functions.cmdBindPipeline = context.lookup<PFN_vkCmdBindPipeline>("vkCmdBindPipeline");
+    functions.cmdExecuteCommands = context.lookup<PFN_vkCmdExecuteCommands>("vkCmdExecuteCommands");
     functions.cmdBindDescriptorSets = context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets");
     functions.cmdPushConstants = context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants");
     functions.cmdDispatch = context.Function<PFN_vkCmdDispatch>("vkCmdDispatch");
     functions.cmdDispatchIndirect = context.Function<PFN_vkCmdDispatchIndirect>("vkCmdDispatchIndirect");
     functions.cmdBeginRenderPass = context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass");
     functions.cmdEndRenderPass = context.Function<PFN_vkCmdEndRenderPass>("vkCmdEndRenderPass");
-    functions.cmdSetViewport = context.Function<PFN_vkCmdSetViewport>("vkCmdSetViewport");
-    functions.cmdSetScissor = context.Function<PFN_vkCmdSetScissor>("vkCmdSetScissor");
-    if (context.dynamicColorWriteMask) functions.cmdSetColorWriteMask = context.Function<PFN_vkCmdSetColorWriteMaskEXT>("vkCmdSetColorWriteMaskEXT");
-    functions.cmdSetDepthBounds = context.Function<PFN_vkCmdSetDepthBounds>("vkCmdSetDepthBounds");
-    functions.cmdSetDepthBias = context.Function<PFN_vkCmdSetDepthBias>("vkCmdSetDepthBias");
+    functions.cmdSetViewport = context.lookup<PFN_vkCmdSetViewport>("vkCmdSetViewport");
+    functions.cmdSetScissor = context.lookup<PFN_vkCmdSetScissor>("vkCmdSetScissor");
+    if (context.dynamicColorWriteMask) functions.cmdSetColorWriteMask = context.lookup<PFN_vkCmdSetColorWriteMaskEXT>("vkCmdSetColorWriteMaskEXT");
+    if (context.dynamicDepthBiasEnable) functions.cmdSetDepthBiasEnable = context.lookup<PFN_vkCmdSetDepthBiasEnableEXT>("vkCmdSetDepthBiasEnableEXT");
+    functions.cmdSetDepthBounds = context.lookup<PFN_vkCmdSetDepthBounds>("vkCmdSetDepthBounds");
+    functions.cmdSetDepthBias = context.lookup<PFN_vkCmdSetDepthBias>("vkCmdSetDepthBias");
     if (context.graphicsPipelineLibrary) {
         functions.cmdBeginRendering = context.Function<PFN_vkCmdBeginRenderingKHR>("vkCmdBeginRenderingKHR");
         functions.cmdEndRendering = context.Function<PFN_vkCmdEndRenderingKHR>("vkCmdEndRenderingKHR");
-        functions.cmdSetCullMode = context.Function<PFN_vkCmdSetCullModeEXT>("vkCmdSetCullModeEXT");
-        functions.cmdSetFrontFace = context.Function<PFN_vkCmdSetFrontFaceEXT>("vkCmdSetFrontFaceEXT");
-        functions.cmdSetDepthTestEnable = context.Function<PFN_vkCmdSetDepthTestEnableEXT>("vkCmdSetDepthTestEnableEXT");
-        functions.cmdSetDepthWriteEnable = context.Function<PFN_vkCmdSetDepthWriteEnableEXT>("vkCmdSetDepthWriteEnableEXT");
-        functions.cmdSetDepthCompareOp = context.Function<PFN_vkCmdSetDepthCompareOpEXT>("vkCmdSetDepthCompareOpEXT");
-        functions.cmdSetDepthBoundsTestEnable = context.Function<PFN_vkCmdSetDepthBoundsTestEnableEXT>("vkCmdSetDepthBoundsTestEnableEXT");
-        functions.cmdSetStencilTestEnable = context.Function<PFN_vkCmdSetStencilTestEnableEXT>("vkCmdSetStencilTestEnableEXT");
-        functions.cmdSetStencilOp = context.Function<PFN_vkCmdSetStencilOpEXT>("vkCmdSetStencilOpEXT");
-        functions.cmdSetStencilCompareMask = context.Function<PFN_vkCmdSetStencilCompareMask>("vkCmdSetStencilCompareMask");
-        functions.cmdSetStencilWriteMask = context.Function<PFN_vkCmdSetStencilWriteMask>("vkCmdSetStencilWriteMask");
-        functions.cmdSetStencilReference = context.Function<PFN_vkCmdSetStencilReference>("vkCmdSetStencilReference");
+        functions.cmdSetCullMode = context.lookup<PFN_vkCmdSetCullModeEXT>("vkCmdSetCullModeEXT");
+        functions.cmdSetFrontFace = context.lookup<PFN_vkCmdSetFrontFaceEXT>("vkCmdSetFrontFaceEXT");
+        functions.cmdSetDepthTestEnable = context.lookup<PFN_vkCmdSetDepthTestEnableEXT>("vkCmdSetDepthTestEnableEXT");
+        functions.cmdSetDepthWriteEnable = context.lookup<PFN_vkCmdSetDepthWriteEnableEXT>("vkCmdSetDepthWriteEnableEXT");
+        functions.cmdSetDepthCompareOp = context.lookup<PFN_vkCmdSetDepthCompareOpEXT>("vkCmdSetDepthCompareOpEXT");
+        functions.cmdSetDepthBoundsTestEnable = context.lookup<PFN_vkCmdSetDepthBoundsTestEnableEXT>("vkCmdSetDepthBoundsTestEnableEXT");
+        functions.cmdSetStencilTestEnable = context.lookup<PFN_vkCmdSetStencilTestEnableEXT>("vkCmdSetStencilTestEnableEXT");
+        functions.cmdSetStencilOp = context.lookup<PFN_vkCmdSetStencilOpEXT>("vkCmdSetStencilOpEXT");
+        functions.cmdSetStencilCompareMask = context.lookup<PFN_vkCmdSetStencilCompareMask>("vkCmdSetStencilCompareMask");
+        functions.cmdSetStencilWriteMask = context.lookup<PFN_vkCmdSetStencilWriteMask>("vkCmdSetStencilWriteMask");
+        functions.cmdSetStencilReference = context.lookup<PFN_vkCmdSetStencilReference>("vkCmdSetStencilReference");
     }
     functions.cmdBindVertexBuffers = context.Function<PFN_vkCmdBindVertexBuffers>("vkCmdBindVertexBuffers");
     functions.cmdBindIndexBuffer = context.Function<PFN_vkCmdBindIndexBuffer>("vkCmdBindIndexBuffer");
@@ -457,12 +464,23 @@ void CommandBatch::Wait() {
     Require(submitted, "command batch has not been submitted");
     if (!pending) return;
     PerformanceTimer timing("Graphics.Wait");
-    const auto result = context.Function<PFN_vkWaitForFences>("vkWaitForFences")(context.device, 1, &fence, VK_TRUE, 5'000'000'000ULL);
+    const auto waitFences = context.Function<PFN_vkWaitForFences>("vkWaitForFences");
+    auto result = waitFences(context.device, 1, &fence, VK_TRUE, 5'000'000'000ULL);
+    if (result == VK_TIMEOUT) stalledWaits.fetch_add(1, std::memory_order_relaxed);
+    for (int waited = 5; result == VK_TIMEOUT; waited += 5) {
+        stalledSlices.fetch_add(1, std::memory_order_relaxed);
+        std::fprintf(stderr, "[gpu] command batch still running on the GPU after %d s\n", waited);
+        result = waitFences(context.device, 1, &fence, VK_TRUE, 5'000'000'000ULL);
+    }
     timing.Mark("fence_wait");
     if (result == VK_SUCCESS || result == VK_ERROR_DEVICE_LOST) pending = false;
     Check(result, "vkWaitForFences graphics");
     // Recorded batches preceded this one, so their completions (write-backs) can run now.
     if (auto* recorder = Recorder::Active()) recorder->Reap();
+}
+
+CommandBatchStalls CommandBatchWaitStalls() {
+    return {stalledWaits.load(std::memory_order_relaxed), stalledSlices.load(std::memory_order_relaxed)};
 }
 
 }

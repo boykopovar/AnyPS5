@@ -27,8 +27,22 @@ struct FakeIdentity {
     const void* const* vtable;
 };
 
+struct FakeCertificate {
+    const void* const* vtable;
+};
+
 void* deleted = nullptr;
 int deletions = 0;
+FakeCertificate* selectedCertificate = nullptr;
+std::int64_t selectedExpiration = 0;
+
+const void* APS5_VABI IdentityCertificate(const void*) {
+    return selectedCertificate;
+}
+
+std::int64_t APS5_VABI CertificateExpiration(const void*) {
+    return selectedExpiration;
+}
 
 void APS5_VABI DeleteIdentity(void* identity) {
     deleted = identity;
@@ -66,11 +80,32 @@ void TestInvalidArgumentsThrow() {
     RequireInvalidArgument([&] { _ZN3rtc14RTCCertificateD1Ev_nid_postfix(&certificate); });
 }
 
+void TestHasExpiredDispatchesThroughIdentityAndCertificateVtables() {
+    std::array<const void*, 8> certificateVtable{};
+    certificateVtable[7] = reinterpret_cast<const void*>(&CertificateExpiration);
+    FakeCertificate nativeCertificate{certificateVtable.data()};
+    selectedCertificate = &nativeCertificate;
+
+    std::array<const void*, 3> identityVtable{};
+    identityVtable[2] = reinterpret_cast<const void*>(&IdentityCertificate);
+    FakeIdentity identity{identityVtable.data()};
+    WebRtcRtcCertificate certificate{1, &identity};
+
+    selectedExpiration = 12;
+    Require(!_ZNK3rtc14RTCCertificate10HasExpiredEm_nid_postfix(&certificate, 11999));
+    Require(_ZNK3rtc14RTCCertificate10HasExpiredEm_nid_postfix(&certificate, 12000));
+    Require(_ZNK3rtc14RTCCertificate10HasExpiredEm_nid_postfix(&certificate, 12001));
+
+    selectedExpiration = -1;
+    Require(_ZNK3rtc14RTCCertificate10HasExpiredEm_nid_postfix(&certificate, 0));
+}
+
 }
 
 int main() {
     TestDeletesTheIdentityThroughItsDeletingDestructor();
     TestWithoutIdentityDoesNothing();
     TestInvalidArgumentsThrow();
+    TestHasExpiredDispatchesThroughIdentityAndCertificateVtables();
     return 0;
 }

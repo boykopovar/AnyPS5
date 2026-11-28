@@ -104,6 +104,44 @@ class Tests(unittest.TestCase):
         self.assertEqual(source.read_bytes(), data)
         source.unlink()
 
+    def run_main(self, path):
+        errors = io.StringIO()
+        printed = io.StringIO()
+        with contextlib.redirect_stderr(errors), contextlib.redirect_stdout(printed):
+            try:
+                code = inspect_self.main([str(path)])
+            except SystemExit as caught:
+                code = caught.code
+        return code, printed.getvalue(), errors.getvalue()
+
+    def test_accepts_kernel_magic(self):
+        import struct
+        source = self.root / "kernel.self"
+        data = self.fixture()
+        struct.pack_into("<I", data, 0, 0xEEF51454)
+        source.write_bytes(data)
+        code, out, _ = self.run_main(source)
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out)["magic"], 0xEEF51454)
+
+    def test_reports_unknown_magic_and_short_file(self):
+        source = self.root / "x.self"
+        data = self.fixture()
+        data[0:4] = bytes(4)
+        source.write_bytes(data)
+        code, out, err = self.run_main(source)
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("not a SELF container", err)
+        source.write_bytes(b"O=")
+        code, out, err = self.run_main(source)
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("smaller than the SELF header area", err)
+
+    def test_missing_input_is_reported_as_usage_error(self):
+        code, out, err = self.run_main(self.root / "absent.self")
+        self.assertEqual((code, out), (2, ""))
+        self.assertTrue(err)
+
 
 if __name__ == "__main__":
     unittest.main()

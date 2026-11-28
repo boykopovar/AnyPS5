@@ -1,0 +1,6 @@
+# libSceAgcDriver
+
+## add Functional
+
+- [DCC keys of a color view's slice](../../../core/libs/prx/libSceAgcDriver/Graphics/src/State.cpp) (libSceAgcDriver) - a single-mip 2D color target whose `CB_COLOR_VIEW` starts at slice N > 0 reads and marks the DCC keys N slices past `CB_COLOR_DCC_BASE`. Each slice takes one key per 256-byte block of one slice's surface, or the console's DCC extent for pipe-aligned DCC of 4-byte SW_64KB_R_X surfaces. The console's per-slice metadata layout is not measured. Hogwarts Legacy (PPSA01593 v01.000.013) fast-clears 12,288 key bytes, 2,048 per slice, for a 256x256 RGBA16F array of six slices, and draws into each slice through such a view, which matches one key per 256 bytes. Sampled arrays still read their keys at one per 256 bytes, so the two layouts differ for pipe-aligned 4-byte SW_64KB_R_X slices smaller than 512x512.
+- [Sampled textures with mixed DCC keys](../../../core/libs/prx/libSceAgcDriver/Graphics/src/DccMetadata.cpp) (libSceAgcDriver) - a texture whose keys are not all one state is read as stored, every 256-byte block included, whatever its own key says. A fast-cleared slice that no draw has written since the clear therefore reads its stale bytes, not the clear value: in Hogwarts Legacy, a slice whose keys held clear code 0001 (0, 0, 0, 1) read as 0 in all four channels.

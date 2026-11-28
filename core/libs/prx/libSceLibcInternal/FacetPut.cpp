@@ -1,6 +1,7 @@
 #include "prx/libc/include/GuestLocale.hpp"
 #include "prx/libc/include/General.hpp"
 #include "SceTypes.hpp"
+#include <cstddef>
 #include <cstdint>
 
 namespace {
@@ -62,5 +63,25 @@ GuestLocale::OutputIterator APS5_VABI sceLibcInternalTimePut_nid_no_patch(const 
     return reinterpret_cast<const GuestLocale::TimePutVtable*>(self->vtable)->put(self, out, stream, fill, time, format, modifier);
 }
 APS5_EXPORT("qkuA-unH7PU", sceLibcInternalTimePut_nid_no_patch);
+
+GuestLocale::OutputIterator APS5_VABI sceLibcInternalWideTimePutPattern_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, const GuestTm* time, const std::uint16_t* first, const std::uint16_t* last) {
+    return LibcWideTimePutPattern_nid_no_patch(self, out, stream, fill, time, first, last);
+}
+APS5_EXPORT("Sc0lXhQG5Ko", sceLibcInternalWideTimePutPattern_nid_no_patch);
+
+GuestLocale::OutputIterator APS5_VABI sceLibcInternalWideTimePut_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, const GuestTm* time, char format, char modifier) {
+    return reinterpret_cast<const GuestLocale::WideTimePutVtable*>(self->vtable)->put(self, out, stream, fill, time, format, modifier);
+}
+APS5_EXPORT("Nt6eyVKm+Z4", sceLibcInternalWideTimePut_nid_no_patch);
+
+GuestLocale::OutputIterator APS5_VABI sceLibcInternalWideTimePutDoPut_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, const GuestTm* time, char format, char modifier) {
+    return LibcWideTimePutDoPut_nid_no_patch(self, out, stream, fill, time, format, modifier);
+}
+APS5_EXPORT("Fr7j8dMsy4s", sceLibcInternalWideTimePutDoPut_nid_no_patch);
+
+std::size_t APS5_VABI sceLibcInternalWideTimePutGetcat_nid_no_patch(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale) {
+    return LibcWideTimePutGetcat_nid_no_patch(facet, locale);
+}
+APS5_EXPORT("bF2uVCqVhBY", sceLibcInternalWideTimePutGetcat_nid_no_patch);
 
 }

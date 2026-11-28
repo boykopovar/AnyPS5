@@ -17,7 +17,9 @@ constexpr std::uint32_t KernelErrnoBase = 0x80020000u;
 constexpr std::uint32_t KernelExists = 0x80020011u;
 constexpr std::uint32_t KernelNoSuchFile = 0x80020002u;
 constexpr std::uint64_t NotFoundCodes = 0x2000000000140001ull;
+constexpr int IoError = 5;
 constexpr int OutOfMemory = 12;
+constexpr int BadAddress = 14;
 constexpr int NotSupported = 45;
 constexpr int NoSystemCall = 78;
 constexpr int TypeNotFound = -1;
@@ -66,10 +68,12 @@ int StatusType(const char* function, const char* path, int* perms, int* error) {
     if (NotFound(result)) {
         type = TypeNotFound;
     } else if (result == 0) {
-        if (perms) *perms = status.st_mode & 0xfff;
+        const int permissions = status.st_mode & 0xfff;
+        if (perms) GuestCopyOut_nid_no_patch(perms, &permissions, sizeof(permissions));
         type = TypeOf(status.st_mode);
     }
-    if (error) *error = StatusOf(result);
+    const int failure = StatusOf(result);
+    if (error) GuestCopyOut_nid_no_patch(error, &failure, sizeof(failure));
     return type;
 }
 
@@ -86,6 +90,7 @@ int CopyContents(const FilesystemForwards_nid_no_patch& kernel, int source, int 
         for (std::int64_t done = 0; done < count;) {
             const auto written = kernel.write(target, buffer + done, static_cast<std::size_t>(count - done));
             if (written < 0) return StatusOf(static_cast<int>(written));
+            if (written == 0) return IoError;
             done += written;
         }
     }
@@ -110,7 +115,7 @@ int APS5_VABI _ZNSt8__sce_v210filesystem6_LstatEPKcPNS0_5permsE_nid_postfix(cons
 std::uint64_t APS5_VABI _ZNSt8__sce_v210filesystem10_File_sizeEPKcPi_nid_postfix(const char* path, int* error) {
     FileStat status{};
     const int result = Kernel(__func__).stat(path, &status);
-    if (result != 0 && error) *error = result;
+    if (result != 0 && error) GuestCopyOut_nid_no_patch(error, &result, sizeof(result));
     return result != 0 ? UINT64_MAX : static_cast<std::uint64_t>(status.st_size);
 }
 
@@ -128,8 +133,9 @@ int APS5_VABI _ZNSt8__sce_v210filesystem16_Last_write_timeEPKcPlS3__nid_postfix(
     FileStat status{};
     const int result = Kernel(__func__).stat(path, &status);
     if (result != 0) return ErrorOf(result);
-    *seconds = status.st_mtim.tv_sec;
-    *nanoseconds = status.st_mtim.tv_nsec;
+    const std::int64_t second = status.st_mtim.tv_sec;
+    const std::int64_t nanosecond = status.st_mtim.tv_nsec;
+    if (!GuestCopyOut_nid_no_patch(seconds, &second, sizeof(second)) || !GuestCopyOut_nid_no_patch(nanoseconds, &nanosecond, sizeof(nanosecond))) return BadAddress;
     return 0;
 }
 
@@ -199,14 +205,16 @@ int APS5_VABI _ZNSt8__sce_v210filesystem10_Copy_fileEPKcS2__nid_postfix(const ch
 }
 
 int APS5_VABI _ZNSt8__sce_v210filesystem8_StatvfsEPKcRNS0_10space_infoE_nid_postfix(const char*, std::uint64_t* space) {
-    space[0] = UINT64_MAX;
-    space[1] = UINT64_MAX;
-    space[2] = UINT64_MAX;
+    const std::uint64_t unknown[3] = {UINT64_MAX, UINT64_MAX, UINT64_MAX};
+    if (!GuestCopyOut_nid_no_patch(space, unknown, sizeof(unknown))) return BadAddress;
     return NoSystemCall;
 }
 
 int APS5_VABI _ZNSt8__sce_v210filesystem13_Current_set2EPKc_nid_postfix(const char* path) {
-    return std::strncmp(path, "/", 2) == 0 ? 0 : NotSupported;
+    char lead[2] = {};
+    if (!GuestCopyIn_nid_no_patch(lead, path, 1)) return BadAddress;
+    if (lead[0] == '/' && !GuestCopyIn_nid_no_patch(lead + 1, path + 1, 1)) return BadAddress;
+    return lead[0] == '/' && lead[1] == '\0' ? 0 : NotSupported;
 }
 
 }
