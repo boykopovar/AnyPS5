@@ -224,6 +224,12 @@ int LastReason() {
     return static_cast<int>(ERR_peek_last_error_nid_postfix() & 0xfff);
 }
 
+struct NameBytesView {
+    std::size_t length;
+    unsigned char* data;
+    std::size_t max;
+};
+
 bool IsPkcs7Type(const Asn1Object_nid_no_patch* object, unsigned char type) {
     return object && object->length == 9 && std::memcmp(object->data, DataOid, 8) == 0 && object->data[8] == type;
 }
@@ -253,6 +259,9 @@ void TestSignedMessage() {
     Require(signer->version->data[0] == 1 && signer->unauthAttr == nullptr && signer->pkey == nullptr);
     Require(signer->issuerAndSerial->issuer != nullptr && signer->issuerAndSerial->serial->length == 20);
     Require(signer->issuerAndSerial->issuer->canonEnc != nullptr);
+    const auto* issuerBytes = static_cast<const NameBytesView*>(signer->issuerAndSerial->issuer->bytes);
+    Require(signer->issuerAndSerial->issuer->modified == 0 && issuerBytes != nullptr);
+    Require(issuerBytes->length == 30 && issuerBytes->max == 44 && std::memcmp(issuerBytes->data, SignedMessage + 483, 30) == 0);
     Require(signer->digestAlg != nullptr && signer->digestEncAlg != nullptr && signer->encDigest->length == 71);
     Require(signer->authAttr->num == 4);
     const int expectedTypes[] = {6, 23, 4, 16};

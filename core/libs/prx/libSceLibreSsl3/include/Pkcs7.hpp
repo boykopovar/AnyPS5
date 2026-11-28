@@ -57,5 +57,5 @@ LibreSsl3Certificate* DecodeCertificate_nid_no_patch(std::span<const unsigned ch
 void FreeCertificate_nid_no_patch(LibreSsl3Certificate* certificate);
 LibreSsl3X509Algor* DecodeAlgor_nid_no_patch(std::span<const unsigned char>& input);
 void FreeAlgor_nid_no_patch(LibreSsl3X509Algor* algor);
-LibreSslX509Name* DecodeName_nid_no_patch(std::span<const unsigned char> content);
+LibreSslX509Name* DecodeName_nid_no_patch(std::span<const unsigned char> content, std::span<const unsigned char> encoded);
 void FreeName_nid_no_patch(LibreSslX509Name* name);

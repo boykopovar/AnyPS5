@@ -464,7 +464,7 @@ LibreSsl3Pkcs7IssuerAndSerial* DecodeIssuerAndSerial(std::span<const unsigned ch
     }
     Tlv issuer;
     Tlv serial;
-    bool ok = Next(body, SequenceTag, issuer) && (value->issuer = DecodeName_nid_no_patch(issuer.content)) != nullptr &&
+    bool ok = Next(body, SequenceTag, issuer) && (value->issuer = DecodeName_nid_no_patch(issuer.content, issuer.encoded)) != nullptr &&
               Next(body, IntegerTag, serial) && (value->serial = NewInteger(serial.encoded)) != nullptr;
     if (ok && !body.empty()) {
         PutError(SequenceLengthMismatch);
