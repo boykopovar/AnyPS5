@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstring>
 #include <iostream>
+#include <iterator>
 #include <span>
 #include <string>
 #include <utility>
@@ -273,6 +274,24 @@ void RunSplit(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarg
     }
 }
 
+void RequireChainBeforeCallee(const std::vector<std::uint32_t>& code) {
+    const auto program = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(code);
+    const auto call = std::ranges::find_if(program.instructions, [](const ShaderRecompiler::RdnaInstruction& instruction) { return instruction.op == ShaderRecompiler::RdnaOpcode::SCallB64; });
+    Require(call != program.instructions.end(), "a continued callee part has no call");
+    auto chain = call;
+    while (chain != program.instructions.begin() && std::prev(chain)->op != ShaderRecompiler::RdnaOpcode::SEndpgm) --chain;
+    Require(chain != program.instructions.begin(), "a continued callee part has no exit before its callee");
+    const auto exit = std::prev(chain)->programCounter;
+    bool leaves = false;
+    for (auto at = chain; at != call; ++at) {
+        if (!ShaderRecompiler::IsConditionalBranchOpcode(at->op)) continue;
+        const bool inChain = at->branchTarget >= chain->programCounter && at->branchTarget < call->programCounter;
+        Require(inChain || at->branchTarget == exit, "a continued callee part jumps past its callee, or away from its exit, when its target does not match");
+        leaves = leaves || at->branchTarget == exit;
+    }
+    Require(leaves, "a continued callee part has no branch to its exit when its target does not match");
+}
+
 }
 
 int main() {
@@ -318,6 +337,7 @@ int main() {
             const auto continuation = ShaderRecompiler::ContinueTableCall(loopProgram, loopCalls[0], Callees(), Vectors, loopRefusal);
             Require(continuation.has_value(), "the loop caller cannot continue: " + loopRefusal);
             const auto continued = ShaderRecompiler::BuildTableCallContinuation(loopProgram, loopCalls[0], Callees(), *continuation);
+            for (const auto& part : continued.callees) RequireChainBeforeCallee(part.code);
             RunContinued(*device, target, continued);
             RunContinued(*device, target, continued, true);
             std::printf("wave%u on host subgroup %u passed\n", lanes, target.subgroupSize);
