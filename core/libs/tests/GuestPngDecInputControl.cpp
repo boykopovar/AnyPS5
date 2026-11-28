@@ -9,6 +9,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <source_location>
+#include <span>
+#include <stdexcept>
 #include <vector>
 #ifdef _WIN32
 #include <windows.h>
@@ -240,7 +242,7 @@ void CheckGuestMemory(const std::vector<std::uint8_t>& png, const std::vector<st
     source.offset = 0;
     const std::vector<std::uint8_t> truncated(png.begin(), png.begin() + 10);
     source.png = &truncated;
-    Require(scePngDecDecodeWithInputControl(decoder.handle, &param, guestInfo) == static_cast<std::int32_t>(0x80690010));
+    Require(scePngDecDecodeWithInputControl(decoder.handle, &param, guestInfo) == static_cast<std::int32_t>(0x80690012));
     Require(std::all_of(bytes, bytes + sizeof(info), [](auto byte) { return byte == 0xA5; }));
 
     output.Protect(false);
@@ -355,6 +357,201 @@ void CheckUnreadableChunk(const std::vector<std::uint8_t>& png) {
     }
 }
 
+template<typename TFunction>
+bool ThrowsRuntimeError(TFunction function) {
+    try {
+        function();
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
+}
+
+void AppendTestChunk(std::vector<std::uint8_t>& output, const char* type, std::span<const std::uint8_t> data, bool corruptCrc = false) {
+    const auto append32 = [&output](std::uint32_t value) {
+        for (int shift = 24; shift >= 0; shift -= 8) output.push_back(static_cast<std::uint8_t>(value >> shift));
+    };
+    const std::size_t crcStart = output.size() + 4;
+    append32(static_cast<std::uint32_t>(data.size()));
+    output.insert(output.end(), type, type + 4);
+    output.insert(output.end(), data.begin(), data.end());
+    std::uint32_t crc = 0xFFFFFFFFu;
+    for (std::size_t i = crcStart; i < output.size(); ++i) {
+        crc ^= output[i];
+        for (int bit = 0; bit < 8; ++bit) crc = (crc >> 1) ^ ((crc & 1) != 0 ? 0xEDB88320u : 0u);
+    }
+    append32((~crc) ^ (corruptCrc ? 1u : 0u));
+}
+
+void CheckReusedWorkMemory(const std::vector<std::uint8_t>& png, const std::vector<std::uint8_t>& expectedImage) {
+    const PngDecCreateParam create{sizeof(PngDecCreateParam), 0, IMAGE_WIDTH};
+    const std::int32_t memorySize = scePngDecQueryMemorySize(&create);
+    Require(memorySize > 0);
+    std::vector<std::uint8_t> work(static_cast<std::size_t>(memorySize));
+
+    void* firstHandle = nullptr;
+    Require(scePngDecCreate(&create, work.data(), static_cast<std::uint32_t>(work.size()), &firstHandle) == 0);
+    Source firstSource{&png};
+    PngDecInputControlParam parse{};
+    parse.input = &ReadChunk;
+    parse.input_argument = &firstSource;
+    parse.operation = 0x10;
+    PngDecImageInfo info{};
+    Require(scePngDecDecodeWithInputControl(firstHandle, &parse, &info) == 0);
+
+    void* secondHandle = nullptr;
+    Require(scePngDecCreate(&create, work.data(), static_cast<std::uint32_t>(work.size()), &secondHandle) == 0);
+    Require(secondHandle == firstHandle);
+
+    std::vector<std::uint8_t> image(expectedImage.size(), 0xCC);
+    Source secondSource{&png};
+    PngDecInputControlParam decode{};
+    decode.input = &ReadChunk;
+    decode.input_argument = &secondSource;
+    decode.operation = 0x20;
+    decode.image_mem_addr = image.data();
+    decode.image_mem_size = static_cast<std::uint32_t>(image.size());
+    decode.alpha_value = 0x77;
+    Require(ThrowsRuntimeError([&] { scePngDecDecodeWithInputControl(secondHandle, &decode, &info); }));
+    Require(std::all_of(image.begin(), image.end(), [](std::uint8_t byte) { return byte == 0xCC; }));
+
+    parse.input_argument = &secondSource;
+    Require(scePngDecDecodeWithInputControl(secondHandle, &parse, &info) == 0);
+    Require(scePngDecDecodeWithInputControl(secondHandle, &decode, &info) == static_cast<std::int32_t>((IMAGE_WIDTH << 16) | IMAGE_HEIGHT));
+    Require(image == expectedImage);
+    Require(scePngDecDelete(secondHandle) == 0);
+}
+
+void CheckStreamHeaderValidation(const std::vector<std::uint8_t>& rgbPng, const std::vector<std::uint8_t>& expectedRgbImage) {
+    constexpr std::int32_t invalidData = static_cast<std::int32_t>(0x80690010);
+    constexpr std::int32_t decodeError = static_cast<std::int32_t>(0x80690012);
+    const std::vector<std::uint8_t> palette(std::begin(PALETTE_TRNS), std::end(PALETTE_TRNS));
+    const auto parseWith = [](std::uint32_t maxWidth, const std::vector<std::uint8_t>& input, std::size_t chunkSize, PngDecImageInfo& info, Source& source) {
+        TestDecoder decoder(maxWidth);
+        source = Source{&input, 0, chunkSize};
+        PngDecInputControlParam param{};
+        param.input = &ReadChunk;
+        param.input_argument = &source;
+        param.operation = 0x10;
+        return scePngDecDecodeWithInputControl(decoder.handle, &param, &info);
+    };
+
+    PngDecImageInfo info{};
+    Source source{};
+
+    std::vector<std::uint8_t> oversizedChunk(palette.begin(), palette.begin() + 33);
+    oversizedChunk.insert(oversizedChunk.end(), {0x80, 0x00, 0x00, 0x00, 't', 'E', 'X', 't'});
+    oversizedChunk.insert(oversizedChunk.end(), 4096, 0);
+    Require(parseWith(2, oversizedChunk, 64, info, source) == decodeError);
+    Require(source.calls <= 2 && source.offset <= 128);
+
+    std::vector<std::uint8_t> invalidType(palette.begin(), palette.begin() + 33);
+    invalidType.insert(invalidType.end(), {0x00, 0x00, 0x00, 0x01, 'a', 'B', '1', 'd'});
+    invalidType.insert(invalidType.end(), 4096, 0);
+    Require(parseWith(2, invalidType, 64, info, source) == decodeError);
+    Require(source.calls <= 2 && source.offset <= 128);
+
+    std::vector<std::uint8_t> badHeaderCrc = palette;
+    badHeaderCrc[32] ^= 1u;
+    badHeaderCrc.insert(badHeaderCrc.end(), 4096, 0);
+    Require(parseWith(2, badHeaderCrc, 8, info, source) == decodeError);
+    Require(source.offset <= 64);
+
+    std::vector<std::uint8_t> zeroWidthHeader(palette.begin(), palette.begin() + 8);
+    std::vector<std::uint8_t> ihdr(palette.begin() + 16, palette.begin() + 29);
+    std::fill(ihdr.begin(), ihdr.begin() + 4, 0);
+    AppendTestChunk(zeroWidthHeader, "IHDR", ihdr);
+    zeroWidthHeader.insert(zeroWidthHeader.end(), palette.begin() + 33, palette.end());
+    zeroWidthHeader.insert(zeroWidthHeader.end(), 4096, 0);
+    Require(parseWith(2, zeroWidthHeader, 8, info, source) == invalidData);
+    Require(source.offset <= 64);
+
+    std::vector<std::uint8_t> secondIhdr(palette.begin(), palette.begin() + 33);
+    secondIhdr.insert(secondIhdr.end(), palette.begin() + 8, palette.begin() + 33);
+    secondIhdr.insert(secondIhdr.end(), 4096, 0);
+    Require(parseWith(2, secondIhdr, 8, info, source) == invalidData);
+    Require(source.offset <= 128);
+
+    std::vector<std::uint8_t> missingPalette(palette.begin(), palette.begin() + 33);
+    missingPalette.insert(missingPalette.end(), palette.begin() + 57, palette.end());
+    Require(parseWith(2, missingPalette, 7, info, source) == invalidData);
+
+    std::vector<std::uint8_t> shortPalette(palette.begin(), palette.begin() + 33);
+    const std::vector<std::uint8_t> tenPalette(10, 0x11);
+    AppendTestChunk(shortPalette, "PLTE", tenPalette);
+    shortPalette.insert(shortPalette.end(), palette.begin() + 73, palette.end());
+    Require(parseWith(2, shortPalette, 7, info, source) == invalidData);
+
+    std::vector<std::uint8_t> badPaletteCrc = palette;
+    badPaletteCrc[56] ^= 1u;
+    badPaletteCrc.insert(badPaletteCrc.end(), 4096, 0);
+    Require(parseWith(2, badPaletteCrc, 7, info, source) == decodeError);
+    Require(source.offset <= 128);
+
+    std::vector<std::uint8_t> duplicatePalette(palette.begin(), palette.begin() + 57);
+    duplicatePalette.insert(duplicatePalette.end(), palette.begin() + 33, palette.end());
+    Require(parseWith(2, duplicatePalette, 7, info, source) == invalidData);
+
+    std::vector<std::uint8_t> endBeforeIdat(palette.begin(), palette.begin() + 33);
+    AppendTestChunk(endBeforeIdat, "IEND", {});
+    endBeforeIdat.insert(endBeforeIdat.end(), 4096, 0);
+    Require(parseWith(2, endBeforeIdat, 7, info, source) == decodeError);
+    Require(source.offset <= 128);
+
+    std::vector<std::uint8_t> unknownCritical(palette.begin(), palette.begin() + 33);
+    const std::vector<std::uint8_t> criticalPayload = {1, 2, 3, 4};
+    AppendTestChunk(unknownCritical, "CRIT", criticalPayload);
+    unknownCritical.insert(unknownCritical.end(), 4096, 0);
+    Require(parseWith(2, unknownCritical, 7, info, source) == decodeError);
+    Require(source.offset <= 128);
+
+    const std::vector<std::uint8_t> truncatedPalette(palette.begin(), palette.begin() + 45);
+    Require(parseWith(2, truncatedPalette, 7, info, source) == decodeError);
+
+    const std::vector<std::uint8_t> shortSignature = {0x89, 0x50, 0x4E, 0x47};
+    Require(parseWith(2, shortSignature, 7, info, source) == invalidData);
+
+    std::vector<std::uint8_t> badTrnsCrc = palette;
+    badTrnsCrc[72] ^= 1u;
+    Require(parseWith(2, badTrnsCrc, 5, info, source) == 0);
+    Require(info.color_space == 4 && info.image_flag == 0);
+
+    std::vector<std::uint8_t> trnsBeforePlte(palette.begin(), palette.begin() + 33);
+    trnsBeforePlte.insert(trnsBeforePlte.end(), palette.begin() + 57, palette.begin() + 73);
+    trnsBeforePlte.insert(trnsBeforePlte.end(), palette.begin() + 33, palette.begin() + 57);
+    trnsBeforePlte.insert(trnsBeforePlte.end(), palette.begin() + 73, palette.end());
+    Require(parseWith(2, trnsBeforePlte, 5, info, source) == 0);
+    Require(info.color_space == 4 && info.image_flag == 0);
+
+    std::vector<std::uint8_t> badRgbTrns(rgbPng.begin(), rgbPng.begin() + 33);
+    const std::vector<std::uint8_t> fourBytes = {0, 1, 0, 2};
+    AppendTestChunk(badRgbTrns, "tRNS", fourBytes);
+    badRgbTrns.insert(badRgbTrns.end(), rgbPng.begin() + 33, rgbPng.end());
+    Require(parseWith(IMAGE_WIDTH, badRgbTrns, 7, info, source) == 0);
+    Require(info.color_space == 3 && info.image_flag == 0);
+
+    std::vector<std::uint8_t> textBeforeHeader(rgbPng.begin(), rgbPng.begin() + 8);
+    const std::vector<std::uint8_t> textPayload = {'k', 0, 'v'};
+    AppendTestChunk(textBeforeHeader, "tEXt", textPayload);
+    textBeforeHeader.insert(textBeforeHeader.end(), rgbPng.begin() + 8, rgbPng.end());
+    TestDecoder rgbDecoder(IMAGE_WIDTH);
+    Source textSource{&textBeforeHeader, 0, 7};
+    PngDecInputControlParam textParam{};
+    textParam.input = &ReadChunk;
+    textParam.input_argument = &textSource;
+    textParam.operation = 0x10;
+    PngDecImageInfo textInfo{};
+    Require(scePngDecDecodeWithInputControl(rgbDecoder.handle, &textParam, &textInfo) == 0);
+    Require(textInfo.image_width == IMAGE_WIDTH && textInfo.image_height == IMAGE_HEIGHT && textInfo.image_flag == 0);
+    std::vector<std::uint8_t> decodedImage(expectedRgbImage.size(), 0);
+    textParam.operation = 0x20;
+    textParam.image_mem_addr = decodedImage.data();
+    textParam.image_mem_size = static_cast<std::uint32_t>(decodedImage.size());
+    textParam.alpha_value = 0x77;
+    Require(scePngDecDecodeWithInputControl(rgbDecoder.handle, &textParam, &textInfo) == static_cast<std::int32_t>((IMAGE_WIDTH << 16) | IMAGE_HEIGHT));
+    Require(decodedImage == expectedRgbImage);
+}
+
 }
 
 int main() {
@@ -383,6 +580,8 @@ int main() {
     CheckGuestMemory(png, expectedImage);
     CheckShortIdat();
     CheckUnreadableChunk(png);
+    CheckReusedWorkMemory(png, expectedImage);
+    CheckStreamHeaderValidation(png, expectedImage);
 
     TestDecoder decoder(width);
     std::vector<std::uint8_t> image(width * height * 4, 0);
@@ -459,7 +658,7 @@ int main() {
         param.input = &ReadChunk;
         param.input_argument = &source;
         param.operation = 0x10;
-        Require(scePngDecDecodeWithInputControl(decoder.handle, &param, &info) == static_cast<std::int32_t>(0x80690010));
+        Require(scePngDecDecodeWithInputControl(decoder.handle, &param, &info) == static_cast<std::int32_t>(0x80690012));
     }
 
     {
