@@ -1707,6 +1707,13 @@ static void CheckReservedRangeIsNotCommitted() {
     Require(sceKernelVirtualQuery(static_cast<unsigned char*>(reserved) + page, 0, &info, sizeof(info)) == 0);
     Require(!info.is_committed && info.protection == 0);
     Require(info.start == start + page && info.end == start + page * 2);
+    char resident[2] = {0x55, 0x55};
+    Require(mincore_nid_postfix(reserved, page * 2, resident) == 0 && resident[0] == 1 && resident[1] == 0);
+    Require(sceKernelMprotect(fixed, page, 0) == 0);
+    Require(sceKernelVirtualQuery(reserved, 0, &info, sizeof(info)) == 0);
+    Require(info.is_committed && info.is_direct && info.protection == 0);
+    resident[0] = resident[1] = 0x55;
+    Require(mincore_nid_postfix(reserved, page * 2, resident) == 0 && resident[0] == 1 && resident[1] == 0);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(reserved), page * 2) == 0);
     Require(sceKernelReleaseDirectMemory(phys, page) == 0);
 }
@@ -4387,8 +4394,11 @@ static void CheckVirtualQuerySplitFlexibleRanges() {
         Require(info.start == reinterpret_cast<std::uintptr_t>(bytes + page * index));
         Require(info.end == info.start + page);
         Require(info.protection == (index == 1 ? 1 : 3));
-        Require(info.is_committed && info.is_flexible && !info.is_direct);
+        Require(!info.is_committed && info.is_flexible && !info.is_direct);
     }
+    int local = 0;
+    VirtualQueryInfo stack{};
+    Require(sceKernelVirtualQuery(&local, 0, &stack, sizeof(stack)) == 0 && !stack.is_committed && !stack.is_direct);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(bytes + page), page) == 0);
     for (std::size_t index : {std::size_t{0}, std::size_t{2}}) {
         VirtualQueryInfo info{};
@@ -4425,7 +4435,7 @@ static void CheckVirtualQueryWireLayout() {
     std::memcpy(&end, bytes + 8, sizeof(end));
     std::memcpy(&protection, bytes + 24, sizeof(protection));
     Require(start == reinterpret_cast<std::uintptr_t>(mapped) && end == start + page);
-    Require(protection == 3 && bytes[32] == 0x11); // flexible and committed
+    Require(protection == 3 && bytes[32] == 0x01);
     Require(std::memcmp(bytes + 33, name, sizeof(name)) == 0);
     Require(bytes[65] == 0 && bytes[66] == 0);
     Require(std::all_of(bytes + 67, bytes + 72, [](auto byte) { return byte == 0; }));
@@ -4848,6 +4858,20 @@ static void CheckArenaFirstFitAgainstPageModel() {
     GuestArenaRelease_nid_postfix(reinterpret_cast<void*>(begin), page * (pages + 8));
 }
 
+static int imageData = 1;
+
+static void CheckImagePagesAreNotCommitted() {
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.RegisterMainImage();
+    }
+    for (const void* address : {static_cast<const void*>(&imageData), reinterpret_cast<const void*>(&CheckImagePagesAreNotCommitted)}) {
+        VirtualQueryInfo info{};
+        Require(sceKernelVirtualQuery(address, 0, &info, sizeof(info)) == 0);
+        Require(!info.is_committed && !info.is_flexible && !info.is_direct);
+    }
+}
+
 int main(int argc, char** argv) {
 #ifdef _WIN32
     _putenv_s("APS5_PIN_WAIT_MS", "1000");
@@ -5198,4 +5222,5 @@ int main(int argc, char** argv) {
         Require(range.bytes == superpage + page && range.readable && range.writable);
     }
     Require(munmap_nid_postfix(aligned, superpage + page) == 0);
+    CheckImagePagesAreNotCommitted();
 }
