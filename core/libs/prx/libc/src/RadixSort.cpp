@@ -30,7 +30,7 @@
  * SUCH DAMAGE.
  */
 
-/* Adapted from FreeBSD release/11.4.0 lib/libc/gen/radixsort.c: https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/gen/radixsort.c */
+/* Adapted from FreeBSD release/11.4.0 lib/libc/stdlib/radixsort.c: https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/stdlib/radixsort.c */
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
