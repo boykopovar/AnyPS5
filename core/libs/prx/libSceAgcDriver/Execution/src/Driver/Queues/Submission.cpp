@@ -219,6 +219,10 @@ void Driver::copyCommands(Submission& submission, const std::uint32_t* guest, st
 
 bool Driver::copySegment(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget, std::size_t depth, const std::uint32_t* origin) {
     require(depth < MaximumSegmentDepth, "command buffer jumps nest too deeply (a jump loop?)");
+    const std::uint32_t* markGuest = guest;
+    std::size_t markWords = words;
+    std::size_t sinceMark = 0;
+    std::size_t markSpan = 1;
     for (;;) {
         const std::uint32_t* chained = nullptr;
         std::size_t chainedWords = 0;
@@ -227,6 +231,13 @@ bool Driver::copySegment(Submission& submission, const std::uint32_t* guest, std
         guest = chained;
         words = chainedWords;
         origin = nullptr;
+        require(guest != markGuest || words != markWords, "a chained indirect buffer leads back to a buffer of its own chain (a jump loop)");
+        if (++sinceMark == markSpan) {
+            markGuest = guest;
+            markWords = words;
+            sinceMark = 0;
+            markSpan *= 2;
+        }
     }
 }
 
