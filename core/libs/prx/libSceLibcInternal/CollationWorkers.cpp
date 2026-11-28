@@ -25,4 +25,12 @@ size_t APS5_VABI _Wcsxfrmx_nid_postfix(char16_t* destination, const char16_t* so
     return wcsxfrm_nid_postfix(destination, source, count);
 }
 
+size_t APS5_VABI _Wcsftime_nid_postfix(char16_t* destination, size_t count, const char16_t* format, const GuestTm* time, void* locale) {
+    (void)locale;
+    if (format == nullptr) throw std::invalid_argument("_Wcsftime: null format");
+    if (time == nullptr) throw std::invalid_argument("_Wcsftime: null time");
+    if (destination == nullptr && count != 0) throw std::invalid_argument("_Wcsftime: null destination");
+    return wcsftime_nid_postfix(reinterpret_cast<std::uint16_t*>(destination), count, reinterpret_cast<const std::uint16_t*>(format), time);
+}
+
 }

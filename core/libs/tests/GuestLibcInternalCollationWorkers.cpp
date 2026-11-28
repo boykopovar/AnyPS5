@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/GuestTime.hpp"
 #include "prx/libSceLibcInternal/libSceLibcInternal.hpp"
 #include <cstddef>
 #include <cstdio>
@@ -15,6 +16,8 @@ static_assert(std::is_same_v<decltype(&_Wcscollx_nid_postfix),
                              int (APS5_VABI*)(const char16_t*, const char16_t*, LibcCollationState*)>);
 static_assert(std::is_same_v<decltype(&_Wcsxfrmx_nid_postfix),
                              size_t (APS5_VABI*)(char16_t*, const char16_t*, size_t, LibcCollationState*)>);
+static_assert(std::is_same_v<decltype(&_Wcsftime_nid_postfix),
+                             size_t (APS5_VABI*)(char16_t*, size_t, const char16_t*, const GuestTm*, void*)>);
 
 void Require(bool condition, int line) {
     if (condition) return;
@@ -154,11 +157,51 @@ void CheckWcscollx() {
     REQUIRE(Rejects([&] { (void)_Wcscollx_nid_postfix(u"a", nullptr, state); }));
 }
 
+void CheckWcsftime() {
+    GuestTm tm{};
+    tm.tm_year = 120;
+    tm.tm_mon = 0;
+    tm.tm_mday = 1;
+    tm.tm_hour = 12;
+    tm.tm_min = 34;
+    tm.tm_sec = 56;
+
+    char16_t buffer[64];
+    constexpr char16_t Fill = u'#';
+    const auto reset = [&] { for (char16_t& unit : buffer) unit = Fill; };
+
+    reset();
+    size_t result = _Wcsftime_nid_postfix(buffer, 64, u"%Y-%m-%d", &tm, nullptr);
+    REQUIRE(result == 10);
+    REQUIRE(std::memcmp(buffer, u"2020-01-01", 10 * sizeof(char16_t)) == 0);
+
+    reset();
+    int dummyLocale = 42;
+    result = _Wcsftime_nid_postfix(buffer, 64, u"%Y-%m-%d", &tm, &dummyLocale);
+    REQUIRE(result == 10);
+    REQUIRE(std::memcmp(buffer, u"2020-01-01", 10 * sizeof(char16_t)) == 0);
+
+    reset();
+    char16_t expected[64];
+    for (char16_t& unit : expected) unit = Fill;
+    size_t expectedLen = wcsftime_nid_postfix(reinterpret_cast<std::uint16_t*>(expected), 64, reinterpret_cast<const std::uint16_t*>(u"%H:%M:%S"), &tm);
+    result = _Wcsftime_nid_postfix(buffer, 64, u"%H:%M:%S", &tm, nullptr);
+    REQUIRE(result == expectedLen);
+    REQUIRE(std::memcmp(buffer, expected, sizeof(buffer)) == 0);
+
+    REQUIRE(_Wcsftime_nid_postfix(nullptr, 0, u"%Y", &tm, nullptr) == 0);
+
+    REQUIRE(Rejects([&] { (void)_Wcsftime_nid_postfix(buffer, 64, nullptr, &tm, nullptr); }));
+    REQUIRE(Rejects([&] { (void)_Wcsftime_nid_postfix(buffer, 64, u"%Y", nullptr, nullptr); }));
+    REQUIRE(Rejects([&] { (void)_Wcsftime_nid_postfix(nullptr, 64, u"%Y", &tm, nullptr); }));
+}
+
 }
 
 int main() {
     CheckStrxfrmx();
     CheckWcsxfrmx();
     CheckWcscollx();
+    CheckWcsftime();
     return 0;
 }
