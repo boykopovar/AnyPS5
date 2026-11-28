@@ -19,7 +19,9 @@ namespace {
 using namespace AgcDriver::Graphics;
 using AgcDriver::Tests::SetAllocationFailureCountdown;
 
-enum class Fault { None, Timing, End, Submit };
+enum class Fault { None, Timing, End, Submit, Stall };
+
+constexpr unsigned StallTimeouts = 2;
 
 struct Probe {
     PFN_vkGetDeviceProcAddr real = nullptr;
@@ -30,6 +32,7 @@ struct Probe {
     unsigned queries = 0;
     unsigned idleWaits = 0;
     unsigned fenceWaits = 0;
+    unsigned timeouts = 0;
     unsigned premature = 0;
     unsigned safetyWaits = 0;
     unsigned nativePending = 0;
@@ -101,6 +104,10 @@ VKAPI_ATTR VkResult VKAPI_CALL QueueIdle(VkQueue queue) {
 
 VKAPI_ATTR VkResult VKAPI_CALL WaitFences(VkDevice device, std::uint32_t count, const VkFence* fences, VkBool32 all, std::uint64_t timeout) {
     ++probe.fenceWaits;
+    if (probe.fault == Fault::Stall && probe.timeouts < StallTimeouts) {
+        ++probe.timeouts;
+        return VK_TIMEOUT;
+    }
     const auto result = probe.real != nullptr ? reinterpret_cast<PFN_vkWaitForFences>(probe.real(device, "vkWaitForFences"))(device, count, fences, all, timeout) : VK_SUCCESS;
     if (result == VK_SUCCESS) probe.pending = false;
     return result;
@@ -151,6 +158,7 @@ bool RunCase(const Context& original, Fault fault, bool wait, bool native) {
     bool allocationFailed = false;
     bool apiFailed = false;
     bool waitFailed = false;
+    const auto stallsBefore = CommandBatchWaitStalls();
     {
         AgcDriver::FrameTiming frame(1, true);
         AgcDriver::PerformanceContext timing(&frame);
@@ -188,9 +196,14 @@ bool RunCase(const Context& original, Fault fault, bool wait, bool native) {
         pixels = std::all_of(words, words + bytes / sizeof(*words), [](auto word) { return word == pattern; });
     }
     const bool rejected = fault == Fault::End || fault == Fault::Submit;
-    const bool complete = rejected ? probe.queries == 0 && probe.idleWaits == 0 && probe.fenceWaits == 0 : wait ? probe.fenceWaits == 1 : probe.queries == 1;
-    const bool passed = allocationFailed == (fault == Fault::Timing) && apiFailed == rejected && !waitFailed && !probe.pending && probe.submitted == (rejected ? 0u : 1u) && probe.premature == 0 && probe.freed == 1 && probe.destroyed == 1 && complete && pixels;
-    std::printf("command batch fault=%u wait=%u allocation failed=%u submitted=%u premature=%u safety waits=%u queries=%u idle waits=%u fence waits=%u readbacks=%u correct=%u wait failed=%u native pending=%u\n", static_cast<unsigned>(fault), wait, allocationFailed, probe.submitted, probe.premature, probe.safetyWaits, probe.queries, probe.idleWaits, probe.fenceWaits, output && probe.submitted != 0 ? 1u : 0u, pixels, waitFailed, probe.nativePending);
+    const bool stall = fault == Fault::Stall;
+    const auto stallsAfter = CommandBatchWaitStalls();
+    const auto stalledWaits = stallsAfter.waits - stallsBefore.waits;
+    const auto stalledSlices = stallsAfter.slices - stallsBefore.slices;
+    const bool counted = stall ? stalledWaits == 1 && stalledSlices == StallTimeouts : stalledWaits == 0 && stalledSlices == 0;
+    const bool complete = rejected ? probe.queries == 0 && probe.idleWaits == 0 && probe.fenceWaits == 0 : wait ? probe.fenceWaits == (stall ? StallTimeouts + 1 : 1u) : probe.queries == 1;
+    const bool passed = allocationFailed == (fault == Fault::Timing) && apiFailed == rejected && !waitFailed && !probe.pending && probe.submitted == (rejected ? 0u : 1u) && probe.premature == 0 && probe.freed == 1 && probe.destroyed == 1 && complete && counted && pixels;
+    std::printf("command batch fault=%u wait=%u allocation failed=%u submitted=%u premature=%u safety waits=%u queries=%u idle waits=%u fence waits=%u readbacks=%u correct=%u wait failed=%u native pending=%u stalled waits=%llu stalled slices=%llu\n", static_cast<unsigned>(fault), wait, allocationFailed, probe.submitted, probe.premature, probe.safetyWaits, probe.queries, probe.idleWaits, probe.fenceWaits, output && probe.submitted != 0 ? 1u : 0u, pixels, waitFailed, probe.nativePending, static_cast<unsigned long long>(stalledWaits), static_cast<unsigned long long>(stalledSlices));
     return passed;
 }
 
@@ -265,6 +278,7 @@ void AgcDriver::Tests::RunCommandBatchFailureTests(const AgcDriver::Graphics::Co
         for (const auto wait : {false, true}) if (!RunCase(context, fault, wait, native)) ++failures;
     }
     for (const auto fault : {Fault::End, Fault::Submit}) if (!RunCase(context, fault, false, native)) ++failures;
+    if (!RunCase(context, Fault::Stall, true, native)) ++failures;
     if (!native && !RunMarkCases(context)) ++failures;
     Require(failures == 0, "command batch failure handling released pending work or lost its submission state");
 }

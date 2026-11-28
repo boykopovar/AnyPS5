@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <bit>
 #include <limits>
+#include <optional>
 #include <set>
 #include <span>
 #include <utility>
@@ -15,6 +16,8 @@
 namespace Elfpatcher {
 
 namespace {
+
+constexpr std::uint64_t kGuestLoadAlignmentLimit = 0x80000000;
 
 void validateRelroCoverage(
     const std::vector<Domain::ProgramHeader>& inputHeaders,
@@ -144,16 +147,19 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
             needsTlsResolver = true;
         }
     }
+    std::optional<std::uint64_t> zeroExportThunk;
     for (std::size_t index = 1; index < image.Symbols.size(); ++index) {
         const auto& symbol = image.Symbols[index];
         if (symbol.Value != 0 || symbol.Section == 0 || symbol.Section >= 0xff00 || (symbol.Info >> 4) == 0 ||
             (symbol.Info & 15) != 2 || symbol.Visibility == 1 || symbol.Visibility == 2) continue;
-        const auto thunk = address();
-        if (thunk > static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max()) - 5)
-            throw Domain::RelinkerException("Guest export at address 0 exceeds relative branch range");
-        bytes.push_back(0xe9);
-        Io::AppendU32(bytes, static_cast<std::uint32_t>(-static_cast<std::int32_t>(thunk + 5)));
-        Io::WriteU64(symbols, index * 24 + 8, thunk);
+        if (!zeroExportThunk) {
+            zeroExportThunk = address();
+            if (*zeroExportThunk > static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max()) - 5)
+                throw Domain::RelinkerException("Guest export at address 0 exceeds relative branch range");
+            bytes.push_back(0xe9);
+            Io::AppendU32(bytes, static_cast<std::uint32_t>(-static_cast<std::int32_t>(*zeroExportThunk + 5)));
+        }
+        Io::WriteU64(symbols, index * 24 + 8, *zeroExportThunk);
     }
     if (!image.BindingAliases.empty()) {
         if (symbols.size() % 24 != 0) throw Domain::RelinkerException("Invalid guest symbol table for binding aliases");
@@ -434,6 +440,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
         if (headers[index].Type == 1) order.push_back(index);
     std::vector<std::vector<std::uint8_t>> prefixes(headers.size());
     std::vector<bool> moved(headers.size(), false);
+    std::vector<std::uint64_t> copyStarts(headers.size(), 0);
     auto cursor = static_cast<std::uint64_t>(bytes.size() + phCount * 56);
     for (std::size_t position = 0; position < order.size(); ++position) {
         auto& load = headers[order[position]];
@@ -460,11 +467,13 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
         for (std::size_t index = 0; index < page.size() && !differs && sharesMoved; ++index)
             differs = covered[index] && bytes[static_cast<std::size_t>(mapped) + index] != page[index];
         if (!differs) continue;
-        if (load.Alignment > kDefaultLoadAlignment)
-            throw Domain::RelinkerException("Guest PT_LOAD sharing a page with a moved load is aligned above the page", load.MappedAddress);
-        cursor = Io::AlignUp64(cursor, kDefaultLoadAlignment) + prefix;
-        load.Offset = cursor;
-        cursor += load.FileSize;
+        const auto alignment = std::max<std::uint64_t>(load.Alignment, kDefaultLoadAlignment);
+        if (alignment >= kGuestLoadAlignmentLimit)
+            throw Domain::RelinkerException("Guest PT_LOAD alignment is too large to place after a shared page", load.MappedAddress);
+        const auto start = Io::AlignUp64(cursor, alignment) + load.MappedAddress % alignment - prefix;
+        load.Offset = start + prefix;
+        cursor = load.Offset + load.FileSize;
+        copyStarts[order[position]] = start;
         prefixes[order[position]] = std::move(page);
         moved[order[position]] = true;
     }
@@ -482,7 +491,9 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
     }
     for (const auto index : order) {
         if (!moved[index]) continue;
-        Io::AlignBuffer(bytes, static_cast<std::size_t>(kDefaultLoadAlignment));
+        if (bytes.size() > copyStarts[index])
+            throw Domain::RelinkerException("Guest load copy overlaps the output", sources[index].MappedAddress);
+        bytes.resize(static_cast<std::size_t>(copyStarts[index]), 0);
         bytes.insert(bytes.end(), prefixes[index].begin(), prefixes[index].end());
         const auto offset = bytes.size();
         bytes.resize(offset + static_cast<std::size_t>(sources[index].FileSize));

@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
+#include <utility>
 
 namespace AgcDriver::DriverDetail {
 
@@ -125,8 +126,15 @@ void Driver::completeSubmission(std::uint64_t serial, std::uint64_t received, st
             if (notify) driver.changed.notify_all();
         }
     } complete{*this, serial, received, labelWrites};
-    if (flipWork != nullptr) finishFlipWork(flipWork, submitFlipWork(0));
-    else submitOpenWork(progress);
+    try {
+        if (flipWork != nullptr) finishFlipWork(flipWork, submitFlipWork(0));
+        else submitOpenWork(progress);
+    } catch (const ProcessShutdown&) {
+        throw;
+    } catch (...) {
+        ReportFailure(std::current_exception());
+        throw;
+    }
 }
 
 const std::atomic<std::uint64_t>*& Driver::workerQueued() {
@@ -224,11 +232,13 @@ void Driver::run(std::uint32_t id) noexcept {
 #endif
                 };
 
+                bool resumeIdleStore = false;
                 while (!ready()) {
                     if (!completionsPending() || (id != 0 && Graphics::Recorder::PendingCompletionLabels() == 0)) {
                         const auto idleEpochAtCheck = idleEpoch.load(std::memory_order_acquire);
                         const bool storeIdleResults = idleResultsPending();
-                        if (storeIdleResults) {
+                        const bool resumed = std::exchange(resumeIdleStore, false);
+                        if (storeIdleResults && !resumed) {
                             queue0Dormant.store(true, std::memory_order_relaxed);
                             const auto quietUntil = std::chrono::steady_clock::now() + IdleResultsQuietPeriod;
                             const auto idleEpochAtWait = idleEpoch.load(std::memory_order_acquire);
@@ -243,13 +253,25 @@ void Driver::run(std::uint32_t id) noexcept {
                             if (!idleResultsPending()) continue;
                         }
                         lock.unlock();
+                        bool storeYielded = false;
                         if (storeIdleResults) {
-                            if (const auto localDevice = device.Load()) localDevice->StoreIdleResults(true, [&] { return worker.queued.load(std::memory_order_acquire) != 0 || runningWorkers.load(std::memory_order_acquire) != 0; });
+                            const auto queueBusy = [&] { return worker.queued.load(std::memory_order_acquire) != 0 || runningWorkers.load(std::memory_order_acquire) != 0; };
+                            if (const auto localDevice = device.Load()) storeYielded = !localDevice->StoreIdleResults(true, queueBusy);
                         }
                         lock.lock();
+                        if (storeYielded) {
+                            const auto handedOff = [&] {
+                                return ready() || completionsPending() || idleEpoch.load(std::memory_order_acquire) != idleEpochAtCheck || GuestMemory::GpuMutex().Waiters() == 0;
+                            };
+                            while (!handedOff()) poll(handedOff);
+                        }
                         if (ready()) break;
+                        const bool epochMoved = idleEpoch.load(std::memory_order_acquire) != idleEpochAtCheck;
                         if (id == 0 && allQueuesIdle() && !completionsPending()
-                            && ((idleStore && !storeIdleResults && Graphics::StorageTexture::AnyPending()) || idleEpoch.load(std::memory_order_acquire) != idleEpochAtCheck)) continue;
+                            && ((idleStore && (!storeIdleResults || storeYielded) && Graphics::StorageTexture::AnyPending()) || epochMoved)) {
+                            resumeIdleStore = storeYielded && !epochMoved;
+                            continue;
+                        }
                         if (id == 0) queue0Dormant.store(true, std::memory_order_relaxed);
                         const auto idleEpochAtWait = idleEpoch.load(std::memory_order_acquire);
                         changed.wait(lock, [&] { return ready() || (id == 0 && (idleEpoch.load(std::memory_order_acquire) != idleEpochAtWait || completionsPending())); });

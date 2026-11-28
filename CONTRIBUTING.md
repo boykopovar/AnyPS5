@@ -95,6 +95,6 @@ A link to a Markdown file with a `#fragment` must name a heading of that file, a
 
 ## Maintainer scripts
 
-- `tools/rebase_verify.py <old> <new> [--onto BRANCH] [--repo REPO]` checks that a rebased branch kept its added and deleted lines, file modes, authors and commits. `--onto` names the branch the new commits sit on; by default it is `upstream/main`, then `origin/main`.
-- `tools/pr_labels.py (--pr N | --all) [--dry-run] [--json]` labels pull requests from their title and template fields. `--dry-run` prints the planned changes and writes nothing.
-- `tools/pr_unchanged.py [--dry-run]` labels open pull requests whose merge would not change `main`. `--dry-run` prints the planned changes and writes nothing.
+- `python3 tools/rebase_verify.py <old> <new> [--onto BRANCH] [--repo REPO]` checks that a rebased branch kept its added and deleted lines, file modes, authors and commits. `--onto` names the branch the new commits sit on; by default it is `upstream/main`, then `origin/main`.
+- `python3 tools/pr_labels.py (--pr N | --all) [--dry-run] [--json]` labels pull requests from their title and template fields. `--dry-run` prints the planned changes and writes nothing.
+- `python3 tools/pr_unchanged.py [--dry-run]` labels open pull requests whose merge would not change `main`. `--dry-run` prints the planned changes and writes nothing.

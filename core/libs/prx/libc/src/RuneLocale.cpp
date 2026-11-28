@@ -1,14 +1,39 @@
+#include "LibcxxRegexCollation.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <iterator>
+#include <optional>
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+
+namespace {
+
+std::optional<char> FindCollatingElement(std::string_view name) {
+    if (name.size() == 1) {
+        const char character = name.front();
+        if ((character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z')) return character;
+    }
+    using LibcxxRegex::CollatingElements;
+    const auto* entry = std::ranges::lower_bound(CollatingElements, name, {}, &LibcxxRegex::CollatingElement::name);
+    if (entry != std::end(CollatingElements) && entry->name == name) return entry->character;
+    return std::nullopt;
+}
+
+struct ShortString {
+    unsigned char sizeAndTag;
+    char characters[23];
+};
+static_assert(sizeof(ShortString) == 24);
+
+}
 
 namespace GuestRune {
 
@@ -194,6 +219,45 @@ std::uint64_t APS5_VABI wctype_nid_postfix(const char* property) {
         if (name == entry.name) return entry.mask;
     }
     return 0;
+}
+
+std::uint64_t APS5_VABI _ZNSt3__115__get_classnameEPKcb_nid_postfix(const char* property, bool caseInsensitive) {
+    constexpr auto alnum = GuestRune::Alpha | GuestRune::Digit;
+    constexpr auto letterCase = GuestRune::Lower | GuestRune::Upper;
+    constexpr auto word = 0x80 | alnum | letterCase;
+    static constexpr struct {
+        const char* name;
+        std::uint64_t mask;
+    } classes[] = {
+        {"alnum", alnum}, {"alpha", GuestRune::Alpha}, {"blank", GuestRune::Blank},
+        {"cntrl", GuestRune::Control}, {"d", GuestRune::Digit}, {"digit", GuestRune::Digit},
+        {"graph", alnum | GuestRune::Punct}, {"lower", GuestRune::Lower}, {"print", GuestRune::Print},
+        {"punct", GuestRune::Punct}, {"s", GuestRune::Space}, {"space", GuestRune::Space},
+        {"upper", GuestRune::Upper}, {"w", word}, {"xdigit", GuestRune::Hex},
+    };
+    std::string name;
+    if (CopyGuestString_nid_no_patch(property, sizeof("xdigit"), name) != 0) return 0;
+    for (const auto& entry : classes) {
+        if (name != entry.name) continue;
+        if (caseInsensitive && (entry.mask & letterCase) != 0) return entry.mask | GuestRune::Alpha;
+        return entry.mask;
+    }
+    return 0;
+}
+
+void* APS5_VABI _ZNSt3__120__get_collation_nameEPKc_nid_postfix(void* result, const char* name) {
+    ShortString value{};
+    std::string element;
+    if (CopyGuestString_nid_no_patch(name, sizeof("right-square-bracket"), element) == 0) {
+        if (const auto character = FindCollatingElement(element)) {
+            value.sizeAndTag = 2;
+            value.characters[0] = *character;
+        }
+    }
+    if (!GuestCopyOut_nid_no_patch(result, &value, sizeof(value))) {
+        throw std::invalid_argument("libc++ collation name: unwritable result");
+    }
+    return result;
 }
 
 std::uint32_t APS5_VABI towlower_nid_postfix(std::uint32_t c) {
