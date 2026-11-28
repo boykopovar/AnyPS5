@@ -12,6 +12,11 @@
 #include <new>
 #include <vector>
 
+extern "C" {
+extern const cairo_font_face_t _cairo_font_face_nil;
+extern const cairo_font_face_t _cairo_font_face_nil_file_not_found;
+}
+
 namespace {
 
 constexpr int kSuccess = 0;
@@ -82,6 +87,8 @@ void FinalizeBackend(void* data) {
 
 CairoFontFace* CairoFontFaceFromBackend_nid_no_patch(cairo_font_face_t* face) {
     if (!face) return nullptr;
+    if (face == &_cairo_font_face_nil) return CairoFontFaceNilNoMemory();
+    if (face == &_cairo_font_face_nil_file_not_found) return CairoFontFaceNilFileNotFound();
     std::lock_guard lock(BackendMutex());
     if (aps5_cairo_font_face_get_reference_count(face) == 0) {
         static auto* faces = new std::map<cairo_font_face_t*, CairoFontFaceState*>;
@@ -107,12 +114,14 @@ cairo_font_face_t* CairoFontFaceBackend_nid_no_patch(CairoFontFace* face, const 
 }
 
 CairoFontFace* CairoFontFaceNilNoMemory() {
-    static CairoFontFaceState nil{.immortal = true, .status = kNoMemory};
+    static CairoFontFaceState nil{.immortal = true, .status = kNoMemory,
+        .backend = const_cast<cairo_font_face_t*>(&_cairo_font_face_nil)};
     return Handle(&nil);
 }
 
 CairoFontFace* CairoFontFaceNilFileNotFound() {
-    static CairoFontFaceState nil{.immortal = true, .status = kFileNotFound};
+    static CairoFontFaceState nil{.immortal = true, .status = kFileNotFound,
+        .backend = const_cast<cairo_font_face_t*>(&_cairo_font_face_nil_file_not_found)};
     return Handle(&nil);
 }
 

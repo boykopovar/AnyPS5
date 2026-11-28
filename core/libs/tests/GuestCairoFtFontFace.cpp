@@ -1,4 +1,4 @@
-#include "prx/libcairo/include/FontFace.hpp"
+#include "prx/libcairo/libcairo.hpp"
 #include "prx/libfontconfig/libfontconfig.hpp"
 
 #include <chrono>
@@ -84,6 +84,22 @@ void CheckMissingFile(const std::string& missing) {
     CairoFontFace* face = FaceFor(missing, nullptr);
     Require(face == FaceFor(missing, nullptr), "missing files share the nil face");
     Require(IsNil(face, 18), "missing file gives CAIRO_STATUS_FILE_NOT_FOUND");
+    const CairoMatrix identity{1, 0, 0, 1, 0, 0};
+    auto* options = cairo_font_options_create();
+    auto* scaled = cairo_scaled_font_create(face, &identity, &identity, options);
+    Require(cairo_scaled_font_status(scaled) == 18, "scaled font preserves the missing file error");
+    auto* noMemory = cairo_scaled_font_get_font_face(scaled);
+    Require(IsNil(noMemory, 1), "failed scaled font returns the no-memory face");
+    auto* surface = cairo_image_surface_create(0, 1, 1);
+    auto* context = cairo_create(surface);
+    cairo_set_font_face(context, face);
+    Require(cairo_surface_status(cairo_get_target(context)) == 18, "context preserves the missing file error");
+    cairo_set_font_face(context, noMemory);
+    Require(cairo_surface_status(cairo_get_target(context)) == 18, "context keeps its first error");
+    cairo_destroy(context);
+    cairo_surface_destroy(surface);
+    cairo_scaled_font_destroy(scaled);
+    cairo_font_options_destroy(options);
     Require(cairo_font_face_reference(face) == face, "nil face reference");
     cairo_font_face_destroy(face);
     Require(IsNil(face, 18), "nil face survives destroy");
