@@ -30,7 +30,12 @@ namespace {
 
 std::mutex shutdownMutex;
 std::condition_variable shutdownChanged;
+struct ShutdownWaitHook {
+    void (*beforeWait)();
+    void (*afterWait)();
+};
 std::vector<void (*)()> shutdownCallbacks;
+std::vector<ShutdownWaitHook> shutdownWaitHooks;
 std::thread::id shutdownThread;
 bool shutdownStarted = false;
 bool shutdownFinished = false;
@@ -76,12 +81,41 @@ extern "C" void LibcRegisterShutdown_nid_postfix(void (*callback)()) {
     shutdownCallbacks.push_back(callback);
 }
 
+extern "C" void LibcRegisterShutdownWaitHook_nid_no_patch(void (*beforeWait)(), void (*afterWait)()) {
+    std::lock_guard lock(shutdownMutex);
+    if (beforeWait == nullptr || afterWait == nullptr) throw std::runtime_error("libc: invalid shutdown wait hook");
+    shutdownWaitHooks.push_back({beforeWait, afterWait});
+}
+
 extern "C" void LibcRunShutdown_nid_postfix() {
     std::unique_lock lock(shutdownMutex);
     if (shutdownStarted) {
         if (!shutdownFinished && shutdownThread == std::this_thread::get_id()) throw std::runtime_error("libc: recursive shutdown");
-        shutdownChanged.wait(lock, [] { return shutdownFinished; });
-        if (shutdownFailure) std::rethrow_exception(shutdownFailure);
+        if (!shutdownFinished) {
+            const auto hooks = shutdownWaitHooks;
+            lock.unlock();
+            std::size_t entered = 0;
+            struct RestoreHooks {
+                const std::vector<ShutdownWaitHook>& hooks;
+                std::size_t& entered;
+                ~RestoreHooks() {
+                    while (entered > 0) {
+                        --entered;
+                        hooks[entered].afterWait();
+                    }
+                }
+            } restore{hooks, entered};
+            for (; entered < hooks.size(); ++entered) hooks[entered].beforeWait();
+            lock.lock();
+            shutdownChanged.wait(lock, [] { return shutdownFinished; });
+            const auto failure = shutdownFailure;
+            lock.unlock();
+            if (failure) std::rethrow_exception(failure);
+            return;
+        }
+        const auto failure = shutdownFailure;
+        lock.unlock();
+        if (failure) std::rethrow_exception(failure);
         return;
     }
     shutdownStarted = true;
