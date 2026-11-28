@@ -923,6 +923,39 @@ void RunAnisoOverrideTests(AgcDriver::VulkanDevice& device) {
     }
 }
 
+void RunAdjustSamplerTests(AgcDriver::VulkanDevice& device) {
+    constexpr std::size_t sample = 21u;
+    constexpr std::uint32_t implicitLod = 0xf0808f08u;
+    constexpr std::uint32_t orLiteralIntoSamplerDword3 = 0x8823ff23u;
+    constexpr std::uint32_t adjustValues = 0x00005000u;
+    Fill();
+    Table = {};
+    Keys = {};
+    Srt = {};
+    const auto image = Image(FloatTexels.data(), Format32Float);
+    SetRecord(0, PointClamp, image);
+    SetRecord(1, PointWrap, image);
+    alignas(256) auto plain = TableSamplerCode;
+    plain[sample] = implicitLod;
+    alignas(256) std::array<std::uint32_t, TableSamplerCode.size() + 2u> adjusted{};
+    std::copy_n(TableSamplerCode.begin(), sample, adjusted.begin());
+    adjusted[sample] = orLiteralIntoSamplerDword3;
+    adjusted[sample + 1u] = adjustValues;
+    adjusted[sample + 2u] = implicitLod | 1u;
+    std::copy(TableSamplerCode.begin() + sample + 1u, TableSamplerCode.end(), adjusted.begin() + sample + 3u);
+    for (const std::uint32_t record : {0u, 1u}) {
+        Keys[0] = record;
+        Keys[1] = 1u - record;
+        const auto control = RunDirectCode(device, plain, PointClamp, image);
+        const auto outcome = RunDirectCode(device, adjusted, PointClamp, image);
+        const auto what = "image table image_sample_a with table S# record " + std::to_string(record);
+        Require(!Faulted(control), what + ": the image_sample control faulted:\n" + control.log);
+        Require(!Faulted(outcome), what + " faulted:\n" + outcome.log);
+        Require(Holds(outcome.samplerTable, PointClamp) && Holds(outcome.samplerTable, PointWrap), what + " did not capture both table samplers");
+        Require(Group(outcome, 0) == Group(control, 0), what + " returned other texels than image_sample");
+    }
+}
+
 void RunTests(AgcDriver::VulkanDevice& device) {
     Fill();
     const auto floatImage = Image(FloatTexels.data(), Format32Float);
@@ -2725,6 +2758,7 @@ int main(int argc, char** argv) {
         RunTests(*device);
         RunBorderSwizzleTests(*device);
         RunAnisoOverrideTests(*device);
+        RunAdjustSamplerTests(*device);
         RunReadTests(*device);
         RunIndirectThreadDimensionTests(*device);
         RunLoopKeyTests(*device);
