@@ -36,7 +36,6 @@ void APS5_VABI WKContextSetPlugInAutoStartOriginsFilteringOutEntriesAddedAfterTi
 void APS5_VABI WKContextSetPrimaryWebsiteDataStore();
 void APS5_VABI WKCookieManagerDeleteAllCookies();
 void APS5_VABI WKCookieManagerSetHTTPCookieAcceptPolicy();
-void APS5_VABI WKPreferencesSetQTKitEnabled();
 void APS5_VABI WKWebsiteDataStoreClearAllDeviceOrientationPermissions();
 void APS5_VABI WKWebsiteDataStoreReinitializeAppBoundDomains();
 void APS5_VABI WKWebsiteDataStoreSetAppBoundDomainsForTesting();
