@@ -241,7 +241,16 @@ void CheckHeaps() {
     Reject([&] { allocate(image, RuntimeAbi::SampledHeapCapacity + 1u); }, "heap capacity exceeded");
     Require(BindingAllocator{}.FindBinding(allocate(image, 40u).layout, DescriptorBindingForImage(image)).resources.size() == 40u, "a sampled heap does not hold 40 images of one class");
     Require(BindingAllocator{}.FindBinding(allocate(image, RuntimeAbi::SampledHeapCapacity).layout, DescriptorBindingForImage(image)).resources.size() == RuntimeAbi::SampledHeapCapacity, "a sampled heap does not hold a full class of images");
-    Reject([&] { allocate(image, 1u, RuntimeAbi::SamplerHeapCapacity + 1u); }, "metadata capacity");
+    Reject([&] { allocate(image, 1u, RuntimeAbi::SamplerHeapCapacity + 1u); }, "sampler pairs");
+    {
+        IrProgram program;
+        program.Metadata().shaderInfoComplete = true;
+        program.Resources().info.images.assign(1u, image);
+        program.Resources().info.samplers.resize(ShaderInfo::MaxSamplers);
+        for (std::uint32_t sampler = 0u; sampler + RuntimeAbi::SamplerHeapCapacity / 2u < ShaderInfo::MaxSamplers; ++sampler) program.Resources().info.samplers[sampler].table = 0u;
+        const auto tableSamplers = BindingAllocator{}.Allocate(program, {0u, 0u, 0u, 128u});
+        Require(BindingAllocator{}.FindBinding(tableSamplers.layout, DescriptorBindingKind::Samplers).resources.size() == RuntimeAbi::SamplerHeapCapacity && tableSamplers.layout.ShaderDataDwords() == single.layout.ShaderDataDwords(), "a shader with 32 direct samplers among 128 did not fill the sampler heap with the same runtime layout");
+    }
     image.resourceClass = ImageResourceClass::Storage;
     image.mipMode = ImageMipMode::DynamicStorage;
     image.mipCount = RuntimeAbi::StorageMipSlots;
