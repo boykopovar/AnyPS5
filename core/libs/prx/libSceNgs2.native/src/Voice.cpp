@@ -136,11 +136,24 @@ std::uint32_t Ngs2Voice::UserFxFlags(std::uint32_t flags) const {
 }
 
 void Ngs2Voice::SetEvent(std::uint32_t eventId) {
+    if (PS4_LIBRARY && eventId != 0 && (eventId & ~0x3fu) == 0 && (eventId & (eventId - 1u)) != 0) {
+        if ((eventId & SCE_NGS2_VOICE_EVENT_PLAY) != 0 && channels == 0) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_VOICE_ACCESS};
+        if ((eventId & SCE_NGS2_VOICE_EVENT_PLAY) != 0) SetEvent(SCE_NGS2_VOICE_EVENT_PLAY);
+        if ((eventId & SCE_NGS2_VOICE_EVENT_STOP) != 0) SetEvent(SCE_NGS2_VOICE_EVENT_STOP);
+        if ((eventId & SCE_NGS2_VOICE_EVENT_STOP_IMM) != 0) SetEvent(SCE_NGS2_VOICE_EVENT_STOP_IMM);
+        if ((eventId & SCE_NGS2_VOICE_EVENT_KILL) != 0) SetEvent(SCE_NGS2_VOICE_EVENT_KILL);
+        if ((eventId & SCE_NGS2_VOICE_EVENT_PAUSE) != 0) SetEvent(SCE_NGS2_VOICE_EVENT_PAUSE);
+        if ((eventId & SCE_NGS2_VOICE_EVENT_RESUME) != 0) SetEvent(SCE_NGS2_VOICE_EVENT_RESUME);
+        return;
+    }
     if (state != Ngs2PlayState::Empty &&
         (eventId == SCE_NGS2_VOICE_EVENT_STOP || eventId == SCE_NGS2_VOICE_EVENT_STOP_IMM || eventId == SCE_NGS2_VOICE_EVENT_KILL)) {
         for (auto& gain : customGain) if (gain.configured) gain.lifecycleUnknown = true;
     }
     switch (eventId) {
+        case 0:
+            if (!PS4_LIBRARY) throw std::invalid_argument("NGS2: unknown voice event " + Ngs2Hex(eventId));
+            break;
         case SCE_NGS2_VOICE_EVENT_PLAY:
             if (IsSampler() && (state == Ngs2PlayState::Playing || state == Ngs2PlayState::Paused) &&
                 std::any_of(filters.begin(), filters.end(), [](const Ngs2Filter& filter) { return filter.enabled; })) {
@@ -204,6 +217,12 @@ void Ngs2Voice::SetEvent(std::uint32_t eventId) {
 static std::uint32_t PendingChannels(const Ngs2Voice& voice);
 
 static void ValidateDeferredEvent(const Ngs2Voice& voice, std::uint32_t event) {
+    if (PS4_LIBRARY && event == 0) return;
+    if (PS4_LIBRARY && event != 0 && (event & ~0x3fu) == 0) {
+        if ((event & SCE_NGS2_VOICE_EVENT_PLAY) != 0 && PendingChannels(voice) == 0) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_VOICE_ACCESS};
+        if (!voice.IsSampler() && !voice.IsMixer()) throw std::runtime_error("NGS2: deferred events for this voice configuration are not implemented");
+        return;
+    }
     if (event == SCE_NGS2_VOICE_EVENT_PLAY && PendingChannels(voice) == 0) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_VOICE_ACCESS};
     if (!voice.IsSampler() && !voice.IsMixer()) throw std::runtime_error("NGS2: deferred events for this voice configuration are not implemented");
     switch (event) {
@@ -220,7 +239,13 @@ static void ValidateDeferredEvent(const Ngs2Voice& voice, std::uint32_t event) {
 static void PublishPendingEvent(Ngs2Voice& voice, const Ngs2PendingControl& control) {
     const auto* event = std::get_if<std::uint32_t>(&control);
     if (event == nullptr) return;
-    if (*event == SCE_NGS2_VOICE_EVENT_PLAY) {
+    if (PS4_LIBRARY && (*event & SCE_NGS2_VOICE_EVENT_KILL) != 0) {
+        voice.pendingPlay = false;
+        if (!voice.IsMastering()) voice.KillForRender(true);
+    } else if (PS4_LIBRARY && (*event & SCE_NGS2_VOICE_EVENT_PLAY) != 0) {
+        voice.pendingPlay = true;
+        if (Ngs2HasPitchShift(voice)) voice.KillForRender(false);
+    } else if (*event == SCE_NGS2_VOICE_EVENT_PLAY) {
         voice.pendingPlay = true;
         if (Ngs2HasPitchShift(voice)) voice.KillForRender(false);
     } else if (*event == SCE_NGS2_VOICE_EVENT_KILL) {
@@ -234,6 +259,7 @@ static bool DeferringControls(const Ngs2Voice& voice) {
 }
 
 static void EnqueueControl(Ngs2Voice& voice, Ngs2PendingControl control) {
+    if (PS4_LIBRARY && std::holds_alternative<std::uint32_t>(control) && std::get<std::uint32_t>(control) == 0) return;
     voice.pendingControls.push_back(std::move(control));
     PublishPendingEvent(voice, voice.pendingControls.back());
 }
@@ -800,7 +826,24 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param);
 
 void Ngs2Voice::ApplyPendingControls() {
     bool restart = false, stop = false, kill = false;
+    std::uint32_t stopEvent = 0;
     std::uint32_t pause = 0;
+    const auto reduceEvent = [&](std::uint32_t event) {
+        if (event == SCE_NGS2_VOICE_EVENT_PLAY) {
+            restart = true;
+            stop = kill = false;
+            stopEvent = 0;
+            pause = 0;
+        } else if (event == SCE_NGS2_VOICE_EVENT_KILL) {
+            restart = stop = false;
+            kill = true;
+            stopEvent = 0;
+            pause = 0;
+        } else if (event == SCE_NGS2_VOICE_EVENT_STOP || event == SCE_NGS2_VOICE_EVENT_STOP_IMM) {
+            stop = true;
+            if (PS4_LIBRARY) stopEvent = event;
+        } else if (event != 0) pause = event;
+    };
     const auto applyEvents = [&] {
         if (kill) {
             SetEvent(SCE_NGS2_VOICE_EVENT_KILL);
@@ -810,7 +853,8 @@ void Ngs2Voice::ApplyPendingControls() {
                 if (state != Ngs2PlayState::Empty) state = Ngs2PlayState::Stopped;
                 SetEvent(SCE_NGS2_VOICE_EVENT_PLAY);
             }
-            if (stop) SetEvent(SCE_NGS2_VOICE_EVENT_STOP);
+            if (stopEvent != 0) SetEvent(stopEvent);
+            else if (stop) SetEvent(SCE_NGS2_VOICE_EVENT_STOP);
             else if (pause != 0) SetEvent(pause);
             if (restart && pause == SCE_NGS2_VOICE_EVENT_PAUSE && !stop) {
                 outputTransition = Ngs2VoiceTransition::None;
@@ -818,6 +862,7 @@ void Ngs2Voice::ApplyPendingControls() {
             }
         }
         restart = stop = kill = false;
+        stopEvent = 0;
         pause = 0;
     };
     std::size_t applied = 0;
@@ -826,16 +871,10 @@ void Ngs2Voice::ApplyPendingControls() {
             std::visit([&](auto& value) {
                 using TValue = std::decay_t<decltype(value)>;
                 if constexpr (std::is_same_v<TValue, std::uint32_t>) {
-                    if (value == SCE_NGS2_VOICE_EVENT_PLAY) {
-                        restart = true;
-                        stop = kill = false;
-                        pause = 0;
-                    } else if (value == SCE_NGS2_VOICE_EVENT_KILL) {
-                        restart = stop = false;
-                        kill = true;
-                        pause = 0;
-                    } else if (value == SCE_NGS2_VOICE_EVENT_STOP || value == SCE_NGS2_VOICE_EVENT_STOP_IMM) stop = true;
-                    else pause = value;
+                    if (PS4_LIBRARY && value != 0 && (value & ~0x3fu) == 0 && (value & (value - 1u)) != 0) {
+                        for (std::uint32_t bit = 1; bit != 0; bit <<= 1)
+                            if ((value & bit) != 0) reduceEvent(bit);
+                    } else reduceEvent(value);
                 } else if constexpr (std::is_same_v<TValue, Ngs2VoicePortVolumeParam>) ports[value.port].volume = value.level;
                 else if constexpr (std::is_same_v<TValue, Ngs2VoicePortMatrixParam>) ports[value.port].matrix = value.matrix_id;
                 else if constexpr (std::is_same_v<TValue, Ngs2MatrixControl>) matrices[value.index] = std::move(value.levels);
@@ -1347,7 +1386,8 @@ int APS5_VABI sceNgs2VoiceGetState(uintptr_t voice_handle, Ngs2VoiceState* state
     switch (voice.rack->rackId) {
         case SCE_NGS2_RACK_ID_SAMPLER: {
             const bool commonOnly = PS4_LIBRARY && state_size == sizeof(Ngs2VoiceState);
-            if (!commonOnly && state_size != sizeof(Ngs2SamplerVoiceState)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
+            const bool ps4State = PS4_LIBRARY && state_size == sizeof(Ngs2Ps4SamplerVoiceState);
+            if (!commonOnly && !ps4State && state_size != sizeof(Ngs2SamplerVoiceState)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
             Ngs2SamplerVoiceState sampler{};
             if (voice.pendingPlay) {
                 sampler = {};
@@ -1368,6 +1408,18 @@ int APS5_VABI sceNgs2VoiceGetState(uintptr_t voice_handle, Ngs2VoiceState* state
             }
             if (commonOnly) {
                 if (!WriteGuest(state, sampler.voice_state)) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+                return SCE_NGS2_OK;
+            }
+            if (ps4State) {
+                Ngs2Ps4SamplerVoiceState ps4{};
+                ps4.state_flags = sampler.voice_state.state_flags;
+                ps4.envelope_height = sampler.envelope_height;
+                ps4.peak_height = sampler.peak_height;
+                ps4.num_decoded_samples = sampler.num_decoded_samples;
+                ps4.decoded_data_size = sampler.decoded_data_size;
+                ps4.user_data = sampler.user_data;
+                ps4.waveform_data = sampler.waveform_data;
+                if (!WriteGuestBytes(state, &ps4, sizeof(ps4))) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
                 return SCE_NGS2_OK;
             }
             if (!WriteGuestBytes(state, &sampler, sizeof(sampler))) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;

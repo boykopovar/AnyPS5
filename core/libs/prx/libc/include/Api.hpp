@@ -1181,6 +1181,8 @@ int APS5_VABI wcstombs_s_nid_postfix( std::size_t* result, char* destination, st
 std::size_t APS5_VABI mbsrtowcs_nid_postfix(std::uint16_t* destination, const char** source, std::size_t capacity, void* state);
 std::size_t APS5_VABI mbstowcs_nid_postfix(std::uint16_t* dest, const char* src, std::size_t size);
 void APS5_VABI exit_nid_postfix(int code);
+[[noreturn]] void APS5_VABI abort_nid_postfix(std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t);
+[[noreturn]] void APS5_VABI __stack_chk_fail_nid_postfix();
 int* APS5_VABI libc_error_nid_postfix();
 int APS5_VABI atexit_nid_postfix(GuestExitCallback func);
 int APS5_VABI at_quick_exit_nid_postfix(GuestExitCallback func);
@@ -1199,6 +1201,7 @@ void APS5_VABI srandom_nid_postfix(std::uint64_t seed);
 void APS5_VABI _ZNSt3__113random_deviceC2ERKNS_12basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEE_nid_postfix(void* self, const void* token);
 void APS5_VABI _ZNSt3__113random_deviceD1Ev_nid_postfix(void* self);
 std::uint32_t APS5_VABI _ZNSt3__113random_deviceclEv_nid_postfix(void* self);
+double APS5_VABI _ZSt22_Random_device_entropyv_nid_postfix();
 char* APS5_VABI initstate_nid_postfix(std::uint64_t seed, char* state, std::int64_t size);
 char* APS5_VABI setstate_nid_postfix(char* state);
 char* APS5_VABI realpath_nid_postfix(const char* path, char* resolved);
@@ -1910,6 +1913,7 @@ void APS5_VABI _ZNSt13exception_ptrD1Ev_nid_postfix(GuestLibcxxExceptionPointer*
 [[noreturn]] void APS5_VABI _ZNKSt9exception6_RaiseEv_nid_postfix(const LibcException::ExceptionObject* self);
 LibcRaiseHandler APS5_VABI LibcExchangeRaiseHandler_nid_no_patch(LibcRaiseHandler handler);
 [[noreturn]] void APS5_VABI _ZNKSt8bad_cast8_DoraiseEv_nid_postfix(const LibcException::ExceptionObject* self);
+[[noreturn]] void APS5_VABI _ZNKSt9bad_alloc8_DoraiseEv_nid_postfix(const LibcException::ExceptionObject* self);
 [[noreturn]] void APS5_VABI _ZNKSt11logic_error8_DoraiseEv_nid_postfix(const LibcException::ExceptionObject* self);
 [[noreturn]] void APS5_VABI __cxa_bad_cast_nid_postfix();
 [[noreturn]] void APS5_VABI __cxa_bad_typeid_nid_postfix();
@@ -2019,6 +2023,7 @@ void APS5_VABI _ZNSt8__sce_v27_MP_RemEPyy_nid_postfix(std::uint64_t* u, std::uin
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v26_ThrowERKNS_12system_errorE_nid_postfix(const LibcException::SystemErrorObject* error);
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v28ios_base6_ThrowERKNS0_7failureE_nid_postfix(const LibcException::SystemErrorObject* failure);
 [[noreturn]] void APS5_VABI _ZNKSt8ios_base7failure8_DoraiseEv_nid_postfix(const LibcException::SystemErrorObject* self);
+[[noreturn]] void APS5_VABI _ZNKSt12system_error8_DoraiseEv_nid_postfix(const LibcException::SystemErrorObject* self);
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v216_Throw_Cpp_errorEi_nid_postfix(int code);
 std::int64_t APS5_VABI _ZNSt8__sce_v216_Xtime_get_ticksEv_nid_postfix();
 int APS5_VABI __std_atomic_wait_direct_8_nid_postfix(const void* storage, std::uint8_t expected, std::uint64_t milliseconds);

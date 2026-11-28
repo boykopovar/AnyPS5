@@ -181,6 +181,22 @@ constexpr std::array<std::uint32_t, 98> BaseContextState400 = [] {
     return base;
 }();
 
+constexpr std::array<std::uint32_t, 18> BaseContextState = [] {
+    constexpr auto& neo = GnmNeo::ContextState;
+    static_assert(neo[7] == 0xc0016900u && neo[8] == 0x102u);
+    static_assert(neo[13] == 0xc0026900u && neo[14] == 0xebu && neo[16] == 0xff00u);
+    static_assert(neo[17] == 0xc00d1000u);
+    std::array<std::uint32_t, 18> base{};
+    std::size_t out = 0;
+    for (std::size_t i = 0; i < 13; ++i) base[out++] = neo[i];
+    base[out++] = Header(OpSetContextReg, 2);
+    base[out++] = 0x2aa;
+    base[out++] = 0xff;
+    base[out++] = 0xc00e1000u;
+    base[out++] = neo[18];
+    return base;
+}();
+
 struct FrameStart {
     std::uint32_t words[HwInitPacketWords]{};
     std::uint32_t size = 0;
@@ -577,6 +593,14 @@ std::uint32_t APS5_VABI sceGnmDrawInitDefaultHardwareState350_nid_disambig1(std:
     else at = std::copy(BaseHardwareState350.begin(), BaseHardwareState350.end(), at);
     Nop(at, static_cast<std::uint32_t>(cmd + HwInitPacketWords - at) - 1);
     return HwInitPacketWords;
+}
+
+std::uint32_t APS5_VABI sceGnmDrawInitToDefaultContextState_nid_disambig1(std::uint32_t* cmd, std::uint32_t size) {
+    if (!cmd) return static_cast<std::uint32_t>(-1);
+    if (size != 0x20u) return 0;
+    if (sceKernelIsNeoMode()) std::copy(GnmNeo::ContextState.begin(), GnmNeo::ContextState.end(), cmd);
+    else std::copy(BaseContextState.begin(), BaseContextState.end(), cmd);
+    return 0x20u;
 }
 
 std::uint32_t APS5_VABI sceGnmDrawInitToDefaultContextState400_nid_disambig1(std::uint32_t* cmd, std::uint32_t size) {
@@ -990,6 +1014,46 @@ int APS5_VABI sceGnmSubmitAndFlipCommandBuffersForWorkload_nid_disambig1(std::ui
 
 int APS5_VABI sceGnmSubmitCommandBuffersForWorkload_nid_disambig1(std::uint64_t, std::uint32_t count, std::uint32_t* const* dcbs, const std::uint32_t* dcbBytes, std::uint32_t* const* ccbs, const std::uint32_t* ccbBytes) {
     return sceGnmSubmitCommandBuffers(count, dcbs, dcbBytes, ccbs, ccbBytes);
+}
+
+int APS5_VABI sceGnmValidateDisableDiagnostics_nid_disambig1(void) {
+    return GNM_ERROR_VALIDATION_NOT_ENABLED;
+}
+
+int APS5_VABI sceGnmValidateDisableDiagnostics2_nid_disambig1(void) {
+    return GNM_ERROR_VALIDATION_NOT_ENABLED;
+}
+
+int APS5_VABI sceGnmValidateDispatchCommandBuffers_nid_disambig1(void) {
+    return GNM_ERROR_VALIDATION_NOT_ENABLED;
+}
+
+int APS5_VABI sceGnmValidateDrawCommandBuffers_nid_disambig1(void) {
+    return GNM_ERROR_VALIDATION_NOT_ENABLED;
+}
+
+int APS5_VABI sceGnmValidateGetDiagnosticInfo_nid_disambig1(void) {
+    return GNM_ERROR_VALIDATION_NOT_ENABLED;
+}
+
+int APS5_VABI sceGnmValidateGetDiagnostics_nid_disambig1(void) {
+    return GNM_ERROR_VALIDATION_NOT_ENABLED;
+}
+
+int APS5_VABI sceGnmValidateGetVersion_nid_disambig1(void) {
+    return 0;
+}
+
+int APS5_VABI sceGnmValidateOnSubmitEnabled_nid_disambig1(void) {
+    return 0;
+}
+
+int APS5_VABI sceGnmValidateResetState_nid_disambig1(void) {
+    return GNM_ERROR_VALIDATION_NOT_ENABLED;
+}
+
+int APS5_VABI sceGnmValidationRegisterMemoryCheckCallback_nid_disambig1(void) {
+    return GNM_ERROR_VALIDATION_NOT_ENABLED;
 }
 
 }

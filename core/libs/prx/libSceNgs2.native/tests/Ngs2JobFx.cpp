@@ -23,6 +23,8 @@ struct UpdateFx {
     unsigned tick = 0;
     unsigned controlMode = 0;
     bool remove = false;
+    std::uint32_t second = 0;
+    bool pair = false;
 };
 
 static int APS5_VABI Process(Ngs2UserFxProcessContext* context) {
@@ -75,7 +77,10 @@ static void SendEvent(const UpdateFx& update, std::uint32_t event) {
 static int APS5_VABI Send(Ngs2UserFxProcessContext* context) {
     auto& update = *reinterpret_cast<UpdateFx*>(context->user_data0);
     if (update.tick == 1) {
-        if (!update.replace) SendEvent(update, update.event);
+        if (update.pair) {
+            SendEvent(update, update.event);
+            SendEvent(update, update.second);
+        } else if (!update.replace) SendEvent(update, update.event);
         else if (update.family == Family::Legacy)
             Control(update.target, SCE_NGS2_SUBMIXER_VOICE_PARAM_USER_FX,
                     Ngs2SubmixerVoiceUserFxParam{{}, update.remove ? nullptr : Process, reinterpret_cast<std::uintptr_t>(update.replacement), 1, 0});
@@ -88,13 +93,13 @@ static int APS5_VABI Send(Ngs2UserFxProcessContext* context) {
             Require(sceNgs2VoiceControl(update.target, &param.header) == (update.controlMode == 2 ? -55 : SCE_NGS2_OK));
             gain = -1.0f;
         }
-        Require(Flags(update.target) == (!update.replace && update.event == SCE_NGS2_VOICE_EVENT_PLAY ? 1u : 3u));
+        Require(Flags(update.target) == (update.pair ? (update.event == SCE_NGS2_VOICE_EVENT_PAUSE ? 3u : 1u) : !update.replace && update.event == SCE_NGS2_VOICE_EVENT_PLAY ? 1u : 3u));
     }
     if (update.tick == 3 && update.controlMode == 2) {
         const float gain = 0.75f;
         Control(update.target, SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX2, Ngs2CustomVoiceUserFx2Param{{}, &gain, sizeof(gain)});
     }
-    if (update.tick == 4 && !update.replace && update.event == SCE_NGS2_VOICE_EVENT_PAUSE) SendEvent(update, SCE_NGS2_VOICE_EVENT_RESUME);
+    if (update.tick == 4 && !update.replace && !update.pair && update.event == SCE_NGS2_VOICE_EVENT_PAUSE) SendEvent(update, SCE_NGS2_VOICE_EVENT_RESUME);
     ++update.tick;
     for (unsigned channel = 0; channel < context->num_channels; ++channel)
         std::fill_n(context->channel_data[channel], context->num_grain_samples, 0.0f);
@@ -258,7 +263,67 @@ static void TestFx(Family family, std::uint32_t event, unsigned order, bool comm
     ResetBuffers(firstBuffer);
 }
 
+static void TestDeferredSequence(std::uint32_t first, std::uint32_t second, std::uint32_t expected) {
+    const auto firstBuffer = usedBuffers;
+    Manager manager{{}, 0};
+    Ngs2JobSchedulerOption scheduler{};
+    scheduler.size = sizeof(scheduler);
+    scheduler.user_data = reinterpret_cast<std::uintptr_t>(&manager);
+    scheduler.query_handler = Query;
+    scheduler.init_handler = Initialize;
+    scheduler.destroy_handler = Destroy;
+    scheduler.submit_handler = Submit;
+    scheduler.flush_handler = Complete;
+    scheduler.join_handler = Complete;
+    scheduler.num_workers = 2;
+    scheduler.max_jobs = 16;
+    Ngs2SystemOption option{};
+    option.size = sizeof(option);
+    option.max_grain_samples = 512;
+    option.num_grain_samples = 64;
+    option.sample_rate = 48000;
+    option.max_voice_channels = 8;
+    option.job_scheduler_options[0] = reinterpret_cast<std::uintptr_t>(&scheduler);
+    Ngs2ContextBufferInfo query{};
+    Require(sceNgs2SystemQueryBufferSize(&option, &query) == SCE_NGS2_OK);
+    const auto buffer = Buffer(query);
+    std::uintptr_t system = 0;
+    Require(sceNgs2SystemCreate(&option, &buffer, &system) == SCE_NGS2_OK);
+    const auto master = Mastering(system, 2);
+    const auto sender = Voice(CreateRack(system, SCE_NGS2_RACK_ID_SUBMIXER));
+    Control(sender, SCE_NGS2_SUBMIXER_VOICE_PARAM_SETUP, Ngs2SubmixerVoiceSetupParam{{}, 2, 0});
+    FxCalls calls{};
+    UpdateFx update{master, Family::Master, first, true, false, &calls, 0, 0, false, second, true};
+    Control(sender, SCE_NGS2_SUBMIXER_VOICE_PARAM_USER_FX,
+            Ngs2SubmixerVoiceUserFxParam{{}, Send, reinterpret_cast<std::uintptr_t>(&update), 0, 0});
+    const auto source = Voice(CreateRack(system, SCE_NGS2_RACK_ID_SAMPLER));
+    Control(source, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP,
+            Ngs2SamplerVoiceSetupParam{{}, {SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 2, 48000, 0, 0, 0}});
+    std::array<std::int16_t, 4096> pcm{};
+    pcm.fill(4096);
+    const Ngs2WaveformBlock block{0, sizeof(pcm), 0, 0, pcm.size() / 2, 0, 0};
+    Control(source, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS,
+            Ngs2SamplerVoiceWaveformBlocksParam{{}, pcm.data(), 0, 1, &block});
+    Patch(source, master);
+    Event(source, SCE_NGS2_VOICE_EVENT_PLAY);
+    Event(sender, SCE_NGS2_VOICE_EVENT_PLAY);
+    for (unsigned grain = 0; grain < 8; ++grain) {
+        std::array<float, 130> samples{};
+        samples.fill(-1234.0f);
+        const Ngs2RenderBufferInfo output{samples.data(), 128 * sizeof(float), SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, 2};
+        Require(sceNgs2SystemRender(system, &output, 1) == SCE_NGS2_OK && manager.batches.empty());
+        if (grain >= 2) Require(Flags(master) == expected);
+    }
+    Require(update.tick == 8 && sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+    ResetBuffers(firstBuffer);
+}
+
 int main() {
+#ifdef APS5_NGS2_PS4_LIBRARY
+    TestDeferredSequence(SCE_NGS2_VOICE_EVENT_STOP, SCE_NGS2_VOICE_EVENT_PLAY | SCE_NGS2_VOICE_EVENT_RESUME, 3u);
+    TestDeferredSequence(SCE_NGS2_VOICE_EVENT_PAUSE, 0, 5u);
+#endif
+#ifndef APS5_NGS2_PS4_LIBRARY
     unsigned cases = 0;
     for (auto family : {Family::Legacy, Family::Custom, Family::UserFx2Mixer, Family::UserFx2Sampler, Family::Mixer, Family::Master}) {
         for (auto event : {SCE_NGS2_VOICE_EVENT_PLAY, SCE_NGS2_VOICE_EVENT_STOP, SCE_NGS2_VOICE_EVENT_STOP_IMM, SCE_NGS2_VOICE_EVENT_KILL, SCE_NGS2_VOICE_EVENT_PAUSE}) {
@@ -288,5 +353,6 @@ int main() {
         ++cases;
     }
     std::printf("NGS2 worker effects: %u scenarios passed\n", cases);
+#endif
     return 0;
 }

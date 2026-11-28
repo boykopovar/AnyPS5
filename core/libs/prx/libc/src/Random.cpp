@@ -243,4 +243,8 @@ std::uint32_t APS5_VABI _ZNSt3__113random_deviceclEv_nid_postfix(void*) {
     return value;
 }
 
+double APS5_VABI _ZSt22_Random_device_entropyv_nid_postfix() {
+    return 32.0;
+}
+
 }

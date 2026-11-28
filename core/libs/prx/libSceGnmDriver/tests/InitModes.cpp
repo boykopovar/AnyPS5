@@ -68,7 +68,8 @@ constexpr std::uint32_t Header(std::uint32_t opcode, std::uint32_t bodyWords) {
     return 0xc0000000u | ((bodyWords - 1) << 16) | (opcode << 8);
 }
 
-bool WholePackets(const std::array<std::uint32_t, 256>& words) {
+template <std::size_t Words>
+bool WholePackets(const std::array<std::uint32_t, Words>& words) {
     std::size_t at = 0;
     while (at < words.size()) {
         if ((words[at] >> 30) != 3) return false;
@@ -116,6 +117,38 @@ void TestContext400(bool neo) {
     Require(contextEb == neo && context2aa != neo && uconfig258 == neo, "400 mode-specific registers differ");
 }
 
+void TestContext(bool neo) {
+    std::array<std::uint32_t, 0x20> words{};
+    words.fill(0xdeadbeefu);
+    Require(sceGnmDrawInitToDefaultContextState_nid_disambig1(words.data(), 0x1f) == 0 && words[0] == 0xdeadbeefu, "short buffer was modified");
+    Require(sceGnmDrawInitToDefaultContextState_nid_disambig1(nullptr, 0x20) == static_cast<std::uint32_t>(-1), "null buffer was accepted");
+    Require(sceGnmDrawInitToDefaultContextState_nid_disambig1(words.data(), 0x20) == 0x20, "returned the wrong length");
+    Require(words[0] == Header(0x28, 2) && words[3] == Header(0x12, 1), "preamble differs");
+    Require(WholePackets(words), "packets are invalid");
+    const auto prefix = neo ? 19 : 18;
+    Require(words[prefix - 2] == (neo ? 0xc00d1000u : 0xc00e1000u) && words[prefix - 1] == 0 && words[prefix] == 0xdeadbeefu, "prefix length or trailer differs");
+    bool contextEb = false, context2aa = false;
+    for (std::size_t at = 0; at + 2 < prefix; at += ((words[at] >> 16) & 0x3fffu) + 2) {
+        const auto opcode = (words[at] >> 8) & 0xffu;
+        if (opcode == 0x69 && words[at + 1] == 0xeb) contextEb = true;
+        if (opcode == 0x69 && words[at + 1] == 0x2aa) context2aa = words[at + 2] == 0xff;
+    }
+    Require(contextEb == neo && context2aa != neo, "mode-specific registers differ");
+}
+
+void TestValidateQueries() {
+    Require(sceGnmValidateDisableDiagnostics_nid_disambig1() == static_cast<int>(0x80d13fffu), "validate disable diagnostics differs");
+    Require(sceGnmValidateDisableDiagnostics2_nid_disambig1() == static_cast<int>(0x80d13fffu), "validate disable diagnostics 2 differs");
+    Require(sceGnmValidateDispatchCommandBuffers_nid_disambig1() == static_cast<int>(0x80d13fffu), "validate dispatch differs");
+    Require(sceGnmValidateDrawCommandBuffers_nid_disambig1() == static_cast<int>(0x80d13fffu), "validate draw differs");
+    Require(sceGnmValidateGetDiagnosticInfo_nid_disambig1() == static_cast<int>(0x80d13fffu), "validate diagnostic info differs");
+    Require(sceGnmValidateGetDiagnostics_nid_disambig1() == static_cast<int>(0x80d13fffu), "validate diagnostics differs");
+    Require(sceGnmValidateGetVersion_nid_disambig1() == 0, "validate version differs");
+    Require(sceGnmValidateOnSubmitEnabled_nid_disambig1() == 0, "validate on-submit differs");
+    Require(sceGnmValidateResetState_nid_disambig1() == static_cast<int>(0x80d13fffu), "validate reset differs");
+    Require(sceGnmValidationRegisterMemoryCheckCallback_nid_disambig1() == static_cast<int>(0x80d13fffu), "validate callback differs");
+}
+
 int RunSelf(const std::filesystem::path& program, const char* mode) {
     const std::string arguments = "\"" + program.string() + "\" " + mode;
 #ifdef _WIN32
@@ -135,6 +168,8 @@ int main(int argc, char** argv) {
             Require(sceKernelIsNeoMode() == neo, "mode fixture did not set sceKernelIsNeoMode");
             TestHardware350(neo);
             TestContext400(neo);
+            TestContext(neo);
+            TestValidateQueries();
             return 0;
         }
         const auto program = std::filesystem::absolute(argv[0]);

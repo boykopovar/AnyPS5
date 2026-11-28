@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <stdexcept>
 #include <numbers>
 #include <utility>
 #include <vector>
@@ -660,6 +661,104 @@ static void TestFft() {
 }
 #endif
 
+static void TestPs4RackOption(std::uint32_t rackId, std::size_t optionSize, std::uint32_t voices, const std::uint32_t* specific, std::size_t specificWords) {
+    alignas(Ngs2RackOption) std::array<unsigned char, 168> raw{};
+    const std::uint64_t size = optionSize;
+    std::memcpy(raw.data(), &size, sizeof(size));
+    const std::uint32_t header[] {0, 512, voices, 0, 1, 8};
+    std::memcpy(raw.data() + 24, header, sizeof(header));
+    std::memcpy(raw.data() + 128, specific, specificWords * sizeof(std::uint32_t));
+    const auto* option = reinterpret_cast<const Ngs2RackOption*>(raw.data());
+    const auto system = CreateSystem();
+    Ngs2ContextBufferInfo query{};
+#ifdef APS5_NGS2_PS4_LIBRARY
+    Require(sceNgs2RackQueryBufferSize(rackId, option, &query) == SCE_NGS2_OK && query.host_buffer_size != 0);
+    const auto info = Buffer(query);
+    std::uintptr_t rack = 0;
+    Require(TestRackCreate(system, rackId, option, &info, &rack) == SCE_NGS2_OK && rack != 0);
+    Require(sceNgs2RackDestroy(rack, nullptr) == SCE_NGS2_OK);
+#else
+    bool rejected = false;
+    try { sceNgs2RackQueryBufferSize(rackId, option, &query); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    Require(rejected);
+#endif
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
+static void TestPs4ZeroVoiceEvent() {
+    const auto system = CreateSystem();
+    const auto voice = Voice(CreateRack(system, SCE_NGS2_RACK_ID_MASTERING));
+    const Ngs2VoiceEventParam event{{sizeof(Ngs2VoiceEventParam), 0, SCE_NGS2_VOICE_PARAM_EVENT}, 0};
+    const Ngs2VoiceCommand zeroCommand{2, 0, 4, 0, {.u = 0}};
+#ifdef APS5_NGS2_PS4_LIBRARY
+    Require(sceNgs2VoiceControl(voice, &event.header) == SCE_NGS2_OK);
+    Require(sceNgs2VoiceRunCommands(voice, &zeroCommand, 1) == SCE_NGS2_OK);
+    Require(Flags(voice) == 0);
+#else
+    bool rejected = false;
+    try { sceNgs2VoiceControl(voice, &event.header); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    Require(rejected);
+    rejected = false;
+    try { sceNgs2VoiceRunCommands(voice, &zeroCommand, 1); }
+    catch (const std::exception&) { rejected = true; }
+    Require(rejected);
+#endif
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
+static void TestPs4CombinedVoiceEvent() {
+    const auto system = CreateSystem();
+    const auto empty = Voice(CreateRack(system, SCE_NGS2_RACK_ID_SAMPLER));
+    const Ngs2VoiceEventParam combined{{sizeof(Ngs2VoiceEventParam), 0, SCE_NGS2_VOICE_PARAM_EVENT}, SCE_NGS2_VOICE_EVENT_PLAY | SCE_NGS2_VOICE_EVENT_STOP};
+#ifdef APS5_NGS2_PS4_LIBRARY
+    Require(sceNgs2VoiceControl(empty, &combined.header) == SCE_NGS2_ERROR_INVALID_VOICE_ACCESS);
+    Require(Flags(empty) == 0);
+    const auto master = Mastering(system, 2);
+    Require(sceNgs2VoiceControl(master, &combined.header) == SCE_NGS2_OK);
+    Require(Flags(master) == SCE_NGS2_VOICE_STATE_FLAG_INUSE);
+#else
+    for (const auto voice : {empty, Mastering(system, 2)}) {
+        bool rejected = false;
+        try { sceNgs2VoiceControl(voice, &combined.header); }
+        catch (const std::invalid_argument&) { rejected = true; }
+        Require(rejected);
+    }
+#endif
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
+static void TestPs4SamplerState() {
+    const auto system = CreateSystem();
+    const auto voice = Voice(CreateRack(system, SCE_NGS2_RACK_ID_SAMPLER));
+    Ngs2Ps4SamplerVoiceState ps4{};
+    const auto ps4Size = sizeof(ps4);
+#ifdef APS5_NGS2_PS4_LIBRARY
+    Require(sceNgs2VoiceGetState(voice, reinterpret_cast<Ngs2VoiceState*>(&ps4), ps4Size) == SCE_NGS2_OK);
+    Require(ps4.state_flags == 0);
+    Require(ps4.num_decoded_samples == 0 && ps4.decoded_data_size == 0);
+#else
+    Require(sceNgs2VoiceGetState(voice, reinterpret_cast<Ngs2VoiceState*>(&ps4), ps4Size) == SCE_NGS2_ERROR_INVALID_OUT_SIZE);
+#endif
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
+static void TestPs4SamplerOption() {
+    const std::uint32_t specific[] {256, 32, 4, 4, 8, 256, 256, 0, 8, 0};
+    TestPs4RackOption(SCE_NGS2_RACK_ID_SAMPLER, 168, 256, specific, 10);
+}
+
+static void TestPs4MasteringOption() {
+    const std::uint32_t specific[] {8, 8};
+    TestPs4RackOption(SCE_NGS2_RACK_ID_MASTERING, 136, 1, specific, 2);
+}
+
+static void TestPs4ReverbOption() {
+    const std::uint32_t specific[] {8, 1};
+    TestPs4RackOption(SCE_NGS2_RACK_ID_REVERB, 136, 1, specific, 2);
+}
+
 int main() {
 #ifdef APS5_NGS2_PS4_LIBRARY
     const std::uint64_t processSize = processParameters.size();
@@ -674,6 +773,12 @@ int main() {
     TestNoModules(3, {0.0f, -0.75f, 0.25f});
     TestNoModules(4, {0.0f, 0.0f, -0.75f, 0.25f});
     TestGainRouting();
+    TestPs4SamplerOption();
+    TestPs4MasteringOption();
+    TestPs4ReverbOption();
+    TestPs4ZeroVoiceEvent();
+    TestPs4CombinedVoiceEvent();
+    TestPs4SamplerState();
     TestSubmixerKeyInput();
     TestSubmixerFilterOff();
     TestSubmixerCompressor();

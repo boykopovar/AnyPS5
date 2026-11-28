@@ -16,11 +16,13 @@ struct TypeRecord { const void* vtable; const char* name; const TypeRecord* base
 extern "C" {
 extern const void* const _ZTVSt9exception_nid_postfix[5];
 extern const void* const _ZTVSt8bad_cast_nid_postfix[5];
+extern const void* const _ZTVSt9bad_alloc_nid_postfix[5];
 extern const void* const _ZTVSt11logic_error_nid_postfix[5];
 extern const void* const _ZTVSt12system_error_nid_postfix[5];
 extern const void* const _ZTVNSt8ios_base7failureE_nid_postfix[5];
 extern const void* const _ZTISt9exception_nid_postfix[];
 extern const void* const _ZTISt8bad_cast_nid_postfix[];
+extern const void* const _ZTISt9bad_alloc_nid_postfix[];
 extern const void* const _ZTISt11logic_error_nid_postfix[];
 extern const void* const _ZTISt12system_error_nid_postfix[];
 extern const void* const _ZTINSt8ios_base7failureE_nid_postfix[];
@@ -86,6 +88,11 @@ void CheckBadCastDoraise() {
                       _ZNKSt8bad_cast8_DoraiseEv_nid_postfix);
 }
 
+void CheckBadAllocDoraise() {
+    CheckPlainDoraise("St9bad_alloc", _ZTVSt9bad_alloc_nid_postfix, "bad allocation",
+                      _ZNKSt9bad_alloc8_DoraiseEv_nid_postfix);
+}
+
 void CheckLogicErrorDoraise() {
     LibcException::ExceptionObject source {&_ZTVSt11logic_error_nid_postfix[2], nullptr};
     _ZNSt11logic_errorC1EPKc_nid_postfix(&source, "logic-msg");
@@ -138,6 +145,34 @@ void CheckSystemErrorDoraise() {
     REQUIRE(source.base.message == nullptr);
 }
 
+void CheckSystemErrorTableDoraise() {
+    LibcException::SystemErrorObject source {};
+    LibcException::ErrorCode code {0, 22, _ZSt16generic_categoryv_nid_postfix()};
+    _ZNSt12system_errorC2ESt10error_codePKc_nid_postfix(&source, code, "system-msg");
+
+    bool caught = false;
+    try { _ZNKSt12system_error8_DoraiseEv_nid_postfix(&source); }
+    catch (const std::system_error& error) {
+        caught = true;
+        const auto* object = reinterpret_cast<const LibcException::SystemErrorObject*>(&error);
+        REQUIRE(object != &source);
+        REQUIRE(object->base.vtable == &_ZTVSt12system_error_nid_postfix[2]);
+        REQUIRE(std::strcmp(TypeName(object), "St12system_error") == 0);
+        REQUIRE(object->base.message == source.base.message);
+        REQUIRE(std::strcmp(What(object), "system-msg: invalid argument") == 0);
+        REQUIRE(object->code.value == source.code.value && object->code.category == source.code.category);
+    }
+    REQUIRE(caught);
+
+    bool rejected = false;
+    try { _ZNKSt12system_error8_DoraiseEv_nid_postfix(nullptr); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    REQUIRE(rejected);
+
+    _ZNSt12system_errorD1Ev_nid_postfix(&source.base);
+    REQUIRE(source.base.message == nullptr);
+}
+
 void CheckSystemErrorCopyConstruct() {
     LibcException::SystemErrorObject source {};
     LibcException::ErrorCode code {0, 22, _ZSt16generic_categoryv_nid_postfix()};
@@ -171,7 +206,9 @@ int main() {
 
     CheckStdExceptionDoraise();
     CheckBadCastDoraise();
+    CheckBadAllocDoraise();
     CheckLogicErrorDoraise();
+    CheckSystemErrorTableDoraise();
     CheckSystemErrorDoraise();
     CheckSystemErrorCopyConstruct();
 
