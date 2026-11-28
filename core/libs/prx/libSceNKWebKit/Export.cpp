@@ -8027,10 +8027,6 @@ int APS5_VABI WKAXObjectPage() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKAccessibilityEnhancedAccessibilityEnabled() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKAccessibilityFocusedObject() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -13611,18 +13607,6 @@ int APS5_VABI _ZN7WebCore13AXObjectCache10rootObjectEv() {
 }
 
 int APS5_VABI _ZN7WebCore13AXObjectCache11getOrCreateEPNS_4NodeE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore13AXObjectCache19enableAccessibilityEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore13AXObjectCache20disableAccessibilityEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore13AXObjectCache37setEnhancedUserInterfaceAccessibilityEb() {
     NotImplemented_nid_no_patch(__func__);
 }
 
