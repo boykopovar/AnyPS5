@@ -22,7 +22,9 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
+#include <vector>
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -2130,6 +2132,99 @@ void TestExpandedBufferLifecycle() {
     Require(sceAmprCommandBufferDestructor(&buffer) == 0);
 }
 
+void TestReadFileGrowsBehindHostCommands() {
+    constexpr std::uint32_t requests = 4096;
+    constexpr std::uint32_t reads = requests - 2;
+    constexpr std::uint32_t chunk = 16;
+    constexpr std::uint32_t capacity = requests * 24 + 256;
+    const char* path = "ampr_host_encoded.bin";
+    {
+        std::ofstream file(path, std::ios::binary);
+        for (std::size_t offset = 0; offset < std::size_t{reads} * chunk; ++offset) file.put(static_cast<char>(FileByte(offset)));
+    }
+    std::uint32_t fileId = 0;
+    std::uint32_t failed = 0;
+    Require(sceKernelAprResolveFilepathsToIds(&path, 1, &fileId, &failed) == 0);
+
+    std::vector<std::uint8_t> memory(capacity);
+    std::vector<std::uint8_t> data(std::size_t{reads} * chunk);
+    Apr::CommandBufferObject buffer{};
+    std::uint64_t gatherState = 0;
+    std::uint64_t scatterState = 0;
+    Require(sceAmprCommandBufferConstructor(&buffer) == 0);
+    Require(sceAmprAprCommandBufferConstructor(&buffer, &gatherState, &scatterState) == 0);
+    Require(sceAmprCommandBufferSetBuffer(&buffer, memory.data(), capacity) == 0);
+    Require(sceAmprCommandBufferReset(&buffer) == 0);
+    std::uint32_t waits = 0;
+    for (std::uint32_t index = 0; index < reads; ++index) {
+        if (index % 4 == 0) {
+            Require(sceAmprCommandBufferWaitOnCounter_04_00(&buffer, 100, 1, 0, 0, 1, 0, 0) == 0);
+            ++waits;
+        }
+        Require(sceAmprAprCommandBufferReadFile(&buffer, &gatherState, &scatterState, fileId, data.data() + std::size_t{index} * chunk, chunk, std::uint64_t{index} * chunk) == 0);
+    }
+    alignas(8) std::uint64_t done = 0;
+    Require(sceAmprCommandBufferWriteAddress_04_00(&buffer, &done, 2, 0) == 0);
+    Require(buffer.numCommands == reads + waits + 1);
+    Require(buffer.base != memory.data() && buffer.size > capacity);
+    Require(sceAmprCommandBufferGetBufferBaseAddress(&buffer) == memory.data());
+    Require(sceKernelAprSubmitCommandBuffer(&buffer, 0) == 0);
+    for (int spin = 0; spin < 5000 && std::atomic_ref<std::uint64_t>(done).load() != 2; ++spin) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    Require(std::atomic_ref<std::uint64_t>(done).load() == 2);
+    Require(MatchesFile(data.data(), 0, data.size()));
+
+    const auto hostEncoded = [&] { return (buffer.recording & Apr::HostEncoded) != 0; };
+    Require(hostEncoded());
+    Require(sceAmprCommandBufferReset(&buffer) == 0);
+    Require(!hostEncoded() && buffer.offset == 0 && buffer.numCommands == 0);
+    Require(sceAmprCommandBufferGetBufferBaseAddress(&buffer) == memory.data());
+
+    std::array<std::uint8_t, 16> destination{};
+    const auto read = [&] { return sceAmprAprCommandBufferReadFile(&buffer, &gatherState, &scatterState, fileId, destination.data(), destination.size(), 0); };
+    const auto wait = [&] { return sceAmprCommandBufferWaitOnCounter_04_00(&buffer, 100, 1, 0, 0, 1, 0, 0); };
+    alignas(8) std::array<std::uint8_t, 40> small{};
+    const auto fill = [&] {
+        Require(read() == 0);
+        Require(read() == 0);
+        Require(buffer.offset == small.size());
+    };
+    Require(sceAmprCommandBufferSetBuffer(&buffer, small.data(), static_cast<std::uint32_t>(small.size())) == 0);
+    Require(wait() == 0 && hostEncoded() && buffer.base == small.data());
+    Require(sceAmprCommandBufferReset(&buffer) == 0 && !hostEncoded());
+    fill();
+    Require(read() == busy && buffer.base == small.data() && buffer.numCommands == 2);
+
+    Require(sceAmprCommandBufferReset(&buffer) == 0);
+    Require(wait() == 0 && hostEncoded());
+    Require(sceAmprCommandBufferSetBuffer(&buffer, small.data(), static_cast<std::uint32_t>(small.size())) == 0 && !hostEncoded());
+    fill();
+    Require(read() == busy && buffer.base == small.data());
+
+    Require(sceAmprCommandBufferReset(&buffer) == 0);
+    Require(sceAmprCommandBufferNop(&buffer, 1) == 0 && !hostEncoded());
+    Require(read() == 0);
+    Require(read() == busy && buffer.base == small.data());
+
+    Require(sceAmprCommandBufferReset(&buffer) == 0);
+    Require(sceAmprCommandBufferPushMarker(&buffer, "m") == 0 && hostEncoded());
+    Require(read() == 0 && buffer.base == small.data());
+    Require(read() == 0 && buffer.base != small.data() && buffer.numCommands == 3);
+    Require(sceAmprCommandBufferGetBufferBaseAddress(&buffer) == small.data());
+
+    Require(sceAmprCommandBufferClearBuffer(&buffer) == small.data() && !hostEncoded());
+    Require(sceAmprCommandBufferSetBuffer(&buffer, small.data(), static_cast<std::uint32_t>(small.size())) == 0);
+    Require(wait() == 0 && hostEncoded());
+    Require(sceAmprCommandBufferConstructor(&buffer) == 0 && !hostEncoded());
+    Require(sceAmprCommandBufferSetBuffer(&buffer, small.data(), static_cast<std::uint32_t>(small.size())) == 0);
+    Require(wait() == 0 && hostEncoded());
+    Require(sceAmprAprCommandBufferConstructor(&buffer, &gatherState, &scatterState) == 0 && !hostEncoded());
+    Require(wait() == 0 && hostEncoded());
+    Require(sceAmprAmmCommandBufferConstructor(&buffer) == 0 && !hostEncoded());
+    Require(sceAmprCommandBufferDestructor(&buffer) == 0);
+    std::remove(path);
+}
+
+
 void TestConstructNopPayloadIntoBuffer() {
     std::array<std::uint8_t, 32> memory{};
     Apr::CommandBufferObject buffer{};
@@ -2239,6 +2334,7 @@ int main() {
     TestKernelWriteCommands();
     TestAmmSubmitAfterGrowth();
     TestExpandedBufferLifecycle();
+    TestReadFileGrowsBehindHostCommands();
     TestConstructNopPayloadIntoBuffer();
     TestGuestPointerAndErrnoPreservation();
     return 0;
