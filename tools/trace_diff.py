@@ -12,7 +12,7 @@ counts as zero in the other. Times are per frame, so captures with different fra
 
 The deltas are B minus A. A capture's digest is built by trace_digest.py, so the same caveats apply: buffer-full
 losses make the slice timings describe retained events only. Use --a-frames or --b-frames to select the matching
-scene in each capture. Each selected frame ends at the next recorded present."""
+scene in each capture. Both captures need at least one complete frame between recorded presents."""
 
 
 class FrameWindowError(ValueError):
@@ -44,10 +44,9 @@ def compare(a_path, b_path, top=10, *, a_frames=None, b_frames=None):
     a, a_window = digest_capture(a_path, a_frames)
     b, b_window = digest_capture(b_path, b_frames)
     windowed = a_window is not None or b_window is not None
-    if windowed:
-        for path, digest in ((a_path, a), (b_path, b)):
-            if not digest["frames"]:
-                raise FrameWindowError(f"{path}: windowed comparison needs at least one complete frame in each capture")
+    for path, digest in ((a_path, a), (b_path, b)):
+        if not digest["frames"]:
+            raise FrameWindowError(f"{path}: comparison needs at least one complete frame in each capture")
 
     a_threads = thread_timings(a["threads"])
     b_threads = thread_timings(b["threads"])
