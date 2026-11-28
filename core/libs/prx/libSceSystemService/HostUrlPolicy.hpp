@@ -108,7 +108,7 @@ public:
         case OpenUrlOutcome::Launched: return OpenUrlGateOutcome::Launched;
         case OpenUrlOutcome::Declined:
             suppressed = true;
-            suppressedUntil = now + OPEN_URL_DECLINE_COOLDOWN;
+            suppressedUntil = clock->Now() + OPEN_URL_DECLINE_COOLDOWN;
             return OpenUrlGateOutcome::Declined;
         case OpenUrlOutcome::Failed: return OpenUrlGateOutcome::Failed;
         case OpenUrlOutcome::Rejected: return OpenUrlGateOutcome::Rejected;

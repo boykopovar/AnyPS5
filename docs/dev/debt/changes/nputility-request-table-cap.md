@@ -1,0 +1,9 @@
+# libSceNpUtility
+
+## change sceNpServiceCheckerIntAbortRequest
+
+- [sceNpAppInfoIntInitialize, sceNpAppInfoIntFinalize, sceNpAppLaunchLinkIntInitialize, sceNpAppLaunchLinkIntFinalize, sceNpAppLaunchLink2IntInitialize, sceNpAppLaunchLink2IntFinalize, sceNpServiceCheckerIntInitialize, sceNpServiceCheckerIntFinalize, sceNpServiceCheckerIntCreateRequest, sceNpServiceCheckerIntDestroyRequest, sceNpServiceCheckerIntAbortRequest, sceNpUtilityInit and sceNpUtilityTerm](../../../core/libs/prx/libSceNpUtility/Export.cpp) (libSceNpUtility) - 11.00 wrappers show per-family init flags (`0x8055B201`/`AE01`/`C601`/`AD01`) and a service-checker table (ids from 1, null `0x8055AD0B`, uninit `0x8055AD02`, unknown abort `0x8055AD06`, idempotent destroy). Host caps live requests at `0x1000` (`0x80550706`, host safety limit) and wraps ids in `1..0x7FFFFFFF` skipping live ones. Service payloads/threads are unmodelled. Not measured on a PS5.
+
+## change sceNpAppLaunchLinkIntGetCompatibleTitleIdList
+
+- [sceNpAppLaunchLinkIntCreateRequest, sceNpAppLaunchLinkIntAbortRequest, sceNpAppLaunchLinkIntDestroyRequest, sceNpAppLaunchLinkIntGetCompatibleTitleIdList, sceNpAppLaunchLinkIntGetCompatibleTitleIdNum, sceNpAppLaunchLink2IntCreateRequest, sceNpAppLaunchLink2IntAbortRequest, sceNpAppLaunchLink2IntDestroyRequest, sceNpAppLaunchLink2IntGetCompatibleTitleIdList and sceNpAppLaunchLink2IntGetCompatibleTitleIdNum](../../../core/libs/prx/libSceNpUtility/Export.cpp) (libSceNpUtility) - 11.00 wrappers show per-family tables (invalid arg `0x8055AE0C`/`C60C`, uninit `0x8055AE02`/`C602`, unknown abort `0x8055AE06`/`C606`, idempotent destroy). Host caps live requests per family at `0x1000` (`0x80550706`, host safety limit) and wraps ids in `1..0x7FFFFFFF` skipping live ones. Compatible-title getters return an empty list. Not measured on a PS5.

@@ -59,20 +59,6 @@ struct ErrnoGuard {
     ~ErrnoGuard() { errno = saved; }
 };
 
-bool copyIn(void* dst, const void* src, std::size_t size) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(dst, src, size);
-    errno = savedErrno;
-    return copied;
-}
-
-bool copyOut(void* dst, const void* src, std::size_t size) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(dst, src, size);
-    errno = savedErrno;
-    return copied;
-}
-
 bool canCopyOut(void* dst, std::size_t size) {
     if (size == 0) return true;
     const auto start = reinterpret_cast<std::uintptr_t>(dst);
@@ -87,7 +73,7 @@ bool canCopyOut(void* dst, std::size_t size) {
 std::int32_t validateCreateParam(const JpegEncCreateParam* param, JpegEncCreateParam* outParam = nullptr) {
     if (!param) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
     JpegEncCreateParam local{};
-    if (!copyIn(&local, param, sizeof(local))) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
+    if (!GuestCopyIn_nid_no_patch(&local, param, sizeof(local))) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
     if (local.size != sizeof(JpegEncCreateParam)) return SCE_JPEG_ENC_ERROR_INVALID_SIZE;
     if (local.attr != ATTRIBUTE_NONE) return SCE_JPEG_ENC_ERROR_INVALID_PARAM;
     if (outParam) *outParam = local;
@@ -99,14 +85,14 @@ Encoder* toEncoder(void* handle) {
     if (address == 0 || address % HANDLE_ALIGNMENT != 0) return nullptr;
     auto* encoder = reinterpret_cast<Encoder*>(handle);
     Encoder selfCheck{};
-    if (!copyIn(&selfCheck, encoder, sizeof(selfCheck))) return nullptr;
+    if (!GuestCopyIn_nid_no_patch(&selfCheck, encoder, sizeof(selfCheck))) return nullptr;
     return selfCheck.self == encoder ? encoder : nullptr;
 }
 
 std::int32_t validateEncodeParam(const JpegEncEncodeParam* param, JpegEncEncodeParam* outParam = nullptr) {
     if (!param) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
     JpegEncEncodeParam local{};
-    if (!copyIn(&local, param, sizeof(local))) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
+    if (!GuestCopyIn_nid_no_patch(&local, param, sizeof(local))) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
     const bool grayscaleInput = local.pixel_format == PIXEL_FORMAT_Y8;
     if (!local.image) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
     if (!grayscaleInput && reinterpret_cast<std::uintptr_t>(local.image) % 4 != 0) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
@@ -156,7 +142,7 @@ std::optional<std::vector<std::uint8_t>> toPackedPixels(const JpegEncEncodeParam
     std::vector<std::uint8_t> pixels(width * param.image_height * channels);
     for (std::size_t y = 0; y < param.image_height; ++y) {
         const std::uint8_t* rowAddr = image + y * param.image_pitch;
-        if (!copyIn(rowBuffer.data(), rowAddr, rowBytes)) return std::nullopt;
+        if (!GuestCopyIn_nid_no_patch(rowBuffer.data(), rowAddr, rowBytes)) return std::nullopt;
         const std::uint8_t* row = rowBuffer.data();
         std::uint8_t* out = pixels.data() + y * width * channels;
         for (std::size_t x = 0; x < width; ++x) {
@@ -209,7 +195,7 @@ std::optional<std::vector<std::uint8_t>> encodeYuyv(const JpegEncEncodeParam& pa
     const auto row = std::make_unique_for_overwrite<std::uint8_t[]>(rowBytes);
     const auto* image = static_cast<const std::uint8_t*>(param.image);
     for (std::size_t y = 0; y < height; ++y) {
-        if (!copyIn(row.get(), image + y * param.image_pitch, rowBytes)) return std::nullopt;
+        if (!GuestCopyIn_nid_no_patch(row.get(), image + y * param.image_pitch, rowBytes)) return std::nullopt;
         auto* luma = planes.get() + y * lumaStride;
         auto* cb = planes.get() + lumaSize + (halfChromaHeight ? y / 2 : y) * chromaStride;
         auto* cr = cb + chromaSize;
@@ -266,13 +252,13 @@ int32_t APS5_VABI sceJpegEncCreate(const JpegEncCreateParam* param, void* memory
     }
     Encoder localEncoder{};
     localEncoder.self = reinterpret_cast<Encoder*>(aligned);
-    if (!copyOut(reinterpret_cast<void*>(aligned), &localEncoder, sizeof(localEncoder))) {
+    if (!GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(aligned), &localEncoder, sizeof(localEncoder))) {
         return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
     }
     auto* encoder = reinterpret_cast<Encoder*>(aligned);
-    if (!copyOut(handle, &encoder, sizeof(encoder))) {
+    if (!GuestCopyOut_nid_no_patch(handle, &encoder, sizeof(encoder))) {
         Encoder cleared{};
-        copyOut(reinterpret_cast<void*>(aligned), &cleared, sizeof(cleared));
+        GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(aligned), &cleared, sizeof(cleared));
         return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
     }
     return 0;
@@ -283,7 +269,7 @@ int32_t APS5_VABI sceJpegEncDelete(void* handle) {
     Encoder* encoder = toEncoder(handle);
     if (!encoder) return SCE_JPEG_ENC_ERROR_INVALID_HANDLE;
     Encoder cleared{};
-    if (!copyOut(encoder, &cleared, sizeof(cleared))) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
+    if (!GuestCopyOut_nid_no_patch(encoder, &cleared, sizeof(cleared))) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
     return 0;
 }
 
@@ -302,12 +288,12 @@ int32_t APS5_VABI sceJpegEncEncode(void* handle, const JpegEncEncodeParam* param
 
     if (!canCopyOut(localParam.jpeg, jpeg.size())) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
     if (outputInfo != nullptr && !canCopyOut(outputInfo, sizeof(*outputInfo))) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
-    if (!copyOut(localParam.jpeg, jpeg.data(), jpeg.size())) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
+    if (!GuestCopyOut_nid_no_patch(localParam.jpeg, jpeg.data(), jpeg.size())) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
     if (outputInfo) {
         JpegEncOutputInfo localOutput{};
         localOutput.size = static_cast<std::uint32_t>(jpeg.size());
         localOutput.height = localParam.image_height;
-        if (!copyOut(outputInfo, &localOutput, sizeof(localOutput))) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
+        if (!GuestCopyOut_nid_no_patch(outputInfo, &localOutput, sizeof(localOutput))) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
     }
     return static_cast<std::int32_t>(jpeg.size());
 }

@@ -14,7 +14,10 @@ std::atomic<const LibcxxMutexForwards_nid_no_patch*> registeredForwards{nullptr}
 
 const LibcxxMutexForwards_nid_no_patch& Kernel(const char* function) {
     const auto* forwards = registeredForwards.load(std::memory_order_acquire);
-    if (!forwards) throw std::runtime_error(std::string(function) + ": libkernel pthread calls are not registered");
+    if (!forwards || !forwards->mutexAttrInit || !forwards->mutexAttrSettype ||
+        !forwards->mutexAttrDestroy || !forwards->mutexInit || !forwards->mutexDestroy ||
+        !forwards->mutexLock || !forwards->mutexTrylock || !forwards->mutexUnlock)
+        throw std::runtime_error(std::string(function) + ": libkernel pthread calls are not registered");
     return *forwards;
 }
 

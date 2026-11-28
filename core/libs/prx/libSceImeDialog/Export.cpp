@@ -10,6 +10,7 @@
 #include <string>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libSceIme/include/ImeComposition.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
 #include "prx/libSceIme/include/ImeKeyboardView.hpp"
@@ -326,6 +327,14 @@ int APS5_VABI sceImeDialogGetPanelSize(const Param* param, uint32_t* width, uint
         errno = savedErrno;
         return ErrorInvalidAddress;
     }
+    const GuestArena::HostWrite widthGuard(width, sizeof(defaultWidth));
+    const GuestArena::HostWrite heightGuard(height, sizeof(defaultHeight));
+    if (!widthGuard.Open() || !heightGuard.Open() ||
+        !GuestWritable_nid_no_patch(width, sizeof(defaultWidth)) ||
+        !GuestWritable_nid_no_patch(height, sizeof(defaultHeight))) {
+        errno = savedErrno;
+        return ErrorInvalidAddress;
+    }
     const bool wroteWidth = GuestCopyOut_nid_no_patch(width, &defaultWidth, sizeof(defaultWidth));
     if (!wroteWidth) {
         errno = savedErrno;
@@ -390,7 +399,8 @@ int APS5_VABI sceImeDialogGetCurrentStarState(int64_t state) {
     std::lock_guard lock(g_mutex);
     if (g_dialog.status == StatusNone) return ErrorNotInUse;
     if (state == 0) return ErrorInvalidAddress;
-    *reinterpret_cast<std::uint32_t*>(state) = 0;
+    const std::uint32_t value = 0;
+    if (!CopyOutPreservingErrno(reinterpret_cast<void*>(static_cast<std::uintptr_t>(state)), &value, sizeof(value))) return ErrorInvalidAddress;
     return 0;
 }
 

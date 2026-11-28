@@ -29,5 +29,6 @@ const NKWebKit::WtfAbi::String& APS5_VABI _ZNK7WebCore12ISOWebVTTCue2idEv(const 
 const NKWebKit::WtfAbi::String& APS5_VABI _ZNK7WebCore12ISOWebVTTCue17originalStartTimeEv(const NKWebKit::IsoAbi::WebVTTCue* self);
 const NKWebKit::WtfAbi::String& APS5_VABI _ZNK7WebCore12ISOWebVTTCue8settingsEv(const NKWebKit::IsoAbi::WebVTTCue* self);
 const NKWebKit::WtfAbi::String& APS5_VABI _ZNK7WebCore12ISOWebVTTCue7cueTextEv(const NKWebKit::IsoAbi::WebVTTCue* self);
+NKWebKit::WtfAbi::String APS5_VABI _ZNK7WebCore12ISOWebVTTCue12toJSONStringEv(const NKWebKit::IsoAbi::WebVTTCue* self);
 
 }

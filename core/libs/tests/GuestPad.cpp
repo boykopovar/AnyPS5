@@ -439,6 +439,16 @@ static void CheckExtControllerInformation(int handle) {
     for (const int invalid : {-9999, -100, -2, -1, 0, handle + 1, 9999}) {
         Require(scePadGetExtControllerInformation(invalid, extended.data()) == PAD_ERROR_INVALID_HANDLE);
     }
+    const int special = scePadOpen_nid_postfix(0x20000099, PAD_PORT_TYPE_SPECIAL, 0, nullptr);
+    Require(special > 0);
+    extended.fill(0x5a);
+    Require(scePadGetExtControllerInformation(special, extended.data()) == PAD_OK);
+    for (std::size_t i = 0; i < 0x2c; ++i) Require(extended[i] == 0);
+    for (std::size_t i = 0x2c; i < extended.size(); ++i) Require(extended[i] == 0x5a);
+    errno = 71;
+    Require(scePadGetExtControllerInformation(special, reinterpret_cast<void*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
+    Require(scePadClose_nid_postfix(special) == PAD_OK);
 }
 
 static bool LightBarValid() {
@@ -1805,6 +1815,11 @@ int main() {
     PadData earlyPadData{};
     Require(scePadRead_nid_postfix(0x999, &earlyPadData, 1) == PAD_ERROR_NOT_INITIALIZED);
     Require(scePadRead_nid_postfix(earlyPad, &earlyPadData, 1) == PAD_ERROR_NOT_INITIALIZED);
+    for (const int earlyHandle : {earlyPad, 0x999}) {
+        Require(scePadRead_nid_postfix(earlyHandle, nullptr, 1) == PAD_ERROR_NOT_INITIALIZED);
+        Require(scePadRead_nid_postfix(earlyHandle, &earlyPadData, 0) == PAD_ERROR_NOT_INITIALIZED);
+        Require(scePadRead_nid_postfix(earlyHandle, nullptr, 0) == PAD_ERROR_NOT_INITIALIZED);
+    }
     Require(scePadReadState(earlyPad, &earlyPadData) == PAD_ERROR_NOT_INITIALIZED);
     Require(scePadReadState(0x999, &earlyPadData) == PAD_ERROR_NOT_INITIALIZED);
     for (const int earlyHandle : {earlyPad, 0x999}) {
@@ -2007,7 +2022,15 @@ int main() {
     Require(p2DataMotion.angular_velocity_x == 0.1f && p2DataMotion.angular_velocity_y == 0.2f && p2DataMotion.angular_velocity_z == -0.3f);
     Require(p2DataMotion.acceleration_x > 0.49f && p2DataMotion.acceleration_x < 0.51f);
 
+    std::uint32_t p2Seq = 0;
+    PadOutputState p2Out{};
+    PadFetchOutputForPort_nid_postfix(1, &p2Seq, &p2Out);
+
     Require(scePadSetMotionSensorState(handle2, false) == PAD_OK);
+    Require(PadFetchOutputForPort_nid_postfix(1, &p2Seq, &p2Out));
+    Require(p2Out.motionEnabled == false);
+    Require(scePadSetMotionSensorState(handle2, false) == PAD_OK);
+    Require(!PadFetchOutputForPort_nid_postfix(1, &p2Seq, &p2Out));
     Require(scePadReadState(handle2, &p2DataMotion) == PAD_OK);
     Require(p2DataMotion.angular_velocity_x == 0.0f && p2DataMotion.angular_velocity_y == 0.0f && p2DataMotion.angular_velocity_z == 0.0f);
     Require(p2DataMotion.acceleration_x == 0.0f);
@@ -2017,6 +2040,10 @@ int main() {
     Require(p0DataMotion.angular_velocity_x == 0.5f && p0DataMotion.angular_velocity_y == 0.5f && p0DataMotion.angular_velocity_z == 0.5f);
 
     Require(scePadSetMotionSensorState(handle2, true) == PAD_OK);
+    Require(PadFetchOutputForPort_nid_postfix(1, &p2Seq, &p2Out));
+    Require(p2Out.motionEnabled == true);
+    Require(scePadSetMotionSensorState(handle2, true) == PAD_OK);
+    Require(!PadFetchOutputForPort_nid_postfix(1, &p2Seq, &p2Out));
     Require(scePadReadState(handle2, &p2DataMotion) == PAD_OK);
     Require(p2DataMotion.angular_velocity_x == 0.1f && p2DataMotion.angular_velocity_y == 0.2f && p2DataMotion.angular_velocity_z == -0.3f);
 

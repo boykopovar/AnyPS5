@@ -4,13 +4,21 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include <array>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <cstdio>
+#include <limits>
 #include <stdexcept>
 #include <thread>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -94,6 +102,64 @@ void CheckCommandBufferSubmission() {
         multiRejected = true;
     }
     Require(multiRejected, "unsupported queue context for multi submit was not rejected");
+
+    struct GuardedPages {
+        std::size_t pageSize = 0;
+        std::uint8_t* base = nullptr;
+        GuardedPages() {
+#ifdef _WIN32
+            SYSTEM_INFO info{};
+            GetSystemInfo(&info);
+            pageSize = info.dwPageSize;
+            base = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, 2 * pageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+            Require(base != nullptr, "VirtualAlloc failed");
+#else
+            const long size = sysconf(_SC_PAGESIZE);
+            pageSize = size > 0 ? static_cast<std::size_t>(size) : 4096u;
+            void* mapped = mmap(nullptr, 2 * pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            Require(mapped != MAP_FAILED, "mmap failed");
+            base = static_cast<std::uint8_t*>(mapped);
+#endif
+            std::memset(base, 0, pageSize);
+#ifdef _WIN32
+            DWORD previous = 0;
+            Require(VirtualProtect(base, pageSize, PAGE_READONLY, &previous) != 0, "VirtualProtect readonly failed");
+            Require(VirtualProtect(base + pageSize, pageSize, PAGE_NOACCESS, &previous) != 0, "VirtualProtect noaccess failed");
+#else
+            Require(mprotect(base, pageSize, PROT_READ) == 0, "mprotect readonly failed");
+            Require(mprotect(base + pageSize, pageSize, PROT_NONE) == 0, "mprotect noaccess failed");
+#endif
+        }
+        ~GuardedPages() {
+            if (!base) return;
+#ifdef _WIN32
+            VirtualFree(base, 0, MEM_RELEASE);
+#else
+            munmap(base, 2 * pageSize);
+#endif
+        }
+        void* ReadOnly() const { return base; }
+        void* NoAccess() const { return base + pageSize; }
+        void* Straddling() const { return base + pageSize - 6; }
+    } pages;
+
+    Require(sceAgcDriverSubmitCommandBuffer(pages.ReadOnly(), &emptyPacket) == 0, "read-only context submit must succeed");
+    Require(sceAgcDriverSubmitMultiCommandBuffers(pages.ReadOnly(), cmdBufs, cmdSizes, 1) == 0, "read-only context multi submit must succeed");
+
+    const std::array<void*, 4> badContexts{
+        reinterpret_cast<void*>(std::uintptr_t{1}),
+        reinterpret_cast<void*>(std::numeric_limits<std::uintptr_t>::max() - 1),
+        pages.NoAccess(),
+        pages.Straddling(),
+    };
+    for (void* badContext : badContexts) {
+        errno = E2BIG;
+        Require(sceAgcDriverSubmitCommandBuffer(badContext, &emptyPacket) == EINVAL, "unreadable context submit must return EINVAL");
+        Require(errno == E2BIG, "unreadable context submit modified errno");
+        errno = E2BIG;
+        Require(sceAgcDriverSubmitMultiCommandBuffers(badContext, cmdBufs, cmdSizes, 1) == EINVAL, "unreadable context multi submit must return EINVAL");
+        Require(errno == E2BIG, "unreadable context multi submit modified errno");
+    }
 }
 
 void CheckShutdownCancellation() {

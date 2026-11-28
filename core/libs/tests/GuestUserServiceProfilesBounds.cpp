@@ -1,6 +1,7 @@
 #include "SceTypes.hpp"
 #include "prx/libSceUserService/UserService.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -117,9 +118,9 @@ void TestInvalidUserIdRejection() {
         Require(sceUserServiceGetPlatformPrivacyWs1(invalidId, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
 
         uint64_t accountId = 0xDEADBEEF;
-        Require(sceUserServiceGetNpAccountId(invalidId, &accountId) == USER_SERVICE_ERROR_UNKNOWN_USER);
+        Require(sceUserServiceGetNpAccountId(invalidId, &accountId) == USER_SERVICE_ERROR_NOT_INITIALIZED);
         Require(accountId == 0xDEADBEEF);
-        Require(sceUserServiceGetNpAccountId(invalidId, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+        Require(sceUserServiceGetNpAccountId(invalidId, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
 
         UserServiceGamePresets presets{};
         presets.difficulty = 0x5A;
@@ -178,11 +179,25 @@ void TestUserNameBufferOverflowGuards() {
     }
 }
 
+void TestEapHomePathGuestWrite() {
+    errno = 71;
+    Require(libSceUserServiceUnknown_ErTMkmSho4E_nid_no_patch(
+                USER_SERVICE_INITIAL_USER_ID,
+                reinterpret_cast<char*>(static_cast<std::uintptr_t>(0x10)), 38) ==
+            USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+}
+
 void TestLoginStateTransitions() {
     Require(sceUserServiceIsLoggedIn(USER_SERVICE_INITIAL_USER_ID) == USER_SERVICE_ERROR_NOT_INITIALIZED);
 
     UserServiceLoginUserIdList uninitList{};
     Require(sceUserServiceGetLoginUserIdList(&uninitList) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+
+    uint64_t uninitAccountId = 0xDEAD;
+    Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID, &uninitAccountId) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(uninitAccountId == 0xDEAD);
+    Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
 
     UserServiceInitParam badParam{};
     badParam.priority = USER_SERVICE_THREAD_PRIORITY_MIN - 1;
@@ -316,6 +331,7 @@ int main() {
     TestUserIdRangeBounds();
     TestInvalidUserIdRejection();
     TestUserNameBufferOverflowGuards();
+    TestEapHomePathGuestWrite();
     TestLoginStateTransitions();
     return 0;
 }

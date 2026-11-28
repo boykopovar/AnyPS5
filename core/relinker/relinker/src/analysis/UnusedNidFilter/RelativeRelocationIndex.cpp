@@ -124,6 +124,10 @@ public:
         return result;
     }
 
+    std::map<VirtualAddress, VirtualAddress> SlotTargets() const override {
+        return {_targets.begin(), _targets.end()};
+    }
+
 private:
     std::unordered_map<VirtualAddress, VirtualAddress> _targets;
 };

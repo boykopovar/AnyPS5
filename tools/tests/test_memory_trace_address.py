@@ -86,6 +86,24 @@ class ParseTests(FeatureRequired):
         with self.assertRaisesRegex(ValueError, "line 1: protect event has no address range"):
             trace.parse_events(["[memory] protect with a truncated record\n"])
 
+    def test_rejects_corrupt_mapping_ranges_at_the_source_line(self):
+        invalid = (
+            ("protect unavailable fallback=0x2000+0x10", "no address range"),
+            ("map direct addr=0x2000+0x10", "no address range"),
+            ("map anon -0x2000+0x10", "no address range"),
+            ("unmap released view 0x2000+0x10G", "no address range"),
+            ("map file 0x10000000000000000+0x10", "unsigned 64-bit"),
+            ("map shared 0x2000+0x10000000000000000", "unsigned 64-bit"),
+            ("reserve 0xffffffffffffffff+0x2", "unsigned 64-bit"),
+        )
+        for detail, diagnostic in invalid:
+            with self.subTest(detail=detail), self.assertRaisesRegex(ValueError, rf"line 2: .*{diagnostic}"):
+                trace.parse_events(["ordinary output\n", f"[memory] {detail}\n"])
+
+    def test_accepts_a_mapping_ending_at_the_64_bit_limit(self):
+        event, = trace.parse_events(["[memory] unmap 0xffffffffffffffff+0x1\n"])
+        self.assertTrue(trace.overlaps(event, 0xffffffffffffffff, 1))
+
 
 class RangeTests(FeatureRequired):
     def test_accepts_decimal_and_hex_ranges(self):
@@ -102,6 +120,11 @@ class RangeTests(FeatureRequired):
 
 
 class RangeErrorTests(FeatureRequired):
+    def test_rejects_undocumented_bases_in_both_query_arguments(self):
+        for address, size in (("0b10000", "1"), ("0o20", "1"), ("16", "0B10"), ("16", "0O2")):
+            with self.subTest(address=address, size=size), self.assertRaisesRegex(ValueError, "decimal or 0x-prefixed"):
+                trace.parse_range(address, size)
+
     def test_reports_the_integer_format_error_for_non_numeric_input(self):
         with self.assertRaisesRegex(ValueError, "decimal or 0x-prefixed integers"):
             trace.parse_range("0x10", "zz")
@@ -192,9 +215,10 @@ class CliTests(FeatureRequired):
             self.assertIn("line 1: map anon 0x1000+0x1000", result.stdout)
             self.assertNotIn("No traced mapping operations", result.stdout)
 
-    def test_cli_reads_a_first_line_event_in_a_utf16_trace(self):
+    def test_cli_reads_a_first_line_event_in_a_utf16_or_utf32_trace(self):
         line = "[memory] map anon 0x1000+0x1000 prot=0x3\r\n"
-        for encoding, bom in (("utf-16-le", b"\xff\xfe"), ("utf-16-be", b"\xfe\xff")):
+        for encoding, bom in (("utf-16-le", b"\xff\xfe"), ("utf-16-be", b"\xfe\xff"),
+                              ("utf-32-le", b"\xff\xfe\x00\x00"), ("utf-32-be", b"\x00\x00\xfe\xff")):
             with self.subTest(encoding=encoding), tempfile.TemporaryDirectory() as directory:
                 path = Path(directory) / "run.log"
                 path.write_bytes(bom + line.encode(encoding))
@@ -235,6 +259,16 @@ class CliTests(FeatureRequired):
                 self.assertEqual(result.stdout, "")
                 self.assertIn("error:", result.stderr)
                 self.assertNotIn("Traceback", result.stderr)
+
+    def test_cli_identifies_the_file_of_a_corrupt_mapping(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "corrupt-memory.log"
+            path.write_text("[memory] unmap invalid\n", encoding="utf-8")
+            result = subprocess.run([sys.executable, str(TOOL), str(path), "--address", "0x1000"],
+                                    capture_output=True, text=True, encoding="utf-8", timeout=10)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn(path.name, result.stderr)
+            self.assertIn("line 1", result.stderr)
 
 
 if __name__ == "__main__":

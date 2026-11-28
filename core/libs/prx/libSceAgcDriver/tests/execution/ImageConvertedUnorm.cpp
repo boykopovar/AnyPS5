@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Optimization/ResourceMaterializer.hpp"
 #include "Optimization/ResourceProgram.hpp"
@@ -105,6 +106,15 @@ constexpr std::array<std::uint32_t, 13> SampleAtCode(std::uint32_t step, std::ui
     };
 }
 
+constexpr std::array<std::uint32_t, 23> LoadSampleCode() {
+    std::array<std::uint32_t, 23> code{};
+    const auto load = LoadCode(0xfu, 0u);
+    const auto sample = SamplerCode(0xf09c0f08u);
+    std::copy(load.begin(), load.end() - 1, code.begin());
+    std::copy(sample.begin(), sample.end(), code.begin() + load.size() - 1u);
+    return code;
+}
+
 alignas(256) constexpr std::array<std::uint32_t, 10> RoundTrip{
     0x7e080218u, 0x343c0885u, 0x4a3c3d00u, 0x7e3e0280u, 0xf0001708u, 0x00010a1eu, 0xbf8c3f70u, 0xf0201708u,
     0x00040a1eu, 0xbf810000u,
@@ -132,6 +142,7 @@ alignas(256) constexpr auto StoreXz = StoreCode(0x5u, 0u);
 alignas(256) constexpr auto StoreD16 = StoreCode(0x7u, D16);
 alignas(256) constexpr auto StoreXzD16 = StoreCode(0x5u, D16);
 alignas(256) constexpr auto SampleLz = SamplerCode(0xf09c0f08u);
+alignas(256) constexpr auto LoadSample = LoadSampleCode();
 alignas(256) constexpr auto SampleAt = SampleAtCode(SampleStep, SampleStart);
 alignas(256) constexpr auto SampleWrapped = SampleAtCode(SampleStep, WrappedStart);
 alignas(256) constexpr auto SampleOffGrid = SampleAtCode(OffGridStep, SampleStart);
@@ -704,7 +715,7 @@ std::uint32_t UnsignedTexel(std::uint32_t index, const UnsignedPackedLayout& lay
 Expected UnsignedSelected(std::uint32_t texel, const UnsignedPackedLayout& layout, std::uint32_t selector) {
     if (selector == 0u) return {0u, 0u};
     if (selector == 1u) return {layout.unorm ? 0x3f800000u : 1u, 0u};
-    const auto channel = selector - 4u;
+    const auto channel = (selector - 4u) % layout.components;
     const auto maximum = (1u << layout.widths[channel]) - 1u;
     const auto field = (texel >> layout.offsets[channel]) & maximum;
     if (!layout.unorm) return {field, 0u};
@@ -758,11 +769,21 @@ void CheckUnsignedPacked32(AgcDriver::VulkanDevice& device, std::uint8_t* texels
             }
         }
     }
-    if (layout.unorm && layout.components == 3u) RequireRefused(device, LoadXyzw, texels, SwizzleXYZW, {}, "channel the converted image format does not have", label + " missing W", format);
+    if (layout.components == 3u) {
+        Run(device, LoadXyzw, TextureDescriptor(texels, format, SwizzleXYZW, LoadWidth), {}, LoadGroups);
+        check(SwizzleXYZW, 0xfu, "load of the missing W through an identity DST_SEL");
+        Run(device, LoadXy, TextureDescriptor(texels, format, SwizzleXYZW, LoadWidth), {}, LoadGroups);
+        check(SwizzleXYZW, 0x3u, "load DMASK through an identity DST_SEL that selects the missing W");
+    }
+    if (layout.unorm && layout.components == 3u) {
+        RequireRefused(device, LoadXyzw, texels, 7u | (5u << 3u) | (6u << 6u) | (4u << 9u), {}, "selects a channel the converted image format does not have", label + " missing W through a DST_SEL that is not the identity", format);
+        RequireRefused(device, sampleCenters[0], texels, SwizzleXYZW, PointSampler, "selects a channel the converted image format does not have", label + " sample of the missing W through an identity DST_SEL", format);
+        RequireRefused(device, LoadSample, texels, SwizzleXYZW, PointSampler, "selects a channel the converted image format does not have", label + " load and sample of one image through an identity DST_SEL", format);
+    }
     alignas(256) static constexpr auto storeAll = StoreCode(0xfu, 0u);
-    for (std::uint32_t pass = 0u; pass < 4u; ++pass) {
-        const auto swizzle = pass == 2u ? reverse : identity;
-        const auto mask = pass == 3u ? 0x5u : 0xfu;
+    for (std::uint32_t pass = 0u; pass < (layout.components == 3u ? 5u : 4u); ++pass) {
+        const auto swizzle = pass == 2u ? reverse : pass == 4u ? SwizzleXYZW : identity;
+        const auto mask = pass == 3u ? 0x5u : pass == 4u ? 0x7u : 0xfu;
         auto* target = texels + StoreOffset;
         std::fill(target - 256u, target + Threads * 4u + 256u, static_cast<std::uint8_t>(0xa5u));
         std::array<std::uint32_t, Threads> expected{};
@@ -776,13 +797,13 @@ void CheckUnsignedPacked32(AgcDriver::VulkanDevice& device, std::uint8_t* texels
                 const auto value = UnsignedSelected(raw, layout, selector);
                 Input[tid * 4u + slot++] = value.bits;
                 if (selector >= 4u) {
-                    const auto field = selector - 4u;
+                    const auto field = (selector - 4u) % layout.components;
                     const auto maximum = (1u << layout.widths[field]) - 1u;
                     expected[tid] |= (layout.unorm ? StoreField(value.bits, maximum) : value.bits & maximum) << layout.offsets[field];
                 }
             }
         }
-        Run(device, mask == 0x5u ? StoreXz : storeAll, TextureDescriptor(target, format, swizzle, Threads), BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u)), 1u);
+        Run(device, mask == 0x5u ? StoreXz : mask == 0x7u ? StoreXyz : storeAll, TextureDescriptor(target, format, swizzle, Threads), BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u)), 1u);
         AgcDriver::Graphics::StorageTexture::FlushPending(reinterpret_cast<std::uintptr_t>(target), Threads * 4u, nullptr, "test");
         device.WaitIdle();
         for (std::uint32_t tid = 0u; tid < Threads; ++tid) {
@@ -876,18 +897,27 @@ bool SameDepth24(std::uint32_t bits, std::uint32_t depth) {
 }
 
 void CheckDepth24(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
+    const bool usesFloatFallback = AgcDriver::Graphics::SampledTextureFormat(device.graphicsContext(), 141u) == VK_FORMAT_R32_SFLOAT;
+    const auto depthTexel = [](std::uint32_t index) {
+        constexpr auto firstPower = LoadWidth / 2u;
+        return index >= firstPower && index < firstPower + 24u ? 1u << (index - firstPower) : LoadTexel(index);
+    };
     for (std::uint32_t index = 0; index < LoadWidth; ++index) {
-        const auto texel = LoadTexel(index);
+        const auto texel = depthTexel(index);
         std::memcpy(texels + index * 4u, &texel, 4u);
     }
     Run(device, LoadXyzw, TextureDescriptor(texels, 141u, SwizzleXYZW, LoadWidth), {}, LoadGroups);
     for (std::uint32_t index = 0; index < LoadWidth; ++index) {
-        const auto depth = LoadTexel(index) & 0xffffffu;
-        Require(SameDepth24(Output[index * 4u], depth), "image_load of 8_24_UNORM reads the wrong depth for format 141: " + Hex(Output[index * 4u]) + " for texel " + Hex(LoadTexel(index)));
+        const auto depth = depthTexel(index) & 0xffffffu;
+        if (usesFloatFallback) {
+            const auto expected = static_cast<float>(static_cast<double>(depth) / 16777215.0);
+            Require(Output[index * 4u] == std::bit_cast<std::uint32_t>(expected), "R32_SFLOAT fallback rounded depth incorrectly for " + Hex(depth));
+        }
+        Require(SameDepth24(Output[index * 4u], depth), "image_load of 8_24_UNORM reads the wrong depth for format 141: " + Hex(Output[index * 4u]) + " for texel " + Hex(depthTexel(index)));
         Require(Output[index * 4u + 1u] == 0u && Output[index * 4u + 2u] == 0u && Output[index * 4u + 3u] == 0x3f800000u, "image_load of 8_24_UNORM must give G=0 B=0 A=1 for format 141");
     }
     Run(device, SampleLz, TextureDescriptor(texels, 141u, SwizzleXYZW, LoadWidth), PointSampler, 1);
-    const auto depth = LoadTexel(0) & 0xffffffu;
+    const auto depth = depthTexel(0) & 0xffffffu;
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         Require(SameDepth24(Output[tid * 4u], depth), "image_sample_lz of 8_24_UNORM reads the wrong depth for format 141");
         Require(Output[tid * 4u + 1u] == 0u && Output[tid * 4u + 2u] == 0u && Output[tid * 4u + 3u] == 0x3f800000u, "image_sample_lz of 8_24_UNORM must give G=0 B=0 A=1 for format 141");

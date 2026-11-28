@@ -7,11 +7,18 @@
 #include <cstdlib>
 #include <cstring>
 #include <array>
+#include <chrono>
+#include <thread>
 
 namespace {
 
 void ClobberErrno(std::uintptr_t, std::size_t) {
     errno = 99;
+}
+
+void ClobberErrnoAndDelay(std::uintptr_t, std::size_t) {
+    errno = 99;
+    std::this_thread::sleep_for(std::chrono::microseconds(20));
 }
 
 constexpr int InvalidArgument = static_cast<int>(0x80553303u);
@@ -241,6 +248,42 @@ int main() {
     Require(sceNpSessionSignalingSetCustomProperty(contextId, &secondProperty, &previousProperty) == 0 && previousProperty == firstProperty, "second custom property update reports its predecessor");
     Require(sceNpSessionSignalingSetCustomProperty(contextId, &secondProperty, nullptr) == 0, "custom property update without a previous output");
     Require(sceNpSessionSignalingGetCustomProperty(contextId, &property) == 0 && property == secondProperty, "updated custom property");
+
+    const std::uint32_t resetProperty = 0;
+    Require(sceNpSessionSignalingSetCustomProperty(contextId, &resetProperty, nullptr) == 0, "reset custom property");
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrnoAndDelay);
+    constexpr std::uint32_t iterationsPerThread = 50;
+    std::array<std::uint32_t, iterationsPerThread * 2> previousValues{};
+    std::array<std::thread, 2> threads;
+    for (std::uint32_t threadIndex = 0; threadIndex < 2; ++threadIndex) {
+        threads[threadIndex] = std::thread([contextId, threadIndex, &previousValues]() {
+            for (std::uint32_t i = 0; i < iterationsPerThread; ++i) {
+                const std::uint32_t nextValue = threadIndex * iterationsPerThread + i + 1;
+                std::uint32_t previousValue = 0xffffffffu;
+                errno = 71;
+                Require(sceNpSessionSignalingSetCustomProperty(contextId, &nextValue, &previousValue) == 0, "concurrent custom property update");
+                Require(errno == 71, "errno preserved on concurrent custom property update");
+                previousValues[threadIndex * iterationsPerThread + i] = previousValue;
+            }
+        });
+    }
+    for (auto& thread : threads) {
+        thread.join();
+    }
+    std::uint32_t finalProperty = 0xffffffffu;
+    Require(sceNpSessionSignalingGetCustomProperty(contextId, &finalProperty) == 0, "final concurrent custom property");
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
+    std::array<std::uint32_t, iterationsPerThread * 2 + 1> seenCounts{};
+    for (const auto value : previousValues) {
+        Require(value <= iterationsPerThread * 2, "concurrent previous custom property out of range");
+        ++seenCounts[value];
+    }
+    Require(finalProperty <= iterationsPerThread * 2, "final concurrent custom property out of range");
+    ++seenCounts[finalProperty];
+    for (const auto count : seenCounts) {
+        Require(count == 1, "concurrent custom property exchange lost or duplicated a value");
+    }
+
     Require(sceNpSessionSignalingRegisterInternalCallback(firstId, nullptr, nullptr) == ContextNotFound, "register callback stale context");
     Require(sceNpSessionSignalingRegisterInternalCallback(contextId, nullptr, nullptr) == 0, "register callback");
     const char* const activateSessionId = reinterpret_cast<const char*>(sessionId);

@@ -79,9 +79,12 @@ int main() {
     CheckBeforeInit(libSceLibcInternalInventory_145_nid_no_patch, outPath, errPath, "narrow-pre-out|", "narrow-pre-err|", outExpected, errExpected);
     CheckDualRelease(libSceLibcInternalInventory_144_nid_no_patch, libSceLibcInternalInventory_145_nid_no_patch, libSceLibcInternalInventory_145_nid_no_patch,
         outPath, errPath, "narrow-out|", "narrow-err|", outExpected, errExpected, "narrow-pre-out|", "narrow-pre-err|");
+    CheckBeforeInit(_ZNSt8ios_base4InitD2Ev_nid_postfix, outPath, errPath, "narrow-d2-pre-out|", "narrow-d2-pre-err|", outExpected, errExpected);
     CheckDualRelease(sceLibcInternalUnknown6_080_bTQcNwRc8hE_nid_no_patch, libSceLibcInternalInventory_145_nid_no_patch,
-        libSceLibcInternalInventory_145_nid_no_patch, outPath, errPath, "narrow-c1-c2-out|", "narrow-c1-c2-err|", outExpected, errExpected,
-        "", "", libSceLibcInternalInventory_144_nid_no_patch);
+        _ZNSt8ios_base4InitD2Ev_nid_postfix, outPath, errPath, "narrow-c2-c1-out|", "narrow-c2-c1-err|", outExpected, errExpected,
+        "narrow-d2-pre-out|", "narrow-d2-pre-err|", libSceLibcInternalInventory_144_nid_no_patch);
+    CheckDualRelease(libSceLibcInternalInventory_144_nid_no_patch, _ZNSt8ios_base4InitD2Ev_nid_postfix,
+        libSceLibcInternalInventory_145_nid_no_patch, outPath, errPath, "narrow-d2-d1-out|", "narrow-d2-d1-err|", outExpected, errExpected);
 
     CheckBeforeInit(_ZNSt6_WinitD1Ev_nid_postfix, outPath, errPath, "wide-d1-pre-out|", "wide-d1-pre-err|", outExpected, errExpected);
     CheckDualRelease(libSceLibcInternalInventory_071_nid_no_patch, _ZNSt6_WinitD1Ev_nid_postfix, _ZNSt6_WinitD2Ev_nid_postfix,

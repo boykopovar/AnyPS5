@@ -51,8 +51,9 @@ void APS5_VABI FT_Set_Default_Properties_nid_postfix(FreeType::GuestLibrary* lib
 
 extern "C" {
 
-int APS5_VABI freetypeLegacyFtcManagerNew_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI freetypeLegacyFtcManagerNew_nid_no_patch(FreeType::GuestLibrary* library, std::uint32_t maxFaces, std::uint32_t maxSizes,
+                                                      std::uint64_t maxBytes, FreeType::GuestFaceRequester requester, void* reqData, void** manager) {
+    return FreeType::FreeTypeNewCacheManager_nid_no_patch(library, maxFaces, maxSizes, maxBytes, requester, reqData, manager, __func__);
 }
 APS5_EXPORT("DYbLD-s1oiQ", freetypeLegacyFtcManagerNew_nid_no_patch);
 

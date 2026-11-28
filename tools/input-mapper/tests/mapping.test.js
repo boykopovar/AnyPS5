@@ -82,6 +82,19 @@ test('setting names and order agree with the current native parser', () => {
     assert.equal(new Set(definitions).size, definitions.length);
 });
 
+test('setting hints show the built-in values of the native settings', () => {
+    const source = readFileSync(new URL('../../../core/libs/prx/libScePad/include/InputMapping.hpp', import.meta.url), 'utf8');
+    const constants = Object.fromEntries([...source.matchAll(/inline constexpr \w+ (\w+) = ([\d.]+);/gu)].map(match => [match[1], match[2]]));
+    const fields = source.match(/struct InputSettings \{([^}]*)\}/u)[1];
+    const native = {};
+    for (const [, field, value] of fields.matchAll(/(?:int|double) (\w+) = (\w[\w.]*);/gu)) {
+        native[field[0].toUpperCase() + field.slice(1).replace(/Percent$/u, '')] = Number(constants[value] ?? value);
+    }
+    native.MouseStickTarget = /bool mouseControlsRightStick = true;/u.test(fields) ? 'Right' : 'Left';
+    const builtin = Object.fromEntries(settings.filter(setting => setting.builtin !== undefined).map(setting => [setting.name, setting.name === 'MouseStickTarget' ? setting.builtin : Number(setting.builtin)]));
+    assert.deepEqual(builtin, native);
+});
+
 test('ToggleActions values follow the current native list parser', () => {
     const source = readFileSync(new URL('../../../core/libs/prx/libSceVideoOut/src/InputMapping.cpp', import.meta.url), 'utf8');
     const parser = source.match(/std::uint32_t parseToggleActions[\s\S]*?return mask;/u)[0];
@@ -264,6 +277,34 @@ test('a setting set more than once is refused like the native parser', () => {
     assert.deepEqual(result.settings, [{name: 'MouseSensitivity', value: '1'}]);
 });
 
+test('names fold case and trim spaces in ASCII only, like the native parser', () => {
+    const lines = [
+        'Trıangle = KEY:A',
+        'ſquare = KEY:A',
+        'Cross = KEY:ſpace',
+        'Cross = MıDDLE:Left',
+        ' Cross = KEY:A',
+        'Cross = KEY:A ',
+        'Cross　= KEY:A',
+        'MouseSensitivity = 2 ',
+        'MouseStickTarget = RıGHT',
+        'ToggleActions = Cross, Circle',
+        'SDLButton:a = Cross',
+        'SDLButton:a = Croſſ'
+    ];
+    for (const line of lines) {
+        const result = parseIni(line);
+        assert.equal(result.errors.length, 1, line);
+        assert.deepEqual([result.entries, result.settings, result.controllerRemaps], [[], [], []], line);
+    }
+    assert.equal(validate([binding('Trıangle', 'KEY', 'A')]).errors.length, 1);
+    assert.equal(validateSettings([{name: 'MouseSensitivity', value: '2 '}]).errors.length, 1);
+    const imported = parseIni('\tTRIANGLE\v=\fkey: a\r\nmousesensitivity =\v2\f\n');
+    assert.deepEqual(imported.errors, []);
+    assert.deepEqual(imported.entries, [binding('Triangle', 'KEY', 'A')]);
+    assert.deepEqual(imported.settings, [{name: 'MouseSensitivity', value: '2'}]);
+});
+
 test('serialize refuses invalid settings it is handed', () => {
     for (const configuration of [[{name: 'MouseSensitivity', value: '0'}], [{name: 'MadeUp', value: '1'}], [{name: 'MouseCurve', value: '9'}], [{name: 'MouseCurve', value: '1'}, {name: 'MouseCurve', value: '2'}], null]) {
         assert.throws(() => serialize([], configuration));
@@ -306,7 +347,7 @@ test('all exportable SDL names validate and unsafe comment names are rejected', 
 test('mouse values and action restrictions match the current INI format', () => {
     for (const action of actions) {
         for (const value of mouseValues) {
-            assert.equal(validate([binding(action, 'MOUSE', value)]).errors.length === 0, !['ToggleFullscreen', 'TogglePerformanceOverlay', 'Screenshot', 'ShowPadStatus', 'VolumeUp', 'VolumeDown', 'ToggleMute', 'ReloadInputMapping'].includes(action));
+            assert.equal(validate([binding(action, 'MOUSE', value)]).errors.length === 0, !['ToggleFullscreen', 'ToggleBorderless', 'TogglePerformanceOverlay', 'Screenshot', 'ShowPadStatus', 'VolumeUp', 'VolumeDown', 'ToggleMute', 'ReloadInputMapping'].includes(action));
         }
     }
     assert.ok(validate([binding('Cross', 'MOUSE', 'Button1')]).errors.length);

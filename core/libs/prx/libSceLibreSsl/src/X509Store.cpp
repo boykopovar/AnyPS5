@@ -235,9 +235,7 @@ void FreeVerifyParam(LibreSslX509VerifyParam* param, const char* function) {
 }
 
 void CopyGuestBytes(void* destination, const void* source, std::size_t size, const char* function) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(destination, source, size);
-    errno = savedErrno;
     if (!copied) throw std::invalid_argument(std::string(function) + ": unreadable guest memory");
 }
 
@@ -250,9 +248,7 @@ T CopyGuestRecord(const T* source, const char* function) {
 
 template <typename T>
 void WriteGuestRecord(T* destination, const std::type_identity_t<T>& value, const char* function) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
-    errno = savedErrno;
     if (!copied) throw std::invalid_argument(std::string(function) + ": unwritable guest memory");
 }
 
@@ -283,9 +279,7 @@ bool ReadHostName(const char* name, std::size_t length, std::string& host) {
     while (!counted || host.size() < length) {
         std::size_t size = Page - address % Page;
         if (counted) size = std::min<std::size_t>(size, length - host.size());
-        const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(chunk, reinterpret_cast<const void*>(address), size);
-        errno = savedErrno;
         if (!copied) throw std::invalid_argument("X509_VERIFY_PARAM_set1_host: unreadable host name");
         const auto* end = static_cast<const char*>(std::memchr(chunk, '\0', size));
         host.append(chunk, end ? static_cast<std::size_t>(end - chunk) : size);
