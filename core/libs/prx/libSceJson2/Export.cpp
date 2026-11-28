@@ -317,6 +317,19 @@ void StoreGuest(void* destination, const Value& value, const char* function) {
     if (!GuestCopyOut_nid_no_patch(destination, &value, sizeof(value))) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
 }
 
+template <typename Value>
+void RequireGuestWritable(void* destination, const char* function) {
+    if (!destination || !GuestWritable_nid_no_patch(destination, sizeof(Value))) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+bool GuestRangesOverlap(const void* left, std::size_t leftBytes, const void* right, std::size_t rightBytes) {
+    if (!left || !right || !leftBytes || !rightBytes) return false;
+    const auto leftStart = reinterpret_cast<std::uintptr_t>(left);
+    const auto rightStart = reinterpret_cast<std::uintptr_t>(right);
+    if (leftStart <= rightStart) return rightStart - leftStart < leftBytes;
+    return leftStart - rightStart < rightBytes;
+}
+
 AllocationContext ActiveAllocation() {
     auto& state = State();
     std::lock_guard lock(state.mutex);
@@ -481,7 +494,7 @@ struct GuestOutOfMemory {};
 
 void Construct(Value& value);
 void Destroy(Value& value);
-void CopyInto(Value& destination, const Value& source);
+void CopyInto(Value& destination, const Value& source, const Value* sourceKey = nullptr);
 
 struct ArrayLink {
     ArrayLink* previous;
@@ -577,8 +590,9 @@ ArrayLink* NewArrayHead() {
     return head;
 }
 
-void Construct(Array& array) {
+void Construct(Array& array, Array* guestTarget = nullptr, const char* function = nullptr) {
     array.items = static_cast<ArrayStorage*>(Allocate(ModernValues() ? 32 : 24));
+    if (guestTarget) StoreGuest(guestTarget, array, function);
     if (!array.items) return;
     array.items->count = 0;
     array.items->head = NewArrayHead();
@@ -586,7 +600,7 @@ void Construct(Array& array) {
 }
 void Destroy(String& string);
 void BindChildren(Value& value);
-void AssignNode(Value& destination, const Value& source);
+void AssignNode(Value& destination, const Value& source, const Value* sourceKey = nullptr);
 void TransferPayload(Value& destination, Value& source);
 
 void PoisonText(Text& text) {
@@ -991,11 +1005,11 @@ void EraseLegacyHandler(const Value& value) {
     if (state.legacyHandlers) state.legacyHandlers->Erase(state.legacyHandlers->Find(&value));
 }
 
-void CopyLegacyHandler(Value& destination, const Value& source) {
+void CopyLegacyHandler(Value& destination, const Value& source, const Value* sourceKey = nullptr) {
     auto& state = State();
     KernelMutexLock lock(state.recoveryMutex);
     if (!state.legacyHandlers) return;
-    const auto* sourceNode = state.legacyHandlers->Find(&source);
+    const auto* sourceNode = state.legacyHandlers->Find(sourceKey ? sourceKey : &source);
     if (!sourceNode->nil) {
         const auto record = sourceNode->record;
         RegisterLegacyHandler(destination, record.callback, record.context);
@@ -1067,7 +1081,7 @@ void CopyObjectStorage(ObjectStorage& destination, const ObjectStorage& source) 
 }
 
 void Destroy(Value& v);
-void CopyInto(Value& destination, const Value& source);
+void CopyInto(Value& destination, const Value& source, const Value* sourceKey);
 
 void SetDefaultHeaderRetired(ValueType type, const void* owner, bool retired);
 
@@ -1080,16 +1094,18 @@ void Destroy(String& s) {
     s.text = nullptr;
     SetDefaultHeaderRetired(TypeString, &s, false);
 }
-void Destroy(Array& a) {
+void Destroy(Array& a, Array* guestTarget = nullptr, const char* function = nullptr) {
     if (!a.items) return;
+    const void* owner = guestTarget ? static_cast<const void*>(guestTarget) : static_cast<const void*>(&a);
     a.items->ReleaseContents();
     if (a.items->head) Release(a.items->head);
-    SetDefaultHeaderRetired(TypeArray, &a, true);
+    SetDefaultHeaderRetired(TypeArray, owner, true);
     a.items->head = reinterpret_cast<ArrayLink*>(std::uintptr_t{0xffffffff});
     a.items->count = std::numeric_limits<std::size_t>::max();
     Release(a.items);
     a.items = nullptr;
-    SetDefaultHeaderRetired(TypeArray, &a, false);
+    if (guestTarget) StoreGuest(guestTarget, a, function);
+    SetDefaultHeaderRetired(TypeArray, owner, false);
 }
 void Destroy(Object& object, Object* guestTarget = nullptr, const char* function = nullptr) {
     if (!object.items) return;
@@ -1330,7 +1346,7 @@ void CopyObject(Object& destination, const Object& source, Object* guestTarget =
 void AssignReal(Node& n, double value);
 
 void SetType(Node& n, ValueType type);
-void AssignArray(Array& destination, const Array& source);
+void AssignArray(Array& destination, const Array& source, Array* guestTarget = nullptr, const char* function = nullptr);
 void AssignObject(Object& destination, const Object& source);
 
 bool HasPayloadStorage(const Node& value) {
@@ -1404,19 +1420,19 @@ void AssignPayload(Node& destination, const Node& source) {
     NotImplemented_nid_no_patch(__func__);
 }
 
-void AssignNode(Node& destination, const Node& source) {
+void AssignNode(Node& destination, const Node& source, const Node* sourceKey) {
     for (auto* parent = source.parent; parent; parent = parent->parent) {
         if (parent != &destination || !HasPayloadStorage(source)) continue;
         Node temporary{};
         try {
-            AssignNode(temporary, source);
+            AssignNode(temporary, source, sourceKey);
             AssignNode(destination, temporary);
         } catch (...) { Destroy(temporary); throw; }
         Destroy(temporary);
         return;
     }
     AssignPayload(destination, source);
-    if (!ModernValues()) CopyLegacyHandler(destination, source);
+    if (!ModernValues()) CopyLegacyHandler(destination, source, sourceKey);
 }
 
 void RecoverSpecial(const Node& source, const Handlers& handlers, int function, double number, Value& result, bool* error) {
@@ -1431,9 +1447,9 @@ void RecoverSpecial(const Node& source, const Handlers& handlers, int function, 
     Destroy(returned);
 }
 
-void CopyInto(Value& destination, const Value& source) {
+void CopyInto(Value& destination, const Value& source, const Value* sourceKey) {
     Construct(destination);
-    AssignNode(destination, source);
+    AssignNode(destination, source, sourceKey);
 }
 
 void SetType(Node& n, ValueType type) {
@@ -2033,7 +2049,7 @@ struct TemporaryTreeEntry {
     ~TemporaryTreeEntry() { Destroy(pair.value); Destroy(pair.key); }
 };
 
-void AssignArray(Array& destination, const Array& source) {
+void AssignArray(Array& destination, const Array& source, Array* guestTarget, const char* function) {
     if (!destination.items || !source.items) return;
     if (!ModernValues()) {
         CopyArrayStorage(*destination.items, *source.items);
@@ -2060,6 +2076,7 @@ void AssignArray(Array& destination, const Array& source) {
     } catch (...) { Destroy(pending); throw; }
     auto previous = destination;
     destination = pending;
+    if (guestTarget) StoreGuest(guestTarget, destination, function);
     Destroy(previous);
 }
 
@@ -2184,11 +2201,12 @@ Value* ObjectAccess(Object& object, const String& input) {
     return &node->pair.value;
 }
 
-void AppendArray(Array* self, const Value* value) {
+void AppendArray(Array* self, const Value* value, const Value* sourceKey = nullptr) {
     if (!self->items || !self->items->head) return;
+    const Value* key = sourceKey ? sourceKey : value;
     AllocationOperation operation;
     if (!ModernValues()) {
-        try { CopyInto(self->items->emplace_back(), *value); }
+        try { CopyInto(self->items->emplace_back(), *value, key); }
         catch (const GuestOutOfMemory&) {}
         if (operation.Finish()) self->items->PopBack();
         return;
@@ -2196,7 +2214,7 @@ void AppendArray(Array* self, const Value* value) {
     Value copy{};
     copy.parent = self->items->Owner();
     try {
-        AssignNode(copy, *value);
+        AssignNode(copy, *value, key);
         auto& inserted = self->items->emplace_back();
         inserted.parent = self->items->Owner();
         TransferPayload(inserted, copy);
@@ -2209,10 +2227,10 @@ void AppendArray(Array* self, const Value* value) {
     if (operation.Finish()) self->items->PopBack();
 }
 
-ArrayLink* InsertArrayLink(ArrayStorage& items, ArrayLink* position, const Value& value) {
+ArrayLink* InsertArrayLink(ArrayStorage& items, ArrayLink* position, const Value& value, const Value* sourceKey = nullptr) {
     auto* link = static_cast<ArrayLink*>(Allocate(sizeof(ArrayLink)));
     if (!link) return items.head;
-    try { CopyInto(link->value, value); }
+    try { CopyInto(link->value, value, sourceKey); }
     catch (...) { Release(link); throw; }
     link->previous = position->previous;
     link->next = position;
@@ -2222,15 +2240,16 @@ ArrayLink* InsertArrayLink(ArrayStorage& items, ArrayLink* position, const Value
     return link;
 }
 
-void PrependArray(Array* self, const Value* value) {
+void PrependArray(Array* self, const Value* value, const Value* sourceKey = nullptr) {
     if (!self->items) return;
+    const Value* key = sourceKey ? sourceKey : value;
     AllocationOperation operation;
     if (!ModernValues()) {
-        if (self->items->head) InsertArrayLink(*self->items, self->items->head->next, *value);
+        if (self->items->head) InsertArrayLink(*self->items, self->items->head->next, *value, key);
     } else {
         ScopedValue copy;
         copy.value.parent = self->items->Owner();
-        AssignNode(copy.value, *value);
+        AssignNode(copy.value, *value, key);
         Value empty{};
         if (self->items->head) InsertArrayLink(*self->items, self->items->head->next, empty);
         if (self->items->count) TransferPayload(self->items->head->next->value, copy.value);
@@ -2975,129 +2994,261 @@ int APS5_VABI _ZNK3sce4Json6String7compareERKS1_(const String* self, const Strin
     return CompareText(Characters(*self), Characters(*other));
 }
 
-void APS5_VABI _ZN3sce4Json5ArrayC1Ev(Array* self) { Construct(*self); }
-void APS5_VABI _ZN3sce4Json5ArrayC1ERKS1_(Array* self, const Array* other) { CopyArray(*self, *other); }
-void APS5_VABI _ZN3sce4Json5ArrayD1Ev(Array* self) { Destroy(*self); }
-Array* APS5_VABI _ZN3sce4Json5ArrayaSERKS1_(Array* self, const Array* other) { AssignArray(*self, *other); return self; }
-void APS5_VABI _ZN3sce4Json5Array10push_frontERKNS0_5ValueE(Array* self, const Value* value) { PrependArray(self, value); }
+void APS5_VABI _ZN3sce4Json5ArrayC1Ev(Array* self) {
+    StoreGuest(self, Array{}, __func__);
+    Array local{};
+    Construct(local, self, __func__);
+    StoreGuest(self, local, __func__);
+}
+void APS5_VABI _ZN3sce4Json5ArrayC1ERKS1_(Array* self, const Array* other) {
+    const auto source = LoadGuest<Array>(other, __func__);
+    RequireGuestWritable<Array>(self, __func__);
+    if (GuestRangesOverlap(self, sizeof(Array), other, sizeof(Array))) NotImplemented_nid_no_patch(__func__);
+    StoreGuest(self, Array{}, __func__);
+    if (!source.items) return;
+    Array local{};
+    Construct(local, self, __func__);
+    StoreGuest(self, local, __func__);
+    if (!local.items) return;
+    CopyArrayStorage(*local.items, *source.items);
+}
+void APS5_VABI _ZN3sce4Json5ArrayD1Ev(Array* self) {
+    auto local = LoadGuest<Array>(self, __func__);
+    StoreGuest(self, local, __func__);
+    Destroy(local, self, __func__);
+}
+Array* APS5_VABI _ZN3sce4Json5ArrayaSERKS1_(Array* self, const Array* other) {
+    auto destination = LoadGuest<Array>(self, __func__);
+    const auto source = LoadGuest<Array>(other, __func__);
+    StoreGuest(self, destination, __func__);
+    AssignArray(destination, source, self, __func__);
+    return self;
+}
+void APS5_VABI _ZN3sce4Json5Array10push_frontERKNS0_5ValueE(Array* self, const Value* value) {
+    auto array = LoadGuest<Array>(self, __func__);
+    if (!array.items) return;
+    const auto item = LoadGuest<Value>(value, __func__);
+    PrependArray(&array, &item, value);
+}
+
+struct ScopedArrayIteratorState {
+    ArrayIteratorState* state = nullptr;
+
+    explicit ScopedArrayIteratorState(ArrayIteratorState* allocated = nullptr) : state(allocated) {}
+    ScopedArrayIteratorState(const ScopedArrayIteratorState&) = delete;
+    ScopedArrayIteratorState& operator=(const ScopedArrayIteratorState&) = delete;
+    ~ScopedArrayIteratorState() {
+        if (state) Release(state);
+    }
+
+    void Reset() {
+        if (!state) return;
+        Release(state);
+        state = nullptr;
+    }
+
+    void Publish(ArrayIterator* destination, const char* function) {
+        const ArrayIterator out{state};
+        StoreGuest(destination, out, function);
+        state = nullptr;
+    }
+};
 
 ArrayIterator* APS5_VABI _ZN3sce4Json5Array6insertERKNS1_8iteratorERKNS0_5ValueE(ArrayIterator* result, Array* self, const ArrayIterator* position, const Value* value) {
-    result->state = static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)));
-    if (result->state) result->state->position = nullptr;
-    if (!self->items) return result;
-    if (!position || !position->state || !position->state->position || !self->items->head) {
-        Release(result->state); result->state = nullptr;
+    const auto array = LoadGuest<Array>(self, __func__);
+    RequireGuestWritable<ArrayIterator>(result, __func__);
+    if (GuestRangesOverlap(result, sizeof(ArrayIterator), self, sizeof(Array))) NotImplemented_nid_no_patch(__func__);
+    if (!array.items) {
+        ScopedArrayIteratorState out{static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)))};
+        if (out.state) out.state->position = nullptr;
+        out.Publish(result, __func__);
+        return result;
+    }
+    ArrayIterator pos{};
+    const bool hasPos = position && GuestCopyIn_nid_no_patch(&pos, position, sizeof(pos));
+    ArrayIteratorState posState{};
+    const bool hasPosState = hasPos && pos.state && GuestCopyIn_nid_no_patch(&posState, pos.state, sizeof(posState));
+    if (!hasPosState || !posState.position || !array.items->head) NotImplemented_nid_no_patch(__func__);
+    Value item{};
+    if (!GuestCopyIn_nid_no_patch(&item, value, sizeof(item))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (GuestRangesOverlap(result, sizeof(ArrayIterator), position, sizeof(ArrayIterator)) ||
+        GuestRangesOverlap(result, sizeof(ArrayIterator), pos.state, sizeof(ArrayIteratorState)) ||
+        GuestRangesOverlap(result, sizeof(ArrayIterator), value, sizeof(Value))) {
         NotImplemented_nid_no_patch(__func__);
     }
+    ScopedArrayIteratorState out{static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)))};
+    if (out.state) out.state->position = nullptr;
     ArrayLink* inserted;
-    if (!ModernValues()) inserted = InsertArrayLink(*self->items, position->state->position, *value);
+    if (!ModernValues()) inserted = InsertArrayLink(*array.items, posState.position, item, value);
     else {
         ScopedValue copy;
-        copy.value.parent = self->items->Owner();
-        AssignNode(copy.value, *value);
+        copy.value.parent = array.items->Owner();
+        AssignNode(copy.value, item, value);
         AllocationOperation operation;
         Value empty{};
-        inserted = InsertArrayLink(*self->items, position->state->position, empty);
+        inserted = InsertArrayLink(*array.items, posState.position, empty);
         if (!operation.Finish()) TransferPayload(inserted->value, copy.value);
     }
-    if (inserted) { if (result->state) result->state->position = inserted; }
-    else { Release(result->state); result->state = nullptr; }
+    if (inserted) { if (out.state) out.state->position = inserted; }
+    else out.Reset();
+    out.Publish(result, __func__);
     return result;
 }
 
-void APS5_VABI _ZN3sce4Json5Array9push_backERKNS0_5ValueE(Array* self, const Value* value) { AppendArray(self, value); }
+void APS5_VABI _ZN3sce4Json5Array9push_backERKNS0_5ValueE(Array* self, const Value* value) {
+    auto array = LoadGuest<Array>(self, __func__);
+    if (!array.items || !array.items->head) return;
+    const auto item = LoadGuest<Value>(value, __func__);
+    AppendArray(&array, &item, value);
+}
 
 ArrayIterator* APS5_VABI _ZNK3sce4Json5Array5beginEv(ArrayIterator* result, const Array* self) {
-    result->state = static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)));
-    if (result->state) result->state->position = self->items && self->items->head ? self->items->head->next : nullptr;
-    if (self->items && (!self->items->head || !self->items->head->next)) {
-        Release(result->state);
-        result->state = nullptr;
-    }
+    const auto array = LoadGuest<Array>(self, __func__);
+    RequireGuestWritable<ArrayIterator>(result, __func__);
+    if (GuestRangesOverlap(result, sizeof(ArrayIterator), self, sizeof(Array))) NotImplemented_nid_no_patch(__func__);
+    ScopedArrayIteratorState out{static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)))};
+    if (out.state) out.state->position = array.items && array.items->head ? array.items->head->next : nullptr;
+    if (array.items && (!array.items->head || !array.items->head->next)) out.Reset();
+    out.Publish(result, __func__);
     return result;
 }
 ArrayIterator* APS5_VABI _ZNK3sce4Json5Array3endEv(ArrayIterator* result, const Array* self) {
-    result->state = static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)));
-    if (result->state) result->state->position = self->items ? self->items->head : nullptr;
-    if (self->items && !self->items->head) {
-        Release(result->state);
-        result->state = nullptr;
-    }
+    const auto array = LoadGuest<Array>(self, __func__);
+    RequireGuestWritable<ArrayIterator>(result, __func__);
+    if (GuestRangesOverlap(result, sizeof(ArrayIterator), self, sizeof(Array))) NotImplemented_nid_no_patch(__func__);
+    ScopedArrayIteratorState out{static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)))};
+    if (out.state) out.state->position = array.items ? array.items->head : nullptr;
+    if (array.items && !array.items->head) out.Reset();
+    out.Publish(result, __func__);
     return result;
 }
-bool APS5_VABI _ZNK3sce4Json5Array5emptyEv(const Array* self) { return !self->items || self->items->empty(); }
-std::size_t APS5_VABI _ZNK3sce4Json5Array4sizeEv(const Array* self) { return self->items ? self->items->size() : 0; }
+bool APS5_VABI _ZNK3sce4Json5Array5emptyEv(const Array* self) {
+    const auto array = LoadGuest<Array>(self, __func__);
+    return !array.items || array.items->empty();
+}
+std::size_t APS5_VABI _ZNK3sce4Json5Array4sizeEv(const Array* self) {
+    const auto array = LoadGuest<Array>(self, __func__);
+    return array.items ? array.items->size() : 0;
+}
 void APS5_VABI _ZN3sce4Json5Array5clearEv(Array* self) {
-    if (!self->items) return;
-    self->items->clear();
+    const auto array = LoadGuest<Array>(self, __func__);
+    if (!array.items) return;
+    array.items->clear();
 }
 const Value* APS5_VABI _ZNK3sce4Json5Array5frontEv(const Array* self) {
-    if (!self->items) return &Defaults(TypeNull);
-    if (!self->items->head) NotImplemented_nid_no_patch(__func__);
-    return &self->items->front();
+    const auto array = LoadGuest<Array>(self, __func__);
+    if (!array.items) return &Defaults(TypeNull);
+    if (!array.items->head) NotImplemented_nid_no_patch(__func__);
+    return &array.items->front();
 }
 const Value* APS5_VABI _ZNK3sce4Json5Array4backEv(const Array* self) {
-    if (!self->items) return &Defaults(TypeNull);
-    if (!self->items->head) return reinterpret_cast<const Value*>(16);
-    return &self->items->back();
+    const auto array = LoadGuest<Array>(self, __func__);
+    if (!array.items) return &Defaults(TypeNull);
+    if (!array.items->head) return reinterpret_cast<const Value*>(16);
+    return &array.items->back();
 }
-void APS5_VABI _ZN3sce4Json5Array8pop_backEv(Array* self) { if (self->items) self->items->PopBack(); }
+void APS5_VABI _ZN3sce4Json5Array8pop_backEv(Array* self) {
+    const auto array = LoadGuest<Array>(self, __func__);
+    if (array.items) array.items->PopBack();
+}
 
 ArrayIterator* APS5_VABI _ZN3sce4Json5Array5eraseERKNS1_8iteratorE(ArrayIterator* result, Array* self, const ArrayIterator* position) {
-    result->state = static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)));
-    if (result->state) result->state->position = nullptr;
-    if (!self->items) return result;
-    if (!position || !position->state || !position->state->position || position->state->position == self->items->head) {
-        Release(result->state);
-        result->state = nullptr;
+    const auto array = LoadGuest<Array>(self, __func__);
+    RequireGuestWritable<ArrayIterator>(result, __func__);
+    if (GuestRangesOverlap(result, sizeof(ArrayIterator), self, sizeof(Array))) NotImplemented_nid_no_patch(__func__);
+    if (!array.items) {
+        ScopedArrayIteratorState out{static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)))};
+        if (out.state) out.state->position = nullptr;
+        out.Publish(result, __func__);
+        return result;
+    }
+    ArrayIterator pos{};
+    const bool hasPos = position && GuestCopyIn_nid_no_patch(&pos, position, sizeof(pos));
+    ArrayIteratorState posState{};
+    const bool hasPosState = hasPos && pos.state && GuestCopyIn_nid_no_patch(&posState, pos.state, sizeof(posState));
+    if (!hasPosState || !posState.position || posState.position == array.items->head) NotImplemented_nid_no_patch(__func__);
+    if (GuestRangesOverlap(result, sizeof(ArrayIterator), position, sizeof(ArrayIterator)) ||
+        GuestRangesOverlap(result, sizeof(ArrayIterator), pos.state, sizeof(ArrayIteratorState))) {
         NotImplemented_nid_no_patch(__func__);
     }
-    auto* link = position->state->position;
+    ScopedArrayIteratorState out{static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)))};
+    if (out.state) out.state->position = nullptr;
+    auto* link = posState.position;
     auto* next = link->next;
     next->previous = link->previous;
     link->previous->next = next;
     Destroy(link->value);
     Release(link);
-    --self->items->count;
+    --array.items->count;
     if (next) {
-        if (result->state) result->state->position = next;
-    } else {
-        Release(result->state);
-        result->state = nullptr;
-    }
+        if (out.state) out.state->position = next;
+    } else out.Reset();
+    out.Publish(result, __func__);
     return result;
 }
 
 void APS5_VABI _ZN3sce4Json5Array9pop_frontEv(Array* self) {
-    if (!self->items || !self->items->head) NotImplemented_nid_no_patch(__func__);
-    if (self->items->empty()) return;
-    auto* link = self->items->head->next;
-    self->items->head->next = link->next;
-    link->next->previous = self->items->head;
+    const auto array = LoadGuest<Array>(self, __func__);
+    if (!array.items || !array.items->head) NotImplemented_nid_no_patch(__func__);
+    if (array.items->empty()) return;
+    auto* link = array.items->head->next;
+    array.items->head->next = link->next;
+    link->next->previous = array.items->head;
     Destroy(link->value);
     Release(link);
-    --self->items->count;
+    --array.items->count;
 }
-void APS5_VABI _ZN3sce4Json5Array8iteratorD1Ev(ArrayIterator* self) { Release(self->state); self->state = nullptr; }
+void APS5_VABI _ZN3sce4Json5Array8iteratorD1Ev(ArrayIterator* self) {
+    const auto local = LoadGuest<ArrayIterator>(self, __func__);
+    StoreGuest(self, local, __func__);
+    Release(local.state);
+    StoreGuest(self, ArrayIterator{}, __func__);
+}
 ArrayIterator* APS5_VABI _ZN3sce4Json5Array8iteratorppEv(ArrayIterator* self) {
-    if (self->state && self->state->position) self->state->position = self->state->position->next;
+    const auto local = LoadGuest<ArrayIterator>(self, __func__);
+    if (local.state) {
+        auto state = LoadGuest<ArrayIteratorState>(local.state, __func__);
+        if (state.position) {
+            state.position = state.position->next;
+            StoreGuest(local.state, state, __func__);
+        }
+    }
     return self;
 }
 Value* APS5_VABI _ZNK3sce4Json5Array8iteratordeEv(const ArrayIterator* self) {
-    if (!self->state) return const_cast<Value*>(&Defaults(TypeNull));
-    return reinterpret_cast<Value*>(reinterpret_cast<std::uintptr_t>(self->state->position) + 16);
+    const auto local = LoadGuest<ArrayIterator>(self, __func__);
+    if (!local.state) return const_cast<Value*>(&Defaults(TypeNull));
+    const auto state = LoadGuest<ArrayIteratorState>(local.state, __func__);
+    return reinterpret_cast<Value*>(reinterpret_cast<std::uintptr_t>(state.position) + 16);
 }
 Value* APS5_VABI _ZNK3sce4Json5Array8iteratorptEv(const ArrayIterator* self) { return _ZNK3sce4Json5Array8iteratordeEv(self); }
 bool APS5_VABI _ZNK3sce4Json5Array8iteratorneERKS2_(const ArrayIterator* self, const ArrayIterator* other) {
-    return self->state && other->state && self->state->position != other->state->position;
+    const auto left = LoadGuest<ArrayIterator>(self, __func__);
+    const auto right = LoadGuest<ArrayIterator>(other, __func__);
+    if (!left.state || !right.state) return false;
+    const auto leftState = LoadGuest<ArrayIteratorState>(left.state, __func__);
+    const auto rightState = LoadGuest<ArrayIteratorState>(right.state, __func__);
+    return leftState.position != rightState.position;
 }
 void APS5_VABI _ZN3sce4Json5Array8iteratorC1ERKS2_(ArrayIterator* self, const ArrayIterator* other) {
-    self->state = other->state ? static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState))) : nullptr;
-    if (self->state) *self->state = *other->state;
+    const auto source = LoadGuest<ArrayIterator>(other, __func__);
+    ArrayIteratorState sourceState{};
+    if (source.state) sourceState = LoadGuest<ArrayIteratorState>(source.state, __func__);
+    RequireGuestWritable<ArrayIterator>(self, __func__);
+    if (GuestRangesOverlap(self, sizeof(ArrayIterator), other, sizeof(ArrayIterator)) ||
+        (source.state && GuestRangesOverlap(self, sizeof(ArrayIterator), source.state, sizeof(ArrayIteratorState)))) {
+        NotImplemented_nid_no_patch(__func__);
+    }
+    ScopedArrayIteratorState out{source.state ? static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState))) : nullptr};
+    if (out.state) *out.state = sourceState;
+    out.Publish(self, __func__);
 }
 void APS5_VABI _ZN3sce4Json5Array8iterator7advanceEm(ArrayIterator* self, std::size_t count) {
-    if (!self->state || !self->state->position || !count) return;
-    auto* start = self->state->position;
+    const auto local = LoadGuest<ArrayIterator>(self, __func__);
+    if (!local.state || !count) return;
+    auto state = LoadGuest<ArrayIteratorState>(local.state, __func__);
+    if (!state.position) return;
+    auto* start = state.position;
     auto* node = start;
     std::size_t traversed = 0;
     do {
@@ -3105,9 +3256,10 @@ void APS5_VABI _ZN3sce4Json5Array8iterator7advanceEm(ArrayIterator* self, std::s
         ++traversed;
     } while (node && node != start && traversed < count);
     if (node == start) count %= traversed;
-    else { self->state->position = node; return; }
+    else { state.position = node; StoreGuest(local.state, state, __func__); return; }
     while (count--) node = node->next;
-    self->state->position = node;
+    state.position = node;
+    StoreGuest(local.state, state, __func__);
 }
 
 void APS5_VABI _ZN3sce4Json6ObjectC1Ev(Object* self) {
@@ -3841,16 +3993,26 @@ ArrayIterator* APS5_VABI _ZN3sce4Json5Array8iteratorppEi(ArrayIterator* self, in
 }
 
 ArrayIterator* APS5_VABI _ZN3sce4Json5Array8iteratoraSERKS2_(ArrayIterator* self, const ArrayIterator* other) {
-    if (self->state) {
-        if (other->state && other->state->position) *self->state = *other->state;
-        else { Release(self->state); self->state = nullptr; }
+    const auto destination = LoadGuest<ArrayIterator>(self, __func__);
+    const auto source = LoadGuest<ArrayIterator>(other, __func__);
+    if (destination.state) {
+        ArrayIteratorState sourceState{};
+        if (source.state) sourceState = LoadGuest<ArrayIteratorState>(source.state, __func__);
+        if (source.state && sourceState.position) StoreGuest(destination.state, sourceState, __func__);
+        else {
+            StoreGuest(self, destination, __func__);
+            Release(destination.state);
+            StoreGuest(self, ArrayIterator{}, __func__);
+        }
     }
     return self;
 }
 
 void APS5_VABI _ZN3sce4Json5Array8iteratorC1Ev(ArrayIterator* self) {
-    self->state = static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)));
-    if (self->state) self->state->position = nullptr;
+    RequireGuestWritable<ArrayIterator>(self, __func__);
+    ScopedArrayIteratorState out{static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)))};
+    if (out.state) out.state->position = nullptr;
+    out.Publish(self, __func__);
 }
 
 ObjectIterator* APS5_VABI _ZN3sce4Json6Object8iteratorppEi(ObjectIterator* self, int) {
