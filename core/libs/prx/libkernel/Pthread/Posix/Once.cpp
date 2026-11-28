@@ -2,8 +2,8 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/Pthread/include/Cancel.hpp"
+#include "prx/libkernel/Time/include/TimedWait.hpp"
 #include <cerrno>
-#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
@@ -13,7 +13,7 @@ namespace {
 
 static_assert(offsetof(GuestOnce, mutex) == 8 && sizeof(GuestOnce) == 16);
 std::mutex onceMutex;
-std::condition_variable onceChanged;
+TimedWait::Condition onceChanged;
 
 bool ReadControlState(const GuestOnce* control, std::int32_t& state) {
     const int savedErrno = errno;
@@ -36,7 +36,7 @@ void APS5_VABI ResetOnce(void* control) {
         std::lock_guard lock(onceMutex);
         WriteControlState(static_cast<GuestOnce*>(control), 0);
     }
-    onceChanged.notify_all();
+    onceChanged.NotifyAll();
 }
 }
 
@@ -46,7 +46,7 @@ extern "C" int APS5_VABI pthread_once_nid_postfix(
     std::unique_lock lock(onceMutex);
     std::int32_t state = 0;
     bool readable = true;
-    onceChanged.wait(lock, [&] {
+    onceChanged.Wait(lock, [&] {
         readable = ReadControlState(control, state);
         return !readable || state != 2;
     });
@@ -72,6 +72,6 @@ extern "C" int APS5_VABI pthread_once_nid_postfix(
     lock.lock();
     const bool updated = WriteControlState(control, 1);
     lock.unlock();
-    onceChanged.notify_all();
+    onceChanged.NotifyAll();
     return updated ? 0 : 14;
 }

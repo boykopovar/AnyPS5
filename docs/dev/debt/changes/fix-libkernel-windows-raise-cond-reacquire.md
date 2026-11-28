@@ -1,0 +1,5 @@
+# libkernel
+
+## change waiting on a thread already stopped
+
+- [sceKernelRaiseException](../../../core/libs/prx/libkernel/System/src/Exception.cpp) on Windows runs the handler after the raise has returned when the target is not in guest code (the executable and the `*.guest.prx` modules): a target in a libkernel wait takes it as an APC at that wait; a target elsewhere in host code, running or blocked, takes it when it returns into guest code, through a debug register 0 execute breakpoint at that return address or a host thread that keeps sampling it. A target in guest code is redirected at once. Unlike the console, the handler's context at such a return holds no vector register beyond what the C runtime context saves; a target that stays in host code waiting on a thread already stopped, as in `pthread_barrier_wait`, `scePthreadOnce`, libc `_Mtx_lock`, `std::call_once` or `__cxa_guard_acquire`, is never stopped; a target inside NtContinue makes the raise throw after 1 s; a debugger or title using debug register 0 on a raised thread is not modeled

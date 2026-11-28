@@ -109,8 +109,12 @@ struct WakingLock {
     PthreadMutex mutex;
     TNative& native;
     void lock() {
-        if (!MutexOperations::SpinAcquire(mutex, native))
-            native.lock();
+        if (MutexOperations::SpinAcquire(mutex, native)) return;
+#ifdef _WIN32
+        TimedWait::ParkAcquire(mutex, [&] { return native.try_lock(); }, nullptr);
+#else
+        native.lock();
+#endif
     }
     void unlock() {
         native.unlock();
