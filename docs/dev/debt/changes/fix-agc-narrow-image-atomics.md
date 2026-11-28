@@ -1,0 +1,9 @@
+# shader
+
+## change [Image atomics]
+
+- [Image atomics](../../../core/shader/recompiler/Optimization/src/ResourceMaterializer.cpp) on 32_SINT and 32_FLOAT surfaces act on the raw dword through an R32_UINT storage view. On gfx1100 (RDNA3, [hardware oracle](../HW_ORACLE.md), wave32 and wave64), all 13 integer image atomics, `swap` to `dec`, return the old dword and store the raw-dword result identically on 32_UINT, 32_SINT and 32_FLOAT T#s, over 121 old/data pairs per op, among them 0x80000000, 0xffffffff, 1.0, -1.0 and NaN: `add` adds the bits and `umin` is unsigned on every format. A 16_UINT control differs, so the format is read. gfx1031 (RDNA2) gives the same rows, and its `fmin`, `fmax` and `fcmpswap`, which gfx1100 lacks, also match on the three formats ([measured by thuanquang](https://github.com/boykopovar/AnyPS5/pull/7939#issuecomment-6275099482)). The console's gfx1013 is unmeasured. 8- and 16-bit integer formats are emulated (below); other formats throw.
+
+## add Functional
+
+- [8- and 16-bit image atomics](../../../core/shader/recompiler/SpirvBackend/src/SpirvImageEmitter.cpp) on 8_UINT, 8_SINT, 16_UINT and 16_SINT T#s are assumed, not measured: the RDNA2 ISA and RADV allow image atomics only on 32- and 64-bit texels. The 13 integer atomics run under the lock table of 64-bit image atomics, through a `Coherent` R8_UINT or R16_UINT view: they act on the texel's raw bits, wrap at its width (`smin` and `smax` compare at that width) and return the old bits zero-extended for both numeric formats, as the 32-bit formats return the raw dword. Another shader running at the same time does not take the lock. Image tables, multisampled images and a resource that also takes a float or 64-bit atomic still throw on them. Needs `shaderStorageImageReadWithoutFormat` and `shaderStorageImageWriteWithoutFormat`; `APS5_NO_NARROW_IMAGE_ATOMICS=1` turns it off. PPSA38500 issues one on an 8_UINT T# in a pixel shader.

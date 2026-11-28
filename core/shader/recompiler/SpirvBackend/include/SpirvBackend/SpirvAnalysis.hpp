@@ -36,6 +36,7 @@ struct SpirvRequirements {
     bool imageInt64Atomics = false;
     bool gdsInt64Atomics = false;
     bool imageAtomicLocks = false;
+    bool narrowImageAtomicLocks = false;
     bool sharedInt64Atomics = false;
     bool float64 = false;
     bool float64NeedsDevice = false;

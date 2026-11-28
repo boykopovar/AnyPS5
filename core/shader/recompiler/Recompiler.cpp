@@ -437,6 +437,8 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     if (request.context.layerRowSamples) {
         for (auto& image : program.Resources().info.images) image.maxArrayLayers = request.target.maxImageArrayLayers;
     }
+    static const bool narrowImageAtomicsDisabled = std::getenv("APS5_NO_NARROW_IMAGE_ATOMICS") != nullptr;
+    ResourceMaterializer::MarkNarrowImageAtomics(program, !narrowImageAtomicsDisabled && supports(spv::CapabilityStorageImageReadWithoutFormat) && supports(spv::CapabilityStorageImageWriteWithoutFormat));
 
     return program;
 }

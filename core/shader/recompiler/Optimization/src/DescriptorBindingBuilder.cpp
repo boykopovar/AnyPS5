@@ -664,7 +664,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
                 entry.identityImageSwizzle.push_back(mode.conversionFormat != IrBufferFormat::Invalid || mode.depthBits);
                 physical.imageWritten.push_back(image.written || image.atomic);
                 physical.imageDepthCompare.push_back(mode.depthCompare);
-                physical.imageAtomic.push_back(image.atomic);
+                physical.imageAtomic.push_back(image.atomic && NarrowImageAtomicBits(mode) == 0u);
                 physical.imageUnnormalized.push_back(unnormalized.images.at(resource));
                 physical.imageUnnormalizedBaseLevel.push_back(unnormalized.imagesAtBaseLevel.at(resource));
                 physical.imageSamplers.push_back(0u);

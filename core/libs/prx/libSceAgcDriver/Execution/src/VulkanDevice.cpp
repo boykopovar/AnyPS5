@@ -2814,7 +2814,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     state->oversizedBuffer = std::make_unique<Graphics::Buffer>(graphicsContext(), Graphics::EmptyBufferBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     std::ranges::fill(state->oversizedBuffer->Bytes(), std::byte{0});
     if (!compileOnly && Pm4::GdsImportable() && Graphics::HostImportFor(graphicsContext(), Pm4::GdsAddress(), Pm4::GdsBytes, Graphics::ImportRequester::Map) == nullptr) Pm4::RejectGdsImport();
-    if (!state->imageInt64Atomics || !state->bufferInt64Atomics) {
+    if (!state->imageInt64Atomics || !state->bufferInt64Atomics || state->storageImageWithoutFormat) {
         state->atomicLockTable = std::make_unique<Graphics::Buffer>(graphicsContext(), ShaderRecompiler::RuntimeAbi::AtomicLockCount * sizeof(std::uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
         const auto words = state->atomicLockTable->Bytes();
         std::memset(words.data(), 0, words.size());

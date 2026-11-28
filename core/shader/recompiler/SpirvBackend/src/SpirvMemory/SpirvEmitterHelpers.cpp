@@ -603,7 +603,11 @@ void DefineDescriptors(SpirvEmitterState& state) {
             const auto& image = *selected;
             const auto name = "image_" + std::to_string(static_cast<std::uint32_t>(binding.kind));
             state.imageVariables.at(ImageBindingIndex(binding.kind)) = Define(ArrayType(ImageType(state, image)), name.c_str(), spv::StorageClassUniformConstant);
-            if ((image.atomic64 && state.requirements.imageAtomicLocks) || std::ranges::any_of(binding.resources, [&](std::uint32_t resource) { return state.program.Info().images.at(resource).targetMerge; })) state.module.AddAnnotation(spv::OpDecorate, state.imageVariables.at(ImageBindingIndex(binding.kind)), spv::DecorationCoherent);
+            const auto narrowAtomics = std::ranges::any_of(binding.resources, [&](std::uint32_t resource) {
+                const auto& candidate = state.program.Info().images.at(resource);
+                return candidate.narrowAtomicCompatible && std::ranges::any_of(ResourceMaterializer::RuntimeImageModes(candidate), [&](const ImageResource& mode) { return NarrowImageAtomicBits(mode) != 0u && DescriptorBindingForImage(mode) == binding.kind; });
+            });
+            if ((image.atomic64 && state.requirements.imageAtomicLocks) || narrowAtomics || std::ranges::any_of(binding.resources, [&](std::uint32_t resource) { return state.program.Info().images.at(resource).targetMerge; })) state.module.AddAnnotation(spv::OpDecorate, state.imageVariables.at(ImageBindingIndex(binding.kind)), spv::DecorationCoherent);
             if (image.dimension == RdnaImageDimension::Dim1D || image.dimension == RdnaImageDimension::Dim1DArray) {
                 state.module.EmitCapability(image.resourceClass == ImageResourceClass::Sampled ? spv::CapabilitySampled1D : spv::CapabilityImage1D);
             }
