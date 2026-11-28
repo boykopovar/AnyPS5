@@ -60,13 +60,52 @@ struct Framebuffer {
 struct Shader {
     GLenum type = 0;
     bool deleted = false;
+    bool compiled = false;
     std::string source;
+    std::string compiledSource;
+    std::string infoLog;
+};
+
+struct ActiveAttribute {
+    std::string name;
+    GLenum type = 0;
+    GLint size = 1;
+    GLint location = -1;
+};
+
+struct ActiveUniform {
+    std::string name;
+    std::string baseName;
+    GLenum type = 0;
+    GLint size = 1;
+    bool isArray = false;
+    GLint baseLocation = 0;
+    unsigned stages = 0;
+    std::vector<float> floatValues;
+    std::vector<GLint> intValues;
+};
+
+struct UniformSlot {
+    std::size_t uniformIndex = 0;
+    GLint elementIndex = 0;
+};
+
+struct Executable {
+    std::vector<ActiveAttribute> attributes;
+    std::map<std::string, GLint> attributeLocations;
+    std::vector<ActiveUniform> uniforms;
+    std::vector<UniformSlot> uniformLocations;
 };
 
 struct Program {
+    GLuint name = 0;
     bool deleted = false;
+    bool linked = false;
+    bool validated = false;
+    std::string infoLog;
     std::map<GLuint, std::shared_ptr<Shader>> shaders;
     std::map<std::string, GLuint> attributes;
+    std::shared_ptr<Executable> executable;
 };
 
 struct ShareGroup {
@@ -115,7 +154,10 @@ struct Context {
     std::array<std::array<std::shared_ptr<Texture>, 2>, 8> textures;
     std::array<std::shared_ptr<Texture>, 2> defaultTextures;
     unsigned activeTexture = 0;
+    std::shared_ptr<Program> program;
+    std::shared_ptr<Executable> executable;
     Context();
+    ~Context();
 };
 
 struct ThreadState {
@@ -144,6 +186,11 @@ bool Query_nid_no_patch(GLenum name, std::vector<double>& result);
 GLenum Complete_nid_no_patch(Context& context);
 Image* Color_nid_no_patch(Context& context, bool read);
 float Clamp_nid_no_patch(float value);
+Shader* FindShader_nid_no_patch(GLuint name);
+Program* FindProgram_nid_no_patch(GLuint name);
+void CollectShaders_nid_no_patch(ShareGroup& share);
+void CollectPrograms_nid_no_patch(ShareGroup& share);
+void CopyString_nid_no_patch(const std::string& source, GLsizei size, GLsizei* length, GLchar* output);
 
 template<class TObject>
 GLuint Name_nid_no_patch(const std::map<GLuint, std::shared_ptr<TObject>>& objects) {
