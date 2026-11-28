@@ -1,3 +1,63 @@
+/* Derived from LibreSSL 4.0.0 (openbsd ce488b78e0bd994780569df718596b9776ff681a)
+ * https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/x509/x509_cpols.c */
+/* $OpenBSD: x509_cpols.c,v 1.13 2024/07/13 15:08:58 tb Exp $ */
+/* Written by Dr Stephen N Henson (steve@openssl.org) for the OpenSSL
+ * project 1999.
+ */
+/* ====================================================================
+ * Copyright (c) 1999-2004 The OpenSSL Project.  All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the
+ *    distribution.
+ *
+ * 3. All advertising materials mentioning features or use of this
+ *    software must display the following acknowledgment:
+ *    "This product includes software developed by the OpenSSL Project
+ *    for use in the OpenSSL Toolkit. (http://www.OpenSSL.org/)"
+ *
+ * 4. The names "OpenSSL Toolkit" and "OpenSSL Project" must not be used to
+ *    endorse or promote products derived from this software without
+ *    prior written permission. For written permission, please contact
+ *    licensing@OpenSSL.org.
+ *
+ * 5. Products derived from this software may not be called "OpenSSL"
+ *    nor may "OpenSSL" appear in their names without prior written
+ *    permission of the OpenSSL Project.
+ *
+ * 6. Redistributions of any form whatsoever must retain the following
+ *    acknowledgment:
+ *    "This product includes software developed by the OpenSSL Project
+ *    for use in the OpenSSL Toolkit (http://www.OpenSSL.org/)"
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE OpenSSL PROJECT ``AS IS'' AND ANY
+ * EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE OpenSSL PROJECT OR
+ * ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ * ====================================================================
+ *
+ * This product includes cryptographic software written by Eric Young
+ * (eay@cryptsoft.com).  This product includes software written by Tim
+ * Hudson (tjh@cryptsoft.com).
+ *
+ */
+
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/libc.hpp"
@@ -72,6 +132,7 @@ enum class Decoder {
     GeneralNames,
     AuthorityInfoAccess,
     CrlDistPoints,
+    CertificatePolicies,
     Null,
 };
 
@@ -96,7 +157,7 @@ constexpr Method Methods[] = {
     {86, Decoder::GeneralNames},
     {87, Decoder::BasicConstraints},
     {88, Decoder::Integer},
-    {89, Decoder::Unsupported},
+    {89, Decoder::CertificatePolicies},
     {90, Decoder::AuthorityKeyId},
     {103, Decoder::CrlDistPoints},
     {126, Decoder::ExtendedKeyUsage},
@@ -298,10 +359,15 @@ void AppendLength(std::vector<unsigned char>& encoded, std::size_t length) {
 
 Asn1String* NewImplicitInteger(std::span<const unsigned char> content) {
     std::vector<unsigned char> encoded;
-    encoded.reserve(content.size() + 5);
-    encoded.push_back(static_cast<unsigned char>(IntegerTag));
-    AppendLength(encoded, content.size());
-    encoded.insert(encoded.end(), content.begin(), content.end());
+    try {
+        encoded.reserve(content.size() + 5);
+        encoded.push_back(static_cast<unsigned char>(IntegerTag));
+        AppendLength(encoded, content.size());
+        encoded.insert(encoded.end(), content.begin(), content.end());
+    } catch (const std::bad_alloc&) {
+        PutError(MallocFailure);
+        return nullptr;
+    }
     const unsigned char* cursor = encoded.data();
     return static_cast<Asn1String*>(
         d2i_ASN1_INTEGER_nid_postfix(nullptr, &cursor, static_cast<std::int64_t>(encoded.size())));
@@ -328,22 +394,35 @@ int DaysInMonth(int year, int month) {
     return leap ? 29 : 28;
 }
 
-bool IsGeneralizedTime(std::span<const unsigned char> content) {
-    if (content.size() != 15 || content[14] != 'Z') return false;
-    const int yearHigh = DigitPair(content, 0);
-    const int yearLow = DigitPair(content, 2);
-    const int month = DigitPair(content, 4);
-    const int day = DigitPair(content, 6);
-    const int hour = DigitPair(content, 8);
-    const int minute = DigitPair(content, 10);
-    const int second = DigitPair(content, 12);
-    if (yearHigh < 0 || yearLow < 0 || month < 1 || month > 12) return false;
-    if (day < 1 || day > DaysInMonth(yearHigh * 100 + yearLow, month)) return false;
+bool IsAsn1Time(std::span<const unsigned char> content, bool generalized) {
+    const std::size_t expectedSize = generalized ? 15 : 13;
+    if (content.size() != expectedSize || content[expectedSize - 1] != 'Z') return false;
+    int year = 0;
+    std::size_t offset = 0;
+    if (generalized) {
+        const int yearHigh = DigitPair(content, 0);
+        const int yearLow = DigitPair(content, 2);
+        if (yearHigh < 0 || yearLow < 0) return false;
+        year = yearHigh * 100 + yearLow;
+        offset = 4;
+    } else {
+        const int yearLow = DigitPair(content, 0);
+        if (yearLow < 0) return false;
+        year = (yearLow < 50 ? 2000 : 1900) + yearLow;
+        offset = 2;
+    }
+    const int month = DigitPair(content, offset);
+    const int day = DigitPair(content, offset + 2);
+    const int hour = DigitPair(content, offset + 4);
+    const int minute = DigitPair(content, offset + 6);
+    const int second = DigitPair(content, offset + 8);
+    if (month < 1 || month > 12) return false;
+    if (day < 1 || day > DaysInMonth(year, month)) return false;
     return hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59 && second >= 0 && second <= 59;
 }
 
 void* NewGeneralizedTime(std::span<const unsigned char> content) {
-    if (!IsGeneralizedTime(content)) {
+    if (!IsAsn1Time(content, true)) {
         PutError(InvalidTimeFormat);
         return nullptr;
     }
@@ -1067,18 +1146,23 @@ bool IsMustBePrimitive(std::uint32_t tag) {
     return tag == 9 || tag == 10 || tag == 13 || tag == 14;
 }
 
-Asn1String* ReadNameValue(std::span<const unsigned char>& input) {
-    const std::span<const unsigned char> element = input;
-    Header header;
+bool ReadAnyHeader(std::span<const unsigned char>& input, Header& header) {
     if (!ReadIdentifier(input, header) || !ReadLength(input, header) || (header.indefinite && !header.constructed)) {
         PutHeaderError(BadObjectHeader);
-        return nullptr;
+        return false;
     }
     if ((!header.indefinite && header.length > input.size()) ||
         header.tag > static_cast<std::uint32_t>(std::numeric_limits<int>::max())) {
         PutHeaderError(TooLong);
-        return nullptr;
+        return false;
     }
+    return true;
+}
+
+Asn1String* ReadNameValue(std::span<const unsigned char>& input) {
+    const std::span<const unsigned char> element = input;
+    Header header;
+    if (!ReadAnyHeader(input, header)) return nullptr;
     if (header.tagClass != 0) {
         PutError(MstringNotUniversal);
         return nullptr;
@@ -1364,6 +1448,549 @@ void* NewCrlDistPoints(std::span<const unsigned char> value) {
     return points.release();
 }
 
+constexpr int NidIdQtCps = 164;
+constexpr int NidIdQtUnotice = 165;
+constexpr std::uint32_t RealTag = 9;
+constexpr std::uint32_t Utf8StringTag = 12;
+constexpr std::uint32_t RelativeObjectTag = 13;
+constexpr std::uint32_t TimeTag = 14;
+constexpr std::uint32_t SetTag = 17;
+constexpr std::uint32_t UtcTimeTag = 23;
+constexpr std::uint32_t VisibleStringTag = 26;
+constexpr int OtherType = -3;
+constexpr int UndefinedType = -1;
+
+struct NoticeRef {
+    Asn1String* organization;
+    LibreSslStack* noticeNos;
+};
+
+static_assert(sizeof(NoticeRef) == 16 && offsetof(NoticeRef, organization) == 0 && offsetof(NoticeRef, noticeNos) == 8);
+
+struct UserNotice {
+    NoticeRef* noticeRef;
+    Asn1String* expText;
+};
+
+static_assert(sizeof(UserNotice) == 16 && offsetof(UserNotice, noticeRef) == 0 && offsetof(UserNotice, expText) == 8);
+
+struct PolicyQualInfo {
+    Asn1Object_nid_no_patch* qualId;
+    union {
+        Asn1String* cpsUri;
+        UserNotice* userNotice;
+        Asn1Type* other;
+    } d;
+};
+
+static_assert(sizeof(PolicyQualInfo) == 16 && offsetof(PolicyQualInfo, qualId) == 0 && offsetof(PolicyQualInfo, d) == 8);
+
+struct PolicyInfo {
+    Asn1Object_nid_no_patch* policyId;
+    LibreSslStack* qualifiers;
+};
+
+static_assert(sizeof(PolicyInfo) == 16 && offsetof(PolicyInfo, policyId) == 0 && offsetof(PolicyInfo, qualifiers) == 8);
+
+void FreeNoticeNos(LibreSslStack* noticeNos) {
+    if (!noticeNos) return;
+    for (int index = 0; index < noticeNos->num; ++index)
+        ASN1_INTEGER_free_nid_postfix(reinterpret_cast<Asn1String*>(noticeNos->data[index]));
+    sk_free_nid_postfix(noticeNos);
+}
+
+void FreeNoticeRef(NoticeRef* noticeRef) {
+    if (!noticeRef) return;
+    ASN1_OCTET_STRING_free_nid_postfix(noticeRef->organization);
+    FreeNoticeNos(noticeRef->noticeNos);
+    free_nid_postfix(noticeRef);
+}
+
+void FreeUserNotice(UserNotice* userNotice) {
+    if (!userNotice) return;
+    FreeNoticeRef(userNotice->noticeRef);
+    ASN1_OCTET_STRING_free_nid_postfix(userNotice->expText);
+    free_nid_postfix(userNotice);
+}
+
+void FreePolicyQualInfo(PolicyQualInfo* qual) {
+    if (!qual) return;
+    if (qual->qualId) {
+        const int nid = OBJ_obj2nid_nid_postfix(reinterpret_cast<const LibreSslAsn1Object*>(qual->qualId));
+        if (nid == NidIdQtCps) {
+            ASN1_OCTET_STRING_free_nid_postfix(qual->d.cpsUri);
+        } else if (nid == NidIdQtUnotice) {
+            FreeUserNotice(qual->d.userNotice);
+        } else {
+            ASN1_TYPE_free_nid_postfix(qual->d.other);
+        }
+        ASN1_OBJECT_free_nid_postfix(qual->qualId);
+    }
+    free_nid_postfix(qual);
+}
+
+void FreePolicyQualifiers(LibreSslStack* qualifiers) {
+    if (!qualifiers) return;
+    for (int index = 0; index < qualifiers->num; ++index)
+        FreePolicyQualInfo(reinterpret_cast<PolicyQualInfo*>(qualifiers->data[index]));
+    sk_free_nid_postfix(qualifiers);
+}
+
+void FreePolicyInfo(PolicyInfo* info) {
+    if (!info) return;
+    ASN1_OBJECT_free_nid_postfix(info->policyId);
+    FreePolicyQualifiers(info->qualifiers);
+    free_nid_postfix(info);
+}
+
+void FreeCertificatePolicies(LibreSslStack* policies) {
+    if (!policies) return;
+    for (int index = 0; index < policies->num; ++index)
+        FreePolicyInfo(reinterpret_cast<PolicyInfo*>(policies->data[index]));
+    sk_free_nid_postfix(policies);
+}
+
+bool IsDisplayTextTag(std::uint32_t tag) {
+    return tag == Utf8StringTag || tag == Ia5StringTag || tag == VisibleStringTag || tag == BmpStringType;
+}
+
+bool IsMustBePrimitiveAny(int type) {
+    return type == BooleanTag || type == IntegerTag || type == NullTag || type == ObjectTag ||
+        type == RealTag || type == EnumeratedTag || type == RelativeObjectTag || type == TimeTag;
+}
+
+Asn1String* ReadCollectedString(std::span<const unsigned char>& input, const Header& header, std::int32_t stringType) {
+    if (header.constructed) {
+        std::vector<unsigned char> collected;
+        if (!CollectConstructedString(input, header.indefinite, 0, collected)) return nullptr;
+        if (stringType == BmpStringType && (collected.size() & 1) != 0) {
+            PutError(BmpStringWrongLength);
+            return nullptr;
+        }
+        return NewString(stringType, collected);
+    }
+    const std::span<const unsigned char> content = input.first(header.length);
+    input = input.subspan(header.length);
+    if (stringType == BmpStringType && (content.size() & 1) != 0) {
+        PutError(BmpStringWrongLength);
+        return nullptr;
+    }
+    return NewString(stringType, content);
+}
+
+Asn1String* ReadIa5String(std::span<const unsigned char>& input) {
+    Header header;
+    if (CheckTag(input, Ia5StringTag, 0, false, header) != TagCheck::Present) {
+        PutNestedErrors(2);
+        return nullptr;
+    }
+    Asn1String* value = ReadCollectedString(input, header, Ia5StringType);
+    if (!value) PutError(NestedAsn1Error);
+    return value;
+}
+
+Asn1String* ReadDisplayText(std::span<const unsigned char>& input) {
+    Header header;
+    if (!ReadAnyHeader(input, header)) return nullptr;
+    if (header.tagClass != 0) {
+        PutError(MstringNotUniversal);
+        return nullptr;
+    }
+    if (!IsDisplayTextTag(header.tag)) {
+        PutError(MstringWrongTag);
+        return nullptr;
+    }
+    return ReadCollectedString(input, header, static_cast<std::int32_t>(header.tag));
+}
+
+bool SkipConstructedValue(std::span<const unsigned char>& input, std::size_t length, bool indefinite) {
+    if (!indefinite) {
+        input = input.subspan(length);
+        return true;
+    }
+    std::size_t eocCount = 1;
+    while (!input.empty()) {
+        if (input.size() >= 2 && input[0] == 0 && input[1] == 0) {
+            input = input.subspan(2);
+            if (--eocCount == 0) return true;
+            continue;
+        }
+        Header header;
+        if (!ReadAnyHeader(input, header)) return false;
+        if (header.indefinite) {
+            ++eocCount;
+            continue;
+        }
+        input = input.subspan(header.length);
+    }
+    PutError(MissingEoc);
+    return false;
+}
+
+Asn1Type* ReadAnyType(std::span<const unsigned char>& input) {
+    const std::span<const unsigned char> element = input;
+    Header header;
+    if (!ReadAnyHeader(input, header)) return nullptr;
+    const int type = header.tagClass != 0 ? OtherType : static_cast<int>(header.tag);
+    if ((type == static_cast<int>(SequenceTag) || type == static_cast<int>(SetTag)) && !header.constructed) {
+        PutError(TypeNotConstructed);
+        return nullptr;
+    }
+    if (IsMustBePrimitiveAny(type) && header.constructed) {
+        PutError(TypeNotPrimitive);
+        return nullptr;
+    }
+    auto* allocated = static_cast<Asn1Type*>(calloc_nid_postfix(1, sizeof(Asn1Type)));
+    if (!allocated) {
+        PutError(MallocFailure);
+        return nullptr;
+    }
+    std::unique_ptr<Asn1Type, decltype(&ASN1_TYPE_free_nid_postfix)> any(allocated, ASN1_TYPE_free_nid_postfix);
+    any->type = UndefinedType;
+    std::vector<unsigned char> collected;
+    std::span<const unsigned char> content;
+    if (type == static_cast<int>(SequenceTag) || type == static_cast<int>(SetTag) || type == OtherType) {
+        if (!SkipConstructedValue(input, header.length, header.indefinite)) return nullptr;
+        content = element.first(static_cast<std::size_t>(input.data() - element.data()));
+    } else if (header.constructed) {
+        if (!CollectConstructedString(input, header.indefinite, 0, collected)) return nullptr;
+        content = collected;
+    } else {
+        content = input.first(header.length);
+        input = input.subspan(header.length);
+    }
+    if (type == static_cast<int>(NullTag)) {
+        if (!content.empty()) {
+            PutError(NullIsWrongLength);
+            return nullptr;
+        }
+        any->type = static_cast<std::int32_t>(NullTag);
+        return any.release();
+    }
+    if (type == static_cast<int>(BooleanTag)) {
+        if (content.size() != 1) {
+            PutError(BooleanIsWrongLength);
+            return nullptr;
+        }
+        any->type = static_cast<std::int32_t>(BooleanTag);
+        any->value.boolean = content.front();
+        return any.release();
+    }
+    void* decoded = nullptr;
+    switch (type) {
+    case static_cast<int>(ObjectTag):
+        decoded = NewObject(content);
+        break;
+    case BitStringType:
+        decoded = NewBitString(content);
+        break;
+    case static_cast<int>(IntegerTag):
+        decoded = NewImplicitInteger(content);
+        break;
+    case EnumeratedType:
+        decoded = NewEnumerated(content);
+        break;
+    case BmpStringType:
+        if ((content.size() & 1) != 0) {
+            PutError(BmpStringWrongLength);
+            return nullptr;
+        }
+        decoded = NewString(BmpStringType, content);
+        break;
+    case UniversalStringType:
+        if ((content.size() & 3) != 0) {
+            PutError(UniversalStringWrongLength);
+            return nullptr;
+        }
+        decoded = NewString(UniversalStringType, content);
+        break;
+    case static_cast<int>(UtcTimeTag):
+    case GeneralizedTimeType:
+        if (!IsAsn1Time(content, type == GeneralizedTimeType)) {
+            PutError(InvalidTimeFormat);
+            return nullptr;
+        }
+        decoded = NewString(type, content);
+        break;
+    default:
+        decoded = NewString(type, content);
+        break;
+    }
+    if (!decoded) return nullptr;
+    any->type = type;
+    any->value.pointer = decoded;
+    return any.release();
+}
+
+LibreSslStack* NewNoticeNos(std::span<const unsigned char>& input) {
+    Header header;
+    if (CheckTag(input, SequenceTag, 0, false, header) != TagCheck::Present) {
+        PutError(NestedAsn1Error);
+        return nullptr;
+    }
+    if (header.indefinite) NotImplemented_nid_no_patch("NOTICEREF noticenos indefinite length");
+    std::span<const unsigned char> body = input.first(header.length);
+    input = input.subspan(header.length);
+    LibreSslStack* allocated = sk_new_nid_postfix(nullptr);
+    if (!allocated) {
+        PutError(MallocFailure);
+        return nullptr;
+    }
+    std::unique_ptr<LibreSslStack, void (*)(LibreSslStack*)> noticeNos(allocated, FreeNoticeNos);
+    while (!body.empty()) {
+        if (EndsDefiniteContent(body)) return nullptr;
+        const unsigned char* cursor = body.data();
+        auto* number = static_cast<Asn1String*>(
+            d2i_ASN1_INTEGER_nid_postfix(nullptr, &cursor, static_cast<std::int64_t>(body.size())));
+        if (!number) {
+            PutError(NestedAsn1Error);
+            return nullptr;
+        }
+        body = body.subspan(static_cast<std::size_t>(cursor - body.data()));
+        if (sk_push_nid_postfix(noticeNos.get(), number) == 0) {
+            ASN1_INTEGER_free_nid_postfix(number);
+            PutError(MallocFailure);
+            return nullptr;
+        }
+    }
+    return noticeNos.release();
+}
+
+NoticeRef* NewNoticeRef(std::span<const unsigned char>& input, const Header& header) {
+    if (!header.constructed) {
+        PutError(SequenceNotConstructed);
+        return nullptr;
+    }
+    if (header.indefinite) NotImplemented_nid_no_patch("NOTICEREF indefinite length");
+    std::span<const unsigned char> content = input.first(header.length);
+    input = input.subspan(header.length);
+    auto* allocated = static_cast<NoticeRef*>(calloc_nid_postfix(1, sizeof(NoticeRef)));
+    if (!allocated) {
+        PutHeaderError(MallocFailure);
+        return nullptr;
+    }
+    std::unique_ptr<NoticeRef, void (*)(NoticeRef*)> ref(allocated, FreeNoticeRef);
+    if (EndsDefiniteContent(content)) return nullptr;
+    if (content.empty()) {
+        PutError(FieldMissing);
+        return nullptr;
+    }
+    ref->organization = ReadDisplayText(content);
+    if (!ref->organization) {
+        PutError(NestedAsn1Error);
+        return nullptr;
+    }
+    if (EndsDefiniteContent(content)) return nullptr;
+    if (content.empty()) {
+        PutError(FieldMissing);
+        return nullptr;
+    }
+    ref->noticeNos = NewNoticeNos(content);
+    if (!ref->noticeNos) return nullptr;
+    if (!content.empty()) {
+        PutError(SequenceLengthMismatch);
+        return nullptr;
+    }
+    return ref.release();
+}
+
+UserNotice* NewUserNotice(std::span<const unsigned char>& input) {
+    Header header;
+    if (CheckTag(input, SequenceTag, 0, false, header) != TagCheck::Present) {
+        PutError(NestedAsn1Error);
+        return nullptr;
+    }
+    if (!header.constructed) {
+        PutError(SequenceNotConstructed);
+        return nullptr;
+    }
+    if (header.indefinite) NotImplemented_nid_no_patch("USERNOTICE indefinite length");
+    std::span<const unsigned char> content = input.first(header.length);
+    input = input.subspan(header.length);
+    auto* allocated = static_cast<UserNotice*>(calloc_nid_postfix(1, sizeof(UserNotice)));
+    if (!allocated) {
+        PutHeaderError(MallocFailure);
+        return nullptr;
+    }
+    std::unique_ptr<UserNotice, void (*)(UserNotice*)> notice(allocated, FreeUserNotice);
+    if (content.empty()) return notice.release();
+    Header refHeader;
+    switch (CheckTag(content, SequenceTag, 0, true, refHeader)) {
+    case TagCheck::Absent:
+        break;
+    case TagCheck::Failed:
+        PutNestedErrors(2);
+        return nullptr;
+    case TagCheck::Present:
+        notice->noticeRef = NewNoticeRef(content, refHeader);
+        if (!notice->noticeRef) {
+            PutError(NestedAsn1Error);
+            return nullptr;
+        }
+        break;
+    }
+    if (content.empty()) return notice.release();
+    if (EndsDefiniteContent(content)) return nullptr;
+    notice->expText = ReadDisplayText(content);
+    if (!notice->expText) {
+        PutError(NestedAsn1Error);
+        return nullptr;
+    }
+    if (!content.empty()) {
+        PutError(SequenceLengthMismatch);
+        return nullptr;
+    }
+    return notice.release();
+}
+
+PolicyQualInfo* NewPolicyQualInfo(std::span<const unsigned char>& input) {
+    Header header;
+    if (CheckTag(input, SequenceTag, 0, false, header) != TagCheck::Present) {
+        PutError(NestedAsn1Error);
+        return nullptr;
+    }
+    if (!header.constructed) {
+        PutError(SequenceNotConstructed);
+        return nullptr;
+    }
+    if (header.indefinite) NotImplemented_nid_no_patch("POLICYQUALINFO indefinite length");
+    std::span<const unsigned char> content = input.first(header.length);
+    input = input.subspan(header.length);
+    auto* allocated = static_cast<PolicyQualInfo*>(calloc_nid_postfix(1, sizeof(PolicyQualInfo)));
+    if (!allocated) {
+        PutHeaderError(MallocFailure);
+        return nullptr;
+    }
+    std::unique_ptr<PolicyQualInfo, void (*)(PolicyQualInfo*)> qual(allocated, FreePolicyQualInfo);
+    if (EndsDefiniteContent(content)) return nullptr;
+    if (content.empty()) {
+        PutError(FieldMissing);
+        return nullptr;
+    }
+    qual->qualId = ReadObject(content);
+    if (!qual->qualId) return nullptr;
+    if (EndsDefiniteContent(content)) return nullptr;
+    if (content.empty()) {
+        PutError(FieldMissing);
+        return nullptr;
+    }
+    const int nid = OBJ_obj2nid_nid_postfix(reinterpret_cast<const LibreSslAsn1Object*>(qual->qualId));
+    if (nid == NidIdQtCps) {
+        qual->d.cpsUri = ReadIa5String(content);
+        if (!qual->d.cpsUri) return nullptr;
+    } else if (nid == NidIdQtUnotice) {
+        qual->d.userNotice = NewUserNotice(content);
+        if (!qual->d.userNotice) {
+            PutError(NestedAsn1Error);
+            return nullptr;
+        }
+    } else {
+        qual->d.other = ReadAnyType(content);
+        if (!qual->d.other) {
+            PutError(NestedAsn1Error);
+            return nullptr;
+        }
+    }
+    if (!content.empty()) {
+        PutError(SequenceLengthMismatch);
+        return nullptr;
+    }
+    return qual.release();
+}
+
+LibreSslStack* NewPolicyQualifiers(std::span<const unsigned char>& input) {
+    Header header;
+    if (CheckTag(input, SequenceTag, 0, false, header) != TagCheck::Present) {
+        PutError(NestedAsn1Error);
+        return nullptr;
+    }
+    if (header.indefinite) NotImplemented_nid_no_patch("POLICYINFO qualifiers indefinite length");
+    std::span<const unsigned char> body = input.first(header.length);
+    input = input.subspan(header.length);
+    LibreSslStack* allocated = sk_new_nid_postfix(nullptr);
+    if (!allocated) {
+        PutError(MallocFailure);
+        return nullptr;
+    }
+    std::unique_ptr<LibreSslStack, void (*)(LibreSslStack*)> qualifiers(allocated, FreePolicyQualifiers);
+    while (!body.empty()) {
+        if (EndsDefiniteContent(body)) return nullptr;
+        PolicyQualInfo* qual = NewPolicyQualInfo(body);
+        if (!qual) {
+            PutError(NestedAsn1Error);
+            return nullptr;
+        }
+        if (sk_push_nid_postfix(qualifiers.get(), qual) == 0) {
+            FreePolicyQualInfo(qual);
+            PutError(MallocFailure);
+            return nullptr;
+        }
+    }
+    return qualifiers.release();
+}
+
+PolicyInfo* NewPolicyInfo(std::span<const unsigned char>& input) {
+    Header header;
+    if (CheckTag(input, SequenceTag, 0, false, header) != TagCheck::Present) {
+        PutError(NestedAsn1Error);
+        return nullptr;
+    }
+    if (!header.constructed) {
+        PutError(SequenceNotConstructed);
+        return nullptr;
+    }
+    if (header.indefinite) NotImplemented_nid_no_patch("POLICYINFO indefinite length");
+    std::span<const unsigned char> content = input.first(header.length);
+    input = input.subspan(header.length);
+    auto* allocated = static_cast<PolicyInfo*>(calloc_nid_postfix(1, sizeof(PolicyInfo)));
+    if (!allocated) {
+        PutHeaderError(MallocFailure);
+        return nullptr;
+    }
+    std::unique_ptr<PolicyInfo, void (*)(PolicyInfo*)> info(allocated, FreePolicyInfo);
+    if (EndsDefiniteContent(content)) return nullptr;
+    if (content.empty()) {
+        PutError(FieldMissing);
+        return nullptr;
+    }
+    info->policyId = ReadObject(content);
+    if (!info->policyId) return nullptr;
+    if (content.empty()) return info.release();
+    if (EndsDefiniteContent(content)) return nullptr;
+    info->qualifiers = NewPolicyQualifiers(content);
+    if (!info->qualifiers) return nullptr;
+    if (!content.empty()) {
+        PutError(SequenceLengthMismatch);
+        return nullptr;
+    }
+    return info.release();
+}
+
+void* NewCertificatePolicies(std::span<const unsigned char> value) {
+    std::span<const unsigned char> body;
+    if (!SequenceBody(value, true, "CERTIFICATEPOLICIES indefinite length", body)) return nullptr;
+    LibreSslStack* allocated = sk_new_nid_postfix(nullptr);
+    if (!allocated) {
+        PutError(MallocFailure);
+        return nullptr;
+    }
+    std::unique_ptr<LibreSslStack, void (*)(LibreSslStack*)> policies(allocated, FreeCertificatePolicies);
+    while (!body.empty()) {
+        if (EndsDefiniteContent(body)) return nullptr;
+        PolicyInfo* info = NewPolicyInfo(body);
+        if (!info) {
+            PutError(NestedAsn1Error);
+            return nullptr;
+        }
+        if (sk_push_nid_postfix(policies.get(), info) == 0) {
+            FreePolicyInfo(info);
+            PutError(MallocFailure);
+            return nullptr;
+        }
+    }
+    return policies.release();
+}
+
 struct UsagePeriodValue {
     Asn1String* notBefore;
     Asn1String* notAfter;
@@ -1464,6 +2091,8 @@ void* Decode(const LibreSsl3X509Extension& extension, Decoder decoder) {
         return NewAuthorityInfoAccess(value);
     case Decoder::CrlDistPoints:
         return NewCrlDistPoints(value);
+    case Decoder::CertificatePolicies:
+        return NewCertificatePolicies(value);
     case Decoder::Null:
         return NewNull(value);
     case Decoder::Unsupported:

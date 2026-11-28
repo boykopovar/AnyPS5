@@ -1894,9 +1894,499 @@ void TestCrlDistPoints() {
     for (const std::vector<int>& queue : fivePointFailures) Require(!queue.empty());
 }
 
+struct NoticeRef {
+    Asn1String* organization;
+    LibreSslStack* noticeNos;
+};
+
+struct UserNotice {
+    NoticeRef* noticeRef;
+    Asn1String* expText;
+};
+
+struct PolicyQualInfo {
+    Asn1Object_nid_no_patch* qualId;
+    union {
+        Asn1String* cpsUri;
+        UserNotice* userNotice;
+        Asn1Type* other;
+    } d;
+};
+
+struct PolicyInfo {
+    Asn1Object_nid_no_patch* policyId;
+    LibreSslStack* qualifiers;
+};
+
+void FreeNoticeNos(LibreSslStack* noticeNos) {
+    if (!noticeNos) return;
+    for (int index = 0; index < noticeNos->num; ++index)
+        ASN1_INTEGER_free_nid_postfix(reinterpret_cast<Asn1String*>(noticeNos->data[index]));
+    sk_free_nid_postfix(noticeNos);
+}
+
+void FreeNoticeRef(NoticeRef* noticeRef) {
+    if (!noticeRef) return;
+    ASN1_OCTET_STRING_free_nid_postfix(noticeRef->organization);
+    FreeNoticeNos(noticeRef->noticeNos);
+    free_nid_postfix(noticeRef);
+}
+
+void FreeUserNotice(UserNotice* userNotice) {
+    if (!userNotice) return;
+    FreeNoticeRef(userNotice->noticeRef);
+    ASN1_OCTET_STRING_free_nid_postfix(userNotice->expText);
+    free_nid_postfix(userNotice);
+}
+
+void FreePolicyQualInfo(PolicyQualInfo* qual) {
+    if (!qual) return;
+    if (qual->qualId) {
+        const int nid = OBJ_obj2nid_nid_postfix(reinterpret_cast<const LibreSslAsn1Object*>(qual->qualId));
+        if (nid == 164) ASN1_OCTET_STRING_free_nid_postfix(qual->d.cpsUri);
+        else if (nid == 165) FreeUserNotice(qual->d.userNotice);
+        else ASN1_TYPE_free_nid_postfix(qual->d.other);
+        ASN1_OBJECT_free_nid_postfix(qual->qualId);
+    }
+    free_nid_postfix(qual);
+}
+
+void FreeCertificatePolicies(void* value) {
+    sk_pop_free_nid_postfix(static_cast<LibreSslStack*>(value), +[](void* pointer) APS5_VABI {
+        auto* info = static_cast<PolicyInfo*>(pointer);
+        if (!info) return;
+        ASN1_OBJECT_free_nid_postfix(info->policyId);
+        if (info->qualifiers) {
+            for (int index = 0; index < info->qualifiers->num; ++index)
+                FreePolicyQualInfo(reinterpret_cast<PolicyQualInfo*>(info->qualifiers->data[index]));
+            sk_free_nid_postfix(info->qualifiers);
+        }
+        free_nid_postfix(info);
+    });
+}
+
+LibreSslStack* DecodeCertificatePolicies(const Bytes& bytes) {
+    auto* policies = static_cast<LibreSslStack*>(DecodeValue(89, bytes));
+    Require(policies != nullptr);
+    RequireQueue({});
+    return policies;
+}
+
+void RequireObject(const Asn1Object_nid_no_patch* object, const Bytes& encoding, int nid) {
+    Require(object != nullptr && object->length == static_cast<int>(encoding.size()));
+    Require(std::memcmp(object->data, encoding.data(), encoding.size()) == 0);
+    Require(object->nid == 0 && object->flags == 0x09);
+    Require(OBJ_obj2nid_nid_postfix(reinterpret_cast<const LibreSslAsn1Object*>(object)) == nid);
+}
+
+const PolicyInfo* PolicyInfoAt(const LibreSslStack* policies, int index, const Bytes& oidEncoding) {
+    const auto* info = static_cast<const PolicyInfo*>(sk_value_nid_postfix(policies, index));
+    Require(info != nullptr);
+    RequireObject(info->policyId, oidEncoding, 0);
+    return info;
+}
+
+const PolicyQualInfo* PolicyQualInfoAt(const LibreSslStack* qualifiers, int index, const Bytes& oidEncoding, int nid) {
+    const auto* qual = static_cast<const PolicyQualInfo*>(sk_value_nid_postfix(qualifiers, index));
+    Require(qual != nullptr);
+    RequireObject(qual->qualId, oidEncoding, nid);
+    return qual;
+}
+
+void RequireExactString(const void* value, std::int32_t type, const Bytes& data, std::int64_t flags = 0) {
+    const auto* string = static_cast<const Asn1String*>(value);
+    Require(string != nullptr && string->type == type && string->flags == flags);
+    Require(string->length == static_cast<std::int32_t>(data.size()));
+    if (!data.empty()) Require(std::memcmp(string->data, data.data(), data.size()) == 0);
+}
+
+void TestCertificatePolicies() {
+    static_assert(sizeof(NoticeRef) == 16 && offsetof(NoticeRef, organization) == 0 && offsetof(NoticeRef, noticeNos) == 8);
+    static_assert(sizeof(UserNotice) == 16 && offsetof(UserNotice, noticeRef) == 0 && offsetof(UserNotice, expText) == 8);
+    static_assert(sizeof(PolicyQualInfo) == 16 && offsetof(PolicyQualInfo, qualId) == 0 && offsetof(PolicyQualInfo, d) == 8);
+    static_assert(sizeof(PolicyInfo) == 16 && offsetof(PolicyInfo, policyId) == 0 && offsetof(PolicyInfo, qualifiers) == 8);
+    static_assert(sizeof(Asn1Type) == 16 && offsetof(Asn1Type, value) == 8);
+
+    const Bytes pidA{0x2a, 0x03};
+    const Bytes pidB{0x2a, 0x04};
+    const Bytes pidC{0x2a, 0x05};
+    const Bytes cpsOid{0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x02, 0x01};
+    const Bytes unoticeOid{0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x02, 0x02};
+
+    for (const Bytes& empty : {FromHex("3000"), FromHex("1000"), FromHex("30005a"), FromHex("308100"),
+             FromHex("3089000000000000000000")}) {
+        LibreSslStack* policies = DecodeCertificatePolicies(empty);
+        Require(sk_num_nid_postfix(policies) == 0);
+        FreeCertificatePolicies(policies);
+        Require(allocations.empty());
+    }
+
+    {
+        LibreSslStack* policies = DecodeCertificatePolicies(FromHex("3006300406022a03"));
+        Require(sk_num_nid_postfix(policies) == 1);
+        Require(PolicyInfoAt(policies, 0, pidA)->qualifiers == nullptr);
+        FreeCertificatePolicies(policies);
+
+        for (const Bytes& emptyQuals : {FromHex("3008300606022a033000"), FromHex("3008300606022a031000")}) {
+            policies = DecodeCertificatePolicies(emptyQuals);
+            Require(sk_num_nid_postfix(policies) == 1);
+            const PolicyInfo* info = PolicyInfoAt(policies, 0, pidA);
+            Require(info->qualifiers != nullptr && sk_num_nid_postfix(info->qualifiers) == 0);
+            FreeCertificatePolicies(policies);
+        }
+
+        policies = DecodeCertificatePolicies(FromHex("301c300406022a03301406022a04300e300c06082b060105050702011600"));
+        Require(sk_num_nid_postfix(policies) == 2);
+        Require(PolicyInfoAt(policies, 0, pidA)->qualifiers == nullptr);
+        const PolicyInfo* second = PolicyInfoAt(policies, 1, pidB);
+        Require(sk_num_nid_postfix(second->qualifiers) == 1);
+        RequireString(PolicyQualInfoAt(second->qualifiers, 0, cpsOid, 164)->d.cpsUri, 22, {});
+        FreeCertificatePolicies(policies);
+        Require(allocations.empty());
+    }
+
+    for (const auto& [hex, expected] : {
+             std::pair<std::string_view, Bytes>{"3016301406022a03300e300c06082b060105050702011600", {}},
+             {"301e301c06022a033016301406082b060105050702011608687474703a2f2f61", {'h', 't', 't', 'p', ':', '/', '/', 'a'}},
+             {"3020301e06022a033018301606082b06010505070201360a04026162040463646566", {'a', 'b', 'c', 'd', 'e', 'f'}},
+             {"3020301e06022a033018301606082b06010505070201368004026162040263640000", {'a', 'b', 'c', 'd'}},
+             {"3019301706022a033011300f06082b060105050702013603800161", {'a'}}}) {
+        LibreSslStack* policies = DecodeCertificatePolicies(FromHex(hex));
+        const PolicyInfo* info = PolicyInfoAt(policies, 0, pidA);
+        Require(sk_num_nid_postfix(info->qualifiers) == 1);
+        RequireString(PolicyQualInfoAt(info->qualifiers, 0, cpsOid, 164)->d.cpsUri, 22, expected);
+        FreeCertificatePolicies(policies);
+        Require(allocations.empty());
+    }
+
+    {
+        LibreSslStack* policies = DecodeCertificatePolicies(FromHex("3016301406022a03300e300c06082b060105050702023000"));
+        const UserNotice* notice =
+            PolicyQualInfoAt(PolicyInfoAt(policies, 0, pidA)->qualifiers, 0, unoticeOid, 165)->d.userNotice;
+        Require(notice != nullptr && notice->noticeRef == nullptr && notice->expText == nullptr);
+        FreeCertificatePolicies(policies);
+
+        for (const auto& [hex, type, expected] : {
+                 std::tuple<std::string_view, std::int32_t, Bytes>{
+                     "3019301706022a033011300f06082b060105050702023003160161", 22, {'a'}},
+                 {"3019301706022a033011300f06082b0601050507020230031a0162", 26, {'b'}},
+                 {"3019301706022a033011300f06082b0601050507020230030c0163", 12, {'c'}},
+                 {"301c301a06022a033014301206082b0601050507020230061e0400410042", 30, {0x00, 'A', 0x00, 'B'}},
+                 {"301f301d06022a033017301506082b0601050507020230092c0704026162040163", 12, {'a', 'b', 'c'}},
+                 {"3020301e06022a033018301606082b06010505070202300a3e080402004104020042", 30, {0x00, 'A', 0x00, 'B'}},
+                 {"3021301f06022a033019301706082b06010505070202300b2c80040261620401630000", 12, {'a', 'b', 'c'}}}) {
+            policies = DecodeCertificatePolicies(FromHex(hex));
+            notice = PolicyQualInfoAt(PolicyInfoAt(policies, 0, pidA)->qualifiers, 0, unoticeOid, 165)->d.userNotice;
+            Require(notice != nullptr && notice->noticeRef == nullptr);
+            RequireString(notice->expText, type, expected);
+            FreeCertificatePolicies(policies);
+        }
+
+        for (const std::string_view hex : {"301d301b06022a033015301306082b060105050702023007300516016f3000",
+                 "301d301b06022a033015301306082b060105050702023007300516016f1000"}) {
+            policies = DecodeCertificatePolicies(FromHex(hex));
+            notice = PolicyQualInfoAt(PolicyInfoAt(policies, 0, pidA)->qualifiers, 0, unoticeOid, 165)->d.userNotice;
+            Require(notice != nullptr && notice->noticeRef != nullptr && notice->expText == nullptr);
+            RequireString(notice->noticeRef->organization, 22, {'o'});
+            Require(notice->noticeRef->noticeNos != nullptr && sk_num_nid_postfix(notice->noticeRef->noticeNos) == 0);
+            FreeCertificatePolicies(policies);
+        }
+
+        policies = DecodeCertificatePolicies(
+            FromHex("3027302506022a03301f301d06082b060105050702023011300f1a026f7230090201000201070201ff"));
+        notice = PolicyQualInfoAt(PolicyInfoAt(policies, 0, pidA)->qualifiers, 0, unoticeOid, 165)->d.userNotice;
+        Require(notice != nullptr && notice->noticeRef != nullptr && notice->expText == nullptr);
+        RequireString(notice->noticeRef->organization, 26, {'o', 'r'});
+        Require(sk_num_nid_postfix(notice->noticeRef->noticeNos) == 3);
+        const auto* n0 = static_cast<const Asn1String*>(sk_value_nid_postfix(notice->noticeRef->noticeNos, 0));
+        const auto* n1 = static_cast<const Asn1String*>(sk_value_nid_postfix(notice->noticeRef->noticeNos, 1));
+        const auto* n2 = static_cast<const Asn1String*>(sk_value_nid_postfix(notice->noticeRef->noticeNos, 2));
+        Require(n0->type == 2 && n0->length == 1 && n0->data[0] == 0);
+        Require(n1->type == 2 && n1->length == 1 && n1->data[0] == 7);
+        Require(n2->type == 0x102 && n2->length == 1 && n2->data[0] == 1);
+        FreeCertificatePolicies(policies);
+
+        policies = DecodeCertificatePolicies(
+            FromHex("3025302306022a03301d301b06082b06010505070202300f300d2c8004024f4b00003003020101"));
+        notice = PolicyQualInfoAt(PolicyInfoAt(policies, 0, pidA)->qualifiers, 0, unoticeOid, 165)->d.userNotice;
+        Require(notice != nullptr && notice->noticeRef != nullptr && notice->expText == nullptr);
+        RequireString(notice->noticeRef->organization, 12, {'O', 'K'});
+        Require(sk_num_nid_postfix(notice->noticeRef->noticeNos) == 1);
+        Require(ASN1_INTEGER_get_nid_postfix(
+                    static_cast<const Asn1String*>(sk_value_nid_postfix(notice->noticeRef->noticeNos, 0))) == 1);
+        FreeCertificatePolicies(policies);
+
+        policies = DecodeCertificatePolicies(
+            FromHex("302f302d06022a033027302506082b060105050702023019300d0c024f4b3007020101020201001e0800480065006c006f"));
+        notice = PolicyQualInfoAt(PolicyInfoAt(policies, 0, pidA)->qualifiers, 0, unoticeOid, 165)->d.userNotice;
+        Require(notice != nullptr && notice->noticeRef != nullptr && notice->expText != nullptr);
+        RequireString(notice->noticeRef->organization, 12, {'O', 'K'});
+        Require(sk_num_nid_postfix(notice->noticeRef->noticeNos) == 2);
+        Require(ASN1_INTEGER_get_nid_postfix(
+                    static_cast<const Asn1String*>(sk_value_nid_postfix(notice->noticeRef->noticeNos, 0))) == 1);
+        Require(ASN1_INTEGER_get_nid_postfix(
+                    static_cast<const Asn1String*>(sk_value_nid_postfix(notice->noticeRef->noticeNos, 1))) == 256);
+        RequireString(notice->expText, 30, {0x00, 'H', 0x00, 'e', 0x00, 'l', 0x00, 'o'});
+        FreeCertificatePolicies(policies);
+        Require(allocations.empty());
+    }
+
+    {
+        LibreSslStack* policies = DecodeCertificatePolicies(FromHex("3010300e06022a033008300606022a040500"));
+        const Asn1Type* other = PolicyQualInfoAt(PolicyInfoAt(policies, 0, pidA)->qualifiers, 0, pidB, 0)->d.other;
+        Require(other != nullptr && other->type == 5 && other->value.pointer == nullptr);
+        FreeCertificatePolicies(policies);
+
+        for (const auto& [hex, expectedBool] : {
+                 std::pair<std::string_view, std::int32_t>{"3011300f06022a033009300706022a040101ff", 255},
+                 {"3011300f06022a033009300706022a04010100", 0}}) {
+            policies = DecodeCertificatePolicies(FromHex(hex));
+            other = PolicyQualInfoAt(PolicyInfoAt(policies, 0, pidA)->qualifiers, 0, pidB, 0)->d.other;
+            Require(other != nullptr && other->type == 1 && other->value.boolean == expectedBool);
+            FreeCertificatePolicies(policies);
+        }
+
+        policies = DecodeCertificatePolicies(FromHex("3012301006022a03300a300806022a0406022a03"));
+        other = PolicyQualInfoAt(PolicyInfoAt(policies, 0, pidA)->qualifiers, 0, pidB, 0)->d.other;
+        Require(other != nullptr && other->type == 6);
+        RequireObject(static_cast<const Asn1Object_nid_no_patch*>(other->value.pointer), pidA, 0);
+        FreeCertificatePolicies(policies);
+
+        for (const auto& [hex, anyType, strType, data, flags] : {
+                 std::tuple<std::string_view, std::int32_t, std::int32_t, Bytes, std::int64_t>{
+                     "3011300f06022a033009300706022a040201fe", 2, 0x102, {0x02}, 0},
+                 {"3012301006022a03300a300806022a0402020100", 2, 2, {0x01, 0x00}, 0},
+                 {"3012301006022a03300a300806022a04030205a0", 3, 3, {0xa0}, 13},
+                 {"3011300f06022a033009300706022a04030100", 3, 3, {}, 8},
+                 {"3012301006022a03300a300806022a0404020102", 4, 4, {0x01, 0x02}, 0},
+                 {"3011300f06022a033009300706022a040a01fe", 10, 0x10a, {0x02}, 0},
+                 {"3012301006022a03300a300806022a040c026162", 12, 12, {'a', 'b'}, 0},
+                 {"3013301106022a03300b300906022a043003020101", 16, 16, {0x30, 0x03, 0x02, 0x01, 0x01}, 0},
+                 {"3013301106022a03300b300906022a043103020101", 17, 17, {0x31, 0x03, 0x02, 0x01, 0x01}, 0},
+                 {"3012301006022a03300a300806022a0480026162", -3, -3, {0x80, 0x02, 'a', 'b'}, 0},
+                 {"3014301206022a03300c300a06022a04a00404026162", -3, -3, {0xa0, 0x04, 0x04, 0x02, 'a', 'b'}, 0},
+                 {"3016301406022a03300e300c06022a042406040161040162", 4, 4, {'a', 'b'}, 0},
+                 {"3018301606022a033010300e06022a0424800401610401620000", 4, 4, {'a', 'b'}, 0},
+                 {"3012301006022a03300a300806022a0430800000", 16, 16, {0x30, 0x80, 0x00, 0x00}, 0},
+                 {"301a301806022a033012301006022a04308030800000300205000000", 16, 16,
+                     {0x30, 0x80, 0x30, 0x80, 0x00, 0x00, 0x30, 0x02, 0x05, 0x00, 0x00, 0x00}, 0},
+                 {"3012301006022a03300a300806022a04a0800000", -3, -3, {0xa0, 0x80, 0x00, 0x00}, 0},
+                 {"3011300f06022a033009300706022a04000161", 0, 0, {'a'}, 0},
+                 {"3011300f06022a033009300706022a04400161", -3, -3, {0x40, 0x01, 'a'}, 0},
+                 {"3011300f06022a033009300706022a04c00161", -3, -3, {0xc0, 0x01, 'a'}, 0},
+                 {"3018301606022a033010300e06022a042306030200aa030200bb", 3, 3, {0xaa, 0x00, 0xbb}, 8},
+                 {"301f301d06022a033017301506022a04180f32303234303130323033303430355a", 24, 24,
+                     {'2', '0', '2', '4', '0', '1', '0', '2', '0', '3', '0', '4', '0', '5', 'Z'}, 0},
+                 {"301d301b06022a033015301306022a04170d3234303130323033303430355a", 23, 23,
+                     {'2', '4', '0', '1', '0', '2', '0', '3', '0', '4', '0', '5', 'Z'}, 0},
+                 {"301d301b06022a033015301306022a04170d3936303232393030303030305a", 23, 23,
+                     {'9', '6', '0', '2', '2', '9', '0', '0', '0', '0', '0', '0', 'Z'}, 0},
+                 {"301d301b06022a033015301306022a04170d3030303232393030303030305a", 23, 23,
+                     {'0', '0', '0', '2', '2', '9', '0', '0', '0', '0', '0', '0', 'Z'}, 0},
+                 {"3014301206022a03300c300a06022a041e0400410042", 30, 30, {0x00, 'A', 0x00, 'B'}, 0},
+                 {"3014301206022a03300c300a06022a041c0400000041", 28, 28, {0x00, 0x00, 0x00, 'A'}, 0},
+                 {"3013301106022a03300b300906022a041f81000161", 128, 128, {'a'}, 0}}) {
+            policies = DecodeCertificatePolicies(FromHex(hex));
+            other = PolicyQualInfoAt(PolicyInfoAt(policies, 0, pidA)->qualifiers, 0, pidB, 0)->d.other;
+            Require(other != nullptr && other->type == anyType);
+            RequireExactString(other->value.pointer, strType, data, flags);
+            FreeCertificatePolicies(policies);
+        }
+        Require(allocations.empty());
+    }
+
+    const Bytes complexMulti = FromHex(
+        "304a304206022a03303c300e06082b0601050507020116026869301c06082b060105050702023010300a0c024f4b3004020201001a026e6f"
+        "300c06022a043006040261620500300406022a05");
+    {
+        LibreSslStack* policies = DecodeCertificatePolicies(complexMulti);
+        Require(sk_num_nid_postfix(policies) == 2);
+        const PolicyInfo* first = PolicyInfoAt(policies, 0, pidA);
+        Require(sk_num_nid_postfix(first->qualifiers) == 3);
+        RequireString(PolicyQualInfoAt(first->qualifiers, 0, cpsOid, 164)->d.cpsUri, 22, {'h', 'i'});
+        const UserNotice* notice = PolicyQualInfoAt(first->qualifiers, 1, unoticeOid, 165)->d.userNotice;
+        Require(notice != nullptr && notice->noticeRef != nullptr);
+        RequireString(notice->noticeRef->organization, 12, {'O', 'K'});
+        Require(sk_num_nid_postfix(notice->noticeRef->noticeNos) == 1);
+        Require(ASN1_INTEGER_get_nid_postfix(
+                    static_cast<const Asn1String*>(sk_value_nid_postfix(notice->noticeRef->noticeNos, 0))) == 256);
+        RequireString(notice->expText, 26, {'n', 'o'});
+        const Asn1Type* other = PolicyQualInfoAt(first->qualifiers, 2, pidB, 0)->d.other;
+        Require(other != nullptr && other->type == 16);
+        RequireExactString(other->value.pointer, 16, {0x30, 0x06, 0x04, 0x02, 'a', 'b', 0x05, 0x00});
+        Require(PolicyInfoAt(policies, 1, pidC)->qualifiers == nullptr);
+        FreeCertificatePolicies(policies);
+        Require(allocations.empty());
+    }
+
+    static unsigned char cpolsOid[] = {0x55, 0x1d, 0x20};
+    Fixture resolvedCpols(0, cpolsOid, sizeof(cpolsOid), {0x30, 0x06, 0x30, 0x04, 0x06, 0x02, 0x2a, 0x03});
+    LibreSslStack* policies = static_cast<LibreSslStack*>(X509V3_EXT_d2i_nid_postfix(&resolvedCpols.extension));
+    Require(policies != nullptr && sk_num_nid_postfix(policies) == 1);
+    Require(PolicyInfoAt(policies, 0, pidA)->qualifiers == nullptr);
+    FreeCertificatePolicies(policies);
+
+    LibreSsl3X509Extension* built =
+        X509V3_EXT_conf_nid_nid_postfix(nullptr, nullptr, 89, "DER:3016301406022a03300e300c06082b060105050702011600");
+    Require(built != nullptr);
+    policies = static_cast<LibreSslStack*>(X509V3_EXT_d2i_nid_postfix(built));
+    Require(policies != nullptr && sk_num_nid_postfix(policies) == 1);
+    RequireString(PolicyQualInfoAt(PolicyInfoAt(policies, 0, pidA)->qualifiers, 0, cpsOid, 164)->d.cpsUri, 22, {});
+    FreeCertificatePolicies(policies);
+    X509_EXTENSION_free_nid_postfix(built);
+    Require(allocations.empty());
+    RequireQueue({});
+
+    const std::vector<MalformedValue> malformed{
+        {{}, {102, 58}},
+        {FromHex("30"), {102, 58}},
+        {FromHex("3100"), {168, 58}},
+        {FromHex("0500"), {168, 58}},
+        {FromHex("30053000"), {155, 58}},
+        {FromHex("30020000"), {159}},
+        {FromHex("30023100"), {168, 58, 58}},
+        {FromHex("30021000"), {149, 58}},
+        {FromHex("300130"), {102, 58, 58}},
+        {FromHex("30023005"), {155, 58, 58}},
+        {FromHex("30023000"), {121, 58}},
+        {FromHex("300430020000"), {159, 58}},
+        {FromHex("300430020500"), {168, 58, 58, 58}},
+        {FromHex("300430022600"), {231, 58, 58}},
+        {FromHex("300430020600"), {216, 58, 58}},
+        {FromHex("3006300406028001"), {216, 58, 58}},
+        {FromHex("3003300106"), {102, 58, 58, 58}},
+        {FromHex("300430020605"), {155, 58, 58, 58}},
+        {FromHex("3008300606022a030500"), {168, 58, 58}},
+        {FromHex("3008300606022a030000"), {159, 58}},
+        {FromHex("300a300806022a0330000500"), {148, 58}},
+        {FromHex("300a300806022a0330000000"), {148, 58}},
+        {FromHex("300a300806022a0330023100"), {168, 58, 58, 58}},
+        {FromHex("300a300806022a0330021000"), {149, 58, 58}},
+        {FromHex("300a300806022a0330023000"), {121, 58, 58}},
+        {FromHex("300a300806022a0330020000"), {159, 58}},
+        {FromHex("300c300a06022a03300430020000"), {159, 58, 58}},
+        {FromHex("3014301206022a03300c300a06082b06010505070201"), {121, 58, 58}},
+        {FromHex("3014301206022a03300c300a06082b06010505070202"), {121, 58, 58}},
+        {FromHex("300e300c06022a033006300406022a04"), {121, 58, 58}},
+        {FromHex("300c300a06022a03300430020500"), {168, 58, 58, 58, 58}},
+        {FromHex("300c300a06022a03300430022600"), {231, 58, 58, 58}},
+        {FromHex("300c300a06022a03300430020600"), {216, 58, 58, 58}},
+        {FromHex("3010300e06022a0330083006060280010500"), {216, 58, 58, 58}},
+        {FromHex("3010300e06022a033008300606022a040000"), {159, 58, 58}},
+        {FromHex("3016301406022a03300e300c06082b060105050702010c00"), {168, 58, 58, 58, 58}},
+        {FromHex("3015301306022a03300d300b06082b0601050507020116"), {102, 58, 58, 58, 58}},
+        {FromHex("3016301406022a03300e300c06082b060105050702011605"), {155, 58, 58, 58, 58}},
+        {FromHex("3024302206022a03301c301a06082b06010505070201360e360c360a36083606360436020400"), {197, 58, 58, 58}},
+        {FromHex("3018301606022a033010300e06082b0601050507020136020000"), {159, 58, 58, 58}},
+        {FromHex("3019301706022a033011300f06082b060105050702013680040161"), {137, 58, 58, 58}},
+        {FromHex("3018301606022a033010300e06082b0601050507020116000500"), {148, 58, 58}},
+        {FromHex("3016301406022a03300e300c06082b060105050702020500"), {168, 58, 58, 58, 58}},
+        {FromHex("3016301406022a03300e300c06082b060105050702021000"), {149, 58, 58, 58}},
+        {FromHex("3018301606022a033010300e06082b0601050507020230000500"), {148, 58, 58}},
+        {FromHex("3018301606022a033010300e06082b0601050507020230020000"), {159, 58, 58, 58}},
+        {FromHex("3017301506022a03300f300d06082b0601050507020230011f"), {102, 58, 58, 58, 58, 58}},
+        {FromHex("3018301606022a033010300e06082b0601050507020230023005"), {155, 58, 58, 58, 58, 58}},
+        {FromHex("3019301706022a033011300f06082b060105050702023003130161"), {140, 58, 58, 58, 58}},
+        {FromHex("3019301706022a033011300f06082b060105050702023003140161"), {140, 58, 58, 58, 58}},
+        {FromHex("301c301a06022a033014301206082b0601050507020230061c0400000041"), {140, 58, 58, 58, 58}},
+        {FromHex("3019301706022a033011300f06082b060105050702023003040161"), {140, 58, 58, 58, 58}},
+        {FromHex("3019301706022a033011300f06082b060105050702023003800161"), {139, 58, 58, 58, 58}},
+        {FromHex("3019301706022a033011300f06082b0601050507020230031e0141"), {214, 58, 58, 58, 58}},
+        {FromHex("301b301906022a033013301106082b0601050507020230053e03040141"), {214, 58, 58, 58, 58}},
+        {FromHex("301c301a06022a033014301206082b060105050702023006160161160162"), {148, 58, 58, 58}},
+        {FromHex("301b301906022a033013301106082b0601050507020230051601610000"), {148, 58, 58, 58}},
+        {FromHex("3017301506022a03300f300d06082b06010505070202300116"), {102, 58, 58, 58, 58, 58}},
+        {FromHex("3019301706022a033011300f06082b060105050702023003160561"), {155, 58, 58, 58, 58, 58}},
+        {FromHex("3018301606022a033010300e06082b0601050507020230021000"), {149, 58, 58, 58, 58}},
+        {FromHex("3018301606022a033010300e06082b0601050507020230023000"), {121, 58, 58, 58, 58}},
+        {FromHex("301a301806022a033012301006082b06010505070202300430020000"), {159, 58, 58, 58, 58}},
+        {FromHex("301d301b06022a033015301306082b06010505070202300730051301613000"), {140, 58, 58, 58, 58, 58}},
+        {FromHex("301d301b06022a033015301306082b06010505070202300730051401613000"), {140, 58, 58, 58, 58, 58}},
+        {FromHex("301d301b06022a033015301306082b06010505070202300730058001613000"), {139, 58, 58, 58, 58, 58}},
+        {FromHex("301d301b06022a033015301306082b06010505070202300730051e01413000"), {214, 58, 58, 58, 58, 58}},
+        {FromHex("301b301906022a033013301106082b060105050702023005300316016f"), {121, 58, 58, 58, 58}},
+        {FromHex("301d301b06022a033015301306082b060105050702023007300516016f0500"), {168, 58, 58, 58, 58, 58}},
+        {FromHex("301f301d06022a033017301506082b060105050702023009300716016f30020500"), {168, 58, 58, 58, 58, 58, 58}},
+        {FromHex("301f301d06022a033017301506082b060105050702023009300716016f30022200"), {231, 58, 58, 58, 58, 58}},
+        {FromHex("301f301d06022a033017301506082b060105050702023009300716016f30020200"), {62, 58, 58, 58, 58, 58}},
+        {FromHex("3021301f06022a033019301706082b06010505070202300b300916016f300402020001"), {62, 58, 58, 58, 58, 58}},
+        {FromHex("301f301d06022a033017301506082b060105050702023009300716016f30000500"), {148, 58, 58, 58, 58}},
+        {FromHex("3022302006022a03301a301806082b06010505070202300c300516016f30001303616263"), {140, 58, 58, 58, 58}},
+        {FromHex("301f301d06022a033017301506082b060105050702023009300516016f30000000"), {159, 58, 58, 58}},
+        {FromHex("301f301d06022a033017301506082b060105050702023009300716016f30020000"), {159, 58, 58, 58, 58}},
+        {FromHex("3031302f06022a033029302706082b06010505070202301b300d0c024f4b3007020101020201001e0800480065006c006f0500"),
+            {148, 58, 58, 58}},
+        {FromHex("3011300f06022a033009300706022a04050100"), {144, 58, 58, 58}},
+        {FromHex("3010300e06022a033008300606022a042500"), {231, 58, 58, 58}},
+        {FromHex("3012301006022a03300a300806022a0401020001"), {106, 58, 58, 58}},
+        {FromHex("3011300f06022a033009300706022a042101ff"), {231, 58, 58, 58}},
+        {FromHex("3010300e06022a033008300606022a040200"), {62, 58, 58, 58}},
+        {FromHex("3011300f06022a033009300706022a04220101"), {231, 58, 58, 58}},
+        {FromHex("3010300e06022a033008300606022a040300"), {152, 58, 58, 58}},
+        {FromHex("3012301006022a03300a300806022a0403020800"), {220, 58, 58, 58}},
+        {FromHex("3012301006022a03300a300806022a0406028001"), {216, 58, 58, 58}},
+        {FromHex("3010300e06022a033008300606022a042600"), {231, 58, 58, 58}},
+        {FromHex("3011300f06022a033009300706022a04290100"), {231, 58, 58, 58}},
+        {FromHex("3010300e06022a033008300606022a042a00"), {231, 58, 58, 58}},
+        {FromHex("3011300f06022a033009300706022a042d0101"), {231, 58, 58, 58}},
+        {FromHex("3011300f06022a033009300706022a042e0101"), {231, 58, 58, 58}},
+        {FromHex("3010300e06022a033008300606022a041000"), {156, 58, 58, 58}},
+        {FromHex("3010300e06022a033008300606022a041100"), {156, 58, 58, 58}},
+        {FromHex("3011300f06022a033009300706022a041e0141"), {214, 58, 58, 58}},
+        {FromHex("3013301106022a03300b300906022a041c03414243"), {215, 58, 58, 58}},
+        {FromHex("3013301106022a03300b300906022a041803616263"), {132, 58, 58, 58}},
+        {FromHex("301f301d06022a033017301506022a04180f31393030303232393030303030305a"), {132, 58, 58, 58}},
+        {FromHex("3013301106022a03300b300906022a041703616263"), {132, 58, 58, 58}},
+        {FromHex("301d301b06022a033015301306022a04170d3939303232393030303030305a"), {132, 58, 58, 58}},
+        {FromHex("3010300e06022a033008300606022a043080"), {137, 58, 58, 58}},
+        {FromHex("3011300f06022a033009300706022a04308004"), {102, 58, 58, 58, 58}},
+        {FromHex("3014301206022a03300c300a06022a04308030800000"), {137, 58, 58, 58}},
+        {FromHex("300f300d06022a033007300506022a0404"), {102, 58, 58, 58, 58}},
+        {FromHex("3011300f06022a033009300706022a04040561"), {155, 58, 58, 58, 58}},
+        {FromHex("3012301006022a03300a300806022a0424020000"), {159, 58, 58, 58}},
+        {FromHex("3013301106022a03300b300906022a042480040161"), {137, 58, 58, 58}},
+        {FromHex("301e301c06022a033016301406022a04240e240c240a24082406240424020400"), {197, 58, 58, 58}},
+        {FromHex("3012301006022a03300a300806022a0405000500"), {148, 58, 58}},
+    };
+    RequireMalformed(89, malformed);
+
+    const std::vector<Bytes> unmodelled{
+        FromHex("30800000"),
+        FromHex("300430800000"),
+        FromHex("300a300806022a0330800000"),
+        FromHex("300c300a06022a03300430800000"),
+        FromHex("3016301406022a03300e300c06082b0601050507020230800000"),
+        FromHex("3018301606022a033010300e06082b06010505070202300230800000"),
+        FromHex("301f301d06022a033017301506082b060105050702023009300716016f30800000"),
+    };
+    RequireUnmodelled(89, unmodelled);
+
+    Require(DistinctQueues(AllocationFailures(89, FromHex("3000"), FreeCertificatePolicies)) ==
+        std::vector<std::vector<int>>{{65}});
+
+    const std::vector<std::vector<int>> complexFailures =
+        AllocationFailures(89, complexMulti, FreeCertificatePolicies);
+    Require(!complexFailures.empty());
+    Require(complexFailures.front() == std::vector<int>{65});
+    int mallocQueueCount = 0;
+    for (const std::vector<int>& queue : complexFailures) {
+        Require(!queue.empty());
+        if (std::find(queue.begin(), queue.end(), 65) != queue.end()) ++mallocQueueCount;
+    }
+    Require(mallocQueueCount >= 20);
+
+    const std::vector<std::vector<int>> otherOidFailures =
+        AllocationFailures(89, FromHex("3012301006022a03300a300806022a0406022a03"), FreeCertificatePolicies);
+    Require(!otherOidFailures.empty());
+    for (const std::vector<int>& queue : otherOidFailures) Require(!queue.empty());
+
+    const std::vector<std::vector<int>> otherIntFailures =
+        AllocationFailures(89, FromHex("3012301006022a03300a300806022a0402020100"), FreeCertificatePolicies);
+    Require(!otherIntFailures.empty());
+    for (const std::vector<int>& queue : otherIntFailures) Require(!queue.empty());
+}
+
 void TestUnsupported() {
-    Fixture certificatePolicies(89, {0x30, 0x00});
-    RequireNotImplemented([&] { X509V3_EXT_d2i_nid_postfix(&certificatePolicies.extension); });
     Fixture serviceLocator(371, {0x30, 0x00});
     RequireNotImplemented([&] { X509V3_EXT_d2i_nid_postfix(&serviceLocator.extension); });
 }
@@ -2099,6 +2589,7 @@ int main() {
     TestGeneralNames();
     TestAuthorityInfoAccess();
     TestCrlDistPoints();
+    TestCertificatePolicies();
     TestUnsupported();
     TestUnknownExtensions();
     TestMethodTable();
