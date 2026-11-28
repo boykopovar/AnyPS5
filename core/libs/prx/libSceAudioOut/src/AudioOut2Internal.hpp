@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <deque>
 #include <mutex>
+#include <string>
 #include <optional>
 #include <stop_token>
 #include <utility>
@@ -100,6 +101,9 @@ struct AudioOut2Context {
     std::uint32_t queued = 0;
     std::chrono::steady_clock::time_point playHead;
     SDL_AudioDeviceID device = 0;
+    std::mutex deviceLock;
+    std::string defaultOutput;
+    std::chrono::steady_clock::time_point nextDefaultOutputCheck;
     HostGainRamp hostGain{AUDIO_OUT2_SAMPLE_RATE / 100};
     // Stereo float mix of the ports for one grain.
     std::vector<float> mix;
