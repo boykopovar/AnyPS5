@@ -860,7 +860,7 @@ LibreSslX509* APS5_VABI PEM_read_bio_X509_nid_postfix(LibreSsl::Bio* bio, LibreS
                                                       LibreSslPemPasswordCallback callback, void* userData);
 LibreSslX509* APS5_VABI PEM_read_bio_X509_AUX_nid_postfix(LibreSsl::Bio* bio, LibreSslX509** certificate,
                                                           LibreSslPemPasswordCallback callback, void* userData);
-int APS5_VABI PEM_write_bio_X509_nid_postfix(void);
+int APS5_VABI PEM_write_bio_X509_nid_postfix(LibreSsl::Bio* bio, LibreSslX509* certificate);
 void APS5_VABI PKCS12_PBE_add_nid_postfix(void);
 void APS5_VABI PKCS12_free_nid_postfix(void* pkcs12);
 int APS5_VABI PKCS12_parse_nid_postfix(void* p12, const char* pass, void** pkey, void** cert, void** ca);
