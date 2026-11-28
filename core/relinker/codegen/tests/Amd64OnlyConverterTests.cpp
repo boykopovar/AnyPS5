@@ -2684,6 +2684,33 @@ void scannerUnwindRanges() {
     require(Codegen::MakeInstructionScanner()->ScanCodeSection(crossing, 0, crossing.size()).front().Length == 5, "Without unwind ranges the crossing instruction must decode whole");
 }
 
+void converterLongPaddingWindowBoundary() {
+    const auto rosetta = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Rosetta);
+    const auto build = [](const Bytes& lead) {
+        Bytes text = lead;
+        text.insert(text.end(), 640, 0x90);
+        const Bytes tail = {0xC5, 0xFC, 0x11, 0x07, 0xEB, 0xFE};
+        text.insert(text.end(), tail.begin(), tail.end());
+        Bytes file(0x300 + text.size(), 0xCC);
+        std::copy(text.begin(), text.end(), file.begin() + 0x200);
+        return std::pair{std::move(file), text.size()};
+    };
+    const auto [nonEntryFile, nonEntrySize] = build({0x31, 0xC0});
+    const auto nonEntry = rosetta->Convert(nonEntryFile, {segmentHeader(nonEntrySize)});
+    require(nonEntry.Trampolines.size() == 1 && nonEntry.Trampolines[0].Offset == 0x200 + 2 + 639 && nonEntry.Trampolines[0].Length == 5,
+        "A short wide store after a non-blocking instruction and >512 bytes of NOP padding did not relocate backward");
+
+    const auto [entryFile, entrySize] = build({0xC3});
+    requireFailure([&] { (void)rosetta->Convert(entryFile, {segmentHeader(entrySize)}); },
+        "A short wide store after RET and >512 bytes of NOP padding must treat the store as a potential entry");
+
+    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
+    const Bytes rexBeforeVex2 = {0x48, 0xC5, 0xFC, 0x11, 0x07};
+    const Bytes rexBeforeVex3 = {0x48, 0xC4, 0xE2, 0x70, 0xF2, 0xC1};
+    require(!matcher->Match(rexBeforeVex2.data(), rexBeforeVex2.size()).has_value(), "REX before 2-byte VEX must not match");
+    require(!matcher->Match(rexBeforeVex3.data(), rexBeforeVex3.size()).has_value(), "REX before 3-byte VEX must not match");
+}
+
 int main() {
     try {
         decoderLengths();
@@ -2750,6 +2777,7 @@ int main() {
         linuxStackSynthesis();
         scannerZeroTail();
         scannerUnwindRanges();
+        converterLongPaddingWindowBoundary();
         std::cout << "AMD64-only converter tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
