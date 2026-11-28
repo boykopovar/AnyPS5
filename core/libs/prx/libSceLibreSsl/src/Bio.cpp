@@ -133,18 +133,36 @@ int queueError(int library, int reason, int result) {
     return result;
 }
 
-bool CopyGuestStringPreservingErrno(const char* source, std::string& destination) {
+template <typename TConsume>
+bool ScanGuestStringPreservingErrno(const char* source, TConsume&& consume) {
     constexpr std::uintptr_t Chunk = 4096;
     char bytes[Chunk];
-    destination.clear();
     for (auto address = reinterpret_cast<std::uintptr_t>(source);;) {
         const std::size_t count = Chunk - address % Chunk;
         if (!GuestCopyIn_nid_no_patch(bytes, reinterpret_cast<const void*>(address), count)) return false;
         const auto* end = static_cast<const char*>(std::memchr(bytes, 0, count));
-        destination.append(bytes, end ? static_cast<std::size_t>(end - bytes) : count);
+        const std::size_t length = end ? static_cast<std::size_t>(end - bytes) : count;
+        if (!consume(bytes, length)) return false;
         if (end) return true;
         address += count;
     }
+}
+
+bool CopyGuestStringPreservingErrno(const char* source, std::string& destination) {
+    destination.clear();
+    return ScanGuestStringPreservingErrno(source, [&](const char* bytes, std::size_t length) {
+        destination.append(bytes, length);
+        return true;
+    });
+}
+
+bool GuestStringLengthPreservingErrno(const char* source, std::size_t& length) {
+    length = 0;
+    return ScanGuestStringPreservingErrno(source, [&](const char*, std::size_t count) {
+        if (length > std::numeric_limits<std::size_t>::max() - count) return false;
+        length += count;
+        return true;
+    });
 }
 
 void clearBuffer(BioBuffer& buffer) {
@@ -246,9 +264,10 @@ int APS5_VABI writeSsl(Bio* bio, const char* source, int size) {
 
 int APS5_VABI putsSsl(Bio* bio, const char* source) {
     if (!source) throw std::invalid_argument("SSL BIO puts: null string");
-    std::string text;
-    if (!CopyGuestStringPreservingErrno(source, text)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-    return writeSsl(bio, text.c_str(), static_cast<int>(text.size()));
+    std::size_t length = 0;
+    if (!GuestStringLengthPreservingErrno(source, length)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (length > static_cast<std::size_t>(std::numeric_limits<int>::max())) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return writeSsl(bio, source, static_cast<int>(length));
 }
 
 std::int64_t APS5_VABI controlSsl(Bio* bio, int command, std::int64_t argument, void* pointer) {
