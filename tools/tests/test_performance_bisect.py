@@ -242,6 +242,12 @@ class GitHistoryTests(GitHistoryCase):
         with self.assertRaisesRegex(ValueError, "ancestor"):
             performance_bisect.first_parent_commits(self.repo, self.commits[-1], self.good)
 
+    def test_endpoints_whose_names_start_with_a_dash_are_revisions(self):
+        subprocess.run(["git", "-C", str(self.repo), "update-ref", "refs/heads/-good", self.good], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "update-ref", "refs/tags/-bad", self.commits[-1]], check=True)
+        good, bad, commits = performance_bisect.first_parent_commits(self.repo, "-good", "-bad")
+        self.assertEqual((good, bad, commits), (self.good, self.commits[-1], self.commits))
+
 
 
 class CommandTests(unittest.TestCase):

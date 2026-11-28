@@ -165,9 +165,13 @@ def git(repo, *args):
     return result.stdout.strip()
 
 
+def commit_id(repo, name):
+    return git(repo, "rev-parse", "--verify", *(("--end-of-options",) if name.startswith("-") else ()), f"{name}^0")
+
+
 def first_parent_commits(repo, good, bad):
-    good_sha = git(repo, "rev-parse", "--verify", f"{good}^0")
-    bad_sha = git(repo, "rev-parse", "--verify", f"{bad}^0")
+    good_sha = commit_id(repo, good)
+    bad_sha = commit_id(repo, bad)
     result = subprocess.run(["git", "-C", str(repo), "merge-base", "--is-ancestor", good_sha, bad_sha], capture_output=True)
     if result.returncode:
         raise ValueError("good commit must be an ancestor of bad commit")
