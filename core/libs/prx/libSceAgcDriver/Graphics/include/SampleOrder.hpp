@@ -69,6 +69,7 @@ SampleOrderPass SampleOrderPassFor(const Context& context, const State& state, c
 void RecordSampleOrder(const Context& context, CommandState& recording, const SampleOrderPass& pass, std::span<const SampleOrderTarget> targets, bool toHost, std::vector<std::shared_ptr<void>>& kept);
 void RecordDepthSampleLocations(const Context& context, VkCommandBuffer commands, const DepthSampleLocations& depth);
 void RecordDepthSampleImport(const Context& context, CommandState& recording, const SampleOrderTarget& target, VkImageView samples, std::vector<std::shared_ptr<void>>& kept);
+void RecordStencilSampleImport(const Context& context, CommandState& recording, const SampleOrderTarget& target, VkImageView samples, std::vector<std::shared_ptr<void>>& kept);
 std::array<std::span<const std::uint32_t>, 9> SampleOrderShaderModules();
 void ClearSampleOrders(VkDevice device);
 
