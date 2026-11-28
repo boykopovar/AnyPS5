@@ -713,6 +713,17 @@ bool GuestArenaRecoverRead_nid_no_patch(EXCEPTION_POINTERS* exception) {
 
 void GuestArenaSetProtection_nid_postfix(std::uintptr_t address, std::size_t bytes, std::uint32_t protection) {
     WindowsMappings::Get().SetProtection(address, bytes, protection);
+    const auto end = address + bytes;
+    for (auto cursor = address; cursor < end;) {
+        MEMORY_BASIC_INFORMATION memory{};
+        if (VirtualQuery(reinterpret_cast<const void*>(cursor), &memory, sizeof(memory)) != sizeof(memory))
+            throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "guest arena protection query failed");
+        const auto stop = std::min(end, reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize);
+        DWORD previous = 0;
+        if (memory.State == MEM_COMMIT && memory.Type == MEM_PRIVATE && !VirtualProtect(reinterpret_cast<void*>(cursor), stop - cursor, protection, &previous))
+            throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "guest arena protection failed");
+        cursor = stop;
+    }
     noteAccess(reinterpret_cast<const void*>(address), bytes);
 }
 
