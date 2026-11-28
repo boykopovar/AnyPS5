@@ -40,4 +40,6 @@ int APS5_VABI sceVideoOutVrrUnpegFromFixedRate(int handle);
 
 }
 
+int ConfiguredFlipRate(int requested);
+
 #endif

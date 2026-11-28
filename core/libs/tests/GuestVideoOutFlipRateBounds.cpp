@@ -48,6 +48,71 @@ int main() {
     Require(sceVideoOutSetFlipRate(handle, 1) == 0);
     Require(sceVideoOutSetFlipRate(handle, 0) == 0);
 
+#ifdef _WIN32
+    _putenv_s("APS5_FLIP_RATE", "");
+#else
+    unsetenv("APS5_FLIP_RATE");
+#endif
+    Require(ConfiguredFlipRate(0) == 0);
+    Require(ConfiguredFlipRate(1) == 1);
+    Require(ConfiguredFlipRate(2) == 2);
+#ifdef _WIN32
+    _putenv_s("APS5_FLIP_RATE", "0");
+#else
+    setenv("APS5_FLIP_RATE", "0", 1);
+#endif
+    Require(ConfiguredFlipRate(0) == 0);
+    Require(ConfiguredFlipRate(1) == 0);
+    Require(ConfiguredFlipRate(2) == 0);
+#ifdef _WIN32
+    _putenv_s("APS5_FLIP_RATE", "1");
+#else
+    setenv("APS5_FLIP_RATE", "1", 1);
+#endif
+    Require(ConfiguredFlipRate(0) == 1);
+    Require(ConfiguredFlipRate(2) == 1);
+#ifdef _WIN32
+    _putenv_s("APS5_FLIP_RATE", "2");
+#else
+    setenv("APS5_FLIP_RATE", "2", 1);
+#endif
+    Require(ConfiguredFlipRate(0) == 2);
+    Require(ConfiguredFlipRate(1) == 2);
+    Require(sceVideoOutSetFlipRate(handle, 2) == 0);
+#ifdef _WIN32
+    _putenv_s("APS5_FLIP_RATE", "3");
+#else
+    setenv("APS5_FLIP_RATE", "3", 1);
+#endif
+    {
+        bool threw = false;
+        try {
+            ConfiguredFlipRate(0);
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        Require(threw);
+    }
+#ifdef _WIN32
+    _putenv_s("APS5_FLIP_RATE", "abc");
+#else
+    setenv("APS5_FLIP_RATE", "abc", 1);
+#endif
+    {
+        bool threw = false;
+        try {
+            sceVideoOutSetFlipRate(handle, 0);
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        Require(threw);
+    }
+#ifdef _WIN32
+    _putenv_s("APS5_FLIP_RATE", "");
+#else
+    unsetenv("APS5_FLIP_RATE");
+#endif
+
     Require(sceVideoOutSetFlipRate(handle, -1) == VIDEO_OUT_ERROR_INVALID_VALUE);
     Require(sceVideoOutSetFlipRate(handle, -2) == VIDEO_OUT_ERROR_INVALID_VALUE);
     Require(sceVideoOutSetFlipRate(handle, -100) == VIDEO_OUT_ERROR_INVALID_VALUE);
