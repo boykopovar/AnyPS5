@@ -249,8 +249,8 @@ int APS5_VABI _ZNK15AbstractStorage13TwitterFolder10GetServiceEv() {
     return 3;
 }
 
-int APS5_VABI _ZNK15AbstractStorage13TwitterFolder13GetCapabilityEv() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint64_t APS5_VABI _ZNK15AbstractStorage13TwitterFolder13GetCapabilityEv() {
+    return 0x1000000000ull;
 }
 
 int APS5_VABI _ZNK15AbstractStorage13TwitterFolder7GetStatEPNS_4StatE() {
@@ -277,8 +277,8 @@ int APS5_VABI _ZNK15AbstractStorage14TwitterStorage10GetServiceEv() {
     return 3;
 }
 
-int APS5_VABI _ZNK15AbstractStorage14TwitterStorage13GetCapabilityEv() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint64_t APS5_VABI _ZNK15AbstractStorage14TwitterStorage13GetCapabilityEv() {
+    return 0x180000000000000ull;
 }
 
 int APS5_VABI _ZNK15AbstractStorage14TwitterStorage7GetStatEPNS_4StatE() {

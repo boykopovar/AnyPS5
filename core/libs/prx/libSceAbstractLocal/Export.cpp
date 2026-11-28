@@ -258,8 +258,8 @@ int APS5_VABI _ZNK15AbstractStorage11LocalFolder10GetServiceEv() {
     return 0;
 }
 
-int APS5_VABI _ZNK15AbstractStorage11LocalFolder13GetCapabilityEv() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint64_t APS5_VABI _ZNK15AbstractStorage11LocalFolder13GetCapabilityEv() {
+    return 0x3FC000007Eull;
 }
 
 int APS5_VABI _ZNK15AbstractStorage11LocalFolder7GetStatEPNS_4StatE() {
@@ -286,8 +286,8 @@ int APS5_VABI _ZNK15AbstractStorage12LocalStorage10GetServiceEv() {
     return 0;
 }
 
-int APS5_VABI _ZNK15AbstractStorage12LocalStorage13GetCapabilityEv() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint64_t APS5_VABI _ZNK15AbstractStorage12LocalStorage13GetCapabilityEv() {
+    return 0xFC00000000001Aull;
 }
 
 int APS5_VABI _ZNK15AbstractStorage12LocalStorage7GetStatEPNS_4StatE() {

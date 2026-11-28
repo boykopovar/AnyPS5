@@ -14,6 +14,8 @@ int main() {
     constexpr int notSupported = static_cast<int>(0x809E0005u);
     for (int call = 0; call < 2; ++call) {
         Require(_ZNK15AbstractStorage14TwitterContent13GetCapabilityEv() == 0x6C0A);
+        Require(_ZNK15AbstractStorage13TwitterFolder13GetCapabilityEv() == 0x1000000000ull);
+        Require(_ZNK15AbstractStorage14TwitterStorage13GetCapabilityEv() == 0x180000000000000ull);
         Require(_ZNK15AbstractStorage14TwitterContent10GetServiceEv() == 3);
         Require(_ZNK15AbstractStorage13TwitterFolder10GetServiceEv() == 3);
         Require(_ZNK15AbstractStorage14TwitterService14GetServiceTypeEv() == 3);

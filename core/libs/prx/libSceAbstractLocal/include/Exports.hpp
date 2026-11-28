@@ -65,14 +65,14 @@ int APS5_VABI _ZN15AbstractStorage12LocalStorageD0Ev();
 int APS5_VABI _ZN15AbstractStorage12LocalStorageD1Ev();
 int APS5_VABI _ZN15AbstractStorage12LocalStorageD2Ev();
 int APS5_VABI _ZNK15AbstractStorage11LocalFolder10GetServiceEv();
-int APS5_VABI _ZNK15AbstractStorage11LocalFolder13GetCapabilityEv();
+std::uint64_t APS5_VABI _ZNK15AbstractStorage11LocalFolder13GetCapabilityEv();
 int APS5_VABI _ZNK15AbstractStorage11LocalFolder7GetStatEPNS_4StatE();
 int APS5_VABI _ZNK15AbstractStorage12LocalContent10GetServiceEv();
 int APS5_VABI _ZNK15AbstractStorage12LocalContent13GetCapabilityEv();
 int APS5_VABI _ZNK15AbstractStorage12LocalContent7GetStatEPNS_4StatE();
 int APS5_VABI _ZNK15AbstractStorage12LocalService14GetServiceTypeEv();
 int APS5_VABI _ZNK15AbstractStorage12LocalStorage10GetServiceEv();
-int APS5_VABI _ZNK15AbstractStorage12LocalStorage13GetCapabilityEv();
+std::uint64_t APS5_VABI _ZNK15AbstractStorage12LocalStorage13GetCapabilityEv();
 int APS5_VABI _ZNK15AbstractStorage12LocalStorage7GetStatEPNS_4StatE();
 
 }
