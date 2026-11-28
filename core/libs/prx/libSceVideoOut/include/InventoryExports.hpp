@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include <cstdint>
 
 extern "C" {
 
@@ -9,7 +10,7 @@ int APS5_VABI sceVideoOutAddBuffer4k2kPrivilege();
 int APS5_VABI sceVideoOutAddBufferAnisoPrivilege();
 int APS5_VABI sceVideoOutAddBufferHdrPrivilege();
 int APS5_VABI sceVideoOutAddBufferYccPrivilege();
-int APS5_VABI sceVideoOutAddDisplayPositionEvent();
+int APS5_VABI sceVideoOutAddDisplayPositionEvent(KernelEqueue eq, int handle, void* udata);
 int APS5_VABI sceVideoOutAddDriver();
 int APS5_VABI sceVideoOutAddS3dHmdPrivilege();
 int APS5_VABI sceVideoOutAddStereoBuffer();
@@ -31,7 +32,7 @@ int APS5_VABI sceVideoOutDebugReadCrc();
 int APS5_VABI sceVideoOutDebugSetDrr();
 int APS5_VABI sceVideoOutDebugSetGlobalAlpha();
 int APS5_VABI sceVideoOutDebugTriggerRefresh();
-int APS5_VABI sceVideoOutDeleteDisplayPositionEvent();
+int APS5_VABI sceVideoOutDeleteDisplayPositionEvent(KernelEqueue eq, int handle);
 int APS5_VABI sceVideoOutDeleteDriver();
 int APS5_VABI sceVideoOutDriverAddEvent();
 int APS5_VABI sceVideoOutDriverDecrementBufferLabel();
@@ -71,7 +72,7 @@ int APS5_VABI sceVideoOutRegisterStereoBuffers();
 int APS5_VABI sceVideoOutRemoveBuffer();
 int APS5_VABI sceVideoOutSetAlphaControl();
 int APS5_VABI sceVideoOutSetBlankAfterResume();
-int APS5_VABI sceVideoOutSetContentType();
+int APS5_VABI sceVideoOutSetContentType(std::uint32_t type, void* record);
 int APS5_VABI sceVideoOutSetDisplayEventPosition();
 int APS5_VABI sceVideoOutSetGamutMetadata_();
 int APS5_VABI sceVideoOutSetGlobalAlpha();

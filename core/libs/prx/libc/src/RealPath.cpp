@@ -134,20 +134,21 @@ bool ResolveGuest(const char* path, std::string& result, int& error) {
         return false;
     }
     unsigned links = 0;
-    bool expandLinks = true;
+    std::size_t frozenPrefix = 0;
     while (!left.empty()) {
         const auto separator = left.find_first_of(Separators);
         const std::string token = left.substr(0, separator);
         const bool moreFollows = separator != std::string::npos;
         left = moreFollows ? left.substr(separator + 1) : std::string();
-        if (token.empty() || token == ".") continue;
-        if (token == "..") {
-            DropLastComponent(result);
-            continue;
-        }
         if (result.size() > 1 && result.size() + 1 >= PathMax) {
             error = NameTooLong;
             return false;
+        }
+        if (token.empty() || token == ".") continue;
+        if (token == "..") {
+            DropLastComponent(result);
+            if (result.size() < frozenPrefix) frozenPrefix = 0;
+            continue;
         }
         std::string candidate = result;
         if (candidate.size() > 1) candidate += '/';
@@ -161,11 +162,11 @@ bool ResolveGuest(const char* path, std::string& result, int& error) {
         std::string target;
         bool isLink = false;
         bool absolute = false;
-        if (expandLinks && !ReadGuestLink(host, target, isLink, absolute)) {
+        if (frozenPrefix == 0 && !ReadGuestLink(host, target, isLink, absolute)) {
             error = InputOutput;
             return false;
         }
-        if (absolute) expandLinks = false;
+        if (absolute) frozenPrefix = result.size();
         if (isLink) {
             if (links++ > MaxSymbolicLinks) {
                 error = TooManyLinks;

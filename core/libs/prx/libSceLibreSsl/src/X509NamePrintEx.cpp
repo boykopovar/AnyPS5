@@ -1,7 +1,9 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/Bio.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
 #include <openssl/asn1.h>
 #include <openssl/bio.h>
+#include <openssl/err.h>
 #include <openssl/objects.h>
 #include <openssl/stack.h>
 #include <openssl/x509.h>
@@ -127,7 +129,6 @@ private:
 extern "C" {
 
 int APS5_VABI X509_NAME_print_ex_nid_postfix(LibreSsl::Bio* bio, const LibreSslX509Name* name, int indent, std::uint64_t flags) {
-    if (!bio && flags == 0) return 0;
     X509_NAME empty{};
     const X509_NAME* real;
     if (name) real = reinterpret_cast<const X509_NAME*>(name);
@@ -137,11 +138,14 @@ int APS5_VABI X509_NAME_print_ex_nid_postfix(LibreSsl::Bio* bio, const LibreSslX
     BIO* memory = BIO_new(BIO_s_mem());
     if (!memory) return -1;
     int result = X509_NAME_print_ex(memory, rejected.Replace(real), indent, static_cast<unsigned long>(flags));
-    if (bio) {
-        char* data = nullptr;
-        const long length = BIO_get_mem_data(memory, &data);
-        if (length > 0 && LibreSslBioWrite_nid_no_patch(bio, data, static_cast<int>(length)) != length)
-            result = flags == 0 ? 0 : -1;
+    char* data = nullptr;
+    const long length = BIO_get_mem_data(memory, &data);
+    const bool written = length <= 0 || (bio && LibreSslBioWrite_nid_no_patch(bio, data, static_cast<int>(length)) == length);
+    if (flags != 0) {
+        if (bio && !written) result = -1;
+    } else if (result == 1 && !written) {
+        LibreSslPutError_nid_no_patch(ERR_LIB_X509, 0xfff, ERR_R_BUF_LIB, __FILE__, __LINE__);
+        result = 0;
     }
     BIO_free(memory);
     return result;

@@ -32,9 +32,8 @@ int APS5_VABI sceOpusCeltDecDecode(void* state, const std::uint8_t* data, int by
 
 int APS5_VABI sceOpusCeltDecDestroy(void* state) { return library.Destroy(state); }
 
-int APS5_VABI sceOpusCeltDecCreate() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceOpusCeltDecCreate(void* state, int sampleRate, int channels) {
+    return library.Create(state, sampleRate, channels);
 }
 
 int APS5_VABI sceOpusCeltDecCtl(void* state, int request, ...) {

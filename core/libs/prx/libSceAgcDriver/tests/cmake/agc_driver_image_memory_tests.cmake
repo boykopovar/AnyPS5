@@ -13,7 +13,7 @@ if(BUILD_TESTING)
                             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/execution/CheckImageMemorySkip.py
                             $<TARGET_FILE:agc_driver_image_memory_tests> ${skip_args})
                     set_tests_properties(agc_driver_image_memory_dedicated_${mode}_${teardown}_skip PROPERTIES
-                            ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 30)
+                            ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_IMAGE_SLABS=1" SKIP_RETURN_CODE 77 TIMEOUT 30)
                     if(WIN32)
                         set_tests_properties(agc_driver_image_memory_dedicated_${mode}_${teardown}_skip PROPERTIES ENVIRONMENT_MODIFICATION
                                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
@@ -27,6 +27,20 @@ if(BUILD_TESTING)
         endif()
     endif()
     set_tests_properties(agc_driver_image_memory PROPERTIES TIMEOUT 30)
+    foreach(pool IN ITEMS staging image)
+        add_test(NAME agc_driver_image_memory_no_${pool}_pool COMMAND agc_driver_image_memory_tests)
+        set_tests_properties(agc_driver_image_memory_no_${pool}_pool PROPERTIES
+                ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_IMAGE_SLABS=1" SKIP_RETURN_CODE 77 TIMEOUT 30)
+        if(pool STREQUAL "staging")
+            set_property(TEST agc_driver_image_memory_no_${pool}_pool APPEND PROPERTY ENVIRONMENT "APS5_STAGING_POOL_MIB=0")
+        else()
+            set_property(TEST agc_driver_image_memory_no_${pool}_pool APPEND PROPERTY ENVIRONMENT "APS5_IMAGE_POOL_MIB=0")
+        endif()
+        if(WIN32)
+            set_tests_properties(agc_driver_image_memory_no_${pool}_pool PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
     add_test(NAME agc_driver_image_memory_no_slabs COMMAND agc_driver_image_memory_tests --no-sharing-check)
     set_tests_properties(agc_driver_image_memory_no_slabs PROPERTIES
             ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 30)
@@ -36,6 +50,7 @@ if(BUILD_TESTING)
     set_tests_properties(agc_driver_image_memory_teardown_failure agc_driver_image_memory_no_slabs_teardown_failure PROPERTIES
             ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 30)
     set_property(TEST agc_driver_image_memory_no_slabs_teardown_failure APPEND PROPERTY ENVIRONMENT "APS5_NO_IMAGE_SLABS=1")
+    set_property(TEST agc_driver_image_memory agc_driver_image_memory_teardown_failure APPEND PROPERTY ENVIRONMENT "APS5_IMAGE_SLABS=1")
     if(WIN32)
         set_tests_properties(agc_driver_image_memory_no_slabs agc_driver_image_memory_teardown_failure
                 agc_driver_image_memory_no_slabs_teardown_failure PROPERTIES ENVIRONMENT_MODIFICATION

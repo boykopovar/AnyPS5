@@ -3,6 +3,7 @@
 #include "prx/libSceNgs2.native/include/Ngs2Types.hpp"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <exception>
@@ -24,6 +25,27 @@ struct CommandRecord {
     } value;
 };
 
+struct ModuleQueueRecord {
+    const void* buffer;
+    std::uint64_t reserved;
+    std::uint64_t count;
+    std::uint64_t first;
+};
+
+struct ModuleQueue {
+    const void* reservedPointer;
+    ModuleQueueRecord rings[2];
+    std::uint32_t lock;
+    std::uint8_t currentRing;
+    std::uint8_t padding[3];
+    std::uint32_t itemSize;
+    std::uint32_t ringLength;
+};
+static_assert(sizeof(ModuleQueueRecord) == 0x20);
+static_assert(sizeof(ModuleQueue) == 0x58);
+static_assert(offsetof(ModuleQueue, rings) == 8);
+static_assert(offsetof(ModuleQueue, lock) == 0x48);
+
 struct StreamOption {
     std::uint64_t size;
     char name[64];
@@ -44,6 +66,7 @@ constexpr int InvalidOutAddress = static_cast<int>(0x804a8010u);
 constexpr int InvalidOutSize = static_cast<int>(0x804a8011u);
 constexpr int InvalidOptionSize = static_cast<int>(0x804a8013u);
 constexpr int InvalidBufferInfo = static_cast<int>(0x804a8020u);
+constexpr int InvalidBufferSize = static_cast<int>(0x804a8021u);
 constexpr int InvalidBufferAllocator = static_cast<int>(0x804a8023u);
 constexpr int InvalidStreamCommands = static_cast<int>(0x804a8030u);
 constexpr int InvalidStreamQueryId = static_cast<int>(0x804a8031u);
@@ -301,8 +324,16 @@ void TestStreamExports() {
     Ngs2ContextBufferInfo emptyHost{};
     Require(sceNgs2StreamCreate(system, &opt, &emptyHost, &streamHandle) == InvalidBufferInfo);
     bufInfo.host_buffer = reinterpret_cast<void*>(0x1000);
+    bufInfo.host_buffer_size = 0x106c0;
     Require(sceNgs2StreamCreate(system, reinterpret_cast<const void*>(0x10), &bufInfo, &streamHandle) == InvalidOptionSize);
     Require(sceNgs2StreamCreate(system, &opt, &bufInfo, nullptr) == InvalidOutAddress);
+    Ngs2ContextBufferInfo shortBuffer = bufInfo;
+    shortBuffer.host_buffer_size = 0x106bf;
+    Require(sceNgs2StreamCreate(0xdead, &opt, &shortBuffer, &streamHandle) == InvalidBufferSize);
+    Require(sceNgs2StreamCreate(system, &badBlocks, &shortBuffer, &streamHandle) == InvalidNumBlocks);
+    StreamOption guarded = opt;
+    guarded.flags = 0x80000000u;
+    Require(sceNgs2StreamCreate(system, &guarded, &bufInfo, &streamHandle) == InvalidBufferSize);
     Require(sceNgs2StreamCreate(0xdead, &opt, &bufInfo, &streamHandle) == InvalidSystemHandle);
     AssertThrows([&] { sceNgs2StreamCreate(system, &opt, &bufInfo, &streamHandle); });
 
@@ -317,9 +348,17 @@ void TestStreamExports() {
     AssertThrows([&] { sceNgs2StreamCreateWithAllocator(system, &opt, &alloc, &streamHandle); });
 
     Require(sceNgs2StreamDestroy(0, nullptr) == InvalidStreamHandle);
+    Require(sceNgs2StreamDestroy(0x100, nullptr) == InvalidStreamHandle);
+    Require(sceNgs2StreamDestroy(0, reinterpret_cast<void*>(0x10)) == InvalidStreamHandle);
+    Require(sceNgs2StreamDestroy(system, nullptr) == InvalidStreamHandle);
+    const auto reverbRack = CreateRack(system, SCE_NGS2_RACK_ID_REVERB);
+    Require(sceNgs2StreamDestroy(reverbRack, nullptr) == InvalidStreamHandle);
+    Require(sceNgs2RackDestroy(reverbRack, nullptr) == SCE_NGS2_OK);
     Require(sceNgs2StreamRunCommands(0, nullptr, 0) == InvalidStreamHandle);
-    Require(sceNgs2StreamRunCommands(0x100, reinterpret_cast<const void*>(0x10), 1) == InvalidStreamCommands);
+    Require(sceNgs2StreamRunCommands(0x100, nullptr, 0) == InvalidStreamHandle);
+    Require(sceNgs2StreamRunCommands(0x100, reinterpret_cast<const void*>(0x10), 1) == InvalidStreamHandle);
     Require(sceNgs2StreamQueryInfo(0, 0xf24001, nullptr, 0) == InvalidStreamHandle);
+    Require(sceNgs2StreamQueryInfo(0x100, 0x99999999, nullptr, 0) == InvalidStreamHandle);
 
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
@@ -330,8 +369,39 @@ void TestModuleEnumerations() {
     Require(sceNgs2ModuleArrayEnumItems(nullptr, nullptr, 0) == 0);
     Require(sceNgs2ModuleArrayEnumItems(reinterpret_cast<const void*>(0x10), nullptr, 0) == 0);
     Require(sceNgs2ModuleQueueEnumItems(nullptr, nullptr, 0) == 0);
-    std::uint8_t dummyQ[16]{};
-    AssertThrows([&] { sceNgs2ModuleQueueEnumItems(dummyQ, nullptr, 0); });
+    Require(sceNgs2ModuleQueueEnumItems(reinterpret_cast<const void*>(0x10), nullptr, 0) == 0);
+
+    ModuleQueue queue{};
+    const std::uint32_t queueItems[] = {0x11111111, 0x22222222, 0x33333333, 0x44444444};
+    queue.rings[0].buffer = queueItems;
+    queue.rings[0].count = 3;
+    queue.rings[0].first = 3;
+    queue.itemSize = sizeof(queueItems[0]);
+    queue.ringLength = 4;
+    std::uint32_t queueOutput[4] = {};
+    Require(sceNgs2ModuleQueueEnumItems(&queue, queueOutput, 3) == 3);
+    Require(queueOutput[0] == queueItems[3]);
+    Require(queueOutput[1] == queueItems[0]);
+    Require(queueOutput[2] == queueItems[1]);
+    Require(queueOutput[3] == 0);
+    Require(queue.lock == 0);
+    queueOutput[0] = queueOutput[1] = queueOutput[2] = queueOutput[3] = 0;
+    Require(sceNgs2ModuleQueueEnumItems(&queue, queueOutput, 2) == 3);
+    Require(queueOutput[0] == queueItems[3]);
+    Require(queueOutput[1] == queueItems[0]);
+    Require(queueOutput[2] == 0);
+    Require(queueOutput[3] == 0);
+    queue.currentRing = 1;
+    queue.rings[1] = queue.rings[0];
+    queueOutput[0] = queueOutput[1] = queueOutput[2] = 0;
+    Require(sceNgs2ModuleQueueEnumItems(&queue, queueOutput, 0) == 3);
+    Require(queueOutput[0] == 0);
+    Require(sceNgs2ModuleQueueEnumItems(&queue, queueOutput, 3) == 3);
+    Require(queueOutput[0] == queueItems[3]);
+    Require(queueOutput[1] == queueItems[0]);
+    Require(queueOutput[2] == queueItems[1]);
+    Require(sceNgs2ModuleQueueEnumItems(&queue, reinterpret_cast<void*>(0x10), 1) == 3);
+    Require(queue.lock == 0);
 
     alignas(8) std::uint8_t arrayData[64] = {};
     const std::uint32_t itemSize = 4;

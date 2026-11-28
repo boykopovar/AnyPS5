@@ -440,6 +440,30 @@ int main() {
         return b.eliminate() != 0u && removed(written);
     });
 
+    passed &= run("selects replaced by an immediate are counted for refolding", [] {
+        const auto fullWave = [](bool immediate) {
+            Builder b;
+            auto& wave = b.threadBit(b.constant(0xffffffffu), b.constant(0xffffffffu));
+            auto& old = b.lane();
+            b.keep(b.select(wave, immediate ? b.constant(0u) : b.add(old, 1u), old));
+            return MaskedSelectEliminator{}.Eliminate(b.program);
+        };
+        const auto unreadLanes = [](bool immediate) {
+            Builder b;
+            auto& exec = b.mask(16u);
+            auto& old = b.lane();
+            auto& written = b.select(exec, immediate ? b.constant(0u) : b.add(old, 1u), old);
+            b.keep(b.select(exec, b.add(written, 2u), old));
+            return MaskedSelectEliminator{}.Eliminate(b.program);
+        };
+        const auto fullImmediate = fullWave(true);
+        const auto fullComputed = fullWave(false);
+        const auto unreadImmediate = unreadLanes(true);
+        const auto unreadComputed = unreadLanes(false);
+        return fullImmediate.removedSelects == fullComputed.removedSelects && fullImmediate.immediateSelects == fullComputed.immediateSelects + 1u &&
+               unreadImmediate.removedSelects == 1u && unreadImmediate.immediateSelects == 1u && unreadComputed.removedSelects == 1u && unreadComputed.immediateSelects == 0u;
+    });
+
     passed &= run("a partial wave's exec is not the full wave", [] {
         Builder b;
         auto& partial = b.threadBit(b.constant(0xffffffffu), b.constant(0x0000ffffu));
@@ -2783,6 +2807,202 @@ int main() {
 
     passed &= run("any-active early return is stable for the source mask's kept quads", [&] { return anyActiveGate(false); });
     passed &= run("an any-active early return cannot control unrelated kept invocations", [&] { return !anyActiveGate(true); });
+
+    enum class DroppedTailShape { AnyLane, ExactWordCompare, SkipDropsExtra };
+    const auto optionalBodyDroppedAnyLaneBallotTail = [&](DroppedTailShape shape) {
+        Builder b;
+        b.program.Resources().stage = IrShaderStage::Pixel;
+        auto& entry = *b.block;
+        auto& live = helperPredicate(b, false);
+        auto& predicate = b.logicalAnd(live, pixelPredicate(b));
+        auto& condition = b.emit(IrOpcode::LogicalNot, IrType::Bool, {&predicate});
+        const auto [allLow, allHigh] = b.ballotWords(b.truth());
+        auto& wqmMask = b.emit(IrOpcode::WqmU64, IrType::U64, {&b.emit(IrOpcode::CompositeConstructU64, IrType::U64, {allLow, allHigh})});
+        auto& wqmLow = b.emit(IrOpcode::CompositeExtractU64, IrType::U32, {&wqmMask, &b.constant(0u)});
+        auto& wqmHigh = b.emit(IrOpcode::CompositeExtractU64, IrType::U32, {&wqmMask, &b.constant(1u)});
+        const auto [liveLow, liveHigh] = b.ballotWords(live);
+        auto& entryOwn = b.threadBit(b.wordAnd(*liveLow, wqmLow), b.wordAnd(*liveHigh, wqmHigh));
+        const auto [predLow, predHigh] = b.ballotWords(predicate);
+        auto& predOwn = b.threadBit(b.wordAnd(*predLow, wqmLow), b.wordAnd(*predHigh, wqmHigh));
+        auto& value = b.emit(IrOpcode::CompositeConstructU32x4, IrType::U32x4, {&b.constant(1u), &b.constant(2u), &b.constant(3u), &b.constant(4u)});
+        auto& nullValue = b.emit(IrOpcode::CompositeConstructU32x4, IrType::U32x4, {&b.constant(0u), &b.constant(0u), &b.constant(0u), &b.constant(0u)});
+        auto& falseGuard = b.program.CreateValue(IrOpcode::Void, IrType::Bool);
+        falseGuard.SetImmediateBool(false);
+
+        auto& bodyWork = b.newBlock();
+        auto& bodyRejoin = b.newBlock();
+        auto& bodyCopy = b.newBlock();
+        auto& bodyExport = b.newBlock();
+        auto& bodyNull = b.newBlock();
+        auto& merge = b.newBlock();
+        auto& skipExport = b.newBlock();
+        auto& skipNull = b.newBlock();
+
+        entry.AddBranch(&merge);
+        entry.AddBranch(&bodyWork);
+        bodyWork.AddBranch(&bodyCopy);
+        bodyWork.AddBranch(&bodyRejoin);
+        bodyRejoin.AddBranch(&merge);
+        bodyCopy.AddBranch(&bodyNull);
+        bodyCopy.AddBranch(&bodyExport);
+        merge.AddBranch(&skipNull);
+        merge.AddBranch(&skipExport);
+
+        auto& entryInfo = b.program.Metadata().blockInfo[0u];
+        entryInfo.terminator.kind = TerminatorKind::ConditionalBranch;
+        entryInfo.terminator.condition = BranchCondition::ExecZero;
+        entryInfo.terminator.trueBlock = merge.Id();
+        entryInfo.terminator.falseBlock = bodyWork.Id();
+        entryInfo.condition = &condition;
+
+        auto& bodyWorkInfo = b.program.Metadata().blockInfo[1u];
+        bodyWorkInfo.terminator.kind = TerminatorKind::ConditionalBranch;
+        bodyWorkInfo.terminator.condition = BranchCondition::SccZero;
+        bodyWorkInfo.terminator.trueBlock = bodyCopy.Id();
+        bodyWorkInfo.terminator.falseBlock = bodyRejoin.Id();
+        bodyWorkInfo.condition = &b.truth();
+        bodyWorkInfo.startPc = 0x200u;
+        bodyWorkInfo.endPc = 0x208u;
+
+        auto& bodyRejoinInfo = b.program.Metadata().blockInfo[2u];
+        bodyRejoinInfo.terminator.kind = TerminatorKind::Branch;
+        bodyRejoinInfo.terminator.trueBlock = merge.Id();
+        bodyRejoinInfo.startPc = 0x200u;
+        bodyRejoinInfo.endPc = 0x208u;
+
+        b.block = &bodyWork;
+        auto& bodyTestCoord = b.emit(IrOpcode::GetBuiltin, IrType::U32, {&b.constant(static_cast<std::uint32_t>(StageInputKind::FragCoord)), &b.constant(1u)});
+        auto& bodyMask = b.emit(IrOpcode::INotEqual32, IrType::Bool, {&bodyTestCoord, &b.constant(0u)});
+        auto& bodyKept = b.logicalAnd(predicate, bodyMask);
+        auto& bodyDropped = b.logicalAnd(predOwn, b.emit(IrOpcode::LogicalNot, IrType::Bool, {&bodyKept}));
+        auto& bodyLiveAfterTest = b.logicalAnd(live, b.emit(IrOpcode::LogicalNot, IrType::Bool, {&bodyDropped}));
+
+        b.block = &bodyCopy;
+        auto& bodySkipCleared = b.logicalAnd(entryOwn, b.emit(IrOpcode::LogicalNot, IrType::Bool, {&predOwn}));
+        auto& bodyTailLanes = b.logicalAnd(bodyLiveAfterTest, b.emit(IrOpcode::LogicalNot, IrType::Bool, {&bodySkipCleared}));
+        const auto [bodyLow, bodyHigh] = b.ballotWords(bodyTailLanes);
+        IrValue* bodyCondition = nullptr;
+        if (shape == DroppedTailShape::ExactWordCompare) {
+            bodyCondition = &b.emit(IrOpcode::IEqual32, IrType::Bool, {bodyLow, &b.constant(3u)});
+        } else {
+            auto& bodyOr = b.emit(IrOpcode::BitwiseOr32, IrType::U32, {bodyLow, bodyHigh});
+            auto& bodyAny = b.emit(IrOpcode::INotEqual32, IrType::Bool, {&bodyOr, &b.constant(0u)});
+            bodyCondition = &b.emit(IrOpcode::LogicalNot, IrType::Bool, {&bodyAny});
+        }
+        auto& bodyCopyInfo = b.program.Metadata().blockInfo[3u];
+        bodyCopyInfo.terminator.kind = TerminatorKind::ConditionalBranch;
+        bodyCopyInfo.terminator.condition = BranchCondition::SccZero;
+        bodyCopyInfo.terminator.trueBlock = bodyNull.Id();
+        bodyCopyInfo.terminator.falseBlock = bodyExport.Id();
+        bodyCopyInfo.condition = bodyCondition;
+        bodyCopyInfo.startPc = 0x100u;
+        bodyCopyInfo.endPc = 0x108u;
+
+        b.block = &merge;
+        auto& mergedPred = b.phi(IrType::Bool, entry, predicate);
+        mergedPred.AddPhiOperand(&bodyRejoin, &predOwn);
+        auto& skipCleared = b.logicalAnd(entryOwn, b.emit(IrOpcode::LogicalNot, IrType::Bool, {&mergedPred}));
+        auto& skipClearedNot = b.emit(IrOpcode::LogicalNot, IrType::Bool, {&skipCleared});
+        IrValue* skipTailLanes = &b.logicalAnd(live, skipClearedNot);
+        if (shape == DroppedTailShape::SkipDropsExtra) {
+            auto& extraCoord = b.emit(IrOpcode::GetBuiltin, IrType::U32, {&b.constant(static_cast<std::uint32_t>(StageInputKind::FragCoord)), &b.constant(2u)});
+            auto& extraMask = b.emit(IrOpcode::INotEqual32, IrType::Bool, {&extraCoord, &b.constant(0u)});
+            skipTailLanes = &b.logicalAnd(b.logicalAnd(live, extraMask), skipClearedNot);
+        }
+        const auto [skipLow, skipHigh] = b.ballotWords(*skipTailLanes);
+        IrValue* skipCondition = nullptr;
+        if (shape == DroppedTailShape::ExactWordCompare) {
+            skipCondition = &b.emit(IrOpcode::IEqual32, IrType::Bool, {skipLow, &b.constant(3u)});
+        } else {
+            auto& skipOr = b.emit(IrOpcode::BitwiseOr32, IrType::U32, {skipLow, skipHigh});
+            auto& skipAny = b.emit(IrOpcode::INotEqual32, IrType::Bool, {&skipOr, &b.constant(0u)});
+            skipCondition = &b.emit(IrOpcode::LogicalNot, IrType::Bool, {&skipAny});
+        }
+        auto& mergeInfo = b.program.Metadata().blockInfo[6u];
+        mergeInfo.terminator.kind = TerminatorKind::ConditionalBranch;
+        mergeInfo.terminator.condition = BranchCondition::SccZero;
+        mergeInfo.terminator.trueBlock = skipNull.Id();
+        mergeInfo.terminator.falseBlock = skipExport.Id();
+        mergeInfo.condition = skipCondition;
+        mergeInfo.startPc = 0x100u;
+        mergeInfo.endPc = 0x108u;
+
+        ExportInfo info{};
+        info.kind = ExportTargetKind::Mrt;
+        info.en = 15u;
+        info.vm = true;
+        const auto exportBits = [&] {
+            ExportFlags flags{static_cast<std::uint32_t>(b.program.Metadata().exportInfo.size())};
+            b.program.Metadata().exportInfo.push_back(info);
+            std::uint64_t bits = 0;
+            std::memcpy(&bits, &flags, sizeof(flags));
+            return bits;
+        };
+
+        b.block = &bodyExport;
+        b.emit(IrOpcode::SetAttribute, IrType::Void, {&value, &b.threadBit(*bodyLow, *bodyHigh)}, exportBits());
+        b.program.Metadata().blockInfo[4u].startPc = 0x110u;
+        b.program.Metadata().blockInfo[4u].endPc = 0x118u;
+
+        b.block = &bodyNull;
+        b.emit(IrOpcode::SetAttribute, IrType::Void, {&nullValue, &falseGuard}, exportBits());
+        b.program.Metadata().blockInfo[5u].startPc = 0x120u;
+        b.program.Metadata().blockInfo[5u].endPc = 0x128u;
+
+        b.block = &skipExport;
+        b.emit(IrOpcode::SetAttribute, IrType::Void, {&value, &b.threadBit(*skipLow, *skipHigh)}, exportBits());
+        b.program.Metadata().blockInfo[7u].startPc = 0x110u;
+        b.program.Metadata().blockInfo[7u].endPc = 0x118u;
+
+        b.block = &skipNull;
+        b.emit(IrOpcode::SetAttribute, IrType::Void, {&nullValue, &falseGuard}, exportBits());
+        b.program.Metadata().blockInfo[8u].startPc = 0x120u;
+        b.program.Metadata().blockInfo[8u].endPc = 0x128u;
+
+        return StencilReplaySafe(b.program);
+    };
+
+    passed &= run("an optional wave body may leave through a copied any-lane tail whose ballot drops only body-cleared active lanes", [&] { return optionalBodyDroppedAnyLaneBallotTail(DroppedTailShape::AnyLane); });
+    passed &= run("an optional wave body cannot leave through a copied tail whose exact ballot word check drops active lanes", [&] { return !optionalBodyDroppedAnyLaneBallotTail(DroppedTailShape::ExactWordCompare); });
+    passed &= run("an optional wave body cannot leave through a copied any-lane tail when the skip copy drops extra active lanes", [&] { return !optionalBodyDroppedAnyLaneBallotTail(DroppedTailShape::SkipDropsExtra); });
+
+    const auto optionalBodyMergeFeedsUniformFirstLaneMask = [&](bool uniformSource) {
+        Builder b;
+        b.program.Resources().stage = IrShaderStage::Pixel;
+        auto& entry = *b.block;
+        auto& predicate = pixelPredicate(b);
+        auto& condition = b.emit(IrOpcode::LogicalNot, IrType::Bool, {&predicate});
+        auto& baseMask = helperPredicate(b, false);
+        auto& source = uniformSource
+            ? b.add(scalarRead(b, ResourceKind::ScalarBuffer), 1u)
+            : b.emit(IrOpcode::GetBuiltin, IrType::U32, {&b.constant(static_cast<std::uint32_t>(StageInputKind::FragCoord)), &b.constant(1u)});
+        auto& body = b.newBlock();
+        auto& merge = b.newBlock();
+        entry.AddBranch(&body);
+        entry.AddBranch(&merge);
+        body.AddBranch(&merge);
+        auto& entryInfo = b.program.Metadata().blockInfo[0u];
+        entryInfo.terminator.kind = TerminatorKind::ConditionalBranch;
+        entryInfo.terminator.condition = BranchCondition::ExecZero;
+        entryInfo.terminator.trueBlock = merge.Id();
+        entryInfo.terminator.falseBlock = body.Id();
+        entryInfo.condition = &condition;
+        auto& bodyInfo = b.program.Metadata().blockInfo[1u];
+        bodyInfo.terminator.kind = TerminatorKind::Branch;
+        bodyInfo.terminator.trueBlock = merge.Id();
+        b.block = &body;
+        auto& inner = pixelPredicate(b);
+        auto& takenMask = b.emit(IrOpcode::SelectU1, IrType::Bool, {&predicate, &inner, &baseMask});
+        b.block = &merge;
+        auto& mergedMask = b.phi(IrType::Bool, entry, baseMask);
+        mergedMask.AddPhiOperand(&body, &takenMask);
+        b.keep(b.emit(IrOpcode::ReadFirstLane, IrType::U32, {&source, &mergedMask}));
+        exportUnder(b, b.truth(), true, true);
+        return StencilReplaySafe(b.program);
+    };
+
+    passed &= run("an optional wave body merge may feed the exec mask of a wave-uniform first-lane read", [&] { return optionalBodyMergeFeedsUniformFirstLaneMask(true); });
+    passed &= run("an optional wave body merge cannot feed a varying first-lane read", [&] { return !optionalBodyMergeFeedsUniformFirstLaneMask(false); });
 
     passed &= run("kept invocations must be covered by the stencil export guard", [&] {
         Builder b;

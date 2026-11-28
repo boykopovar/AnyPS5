@@ -17,7 +17,7 @@ constexpr int StatusRunning = 2;
 constexpr int StatusFinished = 3;
 constexpr int ErrNotInitialized = static_cast<int>(0x80B80003u);
 constexpr int ErrNotFinished = static_cast<int>(0x80B80005u);
-constexpr int ErrBusy = static_cast<int>(0x80B80007u);
+constexpr int ErrInvalidState = static_cast<int>(0x80B80006u);
 constexpr int ErrParam = static_cast<int>(0x80B80001u);
 constexpr int ErrNotRunning = static_cast<int>(0x80B8000Bu);
 constexpr int ErrArgNull = static_cast<int>(0x80B8000Du);
@@ -107,7 +107,7 @@ void Shown() {
     ModalDialogView view;
     Require(ModalDialogReadView_nid_postfix(view) && view.message == u"Continue?" && view.buttons.size() == 2, "the shown dialog is not the message");
     for (int poll = 0; poll < 5; ++poll) Require(sceMsgDialogGetStatus() == StatusRunning && sceMsgDialogUpdateStatus() == StatusRunning, "a shown dialog finished before it was answered");
-    Require(sceMsgDialogOpen(&param) == ErrBusy, "a second open was accepted while the dialog ran");
+    Require(sceMsgDialogOpen(&param) == ErrInvalidState, "a second open was accepted while the dialog ran");
     Require(sceMsgDialogOpen(nullptr) == ErrArgNull, "a null param was not refused before the busy check");
     Require(sceMsgDialogProgressBarInc(0, 10) == ErrNotRunning, "progress bar inc during running user message dialog");
     Require(sceMsgDialogProgressBarSetValue(0, 50) == ErrNotRunning, "progress bar set value during running user message dialog");

@@ -9,7 +9,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pr_overlap
@@ -19,7 +19,7 @@ class OpenPullRequestsTests(unittest.TestCase):
     def test_collects_pull_requests_beyond_the_previous_limit(self):
         pull_requests = [
             {"number": number, "user": {"login": f"author{number}"},
-             "head": {"sha": f"sha{number}"}, "body": None}
+             "head": {"sha": f"sha{number}", "ref": f"branch{number}"}, "body": None}
             for number in range(1, 202)
         ]
         pull_requests[-1]["body"] = "Depends on: #12\n- #34\n"
@@ -38,7 +38,8 @@ class OpenPullRequestsTests(unittest.TestCase):
             found = pr_overlap.open_prs("main")
         self.assertEqual(set(found), set(range(1, 202)))
         self.assertEqual(found[201], {
-            "ref": "refs/pr/201", "sha": "sha201", "author": "author201", "title": "", "depends": {12, 34},
+            "ref": "refs/pr/201", "sha": "sha201", "branch": "branch201", "author": "author201", "title": "",
+            "depends": {12, 34}, "fixes": set(),
         })
         self.assertEqual(found[1]["depends"], set())
 
@@ -48,23 +49,76 @@ class OpenPullRequestsTests(unittest.TestCase):
             self.assertEqual(pr_overlap.open_prs("topic/one&two"), {})
         gh.assert_called_once_with(
             "api", "--include",
-            "repos/owner/project/pulls?state=open&base=topic%2Fone%26two&per_page=100&page=1",
+            "repos/owner/project/pulls?state=open&base=topic%2Fone%26two&sort=created&direction=asc&per_page=100&page=1",
         )
 
+    def test_new_pull_request_does_not_shift_requests_between_parallel_pages(self):
+        def page(url):
+            parameters = parse_qs(urlsplit(url).query)
+            number = int(parameters["page"][0])
+            visible_count = 251 if number == 2 else 250
+            numbers = list(range(1, visible_count + 1))
+            if parameters.get("direction") != ["asc"]:
+                numbers.reverse()
+            first = (number - 1) * 100
+            rows = [{"number": item, "user": {"login": "author"},
+                     "head": {"sha": f"sha{item}", "ref": f"branch{item}"}, "body": None}
+                    for item in numbers[first:first + 100]]
+            return ('Link: <https://api.github.com/pulls?page=3>; rel="last"' if number == 1 else "",
+                    json.dumps(rows))
+
+        with patch.object(pr_overlap, "REPO", "owner/project", create=True), \
+                patch.object(pr_overlap, "page", side_effect=page):
+            found = pr_overlap.open_prs("main")
+        self.assertEqual(set(found), set(range(1, 251)))
+
+    def test_duplicate_pull_requests_fail_the_check(self):
+        rows = [{"number": number, "user": {"login": "author"},
+                 "head": {"sha": f"sha{number}", "ref": f"branch{number}"}, "body": None}
+                for number in range(1, 101)]
+        first = ('Link: <https://api.github.com/pulls?page=2>; rel="last"', json.dumps(rows))
+        second = ("", json.dumps([rows[6]]))
+        with patch.object(pr_overlap, "REPO", "owner/project", create=True), \
+                patch.object(pr_overlap, "page", side_effect=[first, second, first] * 2) as page:
+            with self.assertRaisesRegex(ValueError, "duplicate pull request #7"):
+                pr_overlap.open_prs("main")
+        self.assertEqual(page.call_count, 6)
+
+    def test_closing_first_pull_request_does_not_skip_pull_request_101(self):
+        requested = []
+
+        def page(url):
+            number = int(parse_qs(urlsplit(url).query)["page"][0])
+            opened = range(2 if requested else 1, 251)
+            requested.append(number)
+            first = (number - 1) * 100
+            rows = [{"number": item, "user": {"login": "author"},
+                     "head": {"sha": f"sha{item}", "ref": f"branch{item}"}, "body": None}
+                    for item in opened[first:first + 100]]
+            return ('Link: <https://api.github.com/pulls?page=3>; rel="last"' if number == 1 else "",
+                    json.dumps(rows))
+
+        with patch.object(pr_overlap, "REPO", "owner/project", create=True), \
+                patch.object(pr_overlap, "page", side_effect=page):
+            found = pr_overlap.open_prs("main")
+        self.assertEqual(set(found), set(range(2, 251)))
+        self.assertEqual(requested, [1, 3, 2, 1, 1, 3, 2, 1])
+
     def test_single_page_preserves_author_head_and_dependencies(self):
-        pull_requests = [{"number": 7, "user": {"login": "contributor"}, "head": {"sha": "head-sha"},
+        pull_requests = [{"number": 7, "user": {"login": "contributor"}, "head": {"sha": "head-sha", "ref": "contrib/topic"},
                           "body": "Depends on: none\nUnrelated issue #42"}]
         with patch.object(pr_overlap, "REPO", "owner/project", create=True), \
                 patch.object(pr_overlap, "gh", return_value=json.dumps(pull_requests)):
             found = pr_overlap.open_prs("main")
         self.assertEqual(found, {
-            7: {"ref": "refs/pr/7", "sha": "head-sha", "author": "contributor", "title": "", "depends": set()},
+            7: {"ref": "refs/pr/7", "sha": "head-sha", "branch": "contrib/topic", "author": "contributor", "title": "",
+                "depends": set(), "fixes": set()},
         })
 
     def test_collects_concatenated_json_pages_from_paginated_gh_output(self):
         pull_requests = [
             {"number": number, "user": {"login": f"author{number}"},
-             "head": {"sha": f"sha{number}"}, "body": None}
+             "head": {"sha": f"sha{number}", "ref": f"branch{number}"}, "body": None}
             for number in range(1, 4)
         ]
         pages = [pull_requests[:2], pull_requests[2:]]
@@ -418,7 +472,7 @@ class SubdirectoryTests(unittest.TestCase):
                 git("add", ".")
                 git("commit", "-qm", "fix: change value")
                 heads[branch] = git("rev-parse", "HEAD")
-            pulls = [{"number": 7, "user": {"login": "someone"}, "head": {"sha": heads["theirs"]}, "body": "Depends on: none"}]
+            pulls = [{"number": 7, "user": {"login": "someone"}, "head": {"sha": heads["theirs"], "ref": "theirs"}, "body": "Depends on: none"}]
             (fake / "pulls.json").write_text(json.dumps(pulls), encoding="utf-8")
             (fake / "gh").write_text(f"#!/bin/sh\ncat '{fake / 'pulls.json'}'\n", encoding="utf-8")
             (fake / "gh").chmod(0o755)
@@ -644,6 +698,48 @@ class HelperPathTests(unittest.TestCase):
         self.assertEqual(pr_overlap.depends_on(
             "- [ ] Depends on: [#7](https://github.com/boykopovar/AnyPS5/pull/7)"), {7})
         self.assertEqual(pr_overlap.depends_on(""), set())
+class FixesTests(unittest.TestCase):
+    def test_fixes_reads_the_template_field_and_closing_keywords(self):
+        self.assertEqual(pr_overlap.fixes("- [x] Fixes: Fixes #22530"), {22530})
+        self.assertEqual(pr_overlap.fixes("- [x] Fixes: #12, #34 and #56"), {12, 34, 56})
+        self.assertEqual(pr_overlap.fixes("- [x] Fixes: Fixes #12, closes #34"), {12, 34})
+        self.assertEqual(pr_overlap.fixes("This resolves #7.\n- [x] Fixes: none"), {7})
+        self.assertEqual(pr_overlap.fixes(
+            "- [x] Fixes: [the crash](https://github.com/boykopovar/AnyPS5/issues/9)"), {9})
+        self.assertEqual(pr_overlap.fixes("- [x] Fixes: Fixes https://github.com/boykopovar/AnyPS5/issues/11"), {11})
+
+    def test_fixes_ignores_none_comments_and_other_words(self):
+        self.assertEqual(pr_overlap.fixes("- [ ] Fixes: <!-- issue it closes as Fixes #N, or none -->"), set())
+        self.assertEqual(pr_overlap.fixes("- [x] Fixes: none\nUnrelated issue #42"), set())
+        self.assertEqual(pr_overlap.fixes("<!-- Fixes #3 -->"), set())
+        self.assertEqual(pr_overlap.fixes("strip the prefixes #5 and the hot-fixes #6"), set())
+        self.assertEqual(pr_overlap.fixes("- [x] Depends on: #8"), set())
+        self.assertEqual(pr_overlap.fixes(None), set())
+
+    def test_pull_requests_by_other_authors_that_fix_one_issue_are_reported(self):
+        prs = {1: {"author": "first", "depends": set(), "fixes": {22530, 7}, "tree": "a", "files": {"a.cpp"}, "added": set()},
+               2: {"author": "second", "depends": set(), "fixes": {22530}, "tree": "b", "files": {"b.cpp"}, "added": set()},
+               3: {"author": "first", "depends": set(), "fixes": {7}, "tree": "c", "files": {"c.cpp"}, "added": set()},
+               4: {"author": "third", "depends": {1}, "fixes": {22530}, "tree": "d", "files": {"d.cpp"}, "added": set()}}
+        found = pr_overlap.overlaps(prs, 1, 2)
+        self.assertEqual(found["issues"], {22530})
+        self.assertIsNone(pr_overlap.overlaps(prs, 1, 3))
+        self.assertIsNone(pr_overlap.overlaps(prs, 1, 4))
+        self.assertIsNone(pr_overlap.overlaps(prs, 2, 3))
+
+    def test_report_lists_the_shared_issue_without_cross_references(self):
+        rows = {2: {"added": set(), "conflicts": {}, "exports": set(), "issues": {22530}},
+                3: {"added": set(), "conflicts": {"other.cpp": [(1, 1)]}, "exports": set(), "issues": set()}}
+        report = pr_overlap.report(rows, "https://github.com/owner/project/blob/base")
+        self.assertIsNone(re.search(r"#\d|https://github\.com/owner/project/(pull|issues)/", report))
+        self.assertIn(
+            "\n\nOther open pull requests say they fix the same issue, so they may implement the same thing:\n\n"
+            "- [PR 2](https://www.github.com/owner/project/pull/2): "
+            "[issue 22530](https://www.github.com/owner/project/issues/22530)\n", report)
+        self.assertNotIn("[PR 2](https://www.github.com/owner/project/pull/2) |", report)
+        self.assertIn("| [PR 3](https://www.github.com/owner/project/pull/3) |", report)
+
+
 class PageAndCacheHelperTests(unittest.TestCase):
     def test_decode_pages_reads_consecutive_json_arrays(self):
         self.assertEqual(pr_overlap.decode_pages("[1]\n[2, 3] [] "), [[1], [2, 3], []])
@@ -705,6 +801,67 @@ class ExportScanTests(unittest.TestCase):
         self.assertEqual(pr_overlap.source_exports(text, "libA"),
                          {("libA", nid_names.compute_nid("sceFoo")): {"sceFoo"}})
         self.assertEqual(pr_overlap.source_exports("int APS5_VABI sceFoo_nid_no_patch(int a) { return a; }\n", "libA"), {})
+
+class BlobTextsTests(unittest.TestCase):
+    def test_empty_blob_list_runs_no_command(self):
+        with patch.object(pr_overlap.subprocess, "run") as run:
+            self.assertEqual(pr_overlap.blob_texts("root", []), {})
+        run.assert_not_called()
+
+    def test_batch_output_is_split_by_declared_sizes(self):
+        output = b"aaa blob 5\nhello\nbbb blob 6\nab\ncde\nccc blob 0\n\n"
+        with patch.object(pr_overlap.subprocess, "run") as run:
+            run.return_value.stdout = output
+            texts = pr_overlap.blob_texts("root", ["aaa", "bbb", "ccc"])
+        self.assertEqual(texts, {"aaa": "hello", "bbb": "ab\ncde", "ccc": ""})
+        self.assertEqual(run.call_args.kwargs["input"], b"aaa\nbbb\nccc\n")
+
+    def test_invalid_utf8_is_replaced(self):
+        with patch.object(pr_overlap.subprocess, "run") as run:
+            run.return_value.stdout = b"aaa blob 2\n\xff\xfe\n"
+            texts = pr_overlap.blob_texts("root", ["aaa"])
+        self.assertEqual(texts["aaa"], "\ufffd\ufffd")
+
+
+class BaseSourcesTests(unittest.TestCase):
+    def listing(self, *entries):
+        return "".join(f"{mode} {kind} {blob}\t{name}\0" for mode, kind, blob, name in entries).encode()
+
+    def test_keeps_only_regular_non_test_cpp_blobs(self):
+        output = self.listing(
+            ("100644", "blob", "a1", "core/libs/prx/libX/Export.cpp"),
+            ("100644", "blob", "a2", "core/libs/prx/libX/src/Impl.cpp"),
+            ("100644", "blob", "b1", "core/libs/prx/libX/Export.hpp"),
+            ("120000", "blob", "b2", "core/libs/prx/libX/Link.cpp"),
+            ("100644", "blob", "b3", "core/libs/prx/libX/tests/Test.cpp"),
+            ("100644", "blob", "b4", "core/libs/prx/libX/Tests/Case.cpp"),
+            ("160000", "commit", "b5", "core/libs/prx/libX/sub.cpp"),
+        )
+        with patch.object(pr_overlap.subprocess, "run") as run:
+            run.return_value.stdout = output
+            sources = pr_overlap.base_sources("root", "refs/pr/base")
+        self.assertEqual(sources, [("a1", "core/libs/prx/libX/Export.cpp"), ("a2", "core/libs/prx/libX/src/Impl.cpp")])
+        self.assertEqual(run.call_args.args[0][-4:], ["-z", "refs/pr/base", "--", "core/libs"])
+
+    def test_empty_listing_has_no_sources(self):
+        with patch.object(pr_overlap.subprocess, "run") as run:
+            run.return_value.stdout = b""
+            self.assertEqual(pr_overlap.base_sources("root", "ref"), [])
+
+
+class MergeBaseTests(unittest.TestCase):
+    def test_single_merge_base_is_returned(self):
+        with patch.object(pr_overlap, "git", return_value="abc\n") as git:
+            self.assertEqual(pr_overlap.merge_base("refs/pr/1"), "abc")
+        git.assert_called_once_with("merge-base", "--all", pr_overlap.BASE_REF, "refs/pr/1")
+
+    def test_multiple_bases_pick_the_one_with_the_smallest_diff(self):
+        def fake_git(*args):
+            if args[0] == "merge-base":
+                return "one two three\n"
+            return {"one": "a\0b\0c\0", "two": "a\0", "three": "a\0b\0"}[args[4]]
+        with patch.object(pr_overlap, "git", side_effect=fake_git):
+            self.assertEqual(pr_overlap.merge_base("refs/pr/2"), "two")
 
 
 if __name__ == "__main__":

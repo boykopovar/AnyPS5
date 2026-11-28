@@ -6,6 +6,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "VulkanTestDevice.hpp"
+#include "ExecutionHelpers.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -62,11 +63,6 @@ void WaitUntil(Ready ready, const std::string& what) {
         if (std::chrono::steady_clock::now() >= deadline) throw std::runtime_error("dispatch data hit words: timed out waiting for " + what);
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-}
-
-std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
-    const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
 std::vector<std::uint32_t> Dispatch() {

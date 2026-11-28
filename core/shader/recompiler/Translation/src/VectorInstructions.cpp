@@ -75,6 +75,8 @@ std::uint32_t TranslationContext::f32DenormalFlushFor(const RdnaInstruction& ins
     case RdnaOpcode::VFloorF32:
     case RdnaOpcode::VCeilF32:
     case RdnaOpcode::VFrexpMantF32:
+    case RdnaOpcode::VSinF32:
+    case RdnaOpcode::VCosF32:
         if (floatMode.has_value() && ((floatMode->floatMode >> 4u) & 3u) == 2u) return 1u;
         if (floatMode.has_value() && ((floatMode->floatMode >> 4u) & 3u) == 1u) {
             if (inst.op == RdnaOpcode::VFrexpMantF32) return 0u;
@@ -83,10 +85,6 @@ std::uint32_t TranslationContext::f32DenormalFlushFor(const RdnaInstruction& ins
             }
             return 2u;
         }
-        flush = 3u;
-        break;
-    case RdnaOpcode::VSinF32:
-    case RdnaOpcode::VCosF32:
         flush = 3u;
         break;
     case RdnaOpcode::VMacF32:
@@ -143,7 +141,7 @@ std::uint32_t TranslationContext::f32DenormalFlushFor(const RdnaInstruction& ins
         return floatMode.has_value() && ((floatMode->floatMode >> 4u) & 1u) != 0u ? 0u : 1u;
     case RdnaOpcode::VDivScaleF32:
     case RdnaOpcode::VDivFixupF32:
-        if (floatMode.has_value() && (floatMode->floatMode & 3u) == 0u) {
+        if (floatMode.has_value() && ((floatMode->floatMode & 3u) == 0u || inst.op == RdnaOpcode::VDivFixupF32)) {
             const std::uint32_t denormals = (floatMode->floatMode >> 4u) & 3u;
             if (denormals == 2u) return 1u;
             if (denormals == 1u && inst.op == RdnaOpcode::VDivFixupF32) return 0u;

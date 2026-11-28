@@ -282,6 +282,21 @@ void CheckUmountWithBackupDelivery(int* firstTag) {
     if (CallCount() >= before + 1) CheckDelivered(before, 1, firstTag, 1, "mounted", "the umountWithBackup event");
 }
 
+void CheckUmount2WithBackupDelivery(int* firstTag) {
+    auto dirName = DirName("mounted2");
+    SaveDataMount3 mount{};
+    mount.user_id = User;
+    mount.dir_name = &dirName;
+    mount.mount_mode = MountReadWrite | MountCreate2;
+    SaveDataMountResult mounted{};
+    Check(sceSaveDataMount3(&mount, &mounted) == 0, "the umount2 save mounts");
+    const auto before = CallCount();
+    Check(sceSaveDataUmount2(0x10000u, &mounted.mount_point) == 0, "umount2(0x10000) succeeds");
+    Check(WaitForCalls(before + 1), "umount2(0x10000)'s completion reaches the callback within 5 s");
+    Check(CallCount() == before + 1, "umount2(0x10000) is delivered once");
+    if (CallCount() >= before + 1) CheckDelivered(before, 1, firstTag, 1, "mounted2", "the umount2 backup event");
+}
+
 void CheckUnregister(int* firstTag, int* secondTag) {
     Check(sceSaveDataUnregisterEventCallback() == 0, "the first callback unregisters");
     const auto before = CallCount();
@@ -462,6 +477,7 @@ int main() {
     CheckRegistration();
     CheckBackupDelivery(&firstTag);
     CheckUmountWithBackupDelivery(&firstTag);
+    CheckUmount2WithBackupDelivery(&firstTag);
     CheckUnregister(&firstTag, &secondTag);
     CheckTerminateFromCallback();
     CheckIdleTerminateAndRestart(&firstTag);

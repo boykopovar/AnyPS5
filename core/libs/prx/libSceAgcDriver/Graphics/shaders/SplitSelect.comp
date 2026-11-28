@@ -1,0 +1,90 @@
+#version 450
+
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0, std430) buffer State { uint state[]; };
+layout(set = 1, binding = 0, std430) buffer Select { uint words[]; };
+layout(push_constant) uniform Parameters {
+    uint lanesPerGroup;
+    uint targetAt;
+    uint capacity;
+    uint targets;
+    uint listBase;
+    uint groups;
+    uint groupBase;
+    uint mode;
+} parameters;
+
+const uint StallWord = 0u;
+const uint RoundWord = 1u;
+const uint RoundStateWord = 7u;
+const uint TargetWords = 4u;
+const uint MaxTargets = 64u;
+const uint CountWords = TargetWords + 2u * MaxTargets;
+const uint ArgumentWords = CountWords + MaxTargets + 4u;
+
+void selectGroups() {
+    uint group = gl_GlobalInvocationID.x;
+    if (group >= parameters.groups) return;
+    uint total = state[2] * state[3] * state[4];
+    if (parameters.groupBase + group >= total) return;
+    uvec2 called = uvec2(0u);
+    bool calling = false;
+    uint last = parameters.targets;
+    uint lastLow = 0u;
+    uint lastHigh = 0u;
+    for (uint index = 0u; index < parameters.lanesPerGroup; ++index) {
+        uint lane = group * parameters.lanesPerGroup + index;
+        if (lane >= parameters.capacity) break;
+        uint low = state[parameters.targetAt + lane];
+        uint high = state[parameters.targetAt + parameters.capacity + lane];
+        if ((low | high) == 0u) continue;
+        calling = true;
+        if (last == parameters.targets || low != lastLow || high != lastHigh) {
+            last = parameters.targets;
+            for (uint target = 0u; target < parameters.targets; ++target) {
+                if (words[TargetWords + 2u * target] == low && words[TargetWords + 2u * target + 1u] == high) {
+                    last = target;
+                    break;
+                }
+            }
+            lastLow = low;
+            lastHigh = high;
+        }
+        if (last == parameters.targets) {
+            atomicOr(words[StallWord], 1u);
+            continue;
+        }
+        if (last < 32u) called.x |= 1u << last;
+        else called.y |= 1u << (last - 32u);
+    }
+    for (uint target = 0u; target < parameters.targets; ++target) {
+        bool marked = target < 32u ? (called.x & (1u << target)) != 0u : (called.y & (1u << (target - 32u))) != 0u;
+        if (!marked) continue;
+        uint slot = atomicAdd(words[CountWords + target], 1u);
+        state[parameters.listBase + target * parameters.groups + slot] = group;
+    }
+    if (calling) {
+        uint slot = atomicAdd(words[CountWords + parameters.targets], 1u);
+        state[parameters.listBase + parameters.targets * parameters.groups + slot] = group;
+    }
+}
+
+void finishArguments() {
+    uint target = gl_GlobalInvocationID.x;
+    if (target > parameters.targets) return;
+    bool stalled = words[StallWord] != 0u;
+    uint count = words[CountWords + target];
+    words[ArgumentWords + 4u * target] = stalled ? 0u : count;
+    words[ArgumentWords + 4u * target + 1u] = 1u;
+    words[ArgumentWords + 4u * target + 2u] = 1u;
+    words[CountWords + target] = 0u;
+    if (target != 0u) return;
+    uint ran = words[RoundWord] + (stalled ? 0u : 1u);
+    words[RoundWord] = ran;
+    state[RoundStateWord] = ran;
+}
+
+void main() {
+    if (parameters.mode == 0u) selectGroups();
+    else finishArguments();
+}

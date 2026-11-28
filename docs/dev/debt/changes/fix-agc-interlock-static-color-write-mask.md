@@ -1,0 +1,5 @@
+# libSceAgcDriver
+
+## change [Fragment shader interlock pipelines]
+
+- [Fragment shader interlock pipelines](../../../core/libs/prx/libSceAgcDriver/Graphics/src/Pipeline.cpp) (libSceAgcDriver): except on RADV from Mesa 26.3.1, a pipeline whose fragment shader declares an interlock capability is never built from graphics pipeline libraries and never takes the dynamic color write mask, so it is compiled whole at the draw and draws that differ only in the write mask do not share it. Either gives RADV's fragment shader a PS epilog that, on GFX11 before 26.3.1, ends the primitive-ordered section before the shader's stores land ([mesa#16653](https://gitlab.freedesktop.org/mesa/mesa/-/work_items/16653)): with both allowed, `agc_driver_pixel_interlock` failed 470 of 480 loaded runs on 26.2.7 and 0 of 480 on 26.3.1 (RX 7900 GRE). The check reads `driverVersion`, so it misses a 26.2 backport and trusts a development build that reports 26.3.1 without the fix. Unmeasured: the fast link on Intel and MoltenVK, the dynamic mask outside RADV.

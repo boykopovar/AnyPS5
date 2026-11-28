@@ -2,7 +2,9 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
@@ -23,6 +25,7 @@
 #include <iostream>
 #include <mutex>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -56,6 +59,7 @@ constexpr std::size_t FillBytes = 4096u;
 constexpr std::size_t FillPast = 0x10000u;
 constexpr std::size_t ShadowUnitBytes = 0x10000u;
 constexpr std::uint32_t Standard256B = 1u;
+constexpr std::uint32_t SlabWord = 0x5ad0beefu;
 
 alignas(256) constexpr std::array<std::uint32_t, 11> StoreImageCode{0x7e000280u, 0x7e020280u, 0x7e0402ffu, Stored, 0xf0200108u, 0x00010200u, 0x7e0202ffu, 0x00000064u, 0xf0200108u, 0x00010200u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 11> RestoreImageCode{0x7e000280u, 0x7e020280u, 0x7e0402ffu, Restored, 0xf0200108u, 0x00010200u, 0x7e0202ffu, 0x00000064u, 0xf0200108u, 0x00010200u, 0xbf810000u};
@@ -63,37 +67,37 @@ alignas(256) constexpr std::array<std::uint32_t, 7> StoreGlobalCode{0x7e000208u,
 
 class GuestBlock {
 public:
-    explicit GuestBlock(bool watched) : watched(watched) {
+    explicit GuestBlock(bool watched, std::size_t bytes = BlockBytes, std::size_t trim = 0) : watched(watched), bytes(bytes), trim(trim) {
 #ifdef _WIN32
-        block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(BlockBytes, 65536));
-        if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, BlockBytes, PAGE_READWRITE, BlockBytes);
+        block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, 65536));
+        if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, bytes, PAGE_READWRITE, bytes);
 #else
         constexpr std::uintptr_t alignment = 65536;
-        void* mapped = mmap(nullptr, BlockBytes + alignment, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        void* mapped = mmap(nullptr, bytes + alignment, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         if (mapped != MAP_FAILED) {
             const auto begin = reinterpret_cast<std::uintptr_t>(mapped);
             const auto aligned = (begin + alignment - 1) & ~(alignment - 1);
             if (aligned != begin) munmap(mapped, aligned - begin);
-            if (aligned + BlockBytes != begin + BlockBytes + alignment) munmap(reinterpret_cast<void*>(aligned + BlockBytes), begin + alignment - aligned);
+            if (aligned + bytes != begin + bytes + alignment) munmap(reinterpret_cast<void*>(aligned + bytes), begin + alignment - aligned);
             block = reinterpret_cast<std::uint8_t*>(aligned);
-            if (watched) GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, BlockBytes);
+            if (watched) GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, bytes);
         }
 #endif
         Require(block != nullptr, "storage flush ordering: cannot allocate the guest block");
-        Require(!watched || AgcDriver::GuestMemory::Watched(Address(), BlockBytes), "storage flush ordering: the guest block is not write-watched");
-        std::fill(Words(), Words() + BlockBytes / 4u, Initial);
-        GuestAllocations::Mutation().Add(block, BlockBytes, true, true, true);
-        AgcDriver::GuestMemory::CollectWritesUncached(Address(), BlockBytes);
+        Require(!watched || AgcDriver::GuestMemory::Watched(Address(), bytes), "storage flush ordering: the guest block is not write-watched");
+        std::fill(Words(), Words() + bytes / 4u, Initial);
+        GuestAllocations::Mutation().Add(block + trim, bytes - 2u * trim, true, true, true);
+        AgcDriver::GuestMemory::CollectWritesUncached(Address(), bytes);
     }
 
     ~GuestBlock() {
-        GuestAllocations::Mutation().Remove(block);
+        GuestAllocations::Mutation().Remove(block + trim);
 #ifdef _WIN32
-        GuestArena::GuestArenaReset_nid_postfix(block, BlockBytes);
-        GuestArena::GuestArenaRelease_nid_postfix(block, BlockBytes);
+        GuestArena::GuestArenaReset_nid_postfix(block, bytes);
+        GuestArena::GuestArenaRelease_nid_postfix(block, bytes);
 #else
-        munmap(block, BlockBytes);
-        if (watched) GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(block, BlockBytes);
+        munmap(block, bytes);
+        if (watched) GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(block, bytes);
 #endif
     }
 
@@ -102,9 +106,12 @@ public:
 
     std::uint32_t* Words() const { return reinterpret_cast<std::uint32_t*>(block); }
     std::uint64_t Address() const { return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(block)); }
+    std::size_t Bytes() const { return bytes; }
 
 private:
     bool watched;
+    std::size_t bytes;
+    std::size_t trim;
     std::uint8_t* block = nullptr;
 };
 
@@ -213,6 +220,110 @@ void RunShadowedUnitUnderWriter(AgcDriver::VulkanDevice& device, const GuestBloc
     Require(flushedWords[FarDword] == Stored, what + "the flushed image's texel was not stored");
 }
 
+void ShadowSpansAndPublish(const AgcDriver::Graphics::Context& context, std::uint64_t unit, std::span<const std::pair<std::size_t, std::size_t>> spans, std::uint32_t word, const std::string& what) {
+    using namespace AgcDriver::Graphics;
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    const auto* import = ExistingHostImportFor(context, unit + spans.front().first, spans.front().second - spans.front().first);
+    Require(import != nullptr, what + "the guest block has no host import after the write-back");
+    auto* recorder = Recorder::Active();
+    Require(recorder != nullptr, what + "no active recorder");
+    const auto inside = std::max(unit, import->base);
+    AgcDriver::GuestMemory::CollectWritesUncached(inside, static_cast<std::size_t>(std::min(unit + ShadowUnitBytes, import->base + import->bytes) - inside));
+    const auto destination = ShadowDestinationFor(context, *import, unit + spans.front().first, unit + spans.front().second);
+    Require(destination.has_value(), what + "the import has no unit shadow for the unit");
+    const auto commands = recorder->Commands();
+    recorder->Keep(destination->slab);
+    const auto slabUnit = destination->offset - spans.front().first;
+    context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, destination->buffer, slabUnit, ShadowUnitBytes, word);
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+    recorder->MarkCovered(VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+    std::vector<ShadowedRange> ranges;
+    for (const auto& [from, to] : spans) ranges.push_back({unit + from, unit + to, destination->slab});
+    MarkShadowed(*import, ranges, AgcDriver::GuestMemory::TrackerGeneration());
+    Require(PublishShadow(unit, ShadowUnitBytes, PublishScope::Whole, PublishReason::Address) == 1, what + "the publish selected no unit");
+    recorder->Sync();
+}
+
+void RequireQuarters(std::uint64_t unit, const std::array<std::uint32_t, 4>& expected, const std::string& what) {
+    const auto* words = reinterpret_cast<const std::uint32_t*>(static_cast<std::uintptr_t>(unit));
+    constexpr auto quarter = ShadowUnitBytes / 16u;
+    for (std::size_t part = 0; part < expected.size(); ++part) {
+        const auto matching = std::count(words + part * quarter, words + (part + 1u) * quarter, expected[part]);
+        if (matching == static_cast<std::ptrdiff_t>(quarter)) continue;
+        std::cout << what << "FAILED, quarter " << part << " has " << quarter - static_cast<std::size_t>(matching) << " dwords that are not 0x" << std::hex << expected[part] << std::dec << '\n';
+        throw std::runtime_error(what + "the publish copied slab bytes no retile produced over the guest's, or left out retiled ones");
+    }
+}
+
+void RunPartlyShadowedUnitPublish(AgcDriver::VulkanDevice& device, const GuestBlock& guest) {
+    using namespace AgcDriver::Graphics;
+    const std::string what = "storage flush ordering, publish of a unit retiled only in part: ";
+    if (!UnitShadowEnabled()) {
+        std::puts("unit shadows are off: the partly shadowed unit case is skipped");
+        return;
+    }
+    const auto image = StoreImage(device, guest, 0, Standard256B);
+    Require(StorageTexture::FlushPending(image, ImageBytes, nullptr, "test", PublishScope::None), what + "the image's store left no results pending");
+    if (!AnyShadowedOverlaps(image, ShadowUnitBytes)) {
+        std::puts("the write-back did not retile into the unit shadow: the partly shadowed unit case is skipped");
+        return;
+    }
+    device.WaitIdle();
+    const auto& context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    constexpr std::size_t quarter = ShadowUnitBytes / 4u;
+    const auto half = guest.Address() + 4u * ShadowUnitBytes;
+    const std::array halfSpan{std::pair{std::size_t{0}, 2u * quarter}};
+    ShadowSpansAndPublish(context, half, halfSpan, SlabWord, what);
+    device.WaitIdle();
+    RequireQuarters(half, {SlabWord, SlabWord, Initial, Initial}, what);
+    const auto apart = guest.Address() + 5u * ShadowUnitBytes;
+    const std::string disjoint = "storage flush ordering, publish of a unit retiled in two disjoint spans: ";
+    const std::array apartSpans{std::pair{std::size_t{0}, quarter}, std::pair{3u * quarter, 4u * quarter}};
+    ShadowSpansAndPublish(context, apart, apartSpans, SlabWord, disjoint);
+    device.WaitIdle();
+    RequireQuarters(apart, {SlabWord, Initial, Initial, SlabWord}, disjoint);
+    const std::string again = "storage flush ordering, publish of another span of a published unit: ";
+    const std::array againSpan{std::pair{quarter, 2u * quarter}};
+    ShadowSpansAndPublish(context, apart, againSpan, Overwritten, again);
+    device.WaitIdle();
+    RequireQuarters(apart, {SlabWord, Overwritten, Initial, SlabWord}, again);
+}
+
+void RunImportEdgeUnitPublish(AgcDriver::VulkanDevice& device, const GuestBlock& guest, std::size_t trim) {
+    using namespace AgcDriver::Graphics;
+    const std::string what = "storage flush ordering, publish of the import's partly covered first unit: ";
+    if (!UnitShadowEnabled()) {
+        std::puts("unit shadows are off: the import-edge unit case is skipped");
+        return;
+    }
+    const auto& context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    if (context.hostImportAlignment == 0 || trim % context.hostImportAlignment != 0) {
+        std::puts("host imports cannot start inside a unit shadow unit: the import-edge unit case is skipped");
+        return;
+    }
+    const auto image = StoreImage(device, guest, 2u * ShadowUnitBytes, Standard256B);
+    Require(StorageTexture::FlushPending(image, ImageBytes, nullptr, "test", PublishScope::None), what + "the image's store left no results pending");
+    if (!AnyShadowedOverlaps(image, ShadowUnitBytes)) {
+        std::puts("the write-back did not retile into the unit shadow: the import-edge unit case is skipped");
+        return;
+    }
+    device.WaitIdle();
+    const auto* import = ExistingHostImportFor(context, image, ImageBytes);
+    Require(import != nullptr && import->base == guest.Address() + trim && import->base + import->bytes == guest.Address() + guest.Bytes() - trim, what + "the host import does not cover exactly the registered range");
+    constexpr std::size_t quarter = ShadowUnitBytes / 4u;
+    const auto first = guest.Address();
+    const std::array firstSpan{std::pair{trim, trim + quarter}};
+    ShadowSpansAndPublish(context, first, firstSpan, SlabWord, what);
+    device.WaitIdle();
+    RequireQuarters(first, {Initial, SlabWord, Initial, Initial}, what);
+    const auto last = guest.Address() + guest.Bytes() - ShadowUnitBytes;
+    const std::string end = "storage flush ordering, publish of the import's partly covered last unit: ";
+    const std::array lastSpan{std::pair{ShadowUnitBytes - trim - quarter, ShadowUnitBytes - trim}};
+    ShadowSpansAndPublish(context, last, lastSpan, SlabWord, end);
+    device.WaitIdle();
+    RequireQuarters(last, {Initial, Initial, SlabWord, Initial}, end);
+}
+
 void Run(AgcDriver::VulkanDevice& device, const GuestBlock& guest, std::size_t offset, bool submit, const char* name) {
     const auto* words = guest.Words() + offset / 4u;
     const auto image = guest.Address() + offset;
@@ -244,6 +355,13 @@ std::uint64_t OpenSerial() {
     return recorder->OpenSerial();
 }
 
+bool WritesPending(std::uint64_t address, std::size_t bytes) {
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    const auto* recorder = AgcDriver::Graphics::Recorder::Active();
+    Require(recorder != nullptr, "storage flush ordering: no active recorder");
+    return recorder->PendingWriteOverlaps(address, bytes);
+}
+
 void RunStoredAgain(AgcDriver::VulkanDevice& device, const GuestBlock& guest, std::size_t offset, std::size_t images, bool unrelated) {
     const auto first = guest.Address() + offset;
     const auto target = device.Target();
@@ -267,11 +385,12 @@ void RunStoredAgain(AgcDriver::VulkanDevice& device, const GuestBlock& guest, st
         AgcDriver::Graphics::Recorder::Active()->NoteStampedWrites(stamped);
     }
     const auto open = OpenSerial();
+    const bool pending = WritesPending(first, ImageBytes * images);
     Require(AgcDriver::Graphics::StorageTexture::FlushPending(first, ImageBytes * images, nullptr, "test"), what + "the second store left no results pending");
     if (!compared || unrelated) {
         if (skips) Require(OpenSerial() == open, what + "the second store waited for the GPU to finish the image's own earlier store");
         else if (unrelated) Require(OpenSerial() != open, what + "the second store did not wait for a stamped write that is not the image's own");
-        else Require(OpenSerial() != open, what + "the second store did not wait for the earlier store, which only a single image with a host import may skip");
+        else Require(!pending || OpenSerial() != open, what + "the second store did not wait for the earlier store, which only a single image with a host import may skip");
     }
     device.WaitIdle();
     for (std::size_t index = 0; index < images; ++index) {
@@ -291,8 +410,9 @@ void RunStoredAloneAfterJoint(AgcDriver::VulkanDevice& device, const GuestBlock&
     const bool compared = AgcDriver::Graphics::ComparedHostImportCovers(AgcDriver::VulkanDeviceTestAccess::ContextOf(device), first, ImageBytes * 2u);
     device.Dispatch(restore, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(RestoreImageCode.data()));
     const auto open = OpenSerial();
+    const bool pending = WritesPending(first, ImageBytes * 2u);
     Require(AgcDriver::Graphics::StorageTexture::FlushPending(first, ImageBytes, nullptr, "test"), what + "the second store left no results pending");
-    Require(compared || OpenSerial() != open, what + "the second store did not wait for the joint store, whose writes are not the image's own");
+    Require(compared || !pending || OpenSerial() != open, what + "the second store did not wait for the joint store, whose writes are not the image's own");
     device.WaitIdle();
     const auto* words = guest.Words() + offset / 4u;
     Require(words[0] == Restored && words[FarDword] == Restored, what + "the newer texels did not land over the joint store");
@@ -326,6 +446,10 @@ int main(int argc, char** argv) {
         RunWriterInsideLayer(*device, guest, 3u * BlockBytes / 4u);
         GuestBlock shadowed(watched);
         RunShadowedUnitUnderWriter(*device, shadowed);
+        GuestBlock partly(watched);
+        RunPartlyShadowedUnitPublish(*device, partly);
+        GuestBlock edge(watched, 2u * BlockBytes, ShadowUnitBytes / 4u);
+        RunImportEdgeUnitPublish(*device, edge, ShadowUnitBytes / 4u);
         std::puts("storage flush ordering tests passed");
         return 0;
     } catch (const std::exception& error) {

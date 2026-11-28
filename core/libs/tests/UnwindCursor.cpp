@@ -104,13 +104,13 @@ void CheckInfo(_Unwind_Context& context, std::uintptr_t probe) {
     const auto ip = context.registers[16];
     const auto info = Info(context);
     Require(info.start == probe && info.start < ip && ip < info.end, "getInfo gives the range of the function holding the IP");
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__SEH__)
     const bool compact = info.unwindInfo == 0;
 #else
     const bool compact = false;
 #endif
     if (compact) {
-        Require(info.format == 0 && info.unwindInfoSize == 0 && info.flags == 0, "getInfo gives no FDE for a compact unwind frame");
+        Require(info.format == 0 && info.unwindInfoSize == 0 && info.flags == 0, "getInfo gives no FDE for a compact or native Windows unwind frame");
     } else {
         Require(info.unwindInfo != 0 && info.format == 0x04000000 && info.flags == 0, "getInfo gives the FDE in DWARF mode");
         std::uint32_t length;

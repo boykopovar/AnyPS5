@@ -31,8 +31,8 @@ void RequireInvalidArgument(Function function) {
 const void* lastResultFilter = nullptr;
 std::uint32_t lastResultStatus = 999;
 
-void OnCompileOrLookup(const void* filterRef, std::uint32_t status, void* context) {
-    (void)context;
+void APS5_VABI OnCompileOrLookup(const void* filterRef, std::uint32_t status, void* context) {
+    Require(context == &lastResultStatus);
     lastResultFilter = filterRef;
     lastResultStatus = status;
 }
@@ -53,30 +53,30 @@ int main() {
     auto jsonStr = NKWebKit::String::FromUtf8("[]");
     const void* jsonRef = NKWebKit::ToRef(jsonStr);
 
-    WKUserContentExtensionStoreLookup(storeRef, idRef, nullptr, OnCompileOrLookup);
+    WKUserContentExtensionStoreLookup(storeRef, idRef, &lastResultStatus, OnCompileOrLookup);
     Require(lastResultFilter == nullptr);
     Require(lastResultStatus == 1);
 
     auto badJsonStr = NKWebKit::String::FromUtf8("invalid json");
     const void* badJsonRef = NKWebKit::ToRef(badJsonStr);
-    WKUserContentExtensionStoreCompile(storeRef, idRef, badJsonRef, nullptr, OnCompileOrLookup);
+    WKUserContentExtensionStoreCompile(storeRef, idRef, badJsonRef, &lastResultStatus, OnCompileOrLookup);
     Require(lastResultFilter == nullptr);
     Require(lastResultStatus == 3);
     WKRelease(badJsonRef);
 
     auto emptyJsonStr = NKWebKit::String::FromUtf8("   ");
     const void* emptyJsonRef = NKWebKit::ToRef(emptyJsonStr);
-    WKUserContentExtensionStoreCompile(storeRef, idRef, emptyJsonRef, nullptr, OnCompileOrLookup);
+    WKUserContentExtensionStoreCompile(storeRef, idRef, emptyJsonRef, &lastResultStatus, OnCompileOrLookup);
     Require(lastResultFilter == nullptr);
     Require(lastResultStatus == 3);
     WKRelease(emptyJsonRef);
 
-    WKUserContentExtensionStoreCompile(storeRef, idRef, jsonRef, nullptr, OnCompileOrLookup);
+    WKUserContentExtensionStoreCompile(storeRef, idRef, jsonRef, &lastResultStatus, OnCompileOrLookup);
     Require(lastResultFilter != nullptr);
     Require(lastResultStatus == 0);
 
     const void* compiledFilter = lastResultFilter;
-    WKUserContentExtensionStoreLookup(storeRef, idRef, nullptr, OnCompileOrLookup);
+    WKUserContentExtensionStoreLookup(storeRef, idRef, &lastResultStatus, OnCompileOrLookup);
     Require(lastResultFilter == compiledFilter);
     Require(lastResultStatus == 0);
 

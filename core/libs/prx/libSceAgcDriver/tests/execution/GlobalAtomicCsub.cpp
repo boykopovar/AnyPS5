@@ -3,6 +3,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "ExecutionHelpers.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -143,17 +144,6 @@ std::vector<std::uint8_t> Expected() {
     return image;
 }
 
-std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
-    const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
-}
-
-std::string Hex(std::uint32_t value) {
-    char text[16];
-    std::snprintf(text, sizeof(text), "0x%08x", value);
-    return text;
-}
-
 std::vector<std::uint32_t> UserData(const std::uint8_t* base) {
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(base));
     std::vector<std::uint32_t> userData(10, 0u);
@@ -284,6 +274,7 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         if (SkipWithoutSharedMemoryStores()) return VulkanTestSkipped;
+        if (SkipOnLlvmpipe(*device, "global atomic csub without glc: wave64 byte 644 is 146, expected 0 on subgroup size 8")) return VulkanTestSkipped;
         GuestBlock guest;
         Run(*device, guest, 32);
         Run(*device, guest, 64);

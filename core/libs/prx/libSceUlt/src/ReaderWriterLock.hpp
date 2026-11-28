@@ -4,6 +4,7 @@
 #include "prx/libSceUlt/SceUltTypes.hpp"
 
 UltThreadIdentity UltCurrentThreadIdentity_nid_no_patch();
+UltThreadIdentity UltCurrentOwnerIdentity_nid_no_patch();
 bool CurrentWaitRecord(UltWaitRecord& record, std::int32_t waitValue);
 void RemoveWaitRecord(std::vector<UltWaitRecord>& records, const UltWaitRecord& record);
 int ValidateWaitRecords(const UltWaitingThreadInfo* records, std::uint32_t capacity);

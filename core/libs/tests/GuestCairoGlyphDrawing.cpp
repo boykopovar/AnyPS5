@@ -114,7 +114,8 @@ void ShowErrors() {
 
     context = cairo_create(target);
     cairo_set_source(context, nullptr);
-    cairo_show_glyphs(context, glyphs.data(), static_cast<int>(glyphs.size()));
+    const CairoGlyph wideIndex{0x100000000ULL, 1, 2};
+    cairo_show_glyphs(context, &wideIndex, 1);
     assert(aps5_cairo_status(Backend(context)) == CAIRO_STATUS_NULL_POINTER);
     cairo_destroy(context);
     assert(Covered(target) == 0);
@@ -180,6 +181,8 @@ void Path() {
 
     context = cairo_create(target);
     cairo_glyph_path(context, nullptr, 1);
+    const CairoGlyph wideIndex{0x100000000ULL, 1, 2};
+    cairo_glyph_path(context, &wideIndex, 1);
     assert(aps5_cairo_status(Backend(context)) == CAIRO_STATUS_NULL_POINTER);
     cairo_destroy(context);
     cairo_surface_destroy(target);

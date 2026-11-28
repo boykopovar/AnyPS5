@@ -2,9 +2,21 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cstddef>
@@ -18,10 +30,43 @@
 #include <utility>
 #include <vector>
 
+namespace AgcDriver::DriverDetail {
+
+struct DriverTestAccess {
+    static void SetPendingRelocation(std::uint64_t key, std::uint64_t alias, std::uint64_t identity, const std::shared_ptr<DrawEntry>& donor) {
+        auto& pending = Driver::Get().drawRelocationPending;
+        pending = {};
+        pending.key = key;
+        pending.alias = alias;
+        pending.identity = identity;
+        pending.donor = donor;
+    }
+    static void LearnPendingRelocation() { Driver::Get().learnPendingRelocation(); }
+    static std::shared_ptr<const DrawRelocation> Relocation(std::uint64_t identity) {
+        const auto found = Driver::Get().drawRelocations.find(identity);
+        return found == Driver::Get().drawRelocations.end() ? nullptr : found->second;
+    }
+    static void InsertDraw(std::uint64_t key, const std::shared_ptr<DrawEntry>& entry) { Driver::Get().drawCache.emplace(key, entry); }
+    static std::uint64_t AliasedKey(std::uint64_t alias) {
+        const auto found = Driver::Get().drawAliases.find(alias);
+        return found == Driver::Get().drawAliases.end() ? 0u : found->second;
+    }
+    static void Forget(std::uint64_t key, std::uint64_t alias, std::uint64_t identity) {
+        Driver::Get().drawCache.erase(key);
+        Driver::Get().drawRelocations.erase(identity);
+        Driver::Get().drawAliases.erase(alias);
+    }
+};
+
+}
+
 namespace {
 
 using AgcDriver::Graphics::Require;
 using AgcDriver::DriverDetail::DispatchVariant;
+using AgcDriver::DriverDetail::DriverTestAccess;
+using AgcDriver::DriverDetail::DrawDecode;
+using AgcDriver::DriverDetail::DrawEntry;
 using AgcDriver::DriverDetail::DrawProgram;
 using AgcDriver::DriverDetail::Driver;
 using AgcDriver::DriverDetail::RelocatableUserWord;
@@ -288,6 +333,92 @@ void BufferValueWordsKeyByNothing() {
     Require(readable && first == second, "a V# value word changed the relocated content key");
 }
 
+void* ArenaBlock(std::size_t bytes) {
+    void* block = nullptr;
+#ifdef _WIN32
+    block = GuestArena::GuestArenaAllocate_nid_postfix(bytes, bytes);
+    if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, bytes, PAGE_READWRITE, bytes);
+#else
+    void* mapped = mmap(nullptr, bytes * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (mapped != MAP_FAILED) {
+        const auto begin = reinterpret_cast<std::uintptr_t>(mapped);
+        const auto aligned = (begin + bytes - 1) & ~(static_cast<std::uintptr_t>(bytes) - 1);
+        if (aligned != begin) munmap(mapped, aligned - begin);
+        if (aligned != begin + bytes) munmap(reinterpret_cast<void*>(aligned + bytes), begin + bytes * 2 - aligned - bytes);
+        block = reinterpret_cast<void*>(aligned);
+        GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, bytes);
+    }
+#endif
+    Require(block != nullptr, "cannot reserve a guest block above 4 GiB");
+    std::memset(block, 0, bytes);
+    GuestAllocations::Mutation().Add(block, bytes, true, true, true);
+    return block;
+}
+
+void HighCalleeWordsLearnDeltaOffsets() {
+    ShaderRecompiler::SetGcnGuestShaders(true);
+    constexpr std::size_t BlockBytes = 0x4000, Stride = 0x1000, RunOffset = 0x80, RunWords = 64;
+    auto* const block = static_cast<std::uint32_t*>(ArenaBlock(BlockBytes));
+    auto* const first = block + Stride / sizeof(std::uint32_t);
+    auto* const second = block + 2 * Stride / sizeof(std::uint32_t);
+    auto* const third = block + 3 * Stride / sizeof(std::uint32_t);
+    Require(Low(first) != 0u, "the callee landed on a 4 GiB boundary, which relocatedContentKey keys as null");
+    const auto high = High(first);
+    Require(high != 0u && high == High(second) && high == High(third), "the arena placed the callees below 4 GiB or across its boundary");
+    const auto seed = [&](std::uint32_t* code, std::uint32_t marker) {
+        std::fill_n(code, Stride / sizeof(std::uint32_t), 0xbf810000u);
+        code[0] = 0x7e000280u;
+        code[1] = 0xbe802002u;
+        for (std::size_t i = 0; i < RunWords; ++i) code[RunOffset / sizeof(std::uint32_t) + i] = marker + i;
+    };
+    seed(first, 0x11223344u);
+    seed(second, 0x11223344u);
+    seed(third, 0x55667788u);
+
+    const auto program = VertexProgram(first);
+    const auto variant = Variant(std::make_shared<RecompileResult>());
+    Driver::tagUserValueWords(*variant, program);
+    Require(variant->calleeWords == 1u && variant->calleeReads.size() == 1u && variant->calleeReads[0].first == 0u && variant->calleeReads[0].second == 2u, "the callee pointer above 4 GiB was not tagged (mask " + std::to_string(variant->calleeWords) + ")");
+    const auto address = reinterpret_cast<std::uintptr_t>(first);
+    variant->runs = {{address + RunOffset, address + RunOffset + RunWords * sizeof(std::uint32_t)}};
+    variant->runBases = {0};
+    auto decode = std::make_shared<DrawDecode>();
+    decode->programs = {program};
+    auto entry = std::make_shared<DrawEntry>();
+    entry->decode = decode;
+    entry->stages = {{variant}};
+
+    constexpr std::uint64_t DonorKey = 0x48494748ull, DonorAlias = 0x444f4e4f52ull, DonorIdentity = 0x5348415045ull;
+    DriverTestAccess::SetPendingRelocation(DonorKey, DonorAlias, DonorIdentity, entry);
+    DriverTestAccess::LearnPendingRelocation();
+    const auto learned = DriverTestAccess::Relocation(DonorIdentity);
+    Require(learned != nullptr, "the data donor did not teach a relocation shape");
+    const auto& words = learned->words;
+    Require(words.size() == 1u && words[0].reg == 0u && !words[0].value && words[0].high == high, "the learned word lost the callee pointer's high dword");
+    const std::vector<std::pair<std::int64_t, std::uint32_t>> expected{{0, 2}, {RunOffset, RunWords}};
+    Require(words[0].reads == expected, "a run through a pointer above 4 GiB learned an absolute offset instead of its delta");
+
+    constexpr std::uint64_t Keyed = 0x4b45594544ull, Aliased = 0x414c494153ull, Identity = 0x4944454e54ull;
+    DriverTestAccess::InsertDraw(Keyed, entry);
+    DriverTestAccess::SetPendingRelocation(Keyed, Aliased, Identity, {});
+    DriverTestAccess::LearnPendingRelocation();
+    const auto keyed = DriverTestAccess::Relocation(Identity);
+    Require(keyed != nullptr && keyed->words.size() == 1u && keyed->words[0].reads == expected, "the keyed entry learned different reads than the donor");
+    Require(DriverTestAccess::AliasedKey(Aliased) == Keyed && DriverTestAccess::AliasedKey(DonorAlias) == DonorKey, "the learned aliases did not record their draw keys");
+
+    bool readable = true;
+    const auto donorKey = Driver::relocatedContentKey(words[0], Low(first), readable);
+    const auto movedKey = Driver::relocatedContentKey(words[0], Low(second), readable);
+    const auto changedKey = Driver::relocatedContentKey(words[0], Low(third), readable);
+    Require(readable, "reads through a callee pointer moved above 4 GiB were reported unreadable");
+    Require(donorKey == movedKey, "a callee moved above 4 GiB with identical contents keyed differently");
+    Require(donorKey != changedKey, "changed contents behind a moved callee pointer keyed the same");
+
+    DriverTestAccess::Forget(Keyed, Aliased, Identity);
+    DriverTestAccess::Forget(DonorKey, DonorAlias, DonorIdentity);
+    ShaderRecompiler::SetGcnGuestShaders(false);
+}
+
 }
 
 int main() {
@@ -295,6 +426,7 @@ int main() {
         CalleeWordsAreKeyedByTheirCode();
         BufferValueWordsArePatchedInTheirBinding();
         BufferValueWordsKeyByNothing();
+        HighCalleeWordsLearnDeltaOffsets();
         {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;

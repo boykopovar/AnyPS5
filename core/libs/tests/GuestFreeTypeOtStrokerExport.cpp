@@ -6,7 +6,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <stdexcept>
 #include <vector>
 
 using namespace FreeType;
@@ -18,8 +17,6 @@ void Require(bool condition, const char* message) {
     std::fprintf(stderr, "FreeTypeOt stroker export: %s\n", message);
     std::exit(1);
 }
-
-constexpr bool SharedPoints = sizeof(FT_Pos) == sizeof(std::int64_t);
 
 struct Target {
     std::vector<GuestVector> points;
@@ -51,38 +48,34 @@ int main() {
     GuestLibrary library{};
     Require(FT_Init_FreeType(&library.host) == 0, "initialize FreeType");
     void* forwarded = Stroke(library);
-    void* direct = Stroke(library);
+    FT_Stroker native = nullptr;
+    Require(FT_Stroker_New(library.host, &native) == 0, "create reference stroker");
+    FT_Stroker_Set(native, 64, FT_STROKER_LINECAP_ROUND, FT_STROKER_LINEJOIN_ROUND, 0);
+    FT_Vector start{0, 0};
+    FT_Vector end{640, 0};
+    Require(FT_Stroker_BeginSubPath(native, &start, 1) == 0 &&
+            FT_Stroker_LineTo(native, &end) == 0 && FT_Stroker_EndSubPath(native) == 0, "reference stroke");
     std::uint32_t points = 0;
     std::uint32_t contours = 0;
     Require(FT_Stroker_GetCounts_nid_postfix(forwarded, &points, &contours) == 0 && points && contours, "count stroke");
-    std::uint32_t directPoints = 0;
-    std::uint32_t directContours = 0;
-    Require(FT_Stroker_GetCounts_nid_postfix(direct, &directPoints, &directContours) == 0 &&
-            directPoints == points && directContours == contours, "count reference stroke");
+    FT_UInt nativePoints = 0;
+    FT_UInt nativeContours = 0;
+    Require(FT_Stroker_GetCounts(native, &nativePoints, &nativeContours) == 0 &&
+            nativePoints == points && nativeContours == contours, "count reference stroke");
     Target actual(points, contours);
-    Target expected(points, contours);
-    if constexpr (SharedPoints) {
-        FT_Stroker_ExportForward_nid_no_patch(forwarded, &actual.outline);
-        FT_Stroker_Export_nid_postfix(direct, &expected.outline);
-        Require(actual.outline.n_points == points && actual.outline.n_contours == contours, "export counts");
-        Require(actual.outline.n_points == expected.outline.n_points &&
-                actual.outline.n_contours == expected.outline.n_contours, "counts match libSceFreeType");
-        for (std::uint32_t i = 0; i < points; ++i)
-            Require(actual.points[i].x == expected.points[i].x && actual.points[i].y == expected.points[i].y &&
-                    actual.tags[i] == expected.tags[i], "points match libSceFreeType");
-        for (std::uint32_t i = 0; i < contours; ++i)
-            Require(actual.contours[i] == expected.contours[i], "contours match libSceFreeType");
-    } else {
-        bool threw = false;
-        try {
-            FT_Stroker_ExportForward_nid_no_patch(forwarded, &actual.outline);
-        } catch (const std::runtime_error&) {
-            threw = true;
-        }
-        Require(threw && actual.outline.n_points == 0 && actual.outline.n_contours == 0, "32-bit FT_Pos export throws");
-    }
+    std::vector<FT_Vector> expectedPoints(points);
+    std::vector<unsigned char> expectedTags(points);
+    std::vector<std::uint16_t> expectedContours(contours);
+    FT_Outline expected{0, 0, expectedPoints.data(), expectedTags.data(), expectedContours.data(), 0};
+    FT_Stroker_ExportForward_nid_no_patch(forwarded, &actual.outline);
+    FT_Stroker_Export(native, &expected);
+    Require(actual.outline.n_points == expected.n_points && actual.outline.n_contours == expected.n_contours, "export counts");
+    for (std::uint32_t i = 0; i < points; ++i)
+        Require(actual.points[i].x == expectedPoints[i].x && actual.points[i].y == expectedPoints[i].y &&
+                actual.tags[i] == expectedTags[i], "export points and tags");
+    Require(actual.contours == expectedContours, "export contour ends");
     FT_Stroker_Done_nid_postfix(forwarded);
-    FT_Stroker_Done_nid_postfix(direct);
+    FT_Stroker_Done(native);
     Require(FT_Done_FreeType(library.host) == 0, "release FreeType");
     std::puts("FreeTypeOt stroker export tests passed");
     return 0;

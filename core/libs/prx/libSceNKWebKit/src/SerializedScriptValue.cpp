@@ -2,10 +2,20 @@
 #include "prx/libSceNKWebKit/src/Jsc.hpp"
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
 #include "prx/libSceNKWebKit/include/JscExports.hpp"
+#include "prx/libc/include/General.hpp"
 #include <cmath>
 #include <limits>
 #include <string>
 #include <utility>
+
+namespace {
+
+void StoreException(NKWebKit::JSValueRef* exception, NKWebKit::JSValueRef value) {
+    if (!exception) return;
+    GuestCopyOut_nid_no_patch(exception, &value, sizeof(value));
+}
+
+}
 
 extern "C" {
 
@@ -48,15 +58,13 @@ NKWebKit::JSValueRef APS5_VABI WKSerializedScriptValueDeserialize(const void* se
     }
     NKWebKit::JSStringRef jsonString = JSStringCreateWithUTF8CString_nid_postfix(serialized->data.c_str());
     if (!jsonString) {
-        if (exception) {
-            *exception = JSObjectMakeError(context, 0, nullptr, nullptr);
-        }
+        StoreException(exception, JSObjectMakeError(context, 0, nullptr, nullptr));
         return nullptr;
     }
     NKWebKit::JSValueRef result = JSValueMakeFromJSONString(context, jsonString);
     JSStringRelease_nid_postfix(jsonString);
-    if (!result && exception) {
-        *exception = JSObjectMakeError(context, 0, nullptr, nullptr);
+    if (!result) {
+        StoreException(exception, JSObjectMakeError(context, 0, nullptr, nullptr));
     }
     return result;
 }

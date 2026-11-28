@@ -64,6 +64,13 @@ def reject_benchmark_constant(value):
     raise ValueError(f"non-finite JSON constant: {value}")
 
 
+def parse_benchmark_float(text):
+    value = float(text)
+    if not math.isfinite(value):
+        raise ValueError("non-finite JSON number")
+    return value
+
+
 def read_benchmark_json(path, limit=MAX_FILE_BYTES, decoded_limit=None):
     path = Path(path)
     if not path.is_file():
@@ -76,8 +83,11 @@ def read_benchmark_json(path, limit=MAX_FILE_BYTES, decoded_limit=None):
         if info.st_size > limit:
             raise ValueError(f"{path}: input exceeds {limit} bytes")
         raw = source.read(limit + 1)
+        after = os.fstat(source.fileno())
     if len(raw) > limit:
         raise ValueError(f"{path}: input exceeds {limit} bytes")
+    if len(raw) != info.st_size or (after.st_size, after.st_mtime_ns) != (info.st_size, info.st_mtime_ns):
+        raise ValueError(f"{path}: input changed while reading")
     if raw.startswith(b"\x1f\x8b"):
         try:
             with gzip.GzipFile(fileobj=io.BytesIO(raw)) as stream:
@@ -89,7 +99,7 @@ def read_benchmark_json(path, limit=MAX_FILE_BYTES, decoded_limit=None):
     if len(decoded) > decoded_limit:
         raise ValueError(f"{path}: decoded JSON exceeds {decoded_limit} bytes")
     value = json.loads(decoded.decode("utf-8-sig"), object_pairs_hook=unique_json_object,
-                       parse_constant=reject_benchmark_constant)
+                       parse_constant=reject_benchmark_constant, parse_float=parse_benchmark_float)
     return value, {
         "path": str(path),
         "sha256": hashlib.sha256(raw).hexdigest(),
@@ -234,7 +244,7 @@ def summarize_benchmark(loaded, intervals=None):
         current = benchmark_metrics([interval])
         raw_seconds = sum(interval["frame_us"]) / 1e6
         tolerance = (len(interval["frame_us"]) + 2000) / 1e6
-        if not current["saturated_frames"] and abs(raw_seconds - current["elapsed_s"]) > tolerance:
+        if current["frames"] and not current["saturated_frames"] and abs(raw_seconds - current["elapsed_s"]) > tolerance:
             warnings.append(f"Retained interval {index}: raw durations and wall span differ beyond serialization precision.")
         rows.append({
             "index": index,
@@ -304,7 +314,9 @@ def load_benchmark_series(path):
         if status not in ("included", "failed", "excluded"):
             raise ValueError(f"runs[{index}].status must be included, failed or excluded")
         if status == "included":
-            benchmark_text(run.get("capture"), f"runs[{index}].capture", True)
+            capture = benchmark_text(run.get("capture"), f"runs[{index}].capture", True)
+            if "\0" in capture:
+                raise ValueError(f"runs[{index}].capture contains a NUL character")
             if "reason" in run:
                 raise ValueError("included attempts cannot carry an exclusion reason")
             if "intervals" in run:
@@ -328,7 +340,8 @@ def benchmark_context(summary):
     metadata = summary["metadata"]
     context = {name: metadata.get(name) for name in
                ("gpu", "driver", "os", *IDENTITY_STRINGS, *IDENTITY_INTEGERS)}
-    context.update({f"env.{name}": value for name, value in metadata["env"].items()})
+    context.update({f"env.{name}": value for name, value in metadata["env"].items()
+                    if name != "APS5_TRACE_DIR"})
     context["selection.ordinals"] = [row["ordinal"] for row in summary["intervals"]]
     context["selection.resolutions"] = [row["resolution"] for row in summary["intervals"]]
     return context
@@ -345,7 +358,7 @@ def compare_benchmark_runs(path, require_matching_context=False):
     loaded_series = load_benchmark_series(path)
     data = loaded_series["data"]
     runs, pairs = [], {}
-    seen_files, seen_hashes, seen_decoded = set(), set(), set()
+    seen_files, seen_captures = set(), set()
     total_frames = 0
     reference = None
     arms = {}
@@ -366,11 +379,13 @@ def compare_benchmark_runs(path, require_matching_context=False):
             if "sha256" in attempt and source["sha256"] != attempt["sha256"].lower():
                 raise ValueError(f"{attempt['id']}: SHA-256 does not match original capture bytes")
             identity = source["_identity"]
-            if identity in seen_files or source["sha256"] in seen_hashes or source["decoded_sha256"] in seen_decoded:
+            canonical = json.dumps(loaded["data"], sort_keys=True, separators=(",", ":"))
+            capture_hash = hashlib.sha256(canonical.encode("ascii")).digest()
+            if identity in seen_files or capture_hash in seen_captures:
                 raise ValueError(f"{attempt['id']}: duplicate capture evidence cannot count as another run")
-            seen_files.add(identity)
-            seen_hashes.add(source["sha256"])
-            seen_decoded.add(source["decoded_sha256"])
+            if identity[1]:
+                seen_files.add(identity)
+            seen_captures.add(capture_hash)
             total_frames += sum(len(interval["frame_us"]) for interval in loaded["data"]["intervals"])
             if total_frames > MAX_TOTAL_FRAMES:
                 raise ValueError(f"series exceeds {MAX_TOTAL_FRAMES} supplied frames")
@@ -387,6 +402,8 @@ def compare_benchmark_runs(path, require_matching_context=False):
                         differences.append({"run": row["id"], "field": field,
                                             "reference": reference.get(field), "value": context.get(field)})
             build = {name: summary["metadata"][name] for name in ("commit", "dirty")}
+            if re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", build["commit"]):
+                build["commit"] = build["commit"].lower()
             previous_build = arms.setdefault(row["arm"], build)
             for field in build:
                 if previous_build[field] != build[field]:

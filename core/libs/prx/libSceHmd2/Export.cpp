@@ -10,6 +10,7 @@
 #include "prx/libSceUserService/UserService.hpp"
 #include "SceTypes.hpp"
 
+#include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstring>
@@ -76,6 +77,7 @@ static_assert(offsetof(GazeObjectSelectionMemoryInfo, alignment) == 8);
 namespace {
 
 constexpr std::int32_t DeviceHandle = 0x0e010000;
+constexpr std::int32_t ReprojectionDisplayTimeUnavailable = static_cast<std::int32_t>(0x8a720019);
 constexpr Hmd2::FieldOfView DefaultFieldOfView{1.84177089f, 0.947190642f, 1.32898104f, 1.32898104f};
 
 std::mutex stateMutex;
@@ -90,13 +92,6 @@ std::int32_t BeforeInitialize(std::int32_t answer, const char* name) {
     std::lock_guard lock(stateMutex);
     if (initialized) NotImplemented_nid_no_patch(name);
     return answer;
-}
-
-std::uint32_t CompiledSdkVersion() {
-    static const auto* processParameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::uint32_t version;
-    std::memcpy(&version, processParameters + 0x10, sizeof(version));
-    return version;
 }
 
 bool CopyGuestOut(void* dst, const void* src, std::size_t size) {
@@ -117,7 +112,7 @@ std::int32_t GetDeviceInformation(Hmd2::DeviceInformation* info) {
         return Hmd2::NotInitialized;
     }
     localInfo.status = Hmd2::DeviceStatus::NotDetected;
-    if (CompiledSdkVersion() < Hmd2::UserIdSdkVersion) localInfo.userId = -1;
+    if (ApplicationCompiledSdkVersion() < Hmd2::UserIdSdkVersion) localInfo.userId = -1;
     localInfo.panelWidth = 4000;
     localInfo.panelHeight = 2040;
     localInfo.latency90Hz = 5555;
@@ -251,7 +246,7 @@ std::int32_t APS5_VABI sceHmd2Open(std::int32_t userId, std::int32_t type, std::
     if (!initialized) return Hmd2::NotInitialized;
     if (type != 0 || index != 0 || param) return Hmd2::ParameterInvalid;
     if (userId != USER_SERVICE_INITIAL_USER_ID) {
-        if (CompiledSdkVersion() >= Hmd2::UserIdSdkVersion) return Hmd2::ParameterInvalid;
+        if (ApplicationCompiledSdkVersion() >= Hmd2::UserIdSdkVersion) return Hmd2::ParameterInvalid;
         throw std::runtime_error("sceHmd2Open: user is not the initial user");
     }
     if (openHandle != 0) return Hmd2::AlreadyOpened;
@@ -260,16 +255,28 @@ std::int32_t APS5_VABI sceHmd2Open(std::int32_t userId, std::int32_t type, std::
 }
 
 int APS5_VABI sceHmd2ReprojectionBeginFrame(std::uint64_t frameId) {
+    {
+        std::lock_guard lock(reprojectionMutex);
+        if (reprojectionState == nullptr) return Hmd2::ReprojectionNotInitialized;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceHmd2ReprojectionDisableMirroring() {
+    {
+        std::lock_guard lock(reprojectionMutex);
+        if (reprojectionState == nullptr) return Hmd2::ReprojectionNotInitialized;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceHmd2ReprojectionDisableVrMode() {
+    {
+        std::lock_guard lock(reprojectionMutex);
+        if (reprojectionState == nullptr) return Hmd2::ReprojectionNotInitialized;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -301,13 +308,10 @@ Hmd2::SizeAlign APS5_VABI sceHmd2ReprojectionGetMirroringWorkMemorySizeAlign() {
 }
 
 int APS5_VABI sceHmd2ReprojectionGetPredictedDisplayTime(std::uint64_t frameId, std::uint64_t* time) {
-    {
-        std::lock_guard lock(reprojectionMutex);
-        if (reprojectionState == nullptr) return Hmd2::ReprojectionNotInitialized;
-    }
+    std::lock_guard lock(reprojectionMutex);
+    if (reprojectionState == nullptr) return Hmd2::ReprojectionNotInitialized;
     if (time == nullptr) return Hmd2::ParameterNull;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return ReprojectionDisplayTimeUnavailable;
 }
 
 int APS5_VABI sceHmd2ReprojectionInitialize(const Hmd2::ReprojectionInitializeParameter* parameter, const void* reserved) {
@@ -357,6 +361,10 @@ int APS5_VABI sceHmd2ReprojectionSetAllowPositionalReprojection(std::uint8_t mod
 }
 
 int APS5_VABI sceHmd2ReprojectionSetMirroringOption(const Hmd2::MirroringOption* option) {
+    {
+        std::lock_guard lock(reprojectionMutex);
+        if (reprojectionState == nullptr) return Hmd2::ReprojectionNotInitialized;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

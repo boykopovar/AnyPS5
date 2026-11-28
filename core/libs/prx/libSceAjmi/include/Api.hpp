@@ -11,6 +11,8 @@ void* APS5_VABI sceAjmBatchJobControlBufferRa_nid_disambig1(void* position, uint
 void* APS5_VABI sceAjmBatchJobRunSplitBufferRa_nid_disambig1(void* position, uint32_t instance, uint64_t flags, const AjmBuffer* input_buffers, size_t input_buffers_num, const AjmBuffer* output_buffers, size_t output_buffers_num, void* sideband_output, size_t sideband_output_size, void* return_address);
 void* APS5_VABI sceAjmBatchJobRunBufferRa_nid_disambig1(void* position, uint32_t instance, uint64_t flags, const void* data_input, size_t data_input_size, void* data_output, size_t data_output_size, void* sideband_output, size_t sideband_output_size, void* return_address);
 void* APS5_VABI sceAjmiBatchJobInlineBuffer_nid_no_patch(void* position, const void* data, std::size_t size, const void** address);
+void* APS5_VABI sceAjmiBatchJobControlBufferRa_nid_no_patch(void* position, std::uint32_t instance, std::uint64_t flags, const void* sidebandInput, std::size_t sidebandInputSize, void* sidebandOutput, std::size_t sidebandOutputSize, void* returnAddress);
+void* APS5_VABI sceAjmiBatchJobRunSplitBufferRa_nid_no_patch(void* position, std::uint32_t instance, std::uint64_t flags, const AjmBuffer* inputBuffers, std::size_t inputBuffersNum, const AjmBuffer* outputBuffers, std::size_t outputBuffersNum, void* sidebandOutput, std::size_t sidebandOutputSize, void* returnAddress);
 void* APS5_VABI sceAjmiBatchJobRunBufferRa_nid_no_patch(void* position, std::uint32_t instance, std::uint64_t flags, const void* input, std::size_t inputSize, void* output, std::size_t outputSize, void* sideband, std::size_t sidebandSize, void* returnAddress);
 
 }

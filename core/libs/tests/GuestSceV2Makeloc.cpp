@@ -399,7 +399,7 @@ static void TestAllocationFailures() {
 }
 
 int main() {
-    const std::array<void*, 7> heap{reinterpret_cast<void*>(TestHeapAllocate), reinterpret_cast<void*>(TestHeapFree), reinterpret_cast<void*>(TestHeapCalloc),
+    const std::array<void*, 10> heap{reinterpret_cast<void*>(TestHeapAllocate), reinterpret_cast<void*>(TestHeapFree), reinterpret_cast<void*>(TestHeapCalloc),
                                     reinterpret_cast<void*>(TestHeapReallocate), reinterpret_cast<void*>(TestHeapAlign), reinterpret_cast<void*>(TestHeapRealign),
                                     reinterpret_cast<void*>(TestHeapPosixAlign)};
     ApplicationHeapRegister_nid_no_patch(heap.data());

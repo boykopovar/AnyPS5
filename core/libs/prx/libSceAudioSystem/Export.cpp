@@ -5,6 +5,7 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstddef>
+#include <stdexcept>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -122,7 +123,7 @@ APS5_EXPORT("Fd9u7-OKW+Q", libSceAudioSystemUnknown_Fd9u7_minus_OKW_plus_Q_nid_n
 
 int APS5_VABI libSceAudioSystemUnknown_FkFcs7NTFDo_nid_no_patch(std::int32_t* value) {
     const std::int32_t current = pendingValue.load(std::memory_order_relaxed);
-    if (!CopyOutValue(value, current)) NotImplemented_nid_no_patch(__func__);
+    if (!CopyOutValue(value, current)) throw std::runtime_error(__func__);
     pendingValue.store(0, std::memory_order_relaxed);
     return 0;
 }
@@ -196,7 +197,7 @@ APS5_EXPORT("ltR0PMUM270", libSceAudioSystemUnknown_ltR0PMUM270_nid_no_patch);
 
 int APS5_VABI libSceAudioSystemUnknown_mS9gpe47Eio_nid_no_patch(std::int32_t* value) {
     const std::int32_t current = storedValue.load(std::memory_order_relaxed);
-    if (!CopyOutValue(value, current)) NotImplemented_nid_no_patch(__func__);
+    if (!CopyOutValue(value, current)) throw std::runtime_error(__func__);
     return 0;
 }
 APS5_EXPORT("mS9gpe47Eio", libSceAudioSystemUnknown_mS9gpe47Eio_nid_no_patch);

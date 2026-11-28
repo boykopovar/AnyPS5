@@ -28,11 +28,106 @@ void Write(std::uint8_t* object, const std::size_t offset, const T value) {
     std::memcpy(object + offset, &value, sizeof(value));
 }
 
+void CheckRankingRequest() {
+    alignas(8) std::array<std::uint8_t, 0x40> context{};
+    alignas(8) std::array<std::uint8_t, 0x40> initParams{};
+    auto* library = reinterpret_cast<std::uint64_t*>(context.data());
+    IntrusivePtr user{}, other{}, request{};
+    Require(_ZN3sce2Np9CppWebApi12Leaderboards2V111UserFactory6createEPNS1_6Common10LibContextEPNS5_12IntrusivePtrINS3_4UserEEE(nullptr, &user) == static_cast<int>(0x80553503));
+    Require(_ZN3sce2Np9CppWebApi12Leaderboards2V128GetRankingRequestBodyFactory6createEPNS1_6Common10LibContextEPNS5_12IntrusivePtrINS3_21GetRankingRequestBodyEEE(library, nullptr) == static_cast<int>(0x80553503));
+    Require(_ZN3sce2Np9CppWebApi12Leaderboards2V111UserFactory6createEPNS1_6Common10LibContextEPNS5_12IntrusivePtrINS3_4UserEEE(library, &user) == static_cast<int>(0x80553504));
+    Require(_ZN3sce2Np9CppWebApi12Leaderboards2V128GetRankingRequestBodyFactory6createEPNS1_6Common10LibContextEPNS5_12IntrusivePtrINS3_21GetRankingRequestBodyEEE(library, &request) == static_cast<int>(0x80553504));
+    _ZN3sce2Np9CppWebApi6Common10InitParamsC1Ev(initParams.data());
+    _ZN3sce2Np9CppWebApi6Common10LibContextC1Ev(library);
+    Require(_ZN3sce2Np9CppWebApi6Common10initializeERKNS2_10InitParamsERNS2_10LibContextE(initParams.data(), library) == 0);
+    Require(_ZN3sce2Np9CppWebApi12Leaderboards2V111UserFactory6createEPNS1_6Common10LibContextEPNS5_12IntrusivePtrINS3_4UserEEE(library, &user) == 0 && _ZN3sce2Np9CppWebApi12Leaderboards2V111UserFactory6createEPNS1_6Common10LibContextEPNS5_12IntrusivePtrINS3_4UserEEE(library, &other) == 0);
+    Require(_ZN3sce2Np9CppWebApi12Leaderboards2V128GetRankingRequestBodyFactory6createEPNS1_6Common10LibContextEPNS5_12IntrusivePtrINS3_21GetRankingRequestBodyEEE(library, &request) == 0);
+    auto* userData = static_cast<std::uint8_t*>(user.object);
+    auto* body = static_cast<std::uint8_t*>(request.object);
+    Require(userData && body && user.deleter && request.deleter);
+    Require(Read<void*>(userData, 8) == library && user.libContext == library);
+    Require(Read<void*>(body, 8) == library && request.libContext == library);
+    const std::uint64_t account = 0xfedcba9876543210ULL;
+    const int negative = -7;
+    Require(_ZN3sce2Np9CppWebApi12Leaderboards2V14User12setAccountIdERKm(userData, &account) == account);
+    Require(_ZN3sce2Np9CppWebApi12Leaderboards2V14User7setPcIdERKi(userData, &negative) == negative);
+    Require(Read<std::uint64_t>(userData, 0x10) == account && userData[0x18] == 1);
+    Require(Read<int>(userData, 0x1c) == negative && userData[0x20] == 1);
+    Require(_ZN3sce2Np9CppWebApi12Leaderboards2V121GetRankingRequestBody8setGroupERKNS3_5GroupE(body, &negative) == negative && _ZN3sce2Np9CppWebApi12Leaderboards2V121GetRankingRequestBody8setLimitERKi(body, &negative) == negative);
+    Require(_ZN3sce2Np9CppWebApi12Leaderboards2V121GetRankingRequestBody9setOffsetERKi(body, &negative) == negative && _ZN3sce2Np9CppWebApi12Leaderboards2V121GetRankingRequestBody18setStartSerialRankERKi(body, &negative) == negative);
+    for (const auto offset : {0x18, 0x20, 0x30, 0x38})
+        Require(Read<int>(body, offset) == negative && body[offset + 4] == 1);
+
+    alignas(8) std::array<std::uint8_t, 0x40> vector{};
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_12Leaderboards2V14UserEEEEC1EPNS2_10LibContextE(vector.data(), library);
+    Require(Read<void*>(vector.data(), 0x18) == vector.data());
+    Require(Read<void*>(vector.data(), 0x28) == vector.data());
+    Require(Read<void*>(vector.data(), 0x38) == library);
+    Require(_ZN3sce2Np9CppWebApi12Leaderboards2V121GetRankingRequestBody8setUsersERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_4UserEEEEE(body, vector.data()) == 0 && body[0x78] == 1);
+    auto* emptyCopy = Read<std::uint8_t*>(body, 0x60);
+    Require(emptyCopy && Read<int>(emptyCopy, 0x30) == 1 && Read<void*>(emptyCopy, 0x38) == library);
+    for (int i = 0; i < 16; ++i)
+        Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_12Leaderboards2V14UserEEEE8pushBackERKS8_(vector.data(), i % 2 == 0 ? &user : &other) == 0);
+    auto* first = Read<IntrusivePtr*>(vector.data(), 0x18);
+    Require(Read<IntrusivePtr*>(vector.data(), 0x20) - first == 16);
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_12Leaderboards2V14UserEEEE8pushBackERKS8_(vector.data(), first) == 0);
+    first = Read<IntrusivePtr*>(vector.data(), 0x18);
+    Require(Read<IntrusivePtr*>(vector.data(), 0x20) - first == 32);
+    Require(Read<IntrusivePtr*>(vector.data(), 0x28) - first == 17 && first[16].object == user.object);
+    Require(Read<int>(userData, 0) == 10);
+    Require(_ZN3sce2Np9CppWebApi12Leaderboards2V121GetRankingRequestBody8setUsersERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_4UserEEEEE(body, vector.data()) == 0);
+    auto* copy = Read<std::uint8_t*>(body, 0x60);
+    auto* elements = Read<IntrusivePtr*>(copy, 0x18);
+    Require(copy != vector.data() && elements != first && Read<void*>(body, 0x68) == nullptr);
+    Require(Read<IntrusivePtr*>(copy, 0x20) - elements == 34);
+    Require(Read<IntrusivePtr*>(copy, 0x28) - elements == 17 && elements[16].object == user.object);
+    Require(Read<int>(userData, 0) == 19);
+    Require(_ZN3sce2Np9CppWebApi12Leaderboards2V121GetRankingRequestBody8setUsersERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_4UserEEEEE(body, vector.data()) == 0 && Read<int>(userData, 0) == 19);
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_12Leaderboards2V14UserEEEED1Ev(vector.data());
+    Require(Read<int>(userData, 0) == 10);
+
+    alignas(8) std::array<std::uint8_t, 0x10> liveParameter{};
+    _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRankingC1Ev(liveParameter.data());
+    Require(_ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRanking10initializeEPNS1_6Common10LibContextEi(liveParameter.data(), library, negative) == 0);
+    _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRanking24setgetRankingRequestBodyENS1_6Common12IntrusivePtrINS3_21GetRankingRequestBodyEEE(liveParameter.data(), &request);
+    Require(Read<int>(body, 0) == 2);
+    alignas(8) auto savedForCleanup = liveParameter;
+    _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRankingD1Ev(liveParameter.data());
+    Require(liveParameter == savedForCleanup && Read<int>(body, 0) == 2);
+    Require(_ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRanking9terminateEv(savedForCleanup.data()) == 0 && Read<int>(body, 0) == 1);
+
+    alignas(8) std::array<std::uint8_t, 0x10> parameter{};
+    _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRankingC1Ev(parameter.data());
+    _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRanking24setgetRankingRequestBodyENS1_6Common12IntrusivePtrINS3_21GetRankingRequestBodyEEE(parameter.data(), &request);
+    Require(Read<int>(body, 0) == 1);
+    Require(_ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRanking10initializeEPNS1_6Common10LibContextEi(parameter.data(), library, negative) == 0);
+    auto* state = Read<std::uint8_t*>(parameter.data(), 8);
+    Require(Read<int>(state, 0) == negative && Read<void*>(state, 0x28) == library);
+    _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRanking24setgetRankingRequestBodyENS1_6Common12IntrusivePtrINS3_21GetRankingRequestBodyEEE(parameter.data(), &request);
+    _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRanking24setgetRankingRequestBodyENS1_6Common12IntrusivePtrINS3_21GetRankingRequestBodyEEE(parameter.data(), &request);
+    Require(Read<void*>(state, 8) == request.object && state[0x20] == 1 && Read<int>(body, 0) == 2);
+    IntrusivePtr empty{};
+    _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRanking24setgetRankingRequestBodyENS1_6Common12IntrusivePtrINS3_21GetRankingRequestBodyEEE(parameter.data(), &empty);
+    Require(Read<void*>(state, 8) == nullptr && state[0x20] == 1 && Read<int>(body, 0) == 1);
+    _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRanking24setgetRankingRequestBodyENS1_6Common12IntrusivePtrINS3_21GetRankingRequestBodyEEE(parameter.data(), &request);
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_12Leaderboards2V121GetRankingRequestBodyEED1Ev(&request);
+    Require(Read<int>(body, 0) == 1);
+    Require(_ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRanking9terminateEv(parameter.data()) == 0 && Read<int>(userData, 0) == 1);
+    Require(_ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRanking9terminateEv(parameter.data()) == static_cast<int>(0x80553510));
+    const auto terminatedParameter = parameter;
+    _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRankingD1Ev(parameter.data());
+    Require(parameter == terminatedParameter && Read<int>(userData, 0) == 1);
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_12Leaderboards2V14UserEED1Ev(&other);
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_12Leaderboards2V14UserEED1Ev(&user);
+    Require(_ZN3sce2Np9CppWebApi6Common9terminateERNS2_10LibContextE(library) == 0);
+}
+
 alignas(8) std::array<std::uint8_t, 0x300> Object;
 
 }
 
 int main() {
+    CheckRankingRequest();
     Object.fill(0x5a);
     const auto* model = Object.data();
 

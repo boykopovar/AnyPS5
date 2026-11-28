@@ -2,6 +2,7 @@
 #include "prx/libSceJsc/libSceJsc.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <array>
 #include <atomic>
@@ -14,6 +15,7 @@
 #include <new>
 #include <stdexcept>
 
+using Jsc::JscAbi::ArrayBuffer;
 using Jsc::JscAbi::ArrayBufferContents;
 using Jsc::JscAbi::SharedArrayBufferContents;
 using Jsc::JscAbi::SharedTask;
@@ -365,12 +367,42 @@ void TestNullObjects() {
     Check(Throws([&] { _ZN3JSC19ArrayBufferContentsC2EOS0_(&contents, nullptr); }), __LINE__);
 }
 
+bool SameText(const char* actual, const char* expected) {
+    return actual && std::strcmp(actual, expected) == 0;
+}
+
+void TestTransferErrors() {
+    const char* shared = "Cannot transfer a SharedArrayBuffer";
+    const char* wasm = "Cannot transfer a WebAssembly.Memory";
+    const char* api = "Cannot transfer an ArrayBuffer whose backing store has been accessed by the JavaScriptCore C API";
+    SharedArrayBufferContents sharedContents{};
+    ArrayBuffer buffer{};
+    buffer.locked = true;
+    Check(SameText(_ZN3JSC23errorMesasgeForTransferEPNS_11ArrayBufferE(&buffer), api), __LINE__);
+    buffer.isWasmMemory = true;
+    Check(SameText(_ZN3JSC23errorMesasgeForTransferEPNS_11ArrayBufferE(&buffer), wasm), __LINE__);
+    StorePacked(buffer.contents.shared, &sharedContents);
+    Check(SameText(_ZN3JSC23errorMesasgeForTransferEPNS_11ArrayBufferE(&buffer), shared), __LINE__);
+    buffer.isWasmMemory = false;
+    Check(SameText(_ZN3JSC23errorMesasgeForTransferEPNS_11ArrayBufferE(&buffer), shared), __LINE__);
+    StorePacked(buffer.contents.shared, nullptr);
+    buffer.pinCount = 0xffffffffu;
+    buffer.contents.data = &sharedContents;
+    buffer.contents.sizeInBytes = 0xffffffffu;
+    Check(SameText(_ZN3JSC23errorMesasgeForTransferEPNS_11ArrayBufferE(&buffer), api), __LINE__);
+    buffer.locked = false;
+    Check(SameText(_ZN3JSC23errorMesasgeForTransferEPNS_11ArrayBufferE(&buffer), api), __LINE__);
+    Check(Throws([] { _ZN3JSC23errorMesasgeForTransferEPNS_11ArrayBufferE(nullptr); }), __LINE__);
+    Check(Throws([] { _ZN3JSC23errorMesasgeForTransferEPNS_11ArrayBufferE(reinterpret_cast<ArrayBuffer*>(0x10)); }), __LINE__);
+}
+
 } // namespace
 
 int main() {
     ApplicationHeapInitialize_nid_no_patch(ApplicationEmptyProcessParameters_nid_no_patch());
     TestTranscripts();
     TestNullObjects();
+    TestTransferErrors();
     std::puts("JSC ArrayBufferContents tests passed");
     return 0;
 }

@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <string>
 #include <string_view>
 #include "SceTypes.hpp"
@@ -169,27 +170,13 @@ char HexDigit(std::uint32_t value, bool uppercase) {
     return static_cast<char>((uppercase ? 'A' : 'a') + value - 10);
 }
 
-bool CopyHexIn(void* destination, const void* source, std::size_t bytes) {
-    const int saved = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = saved;
-    return copied;
-}
-
-bool CopyHexOut(void* destination, const void* source, std::size_t bytes) {
-    const int saved = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
-    errno = saved;
-    return copied;
-}
-
 bool CopyHexText(const char* hex, std::string& text) {
     constexpr std::size_t Chunk = 4096;
     std::array<char, Chunk> bytes {};
     auto address = reinterpret_cast<std::uintptr_t>(hex);
     while (true) {
         const std::size_t count = Chunk - address % Chunk;
-        if (!CopyHexIn(bytes.data(), reinterpret_cast<const void*>(address), count)) return false;
+        if (!GuestCopyIn_nid_no_patch(bytes.data(), reinterpret_cast<const void*>(address), count)) return false;
         if (const auto* end = static_cast<const char*>(std::memchr(bytes.data(), 0, count))) {
             text.append(bytes.data(), static_cast<std::size_t>(end - bytes.data()));
             return true;
@@ -205,7 +192,7 @@ bool CopyHexRange(const char* hex, std::size_t length, std::string& text) {
     auto address = reinterpret_cast<std::uintptr_t>(hex);
     while (text.size() < length) {
         const std::size_t count = std::min(Chunk - address % Chunk, length - text.size());
-        if (!CopyHexIn(bytes.data(), reinterpret_cast<const void*>(address), count)) return false;
+        if (!GuestCopyIn_nid_no_patch(bytes.data(), reinterpret_cast<const void*>(address), count)) return false;
         text.append(bytes.data(), count);
         address += count;
     }
@@ -237,7 +224,7 @@ int ParseHex(std::string_view hex, void* out, std::size_t capacity) {
         }
         bytes[stored - 1] = static_cast<char>((high << 4) | low);
     }
-    if (stored != 0 && !CopyHexOut(out, bytes.data(), stored)) return NP_ERROR_INVALID_ARGUMENT;
+    if (stored != 0 && !GuestCopyOut_nid_no_patch(out, bytes.data(), stored)) return NP_ERROR_INVALID_ARGUMENT;
     return result;
 }
 
@@ -284,7 +271,6 @@ char PlusSign(bool positive, std::uint32_t flags) {
 template <typename Parse>
 int ParseInteger(const char* str, std::size_t* parsedLength, Parse parse, bool* saturated) {
     char* end = nullptr;
-    errno = 0;
     parse(str, &end);
     if (end == str) return NP_ERROR_OUT_OF_RANGE;
     if (*saturated && errno == ERANGE) return NP_ERROR_OUT_OF_RANGE;
@@ -433,16 +419,25 @@ const XmlEntity* XmlEntityAt(const char* text) {
     return nullptr;
 }
 
-bool ReadXmlSource(const char* src, std::size_t length, std::string& host) {
+bool ReadGuestBytes(const char* src, std::size_t length, std::string& host) {
     constexpr std::size_t Chunk = 64 * 1024;
-    constexpr std::size_t Tail = 8;
     host.clear();
     for (std::size_t done = 0; done < length;) {
         const std::size_t step = std::min(Chunk, length - done);
-        host.resize(done + step);
+        try {
+            host.resize(done + step);
+        } catch (const std::exception&) {
+            return false;
+        }
         if (!GuestCopyIn_nid_no_patch(host.data() + done, src + done, step)) return false;
         done += step;
     }
+    return true;
+}
+
+bool ReadXmlSource(const char* src, std::size_t length, std::string& host) {
+    constexpr std::size_t Tail = 8;
+    if (!ReadGuestBytes(src, length, host)) return false;
     char tail[Tail]{};
     if (!GuestCopyIn_nid_no_patch(tail, src + length, Tail)) {
         for (std::size_t index = 0; index < Tail && GuestCopyIn_nid_no_patch(tail + index, src + length + index, 1); ++index) {}
@@ -469,6 +464,53 @@ bool ReadNpIdText(const char* text, std::size_t limit, std::string& host) {
 bool IsUrlSafe(unsigned char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.'
         || c == '*';
+}
+
+struct GuestTextReader {
+    static constexpr std::uintptr_t Page = 4096;
+    std::array<char, Page> chunk {};
+    std::uintptr_t chunkStart = 0;
+    std::size_t chunkSize = 0;
+
+    bool ReadByte(const char* guestAddress, unsigned char& value) {
+        const auto address = reinterpret_cast<std::uintptr_t>(guestAddress);
+        if (chunkSize == 0 || address < chunkStart || address - chunkStart >= chunkSize) {
+            const std::size_t size = Page - address % Page;
+            const int saved = errno;
+            const bool copied = GuestCopyIn_nid_no_patch(chunk.data(), reinterpret_cast<const void*>(address), size);
+            errno = saved;
+            if (!copied) {
+                chunkSize = 0;
+                return false;
+            }
+            chunkStart = address;
+            chunkSize = size;
+        }
+        value = static_cast<unsigned char>(chunk[address - chunkStart]);
+        return true;
+    }
+};
+
+int MeasureGuestTextChar(GuestTextReader& reader, const char* position, std::size_t& length) {
+    unsigned char lead = 0;
+    if (!reader.ReadByte(position, lead)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    if (lead == '\0') {
+        length = 0;
+        return 0;
+    }
+    if (lead < 0x80) {
+        if (!IsAllowedTextByte(lead)) return NP_UTIL_ERROR_INVALID_CHARACTER;
+        length = 1;
+        return 0;
+    }
+    length = Utf8SequenceLength(lead);
+    if (length == 0) return NP_UTIL_ERROR_INVALID_CHARACTER;
+    for (std::size_t offset = 1; offset < length; ++offset) {
+        unsigned char next = 0;
+        if (!reader.ReadByte(position + offset, next)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+        if (!IsContinuation(static_cast<char>(next))) return NP_UTIL_ERROR_INVALID_CHARACTER;
+    }
+    return 0;
 }
 
 } // namespace
@@ -649,6 +691,17 @@ int APS5_VABI sceNpUtilJsonEscape(char* dst, std::size_t dstSize, const char* sr
     if (copyError == 63) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
     if (copyError != 0) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     const std::size_t start = existing.size();
+    const std::size_t room = start <= dstSize - JSON_ESCAPE_MARGIN ? dstSize - JSON_ESCAPE_MARGIN - start + 1 : 0;
+    const std::size_t window = std::min(srcLength, room);
+    std::string source;
+    if (window != 0) {
+        const int sourceError = CopyGuestString_nid_no_patch(src, window, source);
+        if (sourceError == 63) {
+            if (!ReadGuestBytes(src, window, source)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+        } else if (sourceError != 0) {
+            return NP_UTIL_ERROR_INVALID_ARGUMENT;
+        }
+    }
     std::size_t written = start;
     std::string appended;
     const auto finish = [&](int result) {
@@ -657,7 +710,7 @@ int APS5_VABI sceNpUtilJsonEscape(char* dst, std::size_t dstSize, const char* sr
     };
     for (std::size_t i = 0; i < srcLength; ++i) {
         if (written > dstSize - JSON_ESCAPE_MARGIN) return finish(NP_UTIL_ERROR_BUFFER_TOO_SMALL);
-        const auto c = static_cast<unsigned char>(src[i]);
+        const auto c = i < source.size() ? static_cast<unsigned char>(source[i]) : 0;
         if (c == 0) return finish(0);
         char piece[JSON_ESCAPE_MARGIN] = {};
         if (const char* escape = JsonShortEscape(c)) {
@@ -677,6 +730,9 @@ int APS5_VABI sceNpUtilJsonUnescape(char* dst, std::size_t dstSize, const char* 
     std::size_t* dstLength) {
     if (src == nullptr || srcLength == 0) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     if (dst == nullptr && dstLength == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    std::string source;
+    if (!ReadGuestBytes(src, srcLength, source)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    src = source.data();
     const char* end = src + srcLength;
     std::size_t count = 0;
     int status = 0;
@@ -753,6 +809,9 @@ int APS5_VABI sceNpUtilJsonGetOneChar(char* dst, std::size_t dstSize, const char
     std::size_t* dstLength, std::size_t* consumed) {
     if (src == nullptr || srcLength == 0) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     if (dst == nullptr && dstLength == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    std::string source;
+    if (!ReadGuestBytes(src, std::min<std::size_t>(srcLength, JSON_SURROGATE_PAIR_LENGTH), source)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    src = source.data();
     std::size_t decoded = 1;
     std::size_t used = 1;
     int status = 0;
@@ -885,19 +944,20 @@ int APS5_VABI sceNpUtilXmlUnescape(char* dst, std::size_t dstSize, const char* s
 
 int APS5_VABI sceNpUtilGetNthChar(std::size_t index, const char* text, const char** character) {
     if (text == nullptr || character == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    GuestTextReader reader;
     const char* position = text;
-    for (std::size_t i = 0; i < index && *position != '\0'; ++i) {
-        const auto lead = static_cast<unsigned char>(*position);
-        std::size_t length = 1;
-        if (lead < 0x80) {
-            if (!IsAllowedTextByte(lead)) return NP_UTIL_ERROR_INVALID_CHARACTER;
-        } else {
-            length = Utf8SequenceLength(lead);
-            if (length == 0 || !IsValidSequence(position, length)) return NP_UTIL_ERROR_INVALID_CHARACTER;
-        }
+    for (std::size_t i = 0; i < index; ++i) {
+        std::size_t length = 0;
+        const int error = MeasureGuestTextChar(reader, position, length);
+        if (error != 0) return error;
+        if (length == 0) break;
         position += length;
     }
-    if (!GuestCopyOut_nid_no_patch(character, &position, sizeof(position))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    const int saved = errno;
+    const bool written = GuestWritable_nid_no_patch(character, sizeof(position))
+        && GuestCopyOut_nid_no_patch(character, &position, sizeof(position));
+    errno = saved;
+    if (!written) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -985,26 +1045,95 @@ int APS5_VABI sceNpUtilHttpUrlEncode(char* dst, std::size_t dstSize, const char*
     std::size_t* dstLength) {
     if (src == nullptr || srcLength == 0) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     if (dst == nullptr && dstLength == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    std::string source;
+    if (!ReadGuestBytes(src, srcLength, source)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    std::string out;
+    const auto flush = [&](int result) {
+        if (dst != nullptr && !out.empty() && !GuestCopyOut_nid_no_patch(dst, out.data(), out.size())) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+        return result;
+    };
     std::size_t count = 0;
     for (std::size_t i = 0; i < srcLength; ++i) {
-        const auto c = static_cast<unsigned char>(src[i]);
+        const auto c = static_cast<unsigned char>(source[i]);
         const bool escaped = c != ' ' && !IsUrlSafe(c);
         const std::size_t length = escaped ? 3 : 1;
-        if (dst != nullptr && count + length > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
+        if (dst != nullptr && count + length > dstSize) return flush(NP_UTIL_ERROR_BUFFER_TOO_SMALL);
         if (dst != nullptr) {
             if (escaped) {
-                dst[count] = '%';
-                dst[count + 1] = URL_HEX_DIGITS[c >> 4];
-                dst[count + 2] = URL_HEX_DIGITS[c & 0xF];
+                out.push_back('%');
+                out.push_back(URL_HEX_DIGITS[c >> 4]);
+                out.push_back(URL_HEX_DIGITS[c & 0xF]);
             } else {
-                dst[count] = c == ' ' ? '+' : static_cast<char>(c);
+                out.push_back(c == ' ' ? '+' : static_cast<char>(c));
             }
         }
         count += length;
     }
-    if (dst != nullptr && count + 1 > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
-    if (dst != nullptr) dst[count] = '\0';
-    if (dstLength != nullptr) *dstLength = count + 1;
+    if (dst != nullptr && count + 1 > dstSize) return flush(NP_UTIL_ERROR_BUFFER_TOO_SMALL);
+    if (dst != nullptr) {
+        out.push_back('\0');
+        if (flush(0) != 0) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    }
+    const std::size_t needed = count + 1;
+    if (dstLength != nullptr && !GuestCopyOut_nid_no_patch(dstLength, &needed, sizeof(needed))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    return 0;
+}
+
+bool APS5_VABI _sceNpMsgPackStrUtilIsValidUtf8StringWithSize(const char* text, std::size_t size) {
+    const char* const end = text + size;
+    for (const char* p = text; p < end;) {
+        const auto lead = static_cast<unsigned char>(*p);
+        std::size_t length = 1;
+        if (lead >= 0x80) {
+            length = Utf8SequenceLength(lead);
+            if (length == 0 || p + length > end) return false;
+            for (std::size_t i = 1; i < length; ++i) {
+                if (!IsContinuation(p[i])) return false;
+            }
+        }
+        p += length;
+    }
+    return true;
+}
+
+bool APS5_VABI _sceNpMsgPackStrUtilIsValidUtf8String(const char* text) {
+    return _sceNpMsgPackStrUtilIsValidUtf8StringWithSize(text, std::strlen(text));
+}
+
+int APS5_VABI sceNpUtilNumChars(const char* text) {
+    if (text == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    std::size_t count = 0;
+    for (const char* p = text; *p != '\0';) {
+        const auto lead = static_cast<unsigned char>(*p);
+        std::size_t length = 1;
+        if (lead < 0x80) {
+            if (!IsAllowedTextByte(lead)) return NP_UTIL_ERROR_INVALID_CHARACTER;
+        } else {
+            length = Utf8SequenceLength(lead);
+            if (length == 0) return NP_UTIL_ERROR_INVALID_CHARACTER;
+            for (std::size_t i = 1; i < length; ++i) {
+                if (p[i] == '\0' || !IsContinuation(p[i])) return NP_UTIL_ERROR_INVALID_CHARACTER;
+            }
+        }
+        p += length;
+        ++count;
+    }
+    return static_cast<int>(count);
+}
+
+int APS5_VABI sceNpJwsHs256GetEncodeSize(std::uint32_t payloadSize, std::uint32_t* encodeSize) {
+    if (encodeSize == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    *encodeSize = ((payloadSize + 2) / 3) * 4 + 0x5E;
+    return 0;
+}
+
+int APS5_VABI sceNpXmlParseInit(void* context, void* arg2, void* arg3, void* arg4) {
+    if (context == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    auto* parser = static_cast<char*>(context);
+    std::memset(parser + 8, 0, 0x248);
+    *reinterpret_cast<void**>(parser) = arg2;
+    *reinterpret_cast<void**>(parser + 0x250) = arg3;
+    *reinterpret_cast<void**>(parser + 0x258) = arg4;
     return 0;
 }
 

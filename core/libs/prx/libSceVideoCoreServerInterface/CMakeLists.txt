@@ -15,4 +15,13 @@ if(BUILD_TESTING)
         set_tests_properties(guest_video_core_server_interface PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVideoCoreServerInterface>")
     endif()
+    add_test_executable(guest_video_core_unavailable_tests ${LIBS_INCLUDE_DIR}/tests/GuestVideoCoreUnavailable.cpp)
+    target_include_directories(guest_video_core_unavailable_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_video_core_unavailable_tests PRIVATE libSceVideoCoreServerInterface libc)
+    configure_windows_unwind(guest_video_core_unavailable_tests)
+    add_test(NAME guest_video_core_unavailable COMMAND guest_video_core_unavailable_tests)
+    if(WIN32)
+        set_tests_properties(guest_video_core_unavailable PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVideoCoreServerInterface>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 endif()

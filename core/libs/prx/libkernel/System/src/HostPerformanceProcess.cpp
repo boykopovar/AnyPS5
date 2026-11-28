@@ -2,6 +2,8 @@
 #include "prx/libc/include/Shutdown.hpp"
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -35,8 +37,18 @@ struct ProcessSession {
 
 ProcessSession* process = nullptr;
 
+std::mutex& ProcessMutex() {
+    static auto* mutex = new std::mutex();
+    return *mutex;
+}
+
 void StopProcessSession() {
-    if (process != nullptr) process->Held.Stop();
+    ProcessSession* active = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(ProcessMutex());
+        active = process;
+    }
+    if (active != nullptr) active->Held.Stop();
 }
 
 }
@@ -52,10 +64,20 @@ std::unique_ptr<IBackend> CreateHostBackend() {
 }
 
 Session* StartProcessSession(Mode mode, std::unique_ptr<IBackend> backend) {
+    std::lock_guard<std::mutex> lock(ProcessMutex());
     if (process != nullptr) throw std::logic_error("host performance: the process session already exists");
     if (mode == Mode::Off) return nullptr;
-    process = new ProcessSession(mode, std::move(backend));
-    if (process->Held.Start() == State::Active) LibcRegisterShutdown_nid_postfix(StopProcessSession);
+    if (backend == nullptr) throw std::invalid_argument("host performance: backend is null");
+    auto candidate = std::make_unique<ProcessSession>(mode, std::move(backend));
+    if (candidate->Held.Start() == State::Active) {
+        try {
+            LibcRegisterShutdown_nid_postfix(StopProcessSession);
+        } catch (...) {
+            candidate->Held.Stop();
+            throw;
+        }
+    }
+    process = candidate.release();
     return &process->Held;
 }
 

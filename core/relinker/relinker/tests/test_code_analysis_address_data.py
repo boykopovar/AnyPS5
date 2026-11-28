@@ -21,6 +21,11 @@ GS_LOOKALIKE = bytes.fromhex("65 48 8b 00 11 22 33 44 c3")
 UNDECODABLE = bytes.fromhex("0f 78 33 1e 77 0f 0f 3c")
 GS_CALLBACK = bytes.fromhex("65 48 8b 00 c3")
 GS_TRAP = bytes.fromhex("0f 0b 90 90")
+STRINGS = TEXT + 0x60
+OPTION_STRINGS = b"rc4(8x,int)\0rc4(8x,char)\0rc4(16x,int)\0RC4 for x86_64, CRYPTOGAMS by <https://github.com/dot-asm>\0"
+SEGMENT_END = TEXT + 0x100 - 4
+NEXT_TEXT_OFFSET = 0xB00
+PORT_IO = bytes.fromhex("ec c3")
 
 
 def unwind(image, functions):
@@ -53,6 +58,10 @@ def callback_in_rbx(following):
     return b"\x48\x8d\x1d" + struct.pack("<i", CALLBACK - (FIRST + 7)) + following
 
 
+def returned(target):
+    return bytes.fromhex("48 8d 05") + struct.pack("<i", target - (FIRST + 7)) + bytes.fromhex("c3")
+
+
 def tested_table():
     return b"\x48\x8d\x2d" + struct.pack("<i", TABLE - (FIRST + 7)) + bytes.fromhex("48 85 ed 74 03 8b 45 00 c3")
 
@@ -64,11 +73,15 @@ CALLBACK_USES = (
 )
 
 
-def module(table, first=None):
+def module(table, first=None, strings=b"", edge=b"", next_segment=b""):
     first = first or first_function()
     image = guest_fixture(b"")
-    image.extend(bytes(0x100))
-    struct.pack_into("<H", image, 56, 5)
+    image.extend(bytes(0x100 + len(next_segment)))
+    struct.pack_into("<H", image, 56, 6 if next_segment else 5)
+    if next_segment:
+        struct.pack_into("<IIQQQQQQ", image, 64 + 5 * 56, PT_LOAD, 5, NEXT_TEXT_OFFSET, TEXT + 0x100, TEXT + 0x100,
+                         len(next_segment), len(next_segment), 0x100)
+        image[NEXT_TEXT_OFFSET:NEXT_TEXT_OFFSET + len(next_segment)] = next_segment
     header_size = unwind(image, [(FIRST, 0x18), (SECOND, 0x8)])
     struct.pack_into("<IIQQQQQQ", image, 64 + 3 * 56, PT_LOAD, 4, UNWIND_OFFSET, UNWIND, UNWIND, 0x100, 0x100, 0x100)
     struct.pack_into("<IIQQQQQQ", image, 64 + 4 * 56, PT_GNU_EH_FRAME, 4, UNWIND_OFFSET, UNWIND, UNWIND, header_size, header_size, 4)
@@ -77,6 +90,8 @@ def module(table, first=None):
     text[FIRST - TEXT:FIRST - TEXT + len(first)] = first
     text[TABLE - TEXT:TABLE - TEXT + len(table)] = table
     text[CALLBACK - TEXT:CALLBACK - TEXT + len(GS_CALLBACK)] = GS_CALLBACK
+    text[STRINGS - TEXT:STRINGS - TEXT + len(strings)] = strings
+    text[SEGMENT_END - TEXT:SEGMENT_END - TEXT + len(edge)] = edge
     text[SECOND - TEXT] = 0xC3
     return image
 
@@ -93,7 +108,7 @@ def convert(relinker, work, name, image, flags, first=None):
     output = converted.read_bytes()
     start = output.find(first or first_function())
     assert start >= 0, name
-    return output[start:start + SECOND - FIRST]
+    return output[start:start + TEXT + 0x100 - FIRST]
 
 
 def main():
@@ -108,6 +123,13 @@ def main():
             assert code[TABLE - FIRST:TABLE - FIRST + len(UNDECODABLE)] == UNDECODABLE, (system, code.hex())
             code = convert(relinker, work, "table-tested-before-read-" + system, module(GS_LOOKALIKE, tested_table()), flags, tested_table())
             assert code[TABLE - FIRST:TABLE - FIRST + len(GS_LOOKALIKE)] == GS_LOOKALIKE, (system, code.hex())
+            code = convert(relinker, work, "strings-returned-" + system, module(b"", returned(STRINGS), OPTION_STRINGS), flags, returned(STRINGS))
+            assert code[STRINGS - FIRST:STRINGS - FIRST + len(OPTION_STRINGS)] == OPTION_STRINGS, (system, code.hex())
+            code = convert(relinker, work, "callback-returned-" + system, module(b"", returned(CALLBACK)), flags, returned(CALLBACK))
+            assert code[CALLBACK - FIRST:CALLBACK - FIRST + len(GS_TRAP)] == GS_TRAP, (system, code.hex())
+            code = convert(relinker, work, "callback-before-next-segment-" + system,
+                           module(b"", returned(SEGMENT_END), edge=GS_CALLBACK[:4], next_segment=PORT_IO), flags, returned(SEGMENT_END))
+            assert code[SEGMENT_END - FIRST:SEGMENT_END - FIRST + len(GS_TRAP)] == GS_TRAP, (system, code.hex())
             for name, first in CALLBACK_USES:
                 code = convert(relinker, work, name + "-" + system, module(b"", first), flags, first)
                 assert code[CALLBACK - FIRST:CALLBACK - FIRST + len(GS_TRAP)] == GS_TRAP, (name, system, code.hex())

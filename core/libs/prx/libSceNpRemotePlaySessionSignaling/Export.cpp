@@ -118,20 +118,20 @@ int APS5_VABI sceNpRemotePlaySessionSignalingTerminate(void) {
     return sceNpSessionSignalingTerminate();
 }
 
-int APS5_VABI sceNpRemotePlaySessionSignalingAbortConnection() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpRemotePlaySessionSignalingAbortConnection(std::uint32_t contextId) {
+    return sceNpSessionSignalingManualUdpAbortConnection(contextId);
 }
 
-int APS5_VABI sceNpRemotePlaySessionSignalingEstablishConnection() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpRemotePlaySessionSignalingEstablishConnection(std::uint32_t contextId, std::uint32_t value) {
+    return sceNpSessionSignalingManualUdpEstablishConnection(contextId, value);
 }
 
-int APS5_VABI sceNpRemotePlaySessionSignalingManualUdpCreateJoinSession() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpRemotePlaySessionSignalingManualUdpCreateJoinSession(const void* param, std::uint32_t* id, std::uint32_t* extra) {
+    return sceNpSessionSignalingManualUdpCreateJoin(param, id, extra);
 }
 
-int APS5_VABI sceNpRemotePlaySessionSignalingManualUdpJoinSession() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpRemotePlaySessionSignalingManualUdpJoinSession(const void* param, const char* name, std::uint32_t* id, std::uint32_t* extra) {
+    return sceNpSessionSignalingManualUdpJoin(param, name, id, extra);
 }
 
 }

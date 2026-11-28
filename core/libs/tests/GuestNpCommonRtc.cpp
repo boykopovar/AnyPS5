@@ -7,6 +7,11 @@
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 static void Require(bool value, int line) {
     if (value) return;
@@ -41,6 +46,25 @@ int main() {
     CHECK(sceNpRtcFormatRFC3339(text, sizeof(text), &epoch, 0) == 0 && std::strcmp(text, "1970-01-01T00:00:00.00Z") == 0);
     CHECK(sceNpRtcFormatRFC3339(text, sizeof(text), &epoch, 90) == 0 && std::strcmp(text, "1970-01-01T01:30:00.00+01:30") == 0);
     CHECK(sceNpRtcFormatRFC3339(text, sizeof(text), &epoch, -300) == 0 && std::strcmp(text, "1969-12-31T19:00:00.00-05:00") == 0);
+    {
+        constexpr std::size_t page = 0x10000;
+#ifdef _WIN32
+        auto* pages = static_cast<char*>(VirtualAlloc(nullptr, 2 * page, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+        DWORD previous = 0;
+        CHECK(pages != nullptr && VirtualProtect(pages + page, page, PAGE_READONLY, &previous) != 0);
+#else
+        auto* pages = static_cast<char*>(mmap(nullptr, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        CHECK(pages != MAP_FAILED && mprotect(pages + page, page, PROT_READ) == 0);
+#endif
+        constexpr int invalidPointer = static_cast<int>(0x80B50002u);
+        errno = 71;
+        CHECK(sceNpRtcFormatRFC3339(pages, page + 0x80, &epoch, 0) == invalidPointer && errno == 71 && std::strcmp(pages, "1970-01-01T00:00:00.00Z") == 0);
+#ifdef _WIN32
+        VirtualFree(pages, 0, MEM_RELEASE);
+#else
+        munmap(pages, 2 * page);
+#endif
+    }
 
     NpTime now{0};
     CHECK(_ZN3sce2np4Time12GetUserClockEPS1_(&now) == 0 && now.tick > unixEpochTick);

@@ -134,10 +134,17 @@ static_assert(offsetof(VPCodecConfigurationRecord, videoFullRangeFlag) == 12);
 static_assert(offsetof(VPCodecConfigurationRecord, colorPrimaries) == 13);
 static_assert(offsetof(VPCodecConfigurationRecord, transferCharacteristics) == 14);
 static_assert(offsetof(VPCodecConfigurationRecord, matrixCoefficients) == 15);
-static_assert(sizeof(std::optional<VPCodecConfigurationRecord>) == 24);
-static_assert(alignof(std::optional<VPCodecConfigurationRecord>) == 8);
-static_assert(!std::is_trivially_destructible_v<std::optional<VPCodecConfigurationRecord>>);
+struct LegacyOptionalVPCodecConfigurationRecord {
+    bool engaged { false };
+    VPCodecConfigurationRecord value;
+};
+
+static_assert(sizeof(LegacyOptionalVPCodecConfigurationRecord) == 24);
+static_assert(alignof(LegacyOptionalVPCodecConfigurationRecord) == 8);
+static_assert(offsetof(LegacyOptionalVPCodecConfigurationRecord, engaged) == 0);
+static_assert(offsetof(LegacyOptionalVPCodecConfigurationRecord, value) == 8);
+static_assert(!std::is_trivially_destructible_v<LegacyOptionalVPCodecConfigurationRecord>);
 
 }  // namespace WebCore
 
-extern "C" std::optional<WebCore::VPCodecConfigurationRecord> APS5_VABI _ZN7WebCore22parseVPCodecParametersEN3WTF10StringViewE(NKWebKit::WtfAbi::StringView input);
+extern "C" WebCore::LegacyOptionalVPCodecConfigurationRecord APS5_VABI _ZN7WebCore22parseVPCodecParametersEN3WTF10StringViewE(NKWebKit::WtfAbi::StringView input);

@@ -1,0 +1,15 @@
+add_library(libSceRnpsAppMgr SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceRnpsAppMgr PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceRnpsAppMgr)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_rnps_app_mgr_tests ${LIBS_INCLUDE_DIR}/tests/GuestRnpsAppMgr.cpp)
+    target_include_directories(guest_rnps_app_mgr_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_rnps_app_mgr_tests PRIVATE libSceRnpsAppMgr libc)
+    configure_windows_unwind(guest_rnps_app_mgr_tests)
+    add_test(NAME guest_rnps_app_mgr COMMAND guest_rnps_app_mgr_tests)
+    if(WIN32)
+        set_tests_properties(guest_rnps_app_mgr PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceRnpsAppMgr>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

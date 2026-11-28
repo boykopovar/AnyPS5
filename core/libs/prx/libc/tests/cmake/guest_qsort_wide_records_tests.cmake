@@ -1,0 +1,12 @@
+if(BUILD_TESTING)
+    add_test_executable(guest_qsort_wide_records_tests ${LIBS_INCLUDE_DIR}/tests/GuestQsortWideRecords.cpp)
+    target_include_directories(guest_qsort_wide_records_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_qsort_wide_records_tests PRIVATE libc)
+    configure_windows_unwind(guest_qsort_wide_records_tests)
+    add_test(NAME guest_qsort_wide_records COMMAND guest_qsort_wide_records_tests)
+    set_tests_properties(guest_qsort_wide_records PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_qsort_wide_records PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
