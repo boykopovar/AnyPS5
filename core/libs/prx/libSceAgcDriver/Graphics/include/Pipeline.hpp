@@ -11,6 +11,11 @@ struct VertexInputLayout;
 class CommandState;
 
 void LogPipelineStatistics_nid_no_patch(const Context& context, VkPipeline pipeline, std::span<const CompiledShader> shaders = {});
+[[nodiscard]] bool PipelineBuildStartLogging();
+[[nodiscard]] std::string PipelineBuildStartLine(std::uint64_t thread, std::string_view kind, std::span<const CompiledShader> shaders);
+[[nodiscard]] std::string ComputePipelineBuildStartLine(std::uint64_t thread, const ShaderRecompiler::RecompileResult& shader);
+void LogPipelineBuildStart(std::string_view kind, std::span<const CompiledShader> shaders);
+void LogComputePipelineBuildStart(const ShaderRecompiler::RecompileResult& shader);
 
 // The attachments of one render pass instance. Work recorded with it references the handle until
 // the batch completes, so a recorded draw keeps the object (Recorder::Keep) like its pipeline.
