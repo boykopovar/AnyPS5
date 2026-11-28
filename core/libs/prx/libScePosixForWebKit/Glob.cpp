@@ -115,10 +115,13 @@ void Expand(Walk& walk, const std::string& prefix, std::size_t index);
 
 void Finish(Walk& walk, const std::string& path) {
     if (path.empty()) return;
-    FileStat entry{};
-    if (lstat_nid_postfix(path.c_str(), &entry) != 0) return;
     FileStat status{};
-    const bool directory = stat_nid_postfix(path.c_str(), &status) == 0 && IsDirectory(status);
+    const bool resolved = stat_nid_postfix(path.c_str(), &status) == 0;
+    if (!resolved) {
+        FileStat link{};
+        if (lstat_nid_postfix(path.c_str(), &link) != 0) return;
+    }
+    const bool directory = resolved && IsDirectory(status);
     if (walk.dirOnly && !directory) return;
     if (walk.mark && directory) {
         walk.matches.push_back(path.back() == '/' ? path : path + "/");
