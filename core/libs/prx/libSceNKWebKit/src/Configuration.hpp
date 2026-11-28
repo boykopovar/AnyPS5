@@ -98,6 +98,9 @@ public:
     bool allowsRemoteInspection = false;
     Retained<URL> pendingAPIRequestURL;
     Retained<PageConfiguration> configuration;
+    Retained<URL> loadedFileURL;
+    Retained<URL> allowedDirectoryURL;
+    const void* loadUserData = nullptr;
 };
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {
 public:
