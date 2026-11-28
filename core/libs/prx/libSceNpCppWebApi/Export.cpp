@@ -1,7 +1,9 @@
 #include "prx/libSceNpCppWebApi/include/Api.hpp"
+#include "prx/libSceNpCppWebApi/include/Internal.hpp"
 #include <atomic>
 #include <array>
 #include <cerrno>
+#include <condition_variable>
 #include <limits>
 #include <cstdint>
 #include <cstddef>
@@ -15,8 +17,11 @@
 #include <string>
 #include <unordered_set>
 #include <unordered_map>
+#include <vector>
 #include "SceTypes.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel/include/Api.hpp"
 
 template <typename T>
 static int SetSessionScalar(void* self, std::size_t offset, const T* value, const char* function) {
@@ -45,6 +50,11 @@ static constexpr std::size_t ReferenceCountOffset = 0;
 static constexpr std::size_t VectorReferenceCountOffset = 0x30;
 static constexpr std::uint64_t VectorBodyMagic = 0x434e507056656342ULL;
 static constexpr int TransactionNotStarted = static_cast<int>(0x80553508);
+static constexpr int LibContextInvalidArgument = static_cast<int>(0x80553503);
+static constexpr int LibContextOutOfMemory = static_cast<int>(0x80553504);
+static constexpr int LibContextNotInitialized = static_cast<int>(0x80553502);
+static constexpr int LibContextAlreadyInitialized = static_cast<int>(0x80553511);
+static constexpr int LibContextUnsupported = static_cast<int>(0x80553519);
 
 // Offline PSN: request entry points (API calls, transaction start/readData, factories) fail with
 // SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN, the constant shadPS4/fpPS4 document for this code; parameter
@@ -263,7 +273,8 @@ static void* HostVectorEnd(void* out, const void* self, const std::int32_t eleme
 static void* HostIteratorAdvance(void* self, const std::size_t elementSize);
 static bool HostIteratorNotEqual(const void* self, const void* other);
 static std::uint64_t HostVectorSize(const void* self, const std::size_t elementSize, const char* function);
-static void ReleaseIntrusivePtr(IntrusivePtr* self, const std::size_t referenceCountOffset, const char* function);
+using IntrusivePtrDestroy = void (APS5_VABI*)(void*);
+static void ReleaseIntrusivePtr(IntrusivePtr* self, const std::size_t referenceCountOffset, const char* function, IntrusivePtrDestroy destroy = nullptr);
 static void* CopyMemberIntrusivePtr(void* out, const void* self, const std::size_t memberOffset, const std::size_t referenceCountOffset);
 static void* CopyOnlineId(void* out, const void* self, const std::size_t memberOffset);
 
@@ -1146,6 +1157,147 @@ int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDow
     return 0;
 }
 
+// The module keeps the mspace behind a LibContext, which is a single pointer to a
+// per-context arena. Objects allocated by the library are released through that arena.
+struct LibContextState {
+    std::uint64_t magic;
+    void* mspace;
+    void* mapping;
+    std::uint64_t mappingSize;
+    void* context;
+    std::uint32_t operations;
+    bool terminated;
+    bool released;
+    bool destroyed;
+};
+
+static constexpr std::uint64_t LibContextMagic = 0x4e50434c49424354ULL;
+static std::mutex g_libContextGuard;
+static std::condition_variable_any g_libContextDestroyed;
+static std::vector<LibContextState*> g_libContextStates;
+static std::vector<std::unique_ptr<LibContextState>> g_libContextOwned;
+
+static void ReleaseLibContextArena(LibContextState* state) {
+    if (state == nullptr) return;
+    void* mspace = state->mspace;
+    void* mapping = state->mapping;
+    const std::uint64_t mappingSize = state->mappingSize;
+    state->mspace = nullptr;
+    state->mapping = nullptr;
+    state->mappingSize = 0;
+    if (mspace != nullptr) sceLibcMspaceDestroy_nid_postfix(mspace);
+    if (mapping != nullptr && mappingSize != 0) {
+        sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), static_cast<std::size_t>(mappingSize));
+    }
+}
+
+static LibContextState* FindLibContextLocked(void* libContext) {
+    if (libContext == nullptr) return nullptr;
+    void* stored = nullptr;
+    std::memcpy(&stored, libContext, sizeof(stored));
+    for (LibContextState* state : g_libContextStates) {
+        if (state->magic != LibContextMagic || state->context != libContext) continue;
+        if (state->terminated || state == stored) return state;
+    }
+    return nullptr;
+}
+
+static LibContextState* AcquireLibContextLocked(void* libContext) {
+    LibContextState* state = FindLibContextLocked(libContext);
+    if (state != nullptr) ++state->operations;
+    return state;
+}
+
+static LibContextState* AcquireLibContext(void* libContext) {
+    std::lock_guard<std::mutex> lock(g_libContextGuard);
+    return AcquireLibContextLocked(libContext);
+}
+
+static LibContextState* AcquireWritableLibContext(void* libContext) {
+    std::lock_guard<std::mutex> lock(g_libContextGuard);
+    LibContextState* state = FindLibContextLocked(libContext);
+    if (state == nullptr || state->terminated || state->destroyed) return nullptr;
+    ++state->operations;
+    return state;
+}
+
+static void ReleaseLibContext(LibContextState* state) {
+    std::lock_guard<std::mutex> lock(g_libContextGuard);
+    --state->operations;
+    if (state->operations == 0 && state->released && !state->destroyed) {
+        state->destroyed = true;
+        ReleaseLibContextArena(state);
+        g_libContextDestroyed.notify_all();
+    }
+}
+
+static void DetachLibContextLocked(LibContextState* state) {
+    for (auto it = g_libContextStates.begin(); it != g_libContextStates.end(); ++it) {
+        if (*it == state) {
+            g_libContextStates.erase(it);
+            return;
+        }
+    }
+}
+
+static void* LibContextAllocate(void* libContext, const std::size_t size) {
+    if (libContext == nullptr) return std::malloc(size);
+    LibContextState* state = AcquireWritableLibContext(libContext);
+    if (state == nullptr) throw std::runtime_error("libSceNpCppWebApi allocates through an uninitialized or terminated LibContext");
+    void* block = sceLibcMspaceMalloc_nid_postfix(state->mspace, size);
+    ReleaseLibContext(state);
+    return block;
+}
+
+static void* LibContextReallocate(void* libContext, void* object, const std::size_t size) {
+    if (libContext == nullptr) return std::realloc(object, size);
+    LibContextState* state = AcquireWritableLibContext(libContext);
+    if (state == nullptr) throw std::runtime_error("libSceNpCppWebApi reallocates through an uninitialized or terminated LibContext");
+    void* block = sceLibcMspaceRealloc_nid_postfix(state->mspace, object, size);
+    ReleaseLibContext(state);
+    return block;
+}
+
+static void LibContextDeallocate(void* libContext, void* object) {
+    if (object == nullptr) return;
+    if (libContext == nullptr) {
+        std::free(object);
+        return;
+    }
+    LibContextState* state = AcquireLibContext(libContext);
+    if (state == nullptr) return;
+    sceLibcMspaceFree_nid_postfix(state->mspace, object);
+    ReleaseLibContext(state);
+}
+
+static bool LibContextMspace(void* libContext, void** mspace) {
+    std::lock_guard<std::mutex> lock(g_libContextGuard);
+    LibContextState* state = FindLibContextLocked(libContext);
+    if (state == nullptr) return false;
+    *mspace = state->mspace;
+    return true;
+}
+
+void* NpCppWebApiContextAllocate(void* libContext, std::size_t size) {
+    return LibContextAllocate(libContext, size);
+}
+
+void NpCppWebApiContextDeallocate(void* libContext, void* object) {
+    LibContextDeallocate(libContext, object);
+}
+
+void* NpCppWebApiContextMspace(void* libContext) {
+    void* mspace = nullptr;
+    return LibContextMspace(libContext, &mspace) ? mspace : nullptr;
+}
+
+void* NpCppWebApiContextReference(void* libContext) {
+    return AcquireLibContext(libContext);
+}
+
+void NpCppWebApiContextDereference(void* reference) {
+    if (reference != nullptr) ReleaseLibContext(static_cast<LibContextState*>(reference));
+}
 int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V129SetDataInfoRequestBodyFactory6createEPNS1_6Common10LibContextEPvmPNS5_12IntrusivePtrINS3_22SetDataInfoRequestBodyEEE(void* self) {
     (void)self;
     return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
@@ -1316,7 +1468,14 @@ bool APS5_VABI _ZNK3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi25UploadDataRe
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common10InitParamsC1Ev(void* self) {
-    (void)self;
+    auto* bytes = static_cast<std::uint8_t*>(self);
+    std::memset(bytes, 0, 0x10);
+    const std::int32_t value = 0x2bc;
+    std::memcpy(bytes + 0x10, &value, sizeof(value));
+    const std::uint64_t storage = 0x8000;
+    std::memcpy(bytes + 0x18, &storage, sizeof(storage));
+    const std::int32_t arenaSize = 0x80000;
+    std::memcpy(bytes + 0x20, &arenaSize, sizeof(arenaSize));
     return 0;
 }
 
@@ -1330,10 +1489,58 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common10LibContextC1Ev(uint64_t* self) {
     return 0;
 }
 
-// Initialization succeeds as on an offline console (see libSceJson2); individual requests fail.
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common10initializeERKNS2_10InitParamsERNS2_10LibContextE(const void* params, uint64_t* context) {
-    (void)params;
-    if (context) *context = 1;
+    if (context == nullptr) return LibContextInvalidArgument;
+    std::unique_lock<std::mutex> lock(g_libContextGuard);
+    LibContextState* existing = FindLibContextLocked(context);
+    if (existing != nullptr && !existing->terminated) return LibContextAlreadyInitialized;
+    if (params == nullptr) return LibContextInvalidArgument;
+    if (existing != nullptr) {
+        DetachLibContextLocked(existing);
+        existing->released = true;
+        if (existing->operations == 0) {
+            existing->destroyed = true;
+            ReleaseLibContextArena(existing);
+        } else {
+            g_libContextDestroyed.wait(lock, [existing] { return existing->destroyed; });
+        }
+    }
+
+    std::uint64_t mode = 0;
+    std::int32_t arenaSize = 0x80000;
+    std::memcpy(&mode, params, sizeof(mode));
+    std::memcpy(&arenaSize, static_cast<const std::uint8_t*>(params) + 0x20, sizeof(arenaSize));
+    if (mode > 1) return LibContextUnsupported;
+    if (arenaSize <= 0) return LibContextOutOfMemory;
+
+    auto owned = std::make_unique<LibContextState>();
+    constexpr const char* Name = "SceNpCppCallbackWorker";
+    void* mapping = nullptr;
+    const int mapResult = sceKernelMapNamedFlexibleMemory(
+        &mapping, static_cast<std::size_t>(arenaSize), 2, 0, Name);
+    if (mapResult < 0) return mapResult;
+
+    void* mspace = sceLibcMspaceCreate_nid_postfix(Name, mapping, static_cast<std::size_t>(arenaSize), 0);
+    if (mspace == nullptr) {
+        sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), static_cast<std::size_t>(arenaSize));
+        return LibContextOutOfMemory;
+    }
+
+    LibContextState* state = owned.get();
+    state->magic = LibContextMagic;
+    state->mspace = mspace;
+    state->mapping = mapping;
+    state->mappingSize = static_cast<std::uint64_t>(arenaSize);
+    state->context = context;
+    try {
+        g_libContextOwned.push_back(std::move(owned));
+        g_libContextStates.push_back(state);
+    } catch (...) {
+        state->destroyed = true;
+        ReleaseLibContextArena(state);
+        throw;
+    }
+    *context = reinterpret_cast<std::uint64_t>(state);
     return 0;
 }
 
@@ -1369,6 +1576,9 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_12
 
 static_assert(sizeof(IntrusivePtr) == 0x18);
 
+
+static void APS5_VABI DestroyString(void* object);
+static void APS5_VABI DestroyVectorBody(void* object);
 static std::atomic_ref<std::int32_t> ReferenceCount(void* object, const std::size_t offset) {
     return std::atomic_ref<std::int32_t>(*reinterpret_cast<std::int32_t*>(static_cast<std::uint8_t*>(object) + offset));
 }
@@ -1454,19 +1664,32 @@ static void CopyIntrusivePtr(IntrusivePtr* self, const IntrusivePtr* source, con
     if (self->object) ReferenceCount(self->object, IntrusiveReferenceOffset(self, referenceCountOffset)).fetch_add(1);
 }
 
-static void ReleaseIntrusivePtr(IntrusivePtr* self, const std::size_t referenceCountOffset, const char* function) {
+static void ReleaseIntrusivePtr(IntrusivePtr* self, const std::size_t referenceCountOffset,
+                                const char* function, IntrusivePtrDestroy destroy) {
+    (void)function;
     if (VectorReferenceOffset(referenceCountOffset)) ForgetVectorHandle(self);
     if (!self->object) return;
     if (ReferenceCount(self->object, IntrusiveReferenceOffset(self, referenceCountOffset)).fetch_sub(1) != 1) return;
-    if (!self->deleter) NotImplemented_nid_no_patch(function);
-    self->deleter(self->object);
+    if (self->deleter != nullptr) {
+        self->deleter(self->object);
+    } else if (TaggedVectorObject(self->object)) {
+        DestroyVectorBody(self->object);
+    } else {
+        LibContextState* state = AcquireLibContext(self->libContext);
+        if (state != nullptr) {
+            if (destroy != nullptr) destroy(self->object);
+            sceLibcMspaceFree_nid_postfix(state->mspace, self->object);
+            ReleaseLibContext(state);
+        }
+    }
     self->object = nullptr;
     self->deleter = nullptr;
 }
 
-static void AssignIntrusivePtr(IntrusivePtr* self, const IntrusivePtr* source, const std::size_t referenceCountOffset, const char* function) {
+static void AssignIntrusivePtr(IntrusivePtr* self, const IntrusivePtr* source, const std::size_t referenceCountOffset,
+                               const char* function, IntrusivePtrDestroy destroy = nullptr) {
     if (self->object == source->object) return;
-    ReleaseIntrusivePtr(self, referenceCountOffset, function);
+    ReleaseIntrusivePtr(self, referenceCountOffset, function, destroy);
     CopyIntrusivePtr(self, source, referenceCountOffset);
 }
 
@@ -1636,7 +1859,118 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common21DownStreamTransactionINS2_12Intrusive
 static_assert(sizeof(CommonString) == 0x20 && offsetof(CommonString, buffer) == 0x08);
 static_assert(offsetof(CommonString, bufferSize) == 0x10 && offsetof(CommonString, libContext) == 0x18);
 
+static constexpr int StringInvalidArgument = static_cast<int>(0x80553503);
+static constexpr int StringOutOfMemory = static_cast<int>(0x80553504);
 
+static void ResetString(CommonString* self) {
+    LibContextDeallocate(self->libContext, self->buffer);
+    self->buffer = nullptr;
+    self->bufferSize = 0;
+}
+
+static void APS5_VABI DestroyString(void* object) {
+    ResetString(static_cast<CommonString*>(object));
+}
+
+
+static int AssignString(CommonString* self, const char* text) {
+    if (text == nullptr) return StringInvalidArgument;
+    const std::size_t length = std::strlen(text) + 1;
+    char* buffer = static_cast<char*>(LibContextAllocate(self->libContext, length));
+    if (buffer == nullptr) return StringOutOfMemory;
+    std::memcpy(buffer, text, length);
+    LibContextDeallocate(self->libContext, self->buffer);
+    self->buffer = buffer;
+    self->bufferSize = length;
+    return 0;
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(CommonString* self, void* libContext) {
+    self->referenceCount = 0;
+    self->buffer = nullptr;
+    self->bufferSize = 0;
+    self->libContext = libContext;
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common6StringC1Ev(CommonString* self) {
+    _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(self, nullptr);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common6StringD1Ev(CommonString* self) {
+    ResetString(self);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common6StringD2Ev(CommonString* self) {
+    ResetString(self);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi6Common6String8copyFromEPKc(CommonString* self, const char* text) {
+    return AssignString(self, text);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi6Common6String8copyFromERKS3_(CommonString* self, const CommonString* source) {
+    void* const previousContext = self->libContext;
+    void* const allocationContext = previousContext != nullptr ? previousContext : source->libContext;
+    if (source->bufferSize == 0) {
+        ResetString(self);
+        self->libContext = allocationContext;
+        return 0;
+    }
+    if (source->buffer == nullptr) return StringInvalidArgument;
+    char* buffer = static_cast<char*>(LibContextAllocate(allocationContext, source->bufferSize));
+    if (buffer == nullptr) return StringOutOfMemory;
+    std::memcpy(buffer, source->buffer, source->bufferSize);
+    LibContextDeallocate(previousContext, self->buffer);
+    self->buffer = buffer;
+    self->bufferSize = source->bufferSize;
+    self->libContext = allocationContext;
+    return 0;
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common6String5clearEv(CommonString* self) {
+    ResetString(self);
+}
+
+std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6String4sizeEv(const CommonString* self) {
+    return self->buffer != nullptr ? static_cast<std::uint64_t>(std::strlen(self->buffer)) : 0;
+}
+
+std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6String6lengthEv(const CommonString* self) {
+    return self->buffer != nullptr ? static_cast<std::uint64_t>(std::strlen(self->buffer)) : 0;
+}
+
+bool APS5_VABI _ZN3sce2Np9CppWebApi6Common6StringeqERKS3_(const CommonString* self, const CommonString* other) {
+    const char* left = self->buffer != nullptr ? self->buffer : "";
+    const char* right = other->buffer != nullptr ? other->buffer : "";
+    return std::strncmp(left, right, std::strlen(left) + 1) == 0;
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common6String10setContextEPNS2_10LibContextE(CommonString* self, void* libContext) {
+    if (self->buffer == nullptr || self->libContext == libContext) {
+        self->libContext = libContext;
+        return;
+    }
+    if (self->bufferSize == 0) {
+        LibContextDeallocate(self->libContext, self->buffer);
+        self->buffer = nullptr;
+        self->libContext = libContext;
+        return;
+    }
+    char* migrated = static_cast<char*>(LibContextAllocate(libContext, self->bufferSize));
+    if (migrated == nullptr) throw std::bad_alloc();
+    std::memcpy(migrated, self->buffer, self->bufferSize);
+    LibContextDeallocate(self->libContext, self->buffer);
+    self->buffer = migrated;
+    self->libContext = libContext;
+}
+
+std::int32_t APS5_VABI _ZN3sce2Np9CppWebApi6Common6String21intrusive_ptr_add_refEPS3_(CommonString* self) {
+    return std::atomic_ref<std::int32_t>(self->referenceCount).fetch_add(1) + 1;
+}
+
+std::int32_t APS5_VABI _ZN3sce2Np9CppWebApi6Common6String21intrusive_ptr_sub_refEPS3_(CommonString* self) {
+    return std::atomic_ref<std::int32_t>(self->referenceCount).fetch_sub(1);
+}
 
 void* APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_12Leaderboards2V15EntryEEEE3endEv(void* out, void* self) {
     return HostVectorEnd(out, self, 1, sizeof(IntrusivePtr), __func__);
@@ -1651,6 +1985,11 @@ void* APS5_VABI _ZN3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_12Le
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common9terminateERNS2_10LibContextE(uint64_t* context) {
+    if (context == nullptr) return LibContextNotInitialized;
+    std::lock_guard<std::mutex> lock(g_libContextGuard);
+    LibContextState* state = FindLibContextLocked(context);
+    if (state == nullptr || state->terminated) return LibContextNotInitialized;
+    state->terminated = true;
     *context = 0;
     return 0;
 }
@@ -1975,12 +2314,12 @@ static void APS5_VABI DestroyVectorBody(void* object) {
     } else if (body->elementKind == 2) {
         auto* elements = static_cast<CommonString*>(body->elements);
         for (std::uint64_t index = 0; index < body->size; ++index) {
-            std::free(elements[index].buffer);
+            ResetString(&elements[index]);
         }
     }
-    std::free(body->elements);
+    LibContextDeallocate(body->libContext, body->elements);
     ForgetVectorObject(body);
-    std::free(body);
+    LibContextDeallocate(body->libContext, body);
 }
 
 static VectorBody* VectorBodyFor(IntrusivePtr* self, const std::int32_t elementKind, const char* function) {
@@ -1994,11 +2333,11 @@ static VectorBody* VectorBodyFor(IntrusivePtr* self, const std::int32_t elementK
     }
     auto* body = static_cast<VectorBody*>(self->object);
     if (body == nullptr) {
-        std::unique_ptr<VectorBody, decltype(&std::free)> allocation(
-            static_cast<VectorBody*>(std::calloc(1, sizeof(VectorBody))), &std::free);
-        if (allocation == nullptr) return nullptr;
-        body = allocation.get();
+        body = static_cast<VectorBody*>(LibContextAllocate(self->libContext, sizeof(VectorBody)));
+        if (body == nullptr) return nullptr;
+        std::memset(body, 0, sizeof(VectorBody));
         body->magic = VectorBodyMagic;
+        body->libContext = self->libContext;
         body->referenceCount = 1;
         body->elementKind = elementKind;
         body->libContext = self->libContext;
@@ -2009,13 +2348,14 @@ static VectorBody* VectorBodyFor(IntrusivePtr* self, const std::int32_t elementK
         } catch (const std::bad_alloc&) {
             self->object = nullptr;
             self->deleter = nullptr;
+            LibContextDeallocate(body->libContext, body);
             return nullptr;
         } catch (...) {
             self->object = nullptr;
             self->deleter = nullptr;
+            LibContextDeallocate(body->libContext, body);
             throw;
         }
-        allocation.release();
         return body;
     }
     if (self->deleter == &DestroyVectorBody) {
@@ -2035,7 +2375,8 @@ static VectorBody* VectorBodyFor(IntrusivePtr* self, const std::int32_t elementK
 static bool VectorGrow(VectorBody* body, const std::size_t elementSize) {
     if (body->size < body->capacity) return true;
     const std::uint64_t capacity = body->capacity != 0 ? body->capacity * 2 : 4;
-    void* elements = std::realloc(body->elements, static_cast<std::size_t>(capacity) * elementSize);
+    void* elements = LibContextReallocate(body->libContext, body->elements,
+                                          static_cast<std::size_t>(capacity) * elementSize);
     if (elements == nullptr) return false;
     body->elements = elements;
     body->capacity = capacity;
@@ -2072,9 +2413,9 @@ static IntrusivePtr* HostVectorElement(void* self, const std::uint64_t index, co
 
 static int VectorPushBackIntrusivePtr(IntrusivePtr* self, const IntrusivePtr* element) {
     VectorBody* body = VectorBodyFor(self, 1, __func__);
-    if (body == nullptr) return -1;
+    if (body == nullptr) return StringOutOfMemory;
     const IntrusivePtr copy = *element;
-    if (!VectorGrow(body, sizeof(IntrusivePtr))) return -1;
+    if (!VectorGrow(body, sizeof(IntrusivePtr))) return StringOutOfMemory;
     auto* elements = static_cast<IntrusivePtr*>(body->elements);
     elements[body->size] = copy;
     if (copy.object != nullptr) ReferenceCount(copy.object, ReferenceCountOffset).fetch_add(1);
@@ -2084,21 +2425,22 @@ static int VectorPushBackIntrusivePtr(IntrusivePtr* self, const IntrusivePtr* el
 
 static int VectorPushBackString(IntrusivePtr* self, const CommonString* element) {
     VectorBody* body = VectorBodyFor(self, 2, __func__);
-    if (body == nullptr) return -1;
+    if (body == nullptr) return StringOutOfMemory;
     CommonString copy = *element;
     copy.referenceCount = 0;
     copy.buffer = nullptr;
     copy.bufferSize = 0;
+    copy.libContext = body->libContext;
     if (element->buffer != nullptr) {
         const std::size_t length = std::strlen(element->buffer) + 1;
-        copy.buffer = static_cast<char*>(std::malloc(length));
-        if (copy.buffer == nullptr) return -1;
+        copy.buffer = static_cast<char*>(LibContextAllocate(body->libContext, length));
+        if (copy.buffer == nullptr) return StringOutOfMemory;
         std::memcpy(copy.buffer, element->buffer, length);
         copy.bufferSize = length;
     }
     if (!VectorGrow(body, sizeof(CommonString))) {
-        std::free(copy.buffer);
-        return -1;
+        LibContextDeallocate(body->libContext, copy.buffer);
+        return StringOutOfMemory;
     }
     static_cast<CommonString*>(body->elements)[body->size] = copy;
     body->size += 1;
@@ -2197,7 +2539,7 @@ static bool VectorReserve(VectorBody* body, const std::size_t elementSize, const
     if (body->capacity >= count) return true;
     std::uint64_t capacity = body->capacity != 0 ? body->capacity : 4;
     while (capacity < count) capacity *= 2;
-    void* elements = std::realloc(body->elements, static_cast<std::size_t>(capacity) * elementSize);
+    void* elements = LibContextReallocate(body->libContext, body->elements, static_cast<std::size_t>(capacity) * elementSize);
     if (elements == nullptr) return false;
     body->elements = elements;
     body->capacity = capacity;
@@ -2210,10 +2552,14 @@ static int HostVectorCopyFrom(IntrusivePtr* self, const IntrusivePtr* source, co
     const auto* sourceDirect = static_cast<const VectorBody*>(static_cast<const void*>(source));
     const bool sourceIsBody = sourceDirect != nullptr && sourceDirect->magic == VectorBodyMagic;
     const auto* sourceBody = sourceIsBody ? sourceDirect : static_cast<const VectorBody*>(source->object);
-    void** const selfContext = body == static_cast<VectorBody*>(static_cast<void*>(self)) ? &body->libContext : &self->libContext;
-    void* const sourceContext = sourceIsBody ? sourceDirect->libContext : source->libContext;
-    if (*selfContext == nullptr) *selfContext = sourceContext;
-    if (body->libContext == nullptr) body->libContext = *selfContext;
+    if (body != static_cast<VectorBody*>(static_cast<void*>(self)) && self->libContext == nullptr) {
+        self->libContext = sourceIsBody ? sourceDirect->libContext : source->libContext;
+        try {
+            RememberVectorHandle(self);
+        } catch (const std::bad_alloc&) {
+            return ParameterOutOfMemory;
+        }
+    }
     if (sourceBody != nullptr && (sourceBody->magic != VectorBodyMagic || sourceBody->elementKind != 1)) {
         NotImplemented_nid_no_patch(function);
         return ParameterOutOfMemory;
@@ -2269,17 +2615,21 @@ static int HostVectorCopyFromStrings(IntrusivePtr* self, const IntrusivePtr* sou
     const auto* sourceDirect = static_cast<const VectorBody*>(static_cast<const void*>(source));
     const bool sourceIsBody = sourceDirect != nullptr && sourceDirect->magic == VectorBodyMagic;
     const auto* sourceBody = sourceIsBody ? sourceDirect : static_cast<const VectorBody*>(source->object);
-    void** const selfContext = body == static_cast<VectorBody*>(static_cast<void*>(self)) ? &body->libContext : &self->libContext;
-    void* const sourceContext = sourceIsBody ? sourceDirect->libContext : source->libContext;
-    if (*selfContext == nullptr) *selfContext = sourceContext;
-    if (body->libContext == nullptr) body->libContext = *selfContext;
+    if (body != static_cast<VectorBody*>(static_cast<void*>(self)) && self->libContext == nullptr) {
+        self->libContext = sourceIsBody ? sourceDirect->libContext : source->libContext;
+        try {
+            RememberVectorHandle(self);
+        } catch (const std::bad_alloc&) {
+            return ParameterOutOfMemory;
+        }
+    }
     if (sourceBody != nullptr && (sourceBody->magic != VectorBodyMagic || sourceBody->elementKind != 2)) {
         NotImplemented_nid_no_patch(function);
         return ParameterOutOfMemory;
     }
     if (sourceBody != nullptr && body == sourceBody) return 0;
     auto* elements = static_cast<CommonString*>(body->elements);
-    for (std::uint64_t index = 0; index < body->size; ++index) DestroyHostString(&elements[index]);
+    for (std::uint64_t index = 0; index < body->size; ++index) ResetString(&elements[index]);
     body->size = 0;
     const std::uint64_t count = sourceBody != nullptr ? sourceBody->size : 0;
     if (count == 0) return 0;
@@ -2291,10 +2641,10 @@ static int HostVectorCopyFromStrings(IntrusivePtr* self, const IntrusivePtr* sou
         copy.referenceCount = 0;
         copy.buffer = nullptr;
         copy.bufferSize = 0;
-        if (copy.libContext == nullptr) copy.libContext = sourceElements[index].libContext;
+        copy.libContext = body->libContext;
         if (sourceElements[index].buffer != nullptr) {
             const std::size_t length = std::strlen(sourceElements[index].buffer) + 1;
-            copy.buffer = static_cast<char*>(std::malloc(length));
+            copy.buffer = static_cast<char*>(LibContextAllocate(body->libContext, length));
             if (copy.buffer == nullptr) {
                 body->size = index;
                 return ParameterOutOfMemory;
@@ -2462,6 +2812,26 @@ int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi25joinPl
     return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
 }
 
+int APS5_VABI _ZN3sce2Np9CppWebApi6Common6String6appendEPKc(CommonString* self, const char* text) {
+    if (text == nullptr) return StringInvalidArgument;
+    if (*text == '\0') return 0;
+    const std::size_t oldLength = self->buffer != nullptr && self->bufferSize != 0
+        ? static_cast<std::size_t>(self->bufferSize - 1) : 0;
+    const std::size_t textLength = std::strlen(text);
+    const std::size_t newSize = oldLength + textLength + 1;
+    char* buffer = static_cast<char*>(LibContextAllocate(self->libContext, newSize));
+    if (buffer == nullptr) return StringOutOfMemory;
+    if (oldLength != 0) std::memcpy(buffer, self->buffer, oldLength);
+    std::memcpy(buffer + oldLength, text, textLength + 1);
+    LibContextDeallocate(self->libContext, self->buffer);
+    self->buffer = buffer;
+    self->bufferSize = newSize;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi6Common6String6appendERKS3_(CommonString* self, const CommonString* source) {
+    return _ZN3sce2Np9CppWebApi6Common6String6appendEPKc(self, source->buffer != nullptr ? source->buffer : "");
+}
 
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V132RequestCreatePlayerSessionPlayerEEEE8pushBackERKS8_(IntrusivePtr* self, const void* element) {
     return VectorPushBackIntrusivePtr(self, static_cast<const IntrusivePtr*>(element));
@@ -2674,6 +3044,14 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common15DefaultResponseD1Ev(void* self) {
     return 0;
 }
 
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEEC1EPS6_PNS2_10LibContextE(IntrusivePtr* self, void* body, void* libContext) {
+    self->object = body;
+    self->deleter = nullptr;
+    self->libContext = libContext;
+    RememberVectorHandle(self);
+    if (body) ReferenceCount(body, IntrusiveReferenceOffset(self, StringVectorReferenceCountOffset)).fetch_add(1);
+}
+
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V120RequestPlayerSessionEEEEC1EPNS2_10LibContextE(IntrusivePtr* self, void* libContext) {
     self->object = nullptr;
     self->deleter = nullptr;
@@ -2744,6 +3122,14 @@ void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V154GetUsersAccountIdPlayerSessionsInvitationsResponseBodyEED1Ev(IntrusivePtr* self) {
     ReleaseIntrusivePtr(self, 0x00, __func__);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEED1Ev(IntrusivePtr* self) {
+    ReleaseIntrusivePtr(self, StringVectorReferenceCountOffset, __func__, &DestroyString);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEED2Ev(IntrusivePtr* self) {
+    ReleaseIntrusivePtr(self, StringVectorReferenceCountOffset, __func__, &DestroyString);
 }
 
 void* APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V154GetUsersAccountIdPlayerSessionsInvitationsResponseBody14getInvitationsEv(void* out, const void* self) {
@@ -3811,7 +4197,11 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6StringEEC1Ev(Intru
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6StringEED1Ev(IntrusivePtr* self) {
-    ReleaseIntrusivePtr(self, ReferenceCountOffset, __func__);
+    ReleaseIntrusivePtr(self, ReferenceCountOffset, __func__, &DestroyString);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6StringEED2Ev(IntrusivePtr* self) {
+    ReleaseIntrusivePtr(self, ReferenceCountOffset, __func__, &DestroyString);
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_11UserProfile2V113BasicPresenceEEEEEED1Ev(IntrusivePtr* self) {
@@ -4730,9 +5120,10 @@ static int MatchesFactoryCreate(const void* context, IntrusivePtr* out, const st
     return 0;
 }
 
-static int CopyMatchesVector(IntrusivePtr* member, const IntrusivePtr* source) {
+static int CopyMatchesVector(IntrusivePtr* member, const IntrusivePtr* source, void* libContext) {
     if (source == nullptr) return ParameterInvalidArgument;
     if (source->object == nullptr) return 0;
+    if (member->libContext == nullptr) member->libContext = libContext;
     const IntrusivePtr* begin;
     const IntrusivePtr* end;
     const auto* body = static_cast<const VectorBody*>(source->object);
@@ -4968,7 +5359,7 @@ int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V122RequestMatchStatistics19setPlayer
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V123JoinMatchRequestFactory6createEPNS1_6Common10LibContextERKNS5_6VectorINS5_12IntrusivePtrINS3_11AddedPlayerEEEEEPNS9_INS3_16JoinMatchRequestEEE(void* self, const IntrusivePtr* players, IntrusivePtr* out) {
     const int created = MatchesFactoryCreate(self, out, 0x30, &DestroyMatchesModelVector24);
     if (created != 0) return created;
-    return CopyMatchesVector(reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(out->object) + 24), players);
+    return CopyMatchesVector(reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(out->object) + 24), players, out->libContext);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V123RequestMatchTeamFactory6createEPNS1_6Common10LibContextEPKcPNS5_12IntrusivePtrINS3_16RequestMatchTeamEEE(void* self, const char* name, IntrusivePtr* out) {
@@ -4982,7 +5373,7 @@ int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V123RequestMatchTeamFactory6createEPN
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V124LeaveMatchRequestFactory6createEPNS1_6Common10LibContextERKNS5_6VectorINS5_12IntrusivePtrINS3_13RemovedPlayerEEEEEPNS9_INS3_17LeaveMatchRequestEEE(void* self, const IntrusivePtr* players, IntrusivePtr* out) {
     const int created = MatchesFactoryCreate(self, out, 0x30, &DestroyMatchesModelVector24);
     if (created != 0) return created;
-    return CopyMatchesVector(reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(out->object) + 24), players);
+    return CopyMatchesVector(reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(out->object) + 24), players, out->libContext);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V124RequestCompetitiveResult14setTeamResultsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_18RequestTeamResultsEEEEE(void* self, const IntrusivePtr* value) {
@@ -5124,7 +5515,7 @@ int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V129RequestPlayerStatisticFactory6cre
     ConstructMatchesString(MatchesStringAt(out->object, 16), out->libContext);
     const int assigned = AssignMatchesString(MatchesStringAt(out->object, 16), name);
     if (assigned < 0) return assigned;
-    return CopyMatchesVector(reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(out->object) + 48), statistics);
+    return CopyMatchesVector(reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(out->object) + 48), statistics, out->libContext);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V130RequestTeamMemberResultFactory6createEPNS1_6Common10LibContextEPKcdPNS5_12IntrusivePtrINS3_23RequestTeamMemberResultEEE(void* self, const char* name, double score, IntrusivePtr* out) {
@@ -5161,7 +5552,7 @@ int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V133RequestTeamMemberStatisticFactory
     ConstructMatchesString(MatchesStringAt(out->object, 16), out->libContext);
     const int assigned = AssignMatchesString(MatchesStringAt(out->object, 16), name);
     if (assigned < 0) return assigned;
-    return CopyMatchesVector(reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(out->object) + 48), statistics);
+    return CopyMatchesVector(reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(out->object) + 48), statistics, out->libContext);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V18MatchApi10leaveMatchEiRKNS4_21ParameterToLeaveMatchERNS1_6Common11TransactionINS8_15DefaultResponseENS8_12IntrusivePtrINS8_18ResponseHeaderBaseEEEEE(void* self) {
@@ -7822,116 +8213,24 @@ std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1
 }
 
 
-static constexpr int StringInvalidArgument = static_cast<int>(0x80553503);
-static constexpr int StringOutOfMemory = static_cast<int>(0x80553504);
 
-static void ResetString(CommonString* self) {
-    std::free(self->buffer);
-    self->buffer = nullptr;
-    self->bufferSize = 0;
-}
 
-static int AssignString(CommonString* self, const char* text) {
-    if (text == nullptr) return StringInvalidArgument;
-    const std::size_t length = std::strlen(text) + 1;
-    char* buffer = static_cast<char*>(std::malloc(length));
-    if (buffer == nullptr) return StringOutOfMemory;
-    std::memcpy(buffer, text, length);
-    std::free(self->buffer);
-    self->buffer = buffer;
-    self->bufferSize = length;
-    return 0;
-}
 
-void APS5_VABI _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(CommonString* self, void* libContext) {
-    self->referenceCount = 0;
-    self->buffer = nullptr;
-    self->bufferSize = 0;
-    self->libContext = libContext;
-}
 
-void APS5_VABI _ZN3sce2Np9CppWebApi6Common6StringC1Ev(CommonString* self) {
-    _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(self, nullptr);
-}
 
-void APS5_VABI _ZN3sce2Np9CppWebApi6Common6StringD1Ev(CommonString* self) {
-    ResetString(self);
-}
 
-void APS5_VABI _ZN3sce2Np9CppWebApi6Common6StringD2Ev(CommonString* self) {
-    ResetString(self);
-}
 
-int APS5_VABI _ZN3sce2Np9CppWebApi6Common6String8copyFromEPKc(CommonString* self, const char* text) {
-    return AssignString(self, text);
-}
 
-int APS5_VABI _ZN3sce2Np9CppWebApi6Common6String8copyFromERKS3_(CommonString* self, const CommonString* source) {
-    const bool hadContext = self->libContext != nullptr;
-    if (!hadContext) self->libContext = source->libContext;
-    if (source->bufferSize == 0) {
-        ResetString(self);
-        return 0;
-    }
-    const int result = AssignString(self, source->buffer != nullptr ? source->buffer : "");
-    if (!hadContext && result != 0) self->libContext = nullptr;
-    return result;
-}
 
-void APS5_VABI _ZN3sce2Np9CppWebApi6Common6String5clearEv(CommonString* self) {
-    ResetString(self);
-}
 
-std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6String4sizeEv(const CommonString* self) {
-    return self->buffer != nullptr ? static_cast<std::uint64_t>(std::strlen(self->buffer)) : 0;
-}
 
-std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6String6lengthEv(const CommonString* self) {
-    return self->buffer != nullptr ? static_cast<std::uint64_t>(std::strlen(self->buffer)) : 0;
-}
 
-bool APS5_VABI _ZN3sce2Np9CppWebApi6Common6StringeqERKS3_(const CommonString* self, const CommonString* other) {
-    const char* left = self->buffer != nullptr ? self->buffer : "";
-    const char* right = other->buffer != nullptr ? other->buffer : "";
-    return std::strncmp(left, right, std::strlen(left) + 1) == 0;
-}
-
-void APS5_VABI _ZN3sce2Np9CppWebApi6Common6String10setContextEPNS2_10LibContextE(CommonString* self, void* libContext) {
-    self->libContext = libContext;
-}
-
-std::int32_t APS5_VABI _ZN3sce2Np9CppWebApi6Common6String21intrusive_ptr_add_refEPS3_(CommonString* self) {
-    return std::atomic_ref<std::int32_t>(self->referenceCount).fetch_add(1) + 1;
-}
-
-std::int32_t APS5_VABI _ZN3sce2Np9CppWebApi6Common6String21intrusive_ptr_sub_refEPS3_(CommonString* self) {
-    return std::atomic_ref<std::int32_t>(self->referenceCount).fetch_sub(1);
-}
 
 const char* APS5_VABI _ZNK3sce2Np9CppWebApi6Common6String5c_strEv(const CommonString* self) {
     return self->buffer != nullptr ? self->buffer : "";
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi6Common6String6appendEPKc(CommonString* self, const char* text) {
-    if (text == nullptr) return StringInvalidArgument;
-    if (*text == '\0') return 0;
-    const std::size_t oldLength = self->buffer != nullptr && self->bufferSize != 0
-        ? static_cast<std::size_t>(self->bufferSize - 1) : 0;
-    const std::size_t textLength = std::strlen(text);
-    const std::size_t newSize = oldLength + textLength + 1;
-    char* buffer = static_cast<char*>(std::malloc(newSize));
-    if (buffer == nullptr) return StringOutOfMemory;
-    if (oldLength != 0) std::memcpy(buffer, self->buffer, oldLength);
-    std::memcpy(buffer + oldLength, text, textLength + 1);
-    std::free(self->buffer);
-    self->buffer = buffer;
-    self->bufferSize = newSize;
-    return 0;
-}
 
-int APS5_VABI _ZN3sce2Np9CppWebApi6Common6String6appendERKS3_(CommonString* self, const CommonString* source) {
-    return _ZN3sce2Np9CppWebApi6Common6String6appendEPKc(self, source->buffer != nullptr ? source->buffer : "");
-}
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V126RequestPlayerSessionPlayerEEEED1Ev(IntrusivePtr* self) {
     ReleaseIntrusivePtr(self, 0x30, __func__);
@@ -7959,9 +8258,6 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14Sessi
     self->libContext = libContext;
 }
 
-void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEED1Ev(IntrusivePtr* self) {
-    ReleaseIntrusivePtr(self, StringVectorReferenceCountOffset, __func__);
-}
 
 std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V113BasicPresenceEEEE4sizeEv(const void* self) {
     return HostVectorSize(self, 24, __func__);
