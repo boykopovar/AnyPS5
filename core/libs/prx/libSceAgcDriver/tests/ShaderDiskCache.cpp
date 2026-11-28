@@ -155,7 +155,7 @@ void removeCacheDirectory(const std::filesystem::path& directory) {
 }
 
 bool sameBinding(const DescriptorBinding& left, const DescriptorBinding& right) {
-    return left.kind == right.kind && left.role == right.role && left.descriptorSet == right.descriptorSet && left.binding == right.binding && left.count == right.count && left.guestDescriptor == right.guestDescriptor && left.readOnly == right.readOnly && left.imageShape == right.imageShape && left.samplerDepthCompare == right.samplerDepthCompare && left.imageWritten == right.imageWritten && left.imageDepthCompare == right.imageDepthCompare && left.imageAtomic == right.imageAtomic && left.imageShapes == right.imageShapes && left.bufferAtomic == right.bufferAtomic && left.bufferWritten == right.bufferWritten && left.bufferRead == right.bufferRead && left.bufferExtent == right.bufferExtent && left.samplerUnnormalized == right.samplerUnnormalized && left.samplerIntegerBorder == right.samplerIntegerBorder && left.samplerCoordinatesIgnored == right.samplerCoordinatesIgnored && left.imageUnnormalized == right.imageUnnormalized && left.imageUnnormalizedBaseLevel == right.imageUnnormalizedBaseLevel && left.imageSamplers == right.imageSamplers;
+    return left.kind == right.kind && left.role == right.role && left.descriptorSet == right.descriptorSet && left.binding == right.binding && left.count == right.count && left.guestDescriptor == right.guestDescriptor && left.readOnly == right.readOnly && left.imageShape == right.imageShape && left.samplerDepthCompare == right.samplerDepthCompare && left.imageWritten == right.imageWritten && left.imageDepthCompare == right.imageDepthCompare && left.imageAtomic == right.imageAtomic && left.imageShapes == right.imageShapes && left.bufferAtomic == right.bufferAtomic && left.bufferWritten == right.bufferWritten && left.bufferRead == right.bufferRead && left.bufferExtent == right.bufferExtent && left.bufferReadBound == right.bufferReadBound && left.samplerUnnormalized == right.samplerUnnormalized && left.samplerIntegerBorder == right.samplerIntegerBorder && left.samplerCoordinatesIgnored == right.samplerCoordinatesIgnored && left.imageUnnormalized == right.imageUnnormalized && left.imageUnnormalizedBaseLevel == right.imageUnnormalizedBaseLevel && left.imageSamplers == right.imageSamplers;
 }
 
 bool sameBindings(const std::vector<DescriptorBinding>& left, const std::vector<DescriptorBinding>& right) {
@@ -261,6 +261,7 @@ DescriptorBinding sampleBinding(std::uint32_t seed) {
     binding.imageSamplers = {0x5u, 0u, 0x8000000080000000u};
     binding.bufferRead = {true, false, false, true, true, false};
     binding.bufferExtent = {32, 0, 16, 4096, 8, 0};
+    binding.bufferReadBound = {0, 0, 16, 0, 68, 0};
     return binding;
 }
 
@@ -336,6 +337,8 @@ CompiledVariant sampleVariant() {
     buffer.source = 3;
     buffer.firstUsePc = 0x40;
     buffer.maxByteExtent = 256;
+    buffer.staticReadExtent = 68;
+    buffer.dynamicAccess = true;
     buffer.imageAlias = 1;
     buffer.read = true;
     buffer.atomic = true;
@@ -1641,11 +1644,31 @@ void verifyBufferAlignmentSpecialization() {
     require(restored.spirv.data() == aligned.spirv.data(), "unaligned buffers replaced the aligned specialization");
 }
 
+void verifyStaticReadBound() {
+    const auto bounds = [](std::uint32_t offsetWord) {
+        ComputeRequest request(false);
+        request.code = {0xf4200202u, offsetWord, 0xbf8cc07fu, 0x7e000208u, 0xe0700000u, 0x80000000u, 0xbf810000u};
+        const std::array<std::uint32_t, 10> userData{0x10000000u, 0u, 0x40u, 0x00027facu, 0x20000000u, 0u, 0x100000u, 0x00027facu, 0u, 8u};
+        request.request.shader.code = request.code;
+        request.request.context.userData = userData;
+        const auto result = Recompile(request.request);
+        const auto found = std::ranges::find_if(result.bindings, [](const DescriptorBinding& binding) { return binding.role == DescriptorRole::GuestBuffers; });
+        require(found != result.bindings.end() && found->bufferWritten.size() == 2u && found->bufferReadBound.size() == 2u, "the scalar read program did not bind its two buffers");
+        const auto read = found->bufferWritten[0] ? 1u : 0u;
+        require(!found->bufferWritten[read] && found->bufferWritten[1u - read] && found->bufferReadBound[1u - read] == 0u, "the stored buffer of the scalar read program has a read bound");
+        return found->bufferReadBound[read];
+    };
+    require(bounds(0xfa000040u) == 0x44u, "a buffer read by one scalar load at offset 0x40 is not bounded at 0x44");
+    require(bounds(0x12000040u) == 0u, "a buffer read by a scalar load at a register offset is bounded");
+}
+
 void verifyBindingPlanSelection() {
     ShaderInfo info{};
     info.buffers.resize(2);
     info.buffers[0].atomic = true;
+    info.buffers[0].staticReadExtent = 16u;
     info.buffers[1].read = true;
+    info.buffers[1].staticReadExtent = 68u;
     CompiledBindingLayout compiled{};
     compiled.layout.descriptors = {{DescriptorBindingKind::Buffers, {0, 1}}, {DescriptorBindingKind::FlattenedSrt, {}}, {DescriptorBindingKind::ShaderData, {}}, {DescriptorBindingKind::Gds, {}}};
     compiled.layout.userDataRegisters = {0};
@@ -1664,6 +1687,19 @@ void verifyBindingPlanSelection() {
     builder.Populate(full, compiled, plan, 0u, snapshot, {});
     require(full.bindings.size() == 4u, "binding plan lost a descriptor before module selection");
     require(full.bindings[0].bufferAtomic == std::vector<bool>{true, false} && full.bindings[0].bufferWritten == std::vector<bool>{true, false} && full.bindings[0].bufferRead == std::vector<bool>{false, true}, "binding plan lost buffer access metadata");
+    require(full.bindings[0].bufferReadBound == std::vector<std::uint32_t>{0u, 68u}, "binding plan did not bound a read-only buffer by its static reads, or bounded an atomic one");
+    {
+        auto dynamic = info;
+        dynamic.buffers[1].dynamicAccess = true;
+        BindingAllocationResult unbounded;
+        builder.Populate(unbounded, compiled, builder.Prepare(compiled.layout, dynamic, IrShaderStage::Compute, snapshot), 0u, snapshot, {});
+        require(unbounded.bindings[0].bufferReadBound == std::vector<std::uint32_t>{0u, 0u}, "binding plan bounded a buffer that has a read at a run-time offset");
+        auto written = info;
+        written.buffers[1].written = true;
+        BindingAllocationResult stored;
+        builder.Populate(stored, compiled, builder.Prepare(compiled.layout, written, IrShaderStage::Compute, snapshot), 0u, snapshot, {});
+        require(stored.bindings[0].bufferReadBound == std::vector<std::uint32_t>{0u, 0u}, "binding plan bounded a buffer the shader stores to");
+    }
     const std::array liveBindings{full.bindings[0].binding, full.bindings[0].binding, full.bindings[3].binding};
     const auto selected = builder.Select(plan, liveBindings);
     snapshot.userData.clear();
@@ -2233,7 +2269,7 @@ IrResourcePlan handBuiltPlan() {
     plan.requiresSpecializationMemory = true;
     plan.srtPlanComplete = true;
     plan.resourceTrackingComplete = true;
-    plan.info.buffers = {BufferResource{}, BufferResource{2u, 0x40u, 0x100u, 0u, true, true, true, true, true, 0x7u, true, 4u}};
+    plan.info.buffers = {BufferResource{}, BufferResource{2u, 0x40u, 0x100u, 0u, true, true, true, true, true, 0x7u, true, 4u, true, 0x44u}};
     ImageResource image{};
     image.source = 1u;
     image.resourceClass = ImageResourceClass::Sampled;
@@ -3193,6 +3229,7 @@ int main(int argc, char** argv) {
         verifyInvocationIsolation();
         verifyBufferAlignmentSpecialization();
         verifyBindingPlanSelection();
+        verifyStaticReadBound();
         verifyVertexTypeSpecialization();
         verifyBuiltinSpecialization();
         verifySpecializationLiveness();

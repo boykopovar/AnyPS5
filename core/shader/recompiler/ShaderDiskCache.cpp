@@ -92,13 +92,13 @@ static_assert(sizeof(ShaderInvocation) == 216, "ShaderInvocation changed: update
 #if defined(__cpp_lib_atomic_shared_ptr)
 static_assert(sizeof(RecompileResult) == 568, "RecompileResult changed: update EncodeResult and DecodeResult");
 #endif
-static_assert(sizeof(DescriptorBinding) == 944, "DescriptorBinding changed: update the binding encoder");
+static_assert(sizeof(DescriptorBinding) == 968, "DescriptorBinding changed: update the binding encoder");
 static_assert(sizeof(VertexAttribute) == 32, "VertexAttribute changed: update the attribute encoder");
 static_assert(sizeof(VertexInput) == 16, "VertexInput changed: update the vertex input encoder");
 static_assert(sizeof(FragmentParameter) == 16, "FragmentParameter changed: update the parameter encoder");
 static_assert(sizeof(CompiledShaderInfo) == 352, "CompiledShaderInfo changed: update the info encoder");
 static_assert(sizeof(ShaderInfo) == 232, "ShaderInfo changed: update the info encoder");
-static_assert(sizeof(BufferResource) == 32, "BufferResource changed: update the info encoder");
+static_assert(sizeof(BufferResource) == 36, "BufferResource changed: update the info encoder");
 static_assert(sizeof(ImageResource) == 244, "ImageResource changed: update the info encoder");
 static_assert(sizeof(SamplerResource) == 24, "SamplerResource changed: update the info encoder");
 static_assert(sizeof(SampledResourcePair) == 16, "SampledResourcePair changed: update the info encoder");
@@ -144,7 +144,7 @@ constexpr std::size_t fieldCount() {
 }
 
 static_assert(fieldCount<ShaderInfo>() == 24, "ShaderInfo changed: update the info encoder");
-static_assert(fieldCount<BufferResource>() == 12, "BufferResource changed: update the info encoder");
+static_assert(fieldCount<BufferResource>() == 14, "BufferResource changed: update the info encoder");
 static_assert(fieldCount<ImageResource>() == 52, "ImageResource changed: update the info encoder");
 static_assert(fieldCount<SamplerResource>() == 8, "SamplerResource changed: update the info encoder");
 static_assert(fieldCount<SampledResourcePair>() == 4, "SampledResourcePair changed: update the info encoder");
@@ -524,6 +524,7 @@ void encodeBinding(Writer& writer, const DescriptorBinding& binding) {
     writer.Values(std::span<const std::uint64_t>(binding.imageSamplers));
     writer.Flags(binding.bufferRead);
     writer.Values(std::span<const std::uint32_t>(binding.bufferExtent));
+    writer.Values(std::span<const std::uint32_t>(binding.bufferReadBound));
     writer.List(binding.imageOverwrites, [](Writer& out, const ImageOverwrite& proof) { encodeOverwrite(out, proof); });
 }
 
@@ -555,6 +556,7 @@ void decodeBinding(Reader& reader, DescriptorBinding& binding) {
     reader.Values(binding.imageSamplers);
     reader.Flags(binding.bufferRead);
     reader.Values(binding.bufferExtent);
+    reader.Values(binding.bufferReadBound);
     reader.List(binding.imageOverwrites, 133, [](Reader& in, ImageOverwrite& proof) { decodeOverwrite(in, proof); });
 }
 
@@ -826,6 +828,8 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(buffer.formattedReadMask);
         out.Value(buffer.scalar);
         out.Value(buffer.typedAlignment);
+        out.Value(buffer.dynamicAccess);
+        out.Value(buffer.staticReadExtent);
     });
     writer.List(info.images, [](Writer& out, const ImageResource& image) {
         out.Value(image.source);
@@ -931,7 +935,7 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
 void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
     reader.Value(info.scratchDwords);
     reader.Value(info.sharedMemoryBytes);
-    reader.List(info.buffers, 27, [](Reader& in, BufferResource& buffer) {
+    reader.List(info.buffers, 32, [](Reader& in, BufferResource& buffer) {
         in.Value(buffer.source);
         in.Value(buffer.firstUsePc);
         in.Value(buffer.maxByteExtent);
@@ -944,6 +948,8 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(buffer.formattedReadMask);
         in.Value(buffer.scalar);
         in.Value(buffer.typedAlignment);
+        in.Value(buffer.dynamicAccess);
+        in.Value(buffer.staticReadExtent);
     });
     reader.List(info.images, 210, [](Reader& in, ImageResource& image) {
         in.Value(image.source);
