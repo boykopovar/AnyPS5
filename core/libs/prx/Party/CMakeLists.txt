@@ -1,3 +1,16 @@
-add_library(Party SHARED EXCLUDE_FROM_ALL Export.cpp)
+add_library(Party SHARED EXCLUDE_FROM_ALL Export.cpp src/Manager.cpp)
 target_include_directories(Party PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(Party)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_party_manager_tests tests/Manager.cpp)
+    target_include_directories(guest_party_manager_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_party_manager_tests PRIVATE Party libc)
+    configure_windows_unwind(guest_party_manager_tests)
+    add_test(NAME guest_party_manager COMMAND guest_party_manager_tests)
+    set_tests_properties(guest_party_manager PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_party_manager PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:Party>")
+    endif()
+endif()
