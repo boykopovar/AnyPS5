@@ -7867,9 +7867,13 @@ bool tableKeyFlushTests(const Device& device, Recorder& recorder) {
     Require(!recorder.PendingWriteOverlaps(quiet, keyBytes), "the quiet key range got a pending write");
     recorder.Sync();
     Require(words[keys - address] == 0x5a && words[keys - address + keyBytes - 1] == 0x5a && words[quiet - address] == 0x11, "the keys do not hold the published bytes");
+    RecordMemoryBarrier(context, recorder.Commands(), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
+    const auto openSerial = recorder.OpenBatchSerial();
+    Require(openSerial != 0, "the unrelated work did not open a batch");
     const auto submittedAfter = recorder.NewestSubmitted();
     Require(!FlushTableKeys(ranges), "a key prepass with nothing to flush reported a submit");
-    Require(recorder.NewestSubmitted() == submittedAfter, "a key prepass with nothing to flush submitted the open batch");
+    Require(recorder.NewestSubmitted() == submittedAfter && recorder.OpenBatchSerial() == openSerial, "a key prepass with nothing to flush submitted the open batch");
+    recorder.Sync();
     return true;
 }
 

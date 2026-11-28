@@ -6504,7 +6504,11 @@ bool FlushTableKeys(std::span<const std::pair<std::uint64_t, std::uint64_t>> key
         const auto bytes = static_cast<std::size_t>(end - begin);
         if (!GuestMemory::Accessible(reinterpret_cast<const void*>(begin), bytes)) continue;
         bool published = false;
-        if (StorageTexture::FlushPending(begin, bytes, nullptr, "image table keys", PublishScope::Whole, &published) || published) flushed = true;
+        try {
+            if (StorageTexture::FlushPending(begin, bytes, nullptr, "image table keys", PublishScope::Whole, &published) || published) flushed = true;
+        } catch (const std::runtime_error&) {
+            flushed = true;
+        }
     }
     if (!flushed) return false;
     auto* recorder = Recorder::Active();
