@@ -4,6 +4,8 @@
 
 - [PS4 (GCN) geometry shaders](../../../core/shader/recompiler/Optimization/src/GeometryLowering.cpp) (shader recompiler, PS4) - not measured on a console. These throw: a copy VS export that is neither a GSVS ring dword nor a constant, copy VS EXEC writes, backward branches, and branches other than on an SCC known at draw time, copy VS GSVS reads not spaced `VGT_GS_MAX_VERT_OUT` times 64 bytes apart, other copy VS memory accesses, ESGS reads of a non-constant input vertex or of more than one dword, ESGS stores at a per-lane address, LDS in the GS, emits to streams 1-3, and GSVS stores at a constant address past `VGT_GS_VERT_ITEMSIZE` times `VGT_GS_MAX_VERT_OUT` dwords. The copy VS's stream-out configuration SGPR (after its user SGPRs when `SPI_SHADER_PGM_RSRC2_VS.SO_EN` is set) is read as 0: stream 0 and no stream-out, the only modeled case. A GSVS store at a computed address past that goes to a spare dword no output reads; on the console it lands in a neighbouring primitive's item.
 
+- [PS4 (GCN) geometry copy VS buffer descriptor](../../../core/shader/recompiler/Optimization/src/GeometryLowering.cpp) (shader recompiler, PS4) - not measured on a console. The copy VS is parsed, not run, and every `buffer_load_dword` it makes is read as a GSVS ring read. The parser does not check that the descriptor is the GSVS ring's: the guest ring table layout is not modeled, and shadPS4's `ParseCopyShader` does not check it either. These throw: reads through two descriptors, a read after the descriptor SGPRs are rewritten, and a read into LDS. A copy VS whose only loads use one other buffer is still read as a GSVS copy.
+
 # libSceAgcDriver
 
 ## add Functional

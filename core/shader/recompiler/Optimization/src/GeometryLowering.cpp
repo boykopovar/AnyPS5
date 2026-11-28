@@ -11,6 +11,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace ShaderRecompiler {
@@ -60,53 +61,64 @@ struct Term {
     std::int64_t constant = 0;
 };
 
-std::optional<Term> Evaluate(const IrValue* raw, std::uint32_t depth = 0u) {
+std::optional<Term> Evaluate(const IrValue* raw, std::unordered_map<const IrValue*, Term>& known, std::uint32_t depth) {
     if (depth > 32u) return std::nullopt;
     const IrValue* value = raw->Resolve();
     if (value->HasImmediate()) return Term{std::nullopt, 0, static_cast<std::int64_t>(value->ImmediateU32())};
     if (const auto vertex = GeometryVertexOf(value)) return Term{vertex, 1, 0};
+    if (const auto found = known.find(value); found != known.end()) return found->second;
     const auto pair = [&]() -> std::optional<std::pair<Term, Term>> {
         if (value->ArgumentCount() < 2u) return std::nullopt;
-        const auto left = Evaluate(value->Argument(0), depth + 1u);
-        const auto right = Evaluate(value->Argument(1), depth + 1u);
-        if (!left || !right) return std::nullopt;
+        const auto left = Evaluate(value->Argument(0), known, depth + 1u);
+        if (!left) return std::nullopt;
+        const auto right = Evaluate(value->Argument(1), known, depth + 1u);
+        if (!right) return std::nullopt;
         return std::pair{*left, *right};
     };
-    switch (value->Opcode()) {
-    case IrOpcode::IAdd32: {
-        const auto terms = pair();
-        if (!terms || (terms->first.vertex && terms->second.vertex)) return std::nullopt;
-        Term sum{terms->first.vertex ? terms->first.vertex : terms->second.vertex};
-        if (__builtin_add_overflow(terms->first.scale, terms->second.scale, &sum.scale) || __builtin_add_overflow(terms->first.constant, terms->second.constant, &sum.constant)) return std::nullopt;
-        return sum;
-    }
-    case IrOpcode::ISub32: {
-        const auto terms = pair();
-        if (!terms || terms->second.vertex) return std::nullopt;
-        Term difference{terms->first.vertex, terms->first.scale};
-        if (__builtin_sub_overflow(terms->first.constant, terms->second.constant, &difference.constant)) return std::nullopt;
-        return difference;
-    }
-    case IrOpcode::ShiftLeftLogical32: {
-        const auto terms = pair();
-        if (!terms || terms->second.vertex || terms->second.constant < 0 || terms->second.constant > 31) return std::nullopt;
-        const auto factor = std::int64_t{1} << terms->second.constant;
-        Term shifted{terms->first.vertex};
-        if (__builtin_mul_overflow(terms->first.scale, factor, &shifted.scale) || __builtin_mul_overflow(terms->first.constant, factor, &shifted.constant)) return std::nullopt;
-        return shifted;
-    }
-    case IrOpcode::IMul32: {
-        const auto terms = pair();
-        if (!terms || (terms->first.vertex && terms->second.vertex)) return std::nullopt;
-        const auto& varying = terms->first.vertex ? terms->first : terms->second;
-        const auto& factor = terms->first.vertex ? terms->second : terms->first;
-        Term product{varying.vertex};
-        if (__builtin_mul_overflow(varying.scale, factor.constant, &product.scale) || __builtin_mul_overflow(varying.constant, factor.constant, &product.constant)) return std::nullopt;
-        return product;
-    }
-    default:
-        return std::nullopt;
-    }
+    const auto term = [&]() -> std::optional<Term> {
+        switch (value->Opcode()) {
+        case IrOpcode::IAdd32: {
+            const auto terms = pair();
+            if (!terms || (terms->first.vertex && terms->second.vertex)) return std::nullopt;
+            Term sum{terms->first.vertex ? terms->first.vertex : terms->second.vertex};
+            if (__builtin_add_overflow(terms->first.scale, terms->second.scale, &sum.scale) || __builtin_add_overflow(terms->first.constant, terms->second.constant, &sum.constant)) return std::nullopt;
+            return sum;
+        }
+        case IrOpcode::ISub32: {
+            const auto terms = pair();
+            if (!terms || terms->second.vertex) return std::nullopt;
+            Term difference{terms->first.vertex, terms->first.scale};
+            if (__builtin_sub_overflow(terms->first.constant, terms->second.constant, &difference.constant)) return std::nullopt;
+            return difference;
+        }
+        case IrOpcode::ShiftLeftLogical32: {
+            const auto terms = pair();
+            if (!terms || terms->second.vertex || terms->second.constant < 0 || terms->second.constant > 31) return std::nullopt;
+            const auto factor = std::int64_t{1} << terms->second.constant;
+            Term shifted{terms->first.vertex};
+            if (__builtin_mul_overflow(terms->first.scale, factor, &shifted.scale) || __builtin_mul_overflow(terms->first.constant, factor, &shifted.constant)) return std::nullopt;
+            return shifted;
+        }
+        case IrOpcode::IMul32: {
+            const auto terms = pair();
+            if (!terms || (terms->first.vertex && terms->second.vertex)) return std::nullopt;
+            const auto& varying = terms->first.vertex ? terms->first : terms->second;
+            const auto& factor = terms->first.vertex ? terms->second : terms->first;
+            Term product{varying.vertex};
+            if (__builtin_mul_overflow(varying.scale, factor.constant, &product.scale) || __builtin_mul_overflow(varying.constant, factor.constant, &product.constant)) return std::nullopt;
+            return product;
+        }
+        default:
+            return std::nullopt;
+        }
+    }();
+    if (term) known.emplace(value, *term);
+    return term;
+}
+
+std::optional<Term> Evaluate(const IrValue* raw) {
+    std::unordered_map<const IrValue*, Term> known;
+    return Evaluate(raw, known, 0u);
 }
 
 ExportTargetKind CopyTargetKind(std::uint32_t target, std::uint32_t& index) {
@@ -368,6 +380,8 @@ std::vector<GeometryCopyExport> ParseGeometryCopyProgram(std::span<const std::ui
     bool vertexIndex = true;
     std::optional<bool> scc;
     std::optional<std::uint32_t> skipTo;
+    std::optional<std::uint32_t> ringDescriptor;
+    bool ringDescriptorWritten = false;
     std::vector<GeometryCopyExport> exports;
     const auto slotBytes = maxVertices * GsVsVertexBytes;
     for (const auto& instruction : program.instructions) {
@@ -393,6 +407,8 @@ std::vector<GeometryCopyExport> ParseGeometryCopyProgram(std::span<const std::ui
         if ((family == RdnaInstructionFamily::SOP1 || family == RdnaInstructionFamily::SOP2 || family == RdnaInstructionFamily::SOPK || family == RdnaInstructionFamily::SOPC) && !KeepsScc(instruction.op)) scc.reset();
         for (const auto* destination : {&instruction.destination, &instruction.destination2}) {
             if (destination->kind == RdnaOperandKind::ExecLo || destination->kind == RdnaOperandKind::ExecHi) FailCopy("a copy program that writes EXEC", pc);
+            const auto count = std::max(instruction.dataDwordCount, 1u) + (instruction.is64Bit ? 1u : 0u);
+            if (ringDescriptor && destination->kind == RdnaOperandKind::ScalarRegister && destination->reg < *ringDescriptor + 4u && *ringDescriptor < destination->reg + count) ringDescriptorWritten = true;
         }
         const bool indexLive = vertexIndex;
         for (const auto* destination : {&instruction.destination, &instruction.destination2}) {
@@ -418,6 +434,10 @@ std::vector<GeometryCopyExport> ParseGeometryCopyProgram(std::span<const std::ui
             continue;
         }
         if (instruction.op == RdnaOpcode::BufferLoadDword && instruction.family == RdnaInstructionFamily::MUBUF) {
+            if (instruction.lds) FailCopy("a GSVS ring read into LDS", pc);
+            if (ringDescriptor && (*ringDescriptor != instruction.source1.reg || ringDescriptorWritten)) FailCopy("GSVS ring reads through more than one buffer descriptor", pc);
+            ringDescriptor = instruction.source1.reg;
+            ringDescriptorWritten = false;
             const auto address = vectors.find(instruction.source0.reg);
             const bool vertexOffset = address != vectors.end() && address->second.vertexOffset;
             Forget(vectors, scalars, instruction);

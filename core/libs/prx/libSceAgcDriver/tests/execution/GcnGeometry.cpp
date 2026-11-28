@@ -101,6 +101,18 @@ alignas(256) constexpr std::array<std::uint32_t, 9> GcnCopyStore{
     0x34020082, 0xe0305000, 0x80400201, 0xbf8c0000, 0xf80008cf, 0x02020202, 0xe0705000, 0x80400201, 0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 9> GcnCopyLds{
+    0x34020082, 0xe0315000, 0x80400301, 0xe0305000, 0x80400201, 0xbf8c0000, 0xf80008cf, 0x02020202, 0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 9> GcnCopyTwoDescriptors{
+    0x34020082, 0xe0305000, 0x80400201, 0xe0305000, 0x80410301, 0xbf8c0000, 0xf80008cf, 0x02020302, 0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 10> GcnCopyDescriptorReloaded{
+    0x34020082, 0xe0305000, 0x80400201, 0xbe800380, 0xe0305000, 0x80400301, 0xbf8c0000, 0xf80008cf, 0x02020302, 0xbf810000,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 8> GcnCopyComputed{
     0x34020082, 0xe0305000, 0x80400201, 0xbf8c0000, 0x060604f2, 0xf80008cf, 0x02020302, 0xbf810000,
 };
@@ -296,7 +308,7 @@ void RequireCopyLayout() {
         refused = std::string(error.what()).find("a copy program branch on a condition not known at draw time") != std::string::npos;
     }
     Require(refused, "a copy program branch on the stream ID was followed without the stream-out configuration SGPR");
-    for (const auto& [code, reason] : {std::pair{std::span<const std::uint32_t>(GcnCopyBranch), "control flow other than a scalar condition in a copy program"}, std::pair{std::span<const std::uint32_t>(GcnCopyExec), "a copy program that writes EXEC"}, std::pair{std::span<const std::uint32_t>(GcnCopyMovedIndex), "not addressed by the vertex index times 4"}, std::pair{std::span<const std::uint32_t>(GcnCopyStore), "a memory access other than a GSVS ring read in a copy program"}}) {
+    for (const auto& [code, reason] : {std::pair{std::span<const std::uint32_t>(GcnCopyBranch), "control flow other than a scalar condition in a copy program"}, std::pair{std::span<const std::uint32_t>(GcnCopyExec), "a copy program that writes EXEC"}, std::pair{std::span<const std::uint32_t>(GcnCopyMovedIndex), "not addressed by the vertex index times 4"}, std::pair{std::span<const std::uint32_t>(GcnCopyStore), "a memory access other than a GSVS ring read in a copy program"}, std::pair{std::span<const std::uint32_t>(GcnCopyLds), "a GSVS ring read into LDS"}, std::pair{std::span<const std::uint32_t>(GcnCopyTwoDescriptors), "GSVS ring reads through more than one buffer descriptor"}, std::pair{std::span<const std::uint32_t>(GcnCopyDescriptorReloaded), "GSVS ring reads through more than one buffer descriptor"}}) {
         refused = false;
         try {
             static_cast<void>(ShaderRecompiler::ParseGeometryCopyProgram(code, 4u, 5u, std::nullopt));
