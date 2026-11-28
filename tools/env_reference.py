@@ -390,7 +390,7 @@ def computed_forms(prefixes=PREFIXES):
     prefix = "|".join(re.escape(prefix) for prefix in prefixes)
     declaration = re.compile(r'\b(?P<ident>[A-Za-z_]\w*)\s*=\s*(?:u8|u|U|L)?"(?P<prefix>(?:' + prefix + r')[A-Za-z0-9_]*)"'
                              r'\s*\+\s*(?:std::)?to_string\s*\(\s*(?P<slot>[A-Za-z_]\w*)\s*'
-                             r'(?:(?P<sign>[+-])\s*(?P<offset>' + COMPUTED_INTEGER + r'))?\s*\)\s*\+\s*"(?P<suffix>[A-Za-z0-9_]*)"')
+                             r'(?:(?P<sign>[+-])\s*(?P<offset>' + COMPUTED_INTEGER + r'))?\s*\)(?:\s*\+\s*"(?P<suffix>[A-Za-z0-9_]*)"|(?!\s*\+))')
     loop = re.compile(r'\bfor\s*\(\s*[^;{}]*?\b(?P<slot>[A-Za-z_]\w*)\s*=\s*(?P<start>' + COMPUTED_INTEGER + r')\s*;\s*'
                       r'(?P=slot)\s*<\s*(?P<bound>[^;{}]+?)\s*;\s*(?:(?P=slot)\s*\+\+|\+\+\s*(?P=slot))\s*\)')
     reader = re.compile(r'(?<![\w:])(?:std::)?(?P<reader>' + "|".join(IDENTIFIER_READERS) + r')\s*\(\s*'
@@ -468,10 +468,10 @@ def computed_reads(text, prefixes=PREFIXES):
             offset = _integer(match.group("offset")) if match.group("offset") else 0
             if match.group("sign") == "-":
                 offset = -offset
-            names.setdefault(ident, set()).update(match.group("prefix") + str(value) + match.group("suffix")
+            names.setdefault(ident, set()).update(match.group("prefix") + str(value) + (match.group("suffix") or "")
                                                   for value in range(start + offset, bound + offset))
         else:
-            wildcards.setdefault(ident, set()).add(match.group("prefix") + "*" + match.group("suffix"))
+            wildcards.setdefault(ident, set()).add(match.group("prefix") + "*" + (match.group("suffix") or ""))
     found = []
     for match in readers:
         ident = match.group("ident")
