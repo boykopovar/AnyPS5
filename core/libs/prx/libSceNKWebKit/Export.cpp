@@ -8696,23 +8696,11 @@ int APS5_VABI WKPageCopyUserAgent() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageCountStringMatches() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageEndPrinting() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI WKPageExecuteCommand() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageFindString() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageFindStringMatches() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -8725,11 +8713,6 @@ int APS5_VABI WKPageGetBackingScaleFactor() {
 }
 
 int APS5_VABI WKPageGetContext() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-
-int APS5_VABI WKPageGetImageForFindMatch() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -8775,10 +8758,6 @@ int APS5_VABI WKPageHandleWheelEvent() {
 }
 
 int APS5_VABI WKPageHasSelectedRange() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageHideFindUI() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -8915,10 +8894,6 @@ int APS5_VABI WKPageRunJavaScriptPromptResultListenerCall() {
 }
 
 int APS5_VABI WKPageSelectContextMenuItem() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageSelectFindMatch() {
     NotImplemented_nid_no_patch(__func__);
 }
 
