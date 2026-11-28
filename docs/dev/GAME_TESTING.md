@@ -95,6 +95,7 @@ Keep screenshot requests outside a timed comparison window: readback and PNG enc
 - **Traces (heavy):** `APS5_TRACE_FRAMES=<n>:<m>` or `APS5_TRACE_SECONDS=<s>:<len>` writes a capture for `tools/trace_digest.py`. `python tools/trace_timeline.py capture.json.gz -o timeline.html` writes one HTML page with nested slice bars on each thread's track and a track for presents. Use `--from-ms` and `--to-ms` to narrow the time window, `--thread` to select threads and `--max-slices` to cap slice bars. Present markers remain visible when filtering threads. `python tools/trace_diff.py A.json.gz B.json.gz` compares two captures per frame: the busy and wait time of each thread, and the largest slices, with B minus A as the delta. Traces slow the title and can move the crash, so mention the trace when reporting.
   Use `--a-frames START:COUNT` and `--b-frames START:COUNT` to select the same scene in each capture.
   The zero-based start indexes complete frames in that capture, so `0:1` needs at least two present markers.
+  `python tools/trace_digest.py capture.json.gz --stacks worker.collapsed.txt` adds the hottest functions of the `APS5_SAMPLE_WORKER` collapsed-stack file of the same run. `--thread NAME` keeps the tracks with that exact thread name (repeat for several); a name no track has is an error. `--frames` and `--top` set how many slowest frames and list entries are printed (5 and 10 by default). `--stacks` and `--thread` are rejected when the input is a `.jsonl` summary file.
 
 ## Measuring performance
 
