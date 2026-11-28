@@ -153,8 +153,14 @@ void Expand(Walk& walk, const std::string& prefix, std::size_t index) {
         return;
     }
     std::vector<std::string> names;
+    *__error_nid_postfix() = 0;
     while (GuestDirectoryEntry* entry = readdir_nid_postfix(handle)) names.emplace_back(entry->name, entry->nameLength);
+    const int readError = *__error_nid_postfix();
     closedir_nid_postfix(handle);
+    if (readError != 0) {
+        Report(walk, directory, readError);
+        if (walk.status != 0) return;
+    }
     const bool dotPattern = segment.text[0] == '.';
     for (const std::string& name : names) {
         if (name.empty() || (name[0] == '.' && !dotPattern)) continue;
