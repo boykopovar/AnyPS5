@@ -73,5 +73,6 @@ extern "C" int APS5_VABI fpurge_nid_postfix(FileStream* stream) {
     }
     stream->GuestState().position = stream->GuestState().buffer;
     stream->SyncUnlockedStatus();
+    for (const char byte : kept) stream->NotePushedBackByte(byte, stream->PushbackLive());
     return 0;
 }
