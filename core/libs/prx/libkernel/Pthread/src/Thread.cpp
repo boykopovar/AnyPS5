@@ -779,6 +779,18 @@ bool GetLiveGuestThreadSched_nid_no_patch(std::int64_t tid, int& policy, int& pr
     return false;
 }
 
+bool SetLiveGuestThreadSched_nid_no_patch(std::int64_t tid, int policy, int priority) {
+    auto& registry = CpuClocks();
+    std::lock_guard lock(registry.lock);
+    for (const auto& [id, thread] : registry.threads) {
+        if (thread->tid != tid || GuestThreadEnded(thread)) continue;
+        thread->schedPolicy.store(policy, std::memory_order_relaxed);
+        thread->priority.store(priority, std::memory_order_relaxed);
+        return true;
+    }
+    return false;
+}
+
 int SetLiveGuestThreadAffinity_nid_no_patch(std::int64_t tid, KernelCpumask mask) {
     constexpr int GuestEsrch = 3, GuestEdeadlk = 11;
     auto& registry = CpuClocks();

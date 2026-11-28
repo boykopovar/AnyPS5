@@ -32,7 +32,12 @@ struct Report {
     std::atomic<int> tid{0};
     GuestRtPrio lookup{7, 7};
     int lookupResult = -1;
-    std::atomic<bool> release{false};
+    std::atomic<bool> checkUpdated{false};
+    GuestRtPrio updatedLookup{7, 7};
+    int updatedLookupResult = -1;
+    int updatedSchedResult = -1;
+    int updatedSchedPolicy = -1;
+    int updatedSchedPriority = -1;
 };
 
 static void* APS5_VABI Entry(void* arg) {
@@ -40,11 +45,45 @@ static void* APS5_VABI Entry(void* arg) {
     report->lookupResult = rtprio_thread_nid_postfix(RTP_LOOKUP, 0, &report->lookup);
     report->tid.store(scePthreadGetthreadid(), std::memory_order_release);
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-    while (!report->release.load(std::memory_order_acquire)) {
+    while (!report->checkUpdated.load(std::memory_order_acquire)) {
         Require(std::chrono::steady_clock::now() < deadline);
         std::this_thread::yield();
     }
+    report->updatedLookupResult = rtprio_thread_nid_postfix(RTP_LOOKUP, 0, &report->updatedLookup);
+    KernelSchedParam updatedParam{};
+    int updatedPolicy = -1;
+    report->updatedSchedResult = scePthreadGetschedparam(scePthreadSelf(), &updatedPolicy, &updatedParam);
+    report->updatedSchedPolicy = updatedPolicy;
+    report->updatedSchedPriority = updatedParam.sched_priority;
     return nullptr;
+}
+
+static void VerifySelfSched(int expectedPolicy, int expectedPriority) {
+    const std::uint16_t expectedType = expectedPolicy == GUEST_SCHED_FIFO ? RTP_PRIO_FIFO : RTP_PRIO_REALTIME;
+    GuestRtPrio byZero{7, 7};
+    *__error_nid_postfix() = 1234;
+    Require(rtprio_thread_nid_postfix(RTP_LOOKUP, 0, &byZero) == 0);
+    Require(*__error_nid_postfix() == 1234);
+    Require(byZero.type == expectedType && byZero.prio == expectedPriority);
+    GuestRtPrio byTid{7, 7};
+    Require(rtprio_thread_nid_postfix(RTP_LOOKUP, scePthreadGetthreadid(), &byTid) == 0);
+    Require(byTid.type == expectedType && byTid.prio == expectedPriority);
+    int policy = -1;
+    KernelSchedParam param{};
+    Require(scePthreadGetschedparam(scePthreadSelf(), &policy, &param) == SCE_OK);
+    Require(policy == expectedPolicy && param.sched_priority == expectedPriority);
+    policy = -1;
+    param.sched_priority = -1;
+    Require(pthread_getschedparam_nid_postfix(scePthreadSelf(), &policy, &param) == 0);
+    Require(policy == expectedPolicy && param.sched_priority == expectedPriority);
+    int prio = -1;
+    Require(scePthreadGetprio(scePthreadSelf(), &prio) == SCE_OK);
+    Require(prio == expectedPriority);
+    Require(pthread_getprio_nid_postfix(scePthreadSelf()) == expectedPriority);
+    Require(sched_getscheduler_nid_postfix(0) == expectedPolicy);
+    param.sched_priority = -1;
+    Require(sched_getparam_nid_postfix(0, &param) == 0);
+    Require(param.sched_priority == expectedPriority);
 }
 
 static int LookupError(int function, int lwpid, GuestRtPrio* priority) {
@@ -86,10 +125,26 @@ static void CheckThread(int policy, int priority, std::uint16_t expectedType) {
     Require(LookupError(RTP_SET, report.tid.load(), &outOfRange) == GUEST_EINVAL);
     GuestRtPrio normal{RTP_PRIO_NORMAL, 31};
     Require(LookupError(RTP_SET, report.tid.load(), &normal) == GUEST_EINVAL);
-    Require(SetFailure(report.tid.load(), fromCreator) == "rtprio_thread: a real-time priority change not implemented");
-    report.release.store(true, std::memory_order_release);
+    const std::uint16_t updatedType = expectedType == RTP_PRIO_FIFO ? RTP_PRIO_REALTIME : RTP_PRIO_FIFO;
+    const int updatedPolicy = updatedType == RTP_PRIO_FIFO ? GUEST_SCHED_FIFO : GUEST_SCHED_RR;
+    const std::uint16_t updatedPrio = priority == 700 ? 300 : 700;
+    GuestRtPrio update{updatedType, updatedPrio};
+    *__error_nid_postfix() = 4321;
+    Require(rtprio_thread_nid_postfix(RTP_SET, report.tid.load(), &update) == 0);
+    Require(*__error_nid_postfix() == 4321);
+    Require(update.type == updatedType && update.prio == updatedPrio);
+    Require(rtprio_thread_nid_postfix(RTP_LOOKUP, report.tid.load(), &fromCreator) == 0);
+    Require(fromCreator.type == updatedType && fromCreator.prio == updatedPrio);
+    int creatorPolicy = -1;
+    KernelSchedParam creatorParam{};
+    Require(scePthreadGetschedparam(thread, &creatorPolicy, &creatorParam) == SCE_OK);
+    Require(creatorPolicy == updatedPolicy && creatorParam.sched_priority == updatedPrio);
+    report.checkUpdated.store(true, std::memory_order_release);
     Require(scePthreadJoin(thread, nullptr) == SCE_OK);
+    Require(report.updatedLookupResult == 0 && report.updatedLookup.type == updatedType && report.updatedLookup.prio == updatedPrio);
+    Require(report.updatedSchedResult == SCE_OK && report.updatedSchedPolicy == updatedPolicy && report.updatedSchedPriority == updatedPrio);
     Require(LookupError(RTP_LOOKUP, report.tid.load(), &fromCreator) == GUEST_ESRCH);
+    Require(LookupError(RTP_SET, report.tid.load(), &update) == GUEST_ESRCH);
 }
 
 int main() {
@@ -125,20 +180,39 @@ int main() {
     Require(sceKernelMprotect(page, 0x4000, 1) == 0);
     Require(LookupError(RTP_LOOKUP, 0, readOnly) == GUEST_EFAULT);
     Require(readOnly->type == 7 && readOnly->prio == 7);
+    Require(sceKernelMprotect(page, 0x4000, 3) == 0);
+    *readOnly = {RTP_PRIO_FIFO, 256};
+    Require(sceKernelMprotect(page, 0x4000, 1) == 0);
+    Require(scePthreadGetschedparam(scePthreadSelf(), &policy, &param) == SCE_OK);
+    const std::uint16_t originalType = policy == GUEST_SCHED_FIFO ? RTP_PRIO_FIFO : RTP_PRIO_REALTIME;
+    const auto originalPrio = static_cast<std::uint16_t>(param.sched_priority);
+    *__error_nid_postfix() = 1234;
+    Require(rtprio_thread_nid_postfix(RTP_SET, 0, readOnly) == 0);
+    Require(*__error_nid_postfix() == 1234);
+    Require(readOnly->type == RTP_PRIO_FIFO && readOnly->prio == 256);
+    VerifySelfSched(GUEST_SCHED_FIFO, 256);
     Require(LookupError(RTP_LOOKUP, 1, &self) == GUEST_ESRCH);
     Require(LookupError(RTP_LOOKUP, 999999, &self) == GUEST_ESRCH);
-    const GuestRtPrio inRange{RTP_PRIO_FIFO, 512};
-    Require(SetFailure(0, inRange) == "rtprio_thread: a real-time priority change not implemented");
-    Require(SetFailure(scePthreadGetthreadid(), inRange) == "rtprio_thread: a real-time priority change not implemented");
     for (const std::uint16_t type : {RTP_PRIO_REALTIME, RTP_PRIO_FIFO}) {
-        for (const std::uint16_t prio : {256, 767}) {
-            Require(SetFailure(0, {type, prio}) == "rtprio_thread: a real-time priority change not implemented");
+        const int expectedPolicy = type == RTP_PRIO_FIFO ? GUEST_SCHED_FIFO : GUEST_SCHED_RR;
+        for (const std::uint16_t prio : {256, 512, 767}) {
+            GuestRtPrio request{type, prio};
+            *__error_nid_postfix() = 5678;
+            Require(rtprio_thread_nid_postfix(RTP_SET, 0, &request) == 0);
+            Require(*__error_nid_postfix() == 5678);
+            VerifySelfSched(expectedPolicy, prio);
         }
         for (const std::uint16_t prio : {255, 768, 895, 896, 959, 960}) {
             GuestRtPrio request{type, prio};
             Require(LookupError(RTP_SET, 0, &request) == GUEST_EINVAL);
         }
     }
+    GuestRtPrio byTidSet{RTP_PRIO_REALTIME, 612};
+    Require(rtprio_thread_nid_postfix(RTP_SET, scePthreadGetthreadid(), &byTidSet) == 0);
+    VerifySelfSched(GUEST_SCHED_RR, 612);
+    GuestRtPrio restore{originalType, originalPrio};
+    Require(rtprio_thread_nid_postfix(RTP_SET, 0, &restore) == 0);
+    VerifySelfSched(policy, originalPrio);
     for (const std::uint16_t type : {RTP_PRIO_IDLE, RTP_PRIO_IDLE_FIFO}) {
         Require(SetFailure(0, {type, 960}) == "rtprio_thread: an idle-class set not implemented");
         for (const std::uint16_t prio : {959, 961}) {
