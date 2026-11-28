@@ -92,7 +92,7 @@ private:
     void trackInactiveExecHalves(const RdnaInstruction& inst);
     IrF32 applyF32ResultModifiers(const RdnaOperand& operand, IrF32 value);
     IrValue& f32OverflowBits(IrValue& sign);
-    IrF32 scaleF32Result(std::uint32_t omod, IrF32 value);
+    IrF32 scaleF32Result(std::uint32_t omod, IrF32 value, bool followsRoundMode);
     IrU32 scaleF16Bits(std::uint32_t omod, IrU32 bits, bool followsRoundMode);
     IrValue& scaleF64Result(std::uint32_t omod, IrValue& value);
     bool outputModifierApplies(std::uint32_t denormalShift) const;

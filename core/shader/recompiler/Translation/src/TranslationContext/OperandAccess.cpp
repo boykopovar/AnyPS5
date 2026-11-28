@@ -476,7 +476,7 @@ IrValue& TranslationContext::f32OverflowBits(IrValue& sign) {
     return ir.BitwiseOr(sign, ir.Constant(roundMode == 3u ? 0x7f7fffffu : 0x7f800000u));
 }
 
-IrF32 TranslationContext::scaleF32Result(std::uint32_t omod, IrF32 value) {
+IrF32 TranslationContext::scaleF32Result(std::uint32_t omod, IrF32 value, bool followsRoundMode) {
     IrValue& bits = ir.BitCastU32(value.Value());
     IrValue& magnitude = ir.BitwiseAnd(bits, ir.Constant(0x7fffffffu));
     IrValue& sign = ir.BitwiseAnd(bits, ir.Constant(0x80000000u));
@@ -485,7 +485,7 @@ IrF32 TranslationContext::scaleF32Result(std::uint32_t omod, IrF32 value) {
         result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x01000000u)), sign, ir.ISub(bits, ir.Constant(0x00800000u)));
     } else {
         const std::uint32_t exponentStep = omod == 1u ? 0x00800000u : 0x01000000u;
-        result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x7f800000u - exponentStep)), ir.IAdd(bits, ir.Constant(exponentStep)), f32OverflowBits(sign));
+        result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x7f800000u - exponentStep)), ir.IAdd(bits, ir.Constant(exponentStep)), followsRoundMode ? f32OverflowBits(sign) : ir.BitwiseOr(sign, ir.Constant(0x7f800000u)));
     }
     result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x00800000u)), ir.Constant(0u), *result);
     result = &ir.Select(ir.UGreaterThan(magnitude, ir.Constant(0x7f7fffffu)), bits, *result);
@@ -494,7 +494,7 @@ IrF32 TranslationContext::scaleF32Result(std::uint32_t omod, IrF32 value) {
 
 IrF32 TranslationContext::applyF32ResultModifiers(const RdnaOperand& operand, IrF32 value) {
     if (operand.omod != 0u && outputModifierApplies(4u)) {
-        value = scaleF32Result(operand.omod, value);
+        value = scaleF32Result(operand.omod, value, true);
     }
     if (operand.clamp) {
         const IrF32 saturated(ir.Emit(IrOpcode::FPSaturate32, IrType::F32, {&value.Value()}));

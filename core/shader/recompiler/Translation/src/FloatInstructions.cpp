@@ -724,8 +724,8 @@ bool TranslationContext::floatUnary(const RdnaInstruction& inst, IrOpcode opcode
     IrF32 value = floatUnaryValue(inst, opcode);
     RdnaOperand destination = inst.destination;
     const bool transcendental = opcode == IrOpcode::FPRecip32 || opcode == IrOpcode::FPRecipIFlag32 || opcode == IrOpcode::FPRecipSqrt32 || opcode == IrOpcode::FPSqrt || opcode == IrOpcode::FPLog2 || opcode == IrOpcode::FPExp2 || opcode == IrOpcode::FPCos;
-    if (transcendental && destination.omod != 0u && !ieeeMode && !outputModifierApplies(4u)) {
-        value = scaleF32Result(destination.omod, value);
+    if (transcendental && destination.omod != 0u && !ieeeMode) {
+        value = scaleF32Result(destination.omod, value, false);
         destination.omod = 0u;
     }
     writeOperand(destination, &value.Value());
@@ -1083,7 +1083,7 @@ bool TranslationContext::floatCube(const RdnaInstruction& inst, std::uint32_t re
     result = IrF32(ir.BitCastF32(ir.Select(nan.Value(), quietNan32(bits).Value(), bits.Value())));
     RdnaOperand destination = inst.destination;
     if (destination.omod != 0u && !ieeeMode) {
-        result = scaleF32Result(destination.omod, result);
+        result = scaleF32Result(destination.omod, result, true);
     }
     destination.omod = 0u;
     writeOperand(destination, &result.Value());
