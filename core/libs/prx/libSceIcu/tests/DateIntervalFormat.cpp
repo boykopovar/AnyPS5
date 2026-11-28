@@ -56,9 +56,20 @@ void Run() {
     RequireNoThrow([] { udtitvfmt_closeResult_nid_postfix(nullptr); });
 
     const auto storage = Filler();
-    RequireThrows([&] { udtitvfmt_closeResult_nid_postfix(reinterpret_cast<UFormattedDateInterval*>(const_cast<std::uint32_t*>(storage.data()))); });
+    RequireNoThrow([&] { udtitvfmt_closeResult_nid_postfix(reinterpret_cast<UFormattedDateInterval*>(const_cast<std::uint32_t*>(storage.data()))); });
     Require(Unchanged(storage));
-    RequireThrows([&] { udtitvfmt_closeResult_nid_postfix(reinterpret_cast<UFormattedDateInterval*>(std::uintptr_t{1})); });
+    RequireNoThrow([&] { udtitvfmt_closeResult_nid_postfix(reinterpret_cast<UFormattedDateInterval*>(std::uintptr_t{1})); });
+
+    std::int32_t status = 0;
+    auto* result = udtitvfmt_openResult_nid_postfix(&status);
+    Require(result != nullptr && status == 0);
+    udtitvfmt_closeResult_nid_postfix(result);
+    RequireNoThrow([&] { udtitvfmt_closeResult_nid_postfix(result); });
+
+    auto* foreign = ulistfmt_openResult_nid_postfix(&status);
+    Require(foreign != nullptr && status == 0);
+    RequireNoThrow([&] { udtitvfmt_closeResult_nid_postfix(reinterpret_cast<UFormattedDateInterval*>(foreign)); });
+    ulistfmt_closeResult_nid_postfix(foreign);
 }
 
 } // namespace UdtitvfmtCloseResult
@@ -314,9 +325,18 @@ void Run() {
 
     for (const auto incoming : passing) {
         std::int32_t status = incoming;
-        RequireThrows([&] { udtitvfmt_openResult_nid_postfix(&status); });
+        auto* result = udtitvfmt_openResult_nid_postfix(&status);
+        Require(result != nullptr);
         Require(status == incoming);
+        udtitvfmt_closeResult_nid_postfix(result);
     }
+
+    std::int32_t status = 0;
+    auto* first = udtitvfmt_openResult_nid_postfix(&status);
+    auto* second = udtitvfmt_openResult_nid_postfix(&status);
+    Require(status == 0 && first != nullptr && second != nullptr && first != second);
+    udtitvfmt_closeResult_nid_postfix(first);
+    udtitvfmt_closeResult_nid_postfix(second);
 
     RequireThrows([&] { udtitvfmt_openResult_nid_postfix(nullptr); });
 }
