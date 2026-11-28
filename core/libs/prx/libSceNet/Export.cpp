@@ -361,9 +361,15 @@ struct Sock {
     bool bound = false;
     bool listening = false;
     bool connectAttempted = false;
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__linux__)
     bool connectPending = false;
+#endif
+#ifdef _WIN32
     bool connectRefused = false;
+#endif
+#ifdef __linux__
+    int connectsInHost = 0;
+    std::uint64_t connectAttempt = 0;
 #endif
     bool aborted = false;
     bool unboundReceiveStopped = false;
@@ -476,6 +482,7 @@ bool g_net_inited = false;
 bool g_net_init_param_set = false;
 std::array<std::uint8_t, 32> g_net_init_param{};
 std::atomic<GuestSceNetTest::ResolverLookup> g_resolverLookupForTests{nullptr};
+std::atomic<GuestSceNetTest::ConnectStart> g_connectStartForTests{nullptr};
 std::atomic<GuestSceNetTest::ResolverReverseLookup> g_resolverReverseLookupForTests{nullptr};
 std::atomic<std::uint32_t> g_lo0_flags{NET_IFF_LO0_DEFAULT};
 
@@ -1060,6 +1067,10 @@ std::optional<std::uint32_t> InterfaceIdOfHostIndex(std::uint32_t index) {
 
 void GuestSceNetTest::SetResolverLookupForTests_nid_no_patch(ResolverLookup lookup) noexcept {
     g_resolverLookupForTests.store(lookup);
+}
+
+void GuestSceNetTest::SetConnectStartForTests_nid_no_patch(ConnectStart hook) noexcept {
+    g_connectStartForTests.store(hook);
 }
 
 void GuestSceNetTest::SetResolverReverseLookupForTests_nid_no_patch(ResolverReverseLookup lookup) noexcept {
@@ -1693,11 +1704,57 @@ static bool pending_connect_refused(Sock& socket) {
     }
     return socket.connectRefused;
 }
+#endif
 
+#ifdef _WIN32
 static void note_connect_pending(int s, const Sock& socket, bool pending) {
     std::lock_guard lock(g_mutex);
     const auto current = g_socks.find(s);
     if (current != g_socks.end() && current->second.native == socket.native) current->second.connectPending = pending;
+}
+#endif
+
+#ifdef __linux__
+static bool host_connecting(int native) {
+    tcp_info info{};
+    socklen_t size = sizeof(info);
+    return ::getsockopt(native, IPPROTO_TCP, TCP_INFO, &info, &size) == 0 && info.tcpi_state == TCP_SYN_SENT;
+}
+
+static bool begin_connect(int s, const Sock& socket) {
+    std::lock_guard lock(g_mutex);
+    const auto current = g_socks.find(s);
+    if (current == g_socks.end() || current->second.native != socket.native) return false;
+    current->second.connectPending = true;
+    ++current->second.connectsInHost;
+    ++current->second.connectAttempt;
+    return true;
+}
+
+static void end_connect(int s, const Sock& socket, bool pending) {
+    const int saved = errno;
+    std::lock_guard lock(g_mutex);
+    const auto current = g_socks.find(s);
+    if (current != g_socks.end() && current->second.native == socket.native) {
+        if (current->second.connectsInHost > 0) --current->second.connectsInHost;
+        current->second.connectPending = pending || current->second.connectsInHost > 0 || host_connecting(socket.native->value);
+    }
+    errno = saved;
+}
+
+static bool send_before_connect(int s, const Sock& socket) {
+    if (!socket.connectPending) return false;
+    if (socket.connectsInHost > 0) return true;
+    pollfd entry{socket.native->value, POLLOUT, 0};
+    int ready;
+    do ready = ::poll(&entry, 1, 0); while (ready < 0 && errno == EINTR);
+    if (ready < 0) throw std::runtime_error("sceNetSend: polling a pending connect failed, errno " + std::to_string(errno));
+    if (ready == 0) return true;
+    std::lock_guard lock(g_mutex);
+    const auto current = g_socks.find(s);
+    if (current != g_socks.end() && current->second.native == socket.native && current->second.connectAttempt == socket.connectAttempt &&
+        current->second.connectsInHost == 0) current->second.connectPending = false;
+    return false;
 }
 #endif
 
@@ -1780,9 +1837,17 @@ int APS5_VABI sceNetConnect(int s, const void* addr, uint32_t addrlen) {
         return 0;
     }
 #endif
+#ifdef __linux__
+    const bool began = socket.type == NET_SOCK_STREAM && begin_connect(s, socket);
+    if (began) {
+        if (const auto hook = g_connectStartForTests.load()) hook(s);
+    }
+#endif
     if (::connect(socket.native->value, reinterpret_cast<const sockaddr*>(&native), native_length) == 0) {
 #ifdef _WIN32
         if (socket.type == NET_SOCK_STREAM) note_connect_pending(s, socket, false);
+#elif defined(__linux__)
+        if (began) end_connect(s, socket, false);
 #endif
 #if defined(_WIN32) || defined(__APPLE__)
         note_local_address(s, socket);
@@ -1819,6 +1884,8 @@ int APS5_VABI sceNetConnect(int s, const void* addr, uint32_t addrlen) {
     }
 #elif defined(__APPLE__)
     if (socket.type == NET_SOCK_STREAM && errno == EISCONN && dropped_tcp_connection(socket.native->value)) return fail(NET_ECONNREFUSED);
+#elif defined(__linux__)
+    if (began) end_connect(s, socket, errno == EINPROGRESS || errno == EALREADY || errno == EINTR);
 #endif
     return fail(native_error());
 }
@@ -1929,6 +1996,9 @@ int64_t APS5_VABI sceNetSend(int s, const void* buf, size_t len, int flags) {
         socket = it->second;
     }
     if (IsPeerSocket(socket)) NotImplemented_nid_no_patch(__func__);
+#ifdef __linux__
+    if (send_before_connect(s, socket)) return fail(NET_ENOTCONN);
+#endif
 #ifdef __APPLE__
     const auto result = send_stream_in_chunks(*socket.native, flags, static_cast<const char*>(buf), len, [&](const char* data, std::size_t size) {
         return ::send(socket.native->value, data, size, NATIVE_SEND_FLAGS | native_message_flags(flags));
@@ -1982,6 +2052,9 @@ int64_t APS5_VABI sceNetSendto(int s, const void* buf, size_t len, int flags, co
 #endif
     if (!to) {
         if (tolen != 0) return fail(NET_EINVAL);
+#ifdef __linux__
+        if (send_before_connect(s, socket)) return fail(NET_ENOTCONN);
+#endif
 #ifdef __APPLE__
         result = send_stream_in_chunks(*socket.native, flags, static_cast<const char*>(buf), len, [&](const char* data, std::size_t size) {
             return ::send(socket.native->value, data, size, NATIVE_SEND_FLAGS | native_message_flags(flags));

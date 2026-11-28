@@ -2264,6 +2264,58 @@ static void CheckEpollClosedStream() {
     Require(sceNetSocketClose(accepted) == 0 && sceNetSocketClose(listener) == 0);
 }
 
+#ifdef __linux__
+static std::atomic<std::int64_t> sendWhileConnectStarts{0};
+static std::atomic<int> connectWhileConnectStarts{0};
+
+static void SendWhileConnectStarts(int socket) {
+    GuestSceNetTest::SetConnectStartForTests_nid_no_patch(nullptr);
+    sendWhileConnectStarts = sceNetSend(socket, "x", 1, 0);
+    const std::array<std::uint8_t, 16> multicast{16, 2, 0x1f, 0x90, 224, 0, 0, 1};
+    connectWhileConnectStarts = sceNetConnect(socket, multicast.data(), multicast.size());
+}
+
+static void CheckSendDuringConnect() {
+    const int listener = socket_nid_postfix(2, 1, 0);
+    Require(listener >= 0);
+    std::array<std::uint8_t, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(bind_nid_postfix(listener, address.data(), address.size()) == 0 && listen_nid_postfix(listener, 0) == 0);
+    std::uint32_t size = address.size();
+    Require(getsockname_nid_postfix(listener, address.data(), &size) == 0);
+    const int on = 1;
+    std::vector<int> clients;
+    int pending = -1;
+    for (int attempt = 0; attempt < 8 && pending < 0; ++attempt) {
+        const int client = sceNetSocket("pending-connect", 2, 1, 6);
+        Require(client >= 0 && sceNetSetsockopt(client, 0xffff, 0x1200, &on, sizeof(on)) == 0);
+        clients.push_back(client);
+        sendWhileConnectStarts = 0;
+        connectWhileConnectStarts = 0;
+        GuestSceNetTest::SetConnectStartForTests_nid_no_patch(SendWhileConnectStarts);
+        const int connected = sceNetConnect(client, address.data(), address.size());
+        const int connectError = *sceNetErrnoLoc();
+        GuestSceNetTest::SetConnectStartForTests_nid_no_patch(nullptr);
+        Require(sendWhileConnectStarts == static_cast<int>(0x80410100u | 57));
+        Require(connectWhileConnectStarts < 0);
+        if (connected == 0) continue;
+        Require(connectError == 36);
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        std::array<std::uint8_t, 16> peer{};
+        std::uint32_t peerSize = peer.size();
+        if (sceNetGetpeername(client, peer.data(), &peerSize) != 0) pending = client;
+    }
+    Require(pending >= 0);
+    Require(Failed(sceNetSend(pending, "x", 1, 0), 57));
+    Require(Failed(sceNetSendto(pending, "x", 1, 0, nullptr, 0), 57));
+    char byte = 'x';
+    NetIovec out[] = {{&byte, 1}};
+    NetMsghdr message{nullptr, 0, out, 1, nullptr, 0, 0};
+    Require(Failed(sceNetSendmsg(pending, &message, 0), 57));
+    for (const int client : clients) Require(sceNetSocketClose(client) == 0);
+    Require(close_nid_postfix(listener) == 0);
+}
+#endif
+
 static void CheckTcpNoDelay() {
     const int stream = sceNetSocket("tcp-nodelay", 2, 1, 6);
     const int datagram = sceNetSocket("tcp-nodelay-udp", 2, 2, 17);
@@ -3299,6 +3351,9 @@ int main(int argc, char** argv) {
     CheckRejectedArguments();
     CheckDontWait();
     CheckNoSignal();
+#ifdef __linux__
+    CheckSendDuringConnect();
+#endif
     CheckAddressText(2, "127.0.0.1");
     CheckAddressText(2, "255.255.255.255");
     CheckAddressText(28, "::1");
