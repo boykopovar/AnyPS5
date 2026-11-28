@@ -542,8 +542,15 @@ int APS5_VABI _ZN3sce3Xml3Dom8Document7setTextENS1_6NodeIdEPKNS0_6StringE(XmlHan
     return XmlDom::DocumentSetText(self, node, text);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom8Document9serializeEPKNS0_18SerializeParameterEPNS0_6StringE() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce3Xml3Dom8Document9serializeEPKNS0_18SerializeParameterEPNS0_6StringE(XmlHandle* self, const XmlSerializeParameter* parameter, XmlString* result) {
+    if (!XmlDom::DocumentIsAvailable(self)) return XmlErrorNotInitialized;
+    if (result == nullptr) return XmlErrorInvalidParameter;
+    std::uint8_t flags = 0;
+    if (parameter != nullptr && !CopyInGuest(flags, reinterpret_cast<const std::uint8_t*>(parameter))) throw std::logic_error("sce::Xml::Dom::Document::serialize: reading a parameter that is not readable faults in 13.40");
+    const std::string& text = XmlDom::DocumentSerialize(self, (flags & 1) != 0);
+    const XmlString value{text.c_str(), text.size()};
+    if (!CopyOutGuest(result, value)) throw std::logic_error("sce::Xml::Dom::Document::serialize: writing a result that is not writable faults in 13.40");
+    return 0;
 }
 
 int APS5_VABI _ZN3sce3Xml3Dom8Document9terminateEv(XmlHandle* self) {

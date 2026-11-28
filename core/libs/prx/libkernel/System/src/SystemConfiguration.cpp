@@ -214,9 +214,9 @@ struct GuestKinfoProc {
     unsigned char reserved5[90];
     std::int32_t threadCount;
     std::int32_t threadId;
-    unsigned char reserved6[484];
+    unsigned char reserved6[492];
 };
-static_assert(offsetof(GuestKinfoProc, pid) == 72 && offsetof(GuestKinfoProc, parentPid) == 76 && offsetof(GuestKinfoProc, flag) == 368 && offsetof(GuestKinfoProc, command) == 447 && sizeof(GuestKinfoProc) == 1088);
+static_assert(offsetof(GuestKinfoProc, pid) == 72 && offsetof(GuestKinfoProc, parentPid) == 76 && offsetof(GuestKinfoProc, flag) == 368 && offsetof(GuestKinfoProc, command) == 447 && sizeof(GuestKinfoProc) == 1096);
 static_assert(offsetof(GuestKinfoProc, threadName) == 394 && offsetof(GuestKinfoProc, moreThreadName) == 502 && offsetof(GuestKinfoProc, threadCount) == 596 && offsetof(GuestKinfoProc, threadId) == 600);
 
 GuestKinfoProc GuestProcessRecord() {
@@ -410,7 +410,6 @@ std::int64_t APS5_VABI sysconf_nid_postfix(int name) {
     return result;
 }
 int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void* oldValue, std::size_t* oldLength, const void* newValue, std::size_t newLength) {
-    (void)newLength;
     if (nameLength < 2 || nameLength > 24) {
         *__error_nid_postfix() = 22;
         return -1;
@@ -420,6 +419,22 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
     name = guestName;
     std::size_t capacity = 0;
     if (oldLength != nullptr && !GuestCopyIn_nid_no_patch(&capacity, oldLength, sizeof(capacity))) return Fault();
+    if (nameLength == 2 && name[0] == 0 && name[1] == 3) {
+        if (newValue == nullptr || newLength == 0) {
+            *__error_nid_postfix() = 2;
+            return -1;
+        }
+        if (newLength >= MaximumSysctlName) {
+            *__error_nid_postfix() = 63;
+            return -1;
+        }
+        std::string text(newLength, '\0');
+        if (!GuestCopyIn_nid_no_patch(text.data(), newValue, newLength)) return Fault();
+        int found[24];
+        std::size_t count = 24;
+        if (sysctlnametomib_nid_postfix(text.c_str(), found, &count) != 0) return -1;
+        return CopyOut(found, count * sizeof(int), oldValue, oldLength);
+    }
     if (IsMeasuredAbsentMib(name, nameLength)) {
         if (newValue != nullptr) throw std::runtime_error(std::string(__func__) + ": writing an unmeasured absent MIB");
         *__error_nid_postfix() = 2;
@@ -552,7 +567,7 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
             *__error_nid_postfix() = 1;
             return -1;
         }
-        if (nameLength != 4) {
+        if (nameLength != 4 || oldValue != nullptr) {
             *__error_nid_postfix() = 22;
             return -1;
         }

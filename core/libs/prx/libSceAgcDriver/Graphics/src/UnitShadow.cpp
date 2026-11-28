@@ -693,18 +693,22 @@ bool AnyPublishInProgress() {
 }
 
 bool AnyShadowedOverlaps(std::uint64_t address, std::size_t bytes) {
-    if (!UnitShadowEnabled() || bytes == 0) return false;
-    auto& registry = Registry();
-    std::lock_guard lock(registry.mutex);
-    return anyShadowedLocked(registry, address, bytes);
+    return !LiveUnitsClear(address, bytes);
 }
 
 bool AnyShadowedOverlaps(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
     if (!UnitShadowEnabled() || ranges.empty()) return false;
-    auto& registry = Registry();
-    std::lock_guard lock(registry.mutex);
+    auto& copy = ThreadScratch<std::shared_ptr<const LiveRanges>, LiveRangesTag>();
+    const auto serial = liveSerial.load(std::memory_order_acquire);
+    if (copy == nullptr || copy->serial != serial) {
+        auto published = publishedLive.load(std::memory_order_acquire);
+        copy = published != nullptr && published->serial == serial ? std::move(published) : currentLiveRanges();
+    }
+    if (copy->ranges.empty()) return false;
     for (const auto& [begin, end] : ranges) {
-        if (end > begin && anyShadowedLocked(registry, begin, static_cast<std::size_t>(end - begin))) return true;
+        if (end <= begin) continue;
+        const auto it = std::upper_bound(copy->ranges.begin(), copy->ranges.end(), begin, [](std::uint64_t value, const std::pair<std::uint64_t, std::uint64_t>& range) { return value < range.second; });
+        if (it != copy->ranges.end() && it->first < end) return true;
     }
     return false;
 }

@@ -848,6 +848,11 @@ class TraceDigestTests(unittest.TestCase):
     def test_summary_is_the_line_of_this_trace(self):
         self.assertEqual(self.result()["summary"]["trace"], "aps5-trace-abc-7.json.gz")
 
+    def test_uppercase_gzip_suffix_still_loads_a_trace(self):
+        uppercase = self.trace.with_suffix(".GZ")
+        self.trace.rename(uppercase)
+        self.assertTrue(trace_digest.load_trace(uppercase).presents)
+
     def test_decompressing_trace_preserves_the_complete_command_line_digest(self):
         uncompressed = self.trace.with_suffix("")
         uncompressed.write_bytes(gzip.decompress(self.trace.read_bytes()))
@@ -900,6 +905,14 @@ class TraceDigestTests(unittest.TestCase):
         result = self.result()
         self.assertEqual(result["frames"], 3)
         self.assertAlmostEqual(result["window_ms"], 40.0)
+
+    def test_frames_clip_at_a_window_end_before_the_last_present(self):
+        trace = trace_digest.Trace([])
+        trace.presents = [(0, 10), (5000, 11), (10000, 12), (15000, 13)]
+        result = trace_digest.digest(trace, {"window": {"ms": 7.5}})
+        self.assertEqual(result["frames"], 2)
+        self.assertEqual(result["window_ms"], 7.5)
+        self.assertEqual(trace.frames(5000), [(0, 0, 5000, 10)])
 
     def test_command_line_prints_non_ascii_names_on_a_legacy_console(self):
         events = [dict(event, args={"name": "メイン"}) if event["name"] == "thread_name" and event["tid"] == 1 else event for event in EVENTS]

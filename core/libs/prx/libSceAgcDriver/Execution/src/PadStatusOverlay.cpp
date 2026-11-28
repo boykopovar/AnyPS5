@@ -129,6 +129,22 @@ void PadStatusDisplay::Request(Clock::time_point now) {
     shownUntil = now + Duration;
 }
 
+void PadStatusDisplay::ShowMouseMode(Clock::time_point now, const char* shortcut, bool enabled) {
+    if (shortcut == nullptr) {
+        mouseModeLines.clear();
+        return;
+    }
+    auto label = OverlayText(shortcut);
+    const auto first = label.find_first_not_of(' ');
+    label = first == std::string::npos ? "" : label.substr(first, label.find_last_not_of(' ') - first + 1);
+    constexpr std::string_view prefix = "TOGGLE: ";
+    constexpr auto limit = PadStatusMetrics::Columns - prefix.size();
+    if (label.size() > limit) label = label.substr(0, limit - 1) + ".";
+    mouseModeLines = {enabled ? "MOUSE AS STICK ON" : "MOUSE AS STICK OFF",
+        label.empty() ? "TOGGLE INPUT UNAVAILABLE" : std::string(prefix) + label};
+    mouseModeUntil = now + Duration;
+}
+
 bool PadStatusDisplay::Visible(Clock::time_point now) const {
     return shownUntil.has_value() && now < *shownUntil;
 }
@@ -157,6 +173,20 @@ std::vector<std::string> PadStatusDisplay::Lines() const {
     return lines;
 }
 
+std::optional<std::vector<std::string>> PadStatusDisplay::OverlayLines(Clock::time_point now) const {
+    const bool controllers = Visible(now);
+    if (now >= mouseModeUntil || mouseModeLines.empty()) {
+        if (controllers) return Lines();
+        return std::nullopt;
+    }
+    auto lines = mouseModeLines;
+    if (controllers) {
+        const auto controllerLines = Lines();
+        lines.insert(lines.end(), controllerLines.begin(), controllerLines.end());
+    }
+    return lines;
+}
+
 namespace {
 
 std::mutex displayMutex;
@@ -170,9 +200,7 @@ PadStatusDisplay& display() {
 
 std::optional<std::vector<std::string>> PadStatusOverlayLines() {
     std::lock_guard lock(displayMutex);
-    auto& shared = display();
-    if (!shared.Visible(PadStatusDisplay::Clock::now())) return std::nullopt;
-    return shared.Lines();
+    return display().OverlayLines(PadStatusDisplay::Clock::now());
 }
 
 }
@@ -185,4 +213,9 @@ extern "C" void AgcDriverPadStatusPoll_nid_postfix(const AgcDriver::PadStatusPro
 extern "C" void AgcDriverPadStatusShow_nid_postfix() {
     std::lock_guard lock(AgcDriver::displayMutex);
     AgcDriver::display().Request(AgcDriver::PadStatusDisplay::Clock::now());
+}
+
+extern "C" void AgcDriverPadStatusMouseMode_nid_postfix(const char* shortcut, bool enabled) {
+    std::lock_guard lock(AgcDriver::displayMutex);
+    AgcDriver::display().ShowMouseMode(AgcDriver::PadStatusDisplay::Clock::now(), shortcut, enabled);
 }

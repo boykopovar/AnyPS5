@@ -116,6 +116,12 @@ void TestDer() {
     CheckValue(Conf(83, "critical,  DER:0A0B"), 83, 1, {0x0a, 0x0b});
 }
 
+void TestUnmappedValue() {
+    Require(Conf(83, reinterpret_cast<const char*>(0x10)) == nullptr);
+    Require(allocations.empty());
+    CheckValue(Conf(83, "DER:0500"), 83, 0, {0x05, 0x00});
+}
+
 void TestAsn1() {
     CheckValue(Conf(83, "ASN1:INTEGER:5"), 83, 0, {0x02, 0x01, 0x05});
     CheckValue(Conf(83, "ASN1:INT:0x10"), 83, 0, {0x02, 0x01, 0x10});
@@ -503,6 +509,7 @@ int main() {
         reinterpret_cast<void*>(UnexpectedPosixAlign_nid_no_patch)};
     ApplicationHeapRegister_nid_no_patch(api.data());
     TestDer();
+    TestUnmappedValue();
     TestAsn1();
     TestMalformed();
     TestErrorQueue();

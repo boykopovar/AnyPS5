@@ -113,6 +113,7 @@ void TestCurrent() {
     Require(_ZNSt8__sce_v210filesystem12_Current_getERA260_c_nid_postfix(current), "current directory");
     Require(std::strcmp(current, "/") == 0, "current directory is the sandbox root");
     Require(static_cast<unsigned char>(current[2]) == 0x5a, "current directory writes two bytes");
+    Require(!_ZNSt8__sce_v210filesystem12_Current_getERA260_c_nid_postfix(reinterpret_cast<char*>(std::uintptr_t{0x10})), "current directory reports an unwritable buffer");
 }
 
 }

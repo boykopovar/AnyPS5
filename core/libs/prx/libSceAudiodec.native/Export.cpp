@@ -248,8 +248,18 @@ int APS5_VABI sceAudiodecGetContext(void* out) {
 
 int APS5_VABI sceAudiodecInitialize(void* context) {
     if (context == nullptr) return AudiodecErrorArgument;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    const auto address = reinterpret_cast<std::uintptr_t>(context);
+    if (address > UINTPTR_MAX - 0x1Fu) return AudiodecErrorArgument;
+    auto* const ids = static_cast<std::uint32_t*>(context);
+    const int ajmiStatus = RetryService([&] { return sceAjmiInitialize(0, &ids[0]); });
+    if (ajmiStatus < 0) return ajmiStatus;
+    const int ajmStatus = RetryService([&] { return sceAjmInitialize(0, &ids[1]); });
+    if (ajmStatus < 0) return ajmStatus;
+    const auto lock = (address + 0xFu) & ~static_cast<std::uintptr_t>(7u);
+    scePthreadRwlockInit(reinterpret_cast<PthreadRwlock*>(lock), nullptr, nullptr);
+    const std::array<std::uint32_t, 2> flags{};
+    if (!WriteGuest(reinterpret_cast<std::array<std::uint32_t, 2>*>(lock + 8u), flags)) return AudiodecErrorArgument;
+    return ajmStatus;
 }
 
 int APS5_VABI sceAudiodecRegisterCodec(void* context, std::uint32_t codecType) {
@@ -283,7 +293,7 @@ int APS5_VABI sceAudiodecRegisterCodec(void* context, std::uint32_t codecType) {
 }
 
 int APS5_VABI sceAudiodecTerminate(void* context) {
-    static_cast<void>(context);
+    if (context == nullptr) return 0;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

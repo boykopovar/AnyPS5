@@ -42,7 +42,7 @@ void Check(const Example& example) {
     const auto* inherited = static_cast<const __cxxabiv1::__si_class_type_info*>(type);
     Require(inherited->__base_type && std::strcmp(inherited->__base_type->name(), "St13runtime_error") == 0,
             "libc++ regex_error must inherit from std::runtime_error");
-    const auto what = reinterpret_cast<What>(vtable[2]);
+    const auto what = reinterpret_cast<What>(const_cast<void*>(vtable[2]));
     Require(std::strstr(what(&exception.base), example.text) != nullptr, "libc++ regex_error reports the wrong diagnostic");
 
     _ZNSt3__111regex_errorD1Ev_nid_postfix(&exception);
