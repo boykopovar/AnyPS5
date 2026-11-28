@@ -130,6 +130,11 @@ std::uint64_t APS5_VABI FT_Get_First_CharForward_nid_no_patch(FreeType::GuestFac
 }
 APS5_EXPORT("qoysbJFu5sI", FT_Get_First_CharForward_nid_no_patch);
 
+const char* APS5_VABI FT_Get_Font_FormatForward_nid_no_patch(FreeType::GuestFaceRec* face) {
+    return FT_Get_Font_Format_nid_postfix(face);
+}
+APS5_EXPORT("N1S26TrBLLk", FT_Get_Font_FormatForward_nid_no_patch);
+
 int APS5_VABI FT_Get_GaspForward_nid_no_patch(FreeType::GuestFaceRec* face, std::uint32_t ppem) {
     return FT_Get_Gasp_nid_postfix(face, ppem);
 }
@@ -200,6 +205,12 @@ int APS5_VABI FT_Get_SubGlyph_InfoForward_nid_no_patch(FreeType::GuestGlyphSlotR
     return FT_Get_SubGlyph_Info_nid_postfix(slot, subIndex, index, flags, arg1, arg2, transform);
 }
 APS5_EXPORT("vOhW2Wdz0t4", FT_Get_SubGlyph_InfoForward_nid_no_patch);
+
+int APS5_VABI FT_Get_Track_KerningForward_nid_no_patch(FreeType::GuestFaceRec* face, std::int64_t pointSize,
+                                                     std::int32_t degree, std::int64_t* kerning) {
+    return FT_Get_Track_Kerning_nid_postfix(face, pointSize, degree, kerning);
+}
+APS5_EXPORT("e2KoMPOAdZg", FT_Get_Track_KerningForward_nid_no_patch);
 
 std::int32_t APS5_VABI FT_Get_TrueType_Engine_TypeForward_nid_no_patch(FreeType::GuestLibrary* library) {
     return FT_Get_TrueType_Engine_Type_nid_postfix(library);
