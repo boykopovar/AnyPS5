@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <stdexcept>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -20,6 +21,15 @@ constexpr int kNotOpen = static_cast<int>(0x80a80006u);
 alignas(16) std::array<std::byte, 0x40> process{};
 
 void Require(bool value) { if (!value) std::abort(); }
+
+template <typename TCall> bool NotImplemented(TCall call) {
+    try {
+        call();
+    } catch (const std::runtime_error& error) {
+        return std::strstr(error.what(), "not implemented") != nullptr;
+    }
+    return false;
+}
 
 void Put32(std::vector<std::uint8_t>& bytes, std::size_t at, std::uint32_t value) {
     std::memcpy(bytes.data() + at, &value, sizeof(value));
@@ -90,6 +100,15 @@ int main() {
         Require(sceVideoRecordingSetInfo_nid_disambig1(info, data.data(), data.size()) == kInvalidArgument);
     }
     for (const auto byte : data) Require(byte == 0xab);
+
+    Require(sceVideoRecordingGetStatus_nid_disambig1() == 0);
+    Require(sceVideoRecordingStart_nid_disambig1() == kNotOpen);
+    Require(sceVideoRecordingStop_nid_disambig1() == kNotOpen);
+    Require(sceVideoRecordingClose_nid_disambig1(0) == kNotOpen);
+    Require(sceVideoRecordingClose_nid_disambig1(1) == kNotOpen);
+    Require(sceVideoRecordingGetStatus_nid_disambig1() == 0);
+    Require(NotImplemented([] { (void)sceVideoRecordingOpen2_nid_disambig1("/app0/recording", nullptr, nullptr, 0); }));
+    Require(NotImplemented([] { (void)sceVideoRecordingQueryMemSize2_nid_disambig1(nullptr); }));
 
     std::filesystem::current_path(original);
     std::filesystem::remove_all(directory);
