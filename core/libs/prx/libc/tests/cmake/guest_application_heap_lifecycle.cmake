@@ -1,0 +1,13 @@
+if(BUILD_TESTING)
+    add_test_executable(guest_application_heap_lifecycle_tests ${LIBS_INCLUDE_DIR}/tests/GuestApplicationHeapLifecycle.cpp)
+    target_include_directories(guest_application_heap_lifecycle_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_application_heap_lifecycle_tests PRIVATE libc)
+    configure_windows_unwind(guest_application_heap_lifecycle_tests)
+    add_test(NAME guest_application_heap_lifecycle COMMAND guest_application_heap_lifecycle_tests)
+    add_test(NAME guest_application_heap_init_failure COMMAND guest_application_heap_lifecycle_tests init-failure)
+    set_tests_properties(guest_application_heap_lifecycle guest_application_heap_init_failure PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_application_heap_lifecycle guest_application_heap_init_failure PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
