@@ -63,7 +63,11 @@ inline HANDLE PreciseWaitThreadTimer() {
             }
         }
     };
-    return HostThreadLocal<Timer, Timer>().handle;
+    try {
+        return HostThreadLocal<Timer, Timer>().handle;
+    } catch (const std::runtime_error&) {
+        return nullptr;
+    }
 }
 
 inline std::uint64_t PreciseQpcFrequency() {
