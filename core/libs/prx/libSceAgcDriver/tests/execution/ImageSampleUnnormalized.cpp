@@ -354,6 +354,16 @@ int main() {
             Require(levelZeroChain == levelZeroSingle, std::string(sampler.name) + ": a 4-level view read by image_sample_lz does not sample its base level like a 1-level image");
             if (driverSamplesUnnormalizedAboveMipZero) Check(LevelZero, sampler, 1u, "3-level view starting at mip 1", levelOneCoordinates, Run(*device, LevelZero, fromLevelOne, sampler.words, levelOneCoordinates));
         }
+        constexpr std::array<SamplerCase, 3> AnisotropicSamplers{{
+            {"16x anisotropic linear clamp-to-last-texel, point mips", {0x00008892u, 0x00fff000u, 0x05f00000u, 0u}, true, true},
+            {"4x anisotropic linear mirror on X and Y, point mips", {0x00008489u, 0x00fff000u, 0x05f00000u, 0u}, true, true},
+            {"2x anisotropic linear clamp-to-border, transparent black", {0x000082b6u, 0x00fff000u, 0x05f00000u, 0u}, true, true},
+        }};
+        for (const auto& sampler : AnisotropicSamplers) {
+            Check(LevelZero, sampler, 0u, "1-level image", coordinates, Run(*device, LevelZero, single, sampler.words, coordinates));
+            Check(LevelZero, sampler, 0u, "4-level view", coordinates, Run(*device, LevelZero, chain, sampler.words, coordinates));
+            Check(Offsets, sampler, 0u, "1-level image", offsetCoordinates, Run(*device, Offsets, single, sampler.words, offsetCoordinates));
+        }
         ExpectFailure(*device, Plain, TextureDescriptor(MultiLevel.data(), 2u, 2u), Samplers[0].words, "single-level", "a 3-level view read by a selected LOD");
         ExpectFailure(*device, Plain, chain, Samplers[0].words, "single-level", "a 4-level view read by image_sample_l and image_sample");
         ExpectFailure(*device, Plain, fromLevelOne, Samplers[0].words, "single-level", "a view starting at mip 1 read by image_sample_l and image_sample");
