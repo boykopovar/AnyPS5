@@ -76,7 +76,7 @@ static void RequireFaultKeepsErrno() {
         Require(*__error_nid_postfix() == 12345);
         *__error_nid_postfix() = 12345;
         Require(sceKernelReadv(0, static_cast<const KernelIovec*>(bad), 1) == KernelEfault);
-        Require(*__error_nid_postfix() == 12345);
+        Require(*__error_nid_postfix() == GuestEfault);
     }
 }
 

@@ -17,13 +17,33 @@ UErrorCode& Status(std::int32_t* error) {
     return *reinterpret_cast<UErrorCode*>(error);
 }
 
+std::int32_t CaseLocale(const char* locale) {
+    if (!locale) locale = Icu::DefaultLocaleName();
+    return *locale ? ucase_getCaseLocale(locale) : UCASE_LOC_ROOT;
+}
+
 std::int32_t MapInLocale(const char* locale, char16_t* destination, std::int32_t capacity, const char16_t* source,
                          std::int32_t length, UStringCaseMapper* mapper, std::int32_t* error) {
     auto& status = Status(error);
-    if (!locale) locale = Icu::DefaultLocaleName();
-    const std::int32_t caseLocale = *locale ? ucase_getCaseLocale(locale) : UCASE_LOC_ROOT;
-    return ustrcase_mapWithOverlap(caseLocale, 0, UCASEMAP_BREAK_ITERATOR_NULL destination, capacity, source, length, mapper,
-                                   status);
+    return ustrcase_mapWithOverlap(CaseLocale(locale), 0, UCASEMAP_BREAK_ITERATOR_NULL destination, capacity, source, length,
+                                   mapper, status);
+}
+
+bool ReachesEdits(UErrorCode status, const char16_t* source, std::int32_t length, const char16_t* destination,
+                  std::int32_t capacity) {
+    if (U_FAILURE(status) || capacity < 0 || (!destination && capacity > 0) || !source || length < -1) return false;
+    if (length == -1) length = u_strlen(source);
+    if (!destination) return true;
+    return (source < destination || source >= destination + capacity) && (destination < source || destination >= source + length);
+}
+
+std::int32_t MapWithoutOverlap(const char* name, std::int32_t caseLocale, std::uint32_t options, const char16_t* source,
+                               std::int32_t length, char16_t* destination, std::int32_t capacity, void* edits,
+                               std::int32_t* error, UStringCaseMapper* mapper) {
+    auto& status = Status(error);
+    if (edits && ReachesEdits(status, source, length, destination, capacity)) NotImplemented_nid_no_patch(name);
+    return ustrcase_map(caseLocale, options, UCASEMAP_BREAK_ITERATOR_NULL destination, capacity, source, length, mapper,
+                        nullptr, status);
 }
 
 }
@@ -80,6 +100,27 @@ void APS5_VABI u_caseInsensitivePrefixMatch_nid_postfix(const char16_t* first, s
     CheckString(second, secondLength);
     u_caseInsensitivePrefixMatch(first, firstLength, second, secondLength, options, firstMatch, secondMatch,
                                  reinterpret_cast<UErrorCode*>(error));
+}
+
+std::int32_t APS5_VABI _ZN6icu_687CaseMap7toLowerEPKcjPKDsiPDsiPNS_5EditsER10UErrorCode_nid_postfix(
+    const char* locale, std::uint32_t options, const char16_t* source, std::int32_t length, char16_t* destination,
+    std::int32_t capacity, void* edits, std::int32_t* error) {
+    return MapWithoutOverlap(__func__, CaseLocale(locale), options, source, length, destination, capacity, edits, error,
+                             ustrcase_internalToLower);
+}
+
+std::int32_t APS5_VABI _ZN6icu_687CaseMap7toUpperEPKcjPKDsiPDsiPNS_5EditsER10UErrorCode_nid_postfix(
+    const char* locale, std::uint32_t options, const char16_t* source, std::int32_t length, char16_t* destination,
+    std::int32_t capacity, void* edits, std::int32_t* error) {
+    return MapWithoutOverlap(__func__, CaseLocale(locale), options, source, length, destination, capacity, edits, error,
+                             ustrcase_internalToUpper);
+}
+
+std::int32_t APS5_VABI _ZN6icu_687CaseMap4foldEjPKDsiPDsiPNS_5EditsER10UErrorCode_nid_postfix(
+    std::uint32_t options, const char16_t* source, std::int32_t length, char16_t* destination, std::int32_t capacity,
+    void* edits, std::int32_t* error) {
+    return MapWithoutOverlap(__func__, UCASE_LOC_ROOT, options, source, length, destination, capacity, edits, error,
+                             ustrcase_internalFold);
 }
 
 }

@@ -59,6 +59,14 @@ else:
         self.assertEqual(removed_calls, {0, 3})
         self.assertEqual(removed_chunks, {1, 5})
 
+    def test_two_rejected_singletons_finish_with_two_trials(self):
+        minimizer = PredicateMinimizer({0, 1}, set())
+        with patch.object(minimizer, "predicate", side_effect=[False, False, frame_capture_minimize.TrialLimitReached]) as trial:
+            remaining, _, _, complete = minimizer.minimize([0, 1], set(), set(), True)
+        self.assertEqual([args[0][0] for args in trial.call_args_list], [{0}, {1}])
+        self.assertEqual(remaining, [0, 1])
+        self.assertTrue(complete)
+
     def test_requires_repeated_confirmation_and_positive_trial_limit(self):
         for arguments in (("--confirm-runs", "1"), ("--max-trials", "0"), ("--replay-timeout", "0")):
             with self.subTest(arguments=arguments), self.assertRaises(SystemExit):
@@ -189,6 +197,17 @@ if command == 'inspect':
             self.assertEqual(result, 2)
             self.assertIn("invalid inspection JSON", stderr.getvalue())
             self.assertFalse(output.exists())
+
+    def test_inspection_rejects_duplicate_metadata_fields(self):
+        for field, inspection in (
+            ("calls", '{"calls": [], "calls": [], "chunks": []}'),
+            ("kind", '{"calls": [{"index": 0, "kind": "end", "kind": "submit", "memory_group": null}], "chunks": []}'),
+        ):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                arguments, _, _, _ = self.empty_cli(Path(directory), filter_source=f"print({inspection!r})\n")
+                minimizer = frame_capture_minimize.Minimizer(frame_capture_minimize.parse_args(arguments), re.compile("failure"))
+                with self.assertRaisesRegex(RuntimeError, f"duplicate JSON field: '{field}'"):
+                    minimizer.inspect()
 
     def test_inspection_requires_json_object(self):
         with tempfile.TemporaryDirectory() as directory:

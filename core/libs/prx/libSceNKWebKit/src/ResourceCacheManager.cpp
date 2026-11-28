@@ -28,7 +28,7 @@ void APS5_VABI WKResourceCacheManagerClearCacheForOrigin(const void* managerRef,
     }
 }
 
-void APS5_VABI WKResourceCacheManagerGetCacheOrigins(const void* managerRef, void* context, void (*callback)(const void*, const void*, void*)) {
+void APS5_VABI WKResourceCacheManagerGetCacheOrigins(const void* managerRef, void* context, WKResultErrorFunction callback) {
     auto* manager = NKWebKit::Cast<NKWebKit::ResourceCacheManager>(managerRef, __func__);
     if (callback) {
         auto array = NKWebKit::Make<NKWebKit::Array>();

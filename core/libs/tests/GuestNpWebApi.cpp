@@ -134,6 +134,13 @@ void TestLibraryContexts() {
     Require(sceNpWebApiDeleteHandle(context, handle) == 0, "delete the handle");
     Require(sceNpWebApiDeleteHandle(context, handle) == HandleNotFound, "handle deleted twice");
 
+    Require(sceNpWebApiSetMaxConnection(context, 17) == InvalidArgument, "more than 16 connections");
+    Require(sceNpWebApiSetMaxConnection(0x7fff + 1, 17) == InvalidArgument, "the connection limit is checked before the library context");
+    Require(sceNpWebApiSetMaxConnection(0x7fff + 1, 16) == LibContextNotFound, "connection limit of an unknown context");
+    Require(sceNpWebApiSetMaxConnection(context, 16) == 0, "16 connections");
+    Require(sceNpWebApiSetMaxConnection(context, 0) == 0, "no lower bound on the connection limit");
+    Require(sceNpWebApiSetMaxConnection(context, -1) == 0, "a negative connection limit");
+
     Require(sceNpWebApiTerminate(context) == 0, "terminate the library context");
     Require(sceNpWebApiTerminate(context) == LibContextNotFound, "library context terminated twice");
     Require(sceNpWebApiCreateHandle(context) == LibContextNotFound, "handle of a terminated context");
@@ -173,6 +180,10 @@ void TestUserContexts() {
     const int user = sceNpWebApiCreateContext(context, onlineId);
     Require(user > 0 && (user >> 16) == context && (user & 0xffff) != 0, "user context id holds its library context");
     Require(sceNpWebApiCreateContext(context, onlineId) == UserContextAlreadyExist, "a second user context for the same user");
+    Require(sceNpWebApiClearAllUnusedConnection(user, false) == 0, "clear the connections of a user context without any");
+    Require(sceNpWebApiClearAllUnusedConnection(user, true) == 0, "clear the connections with the flag set");
+    Require(sceNpWebApiClearAllUnusedConnection(user + 1, false) == UserContextNotFound, "clear the connections of an unknown user context");
+    Require(sceNpWebApiClearAllUnusedConnection((other << 16) | 1, false) == LibContextNotFound, "clear the connections of a terminated library context");
 
     Require(sceNpWebApiDeleteContext(user + 1) == UserContextNotFound, "delete an unknown user context");
     Require(sceNpWebApiDeleteContext(-1) == LibContextNotFound, "delete user context -1");
@@ -869,6 +880,24 @@ void TestConnectionChecks() {
     Require(sceNpWebApiTerminate(context) == 0, "terminate the connection checks library context");
 }
 
+void TestErrorCode() {
+    constexpr char topLevel[] = R"({"code":7})";
+    constexpr char nested[] = R"({"error":{"code":8}})";
+    SetSdkVersion(0x024fffff);
+    Require(sceNpWebApiGetErrorCode(404, topLevel, sizeof(topLevel) - 1) == static_cast<int>(0x82F00194u),
+        "the old error parser needs error.code");
+    Require(sceNpWebApiGetErrorCode(404, nested, sizeof(nested) - 1) == static_cast<int>(0x82000008u),
+        "the old error parser reads error.code");
+    SetSdkVersion(0x02500000);
+    Require(sceNpWebApiGetErrorCode(404, topLevel, sizeof(topLevel) - 1) == static_cast<int>(0x82000007u),
+        "the new error parser reads a top-level code");
+    Require(sceNpWebApiGetErrorCode(404, nested, sizeof(nested) - 1) == static_cast<int>(0x82000008u),
+        "the new error parser reads error.code");
+    Require(sceNpWebApiGetErrorCode(503, nullptr, 1) == static_cast<int>(0x82F001F7u),
+        "an absent body falls back to the HTTP status");
+    SetSdkVersion(0x04508001);
+}
+
 }
 
 void TestEmptyExports() {
@@ -901,6 +930,7 @@ int main() {
     TestInternalServicePushEventFilter();
     TestMultipartSendOnPlainRequest();
     TestConnectionChecks();
+    TestErrorCode();
     {
         errno = 71;
         Require(sceNpWebApiIntInitialize(reinterpret_cast<const NpWebApiIntInitializeArgs*>(static_cast<std::uintptr_t>(0x10))) == InvalidArgument && errno == 71,

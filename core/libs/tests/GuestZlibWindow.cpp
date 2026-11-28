@@ -165,6 +165,8 @@ static void WaitPointers() {
     Require(errno == EDOM);
     Require(sceZlibWaitForDone(crossingResult, readOnlyTimeout) == invalid);
     Require(errno == EDOM);
+    Require(std::all_of(resultMemory.End(4), resultMemory.End(1) + 1,
+        [](unsigned char byte) { return byte == 0xa5; }));
     resultMemory.Reset();
     resultMemory.Protect(true);
     errno = EDOM;

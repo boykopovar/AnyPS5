@@ -7,42 +7,18 @@
 
 namespace {
 
-class PreservedErrno {
-public:
-    PreservedErrno() : saved(errno) {}
-    ~PreservedErrno() { errno = saved; }
-
-private:
-    int saved;
-};
-
-bool CopyInPreservingErrno(void* dst, const void* src, std::size_t bytes) {
-    PreservedErrno guard;
-    return GuestCopyIn_nid_no_patch(dst, src, bytes);
-}
-
-bool CopyOutPreservingErrno(void* dst, const void* src, std::size_t bytes) {
-    PreservedErrno guard;
-    return GuestCopyOut_nid_no_patch(dst, src, bytes);
-}
-
-bool WritablePreservingErrno(void* dst, std::size_t bytes) {
-    PreservedErrno guard;
-    return GuestWritable_nid_no_patch(dst, bytes);
-}
-
 bool EnterStatus(std::int32_t* error, UErrorCode& status, std::int32_t& previous, const char* caller) {
     if (!error) APS5_INVALID_ARG_EX;
-    if (!CopyInPreservingErrno(&previous, error, sizeof(previous))) NotImplemented_nid_no_patch(caller);
+    if (!GuestCopyIn_nid_no_patch(&previous, error, sizeof(previous))) NotImplemented_nid_no_patch(caller);
     status = static_cast<UErrorCode>(previous);
     if (U_FAILURE(status)) return false;
-    if (!WritablePreservingErrno(error, sizeof(*error))) NotImplemented_nid_no_patch(caller);
+    if (!GuestWritable_nid_no_patch(error, sizeof(*error))) NotImplemented_nid_no_patch(caller);
     return true;
 }
 
 void LeaveStatus(std::int32_t* error, UErrorCode status, std::int32_t previous, const char* caller) {
     const auto updated = static_cast<std::int32_t>(status);
-    if (updated != previous && !CopyOutPreservingErrno(error, &updated, sizeof(updated))) NotImplemented_nid_no_patch(caller);
+    if (updated != previous && !GuestCopyOut_nid_no_patch(error, &updated, sizeof(updated))) NotImplemented_nid_no_patch(caller);
 }
 
 UCharsetDetector* Native(Icu::CharsetDetector* detector) {
@@ -87,13 +63,13 @@ const Icu::CharsetMatch** APS5_VABI ucsdet_detectAll_nid_postfix(Icu::CharsetDet
     if (!EnterStatus(error, status, previous, __func__)) return nullptr;
     if (!detector || !found) APS5_INVALID_ARG_EX;
     std::int32_t hostFound = 0;
-    if (!CopyInPreservingErrno(&hostFound, found, sizeof(hostFound)) ||
-        !WritablePreservingErrno(found, sizeof(*found))) {
+    if (!GuestCopyIn_nid_no_patch(&hostFound, found, sizeof(hostFound)) ||
+        !GuestWritable_nid_no_patch(found, sizeof(*found))) {
         NotImplemented_nid_no_patch(__func__);
     }
     const auto** matches =
         reinterpret_cast<const Icu::CharsetMatch**>(ucsdet_detectAll(Native(detector), &hostFound, &status));
-    if (!CopyOutPreservingErrno(found, &hostFound, sizeof(hostFound))) NotImplemented_nid_no_patch(__func__);
+    if (!GuestCopyOut_nid_no_patch(found, &hostFound, sizeof(hostFound))) NotImplemented_nid_no_patch(__func__);
     LeaveStatus(error, status, previous, __func__);
     return matches;
 }

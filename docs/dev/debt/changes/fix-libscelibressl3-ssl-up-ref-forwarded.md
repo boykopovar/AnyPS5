@@ -1,0 +1,9 @@
+# libSceLibreSsl3
+
+## change [SSL_CTX_up_ref]
+
+- [SSL_CTX_up_ref](../../../core/libs/prx/libSceLibreSsl3/src/Key.cpp) - the console layout is unverified. The counter is at offset 32 of the 120-byte `SSL_CTX` that libSceLibreSsl's `SSL_CTX_new` allocates and its `SSL_CTX_free` releases, which libSceLibreSsl3 importers reach by dependency lookup on Linux and macOS and parent export forwarding on Windows, so it is not at the [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libssl/ssl_local.h#L665-L678) offset 40. Atomic retain replaces internal locking, on the counter `SSL_CTX_free` decrements atomically. Null context and signed-counter overflow, undefined upstream, throw without mutation. Closes when: the layout is measured on the firmware module.
+
+## change [SSL and SSL_SESSION retains, SSL_CTX version bounds and SSL_get_client_random]
+
+- [SSL and SSL_SESSION retains, SSL_CTX version bounds and SSL_get_client_random](../../../core/libs/prx/libSceLibreSsl3/src/Ssl.cpp) - the SSL_METHOD, SSL_CTX, SSL, SSL3_STATE and SSL_SESSION offsets follow [LibreSSL 4.0.0 ssl_local.h](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libssl/ssl_local.h) and are not measured on the console. libSceLibreSsl3 importers reach libSceLibreSsl's LibreSSL 2.5.4 `SSL_CTX_new`, `SSL_new` and `SSL_free`, so `SSL_up_ref` counts at offset 168 of the 232-byte `SSL` they allocate, not at the 4.0.0 offset 176. 2.5.4 puts the SSL_SESSION counter at 160 and SSL s3 at 48, and the method and SSL_CTX version bounds in internal structs, so the other calls here misread a 2.5.4 object. Signed-counter overflow and null objects, methods and SSL3 state, undefined upstream, throw without mutation. Closes when: the offsets are measured on the firmware module and the other calls use the layouts the constructors allocate.

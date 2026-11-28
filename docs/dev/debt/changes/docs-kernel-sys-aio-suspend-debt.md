@@ -1,5 +1,0 @@
-# libkernel_sys
-
-## change [aio_read, aio_write, aio_fsync, aio_error, aio_return, aio_suspend, aio_waitcomplete, aio_cancel]
-
-- [aio_read, aio_write, aio_fsync, aio_error, aio_return, aio_suspend, aio_waitcomplete, aio_cancel](../../../core/libs/prx/libkernel_sys/Aio.cpp) (libkernel_sys) - a request with `SIGEV_SIGNAL`, `SIGEV_THREAD_ID` or `SIGEV_KEVENT` completion, or on a socket, throws. One worker thread runs requests sequentially in submission order, so a request is cancellable only until that thread takes it. A queued request keeps the descriptor number, not the open file: closing or reusing the descriptor before it runs changes what it reaches. Pipes fail with `EOPNOTSUPP` (FreeBSD 11 `vfs.aio.enable_unsafe` 0); console setting is unverified. Waits are not interrupted by signals (`EINTR`), and timeouts under 1 ms round up to 1 ms. `aio_suspend` copies its list and timeout in, and `aio_waitcomplete` validates its result and timeout pointers, via `GuestCopyIn`/`GuestCopyOut`, returning `EFAULT` (14) for an unreadable or unwritable one. Otherwise rules follow FreeBSD 11 `vfs_aio.c`

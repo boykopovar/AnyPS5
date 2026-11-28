@@ -10,17 +10,10 @@ using namespace FreeType;
 
 namespace {
 
-bool CopyInPreservingErrno(void* destination, const void* source, std::size_t bytes) {
-    const int saved = errno;
-    const bool ok = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = saved;
-    return ok;
-}
-
 GuestFace* ReadGuestFace(GuestFaceRec* face, const char* caller) {
     if (!face) return nullptr;
     void* internal = nullptr;
-    if (!CopyInPreservingErrno(&internal, &face->internal, sizeof(internal))) NotImplemented_nid_no_patch(caller);
+    if (!GuestCopyIn_nid_no_patch(&internal, &face->internal, sizeof(internal))) NotImplemented_nid_no_patch(caller);
     return static_cast<GuestFace*>(internal);
 }
 
@@ -32,7 +25,7 @@ int APS5_VABI FT_Request_Size_nid_postfix(GuestFaceRec* face, const GuestSizeReq
     GuestFace* owner = ReadGuestFace(face, __func__);
     if (!owner || !owner->host->size || !request) return FT_Request_Size(owner ? owner->host : nullptr, nullptr);
     GuestSizeRequestRec guestRequest{};
-    if (!CopyInPreservingErrno(&guestRequest, request, sizeof(guestRequest))) NotImplemented_nid_no_patch(__func__);
+    if (!GuestCopyIn_nid_no_patch(&guestRequest, request, sizeof(guestRequest))) NotImplemented_nid_no_patch(__func__);
     if (guestRequest.width < 0 || guestRequest.height < 0 || guestRequest.type >= FT_SIZE_REQUEST_TYPE_MAX) return FT_Err_Invalid_Argument;
     if (guestRequest.width > std::numeric_limits<FT_Long>::max() || guestRequest.height > std::numeric_limits<FT_Long>::max()) {
         NotImplemented_nid_no_patch(__func__);

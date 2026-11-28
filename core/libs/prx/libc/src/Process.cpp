@@ -199,6 +199,10 @@ void LibcStartExit_nid_postfix() {
     StartExit();
 }
 
+bool LibcExitStarted_nid_no_patch() {
+    return exitStarted.load();
+}
+
 [[noreturn]] void LibcExit_nid_no_patch(int code) {
     StartExit();
     CxaFinalize_nid_no_patch(nullptr);
@@ -298,6 +302,7 @@ struct ChildProcess {
 
 std::mutex childProcessMutex;
 std::vector<ChildProcess> childProcesses;
+ChildProcessTimes reapedChildProcessTimes{};
 
 int ChildProcessWaitStatus(DWORD code) {
     switch (code) {
@@ -318,6 +323,11 @@ int ChildProcessWaitStatus(DWORD code) {
 extern "C" void RegisterChildProcess_nid_no_patch(std::int32_t processId, std::int64_t processHandle) {
     std::lock_guard lock(childProcessMutex);
     childProcesses.push_back({processId, processHandle});
+}
+
+extern "C" ChildProcessTimes GetReapedChildProcessTimes_nid_no_patch() {
+    std::lock_guard lock(childProcessMutex);
+    return reapedChildProcessTimes;
 }
 
 extern "C" std::int64_t WaitChildProcess_nid_no_patch(std::int32_t processId, unsigned options, int* status, ChildProcessTimes* times) {
@@ -342,15 +352,20 @@ extern "C" std::int64_t WaitChildProcess_nid_no_patch(std::int32_t processId, un
                     *__error_nid_postfix() = 14;
                     return -1;
                 }
-                if (times != nullptr) {
-                    FILETIME creation{};
-                    FILETIME exitTime{};
-                    FILETIME kernel{};
-                    FILETIME user{};
-                    if (!GetProcessTimes(handle, &creation, &exitTime, &kernel, &user))
-                        throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "wait4: GetProcessTimes failed");
-                    times->user = (static_cast<std::uint64_t>(user.dwHighDateTime) << 32) | user.dwLowDateTime;
-                    times->kernel = (static_cast<std::uint64_t>(kernel.dwHighDateTime) << 32) | kernel.dwLowDateTime;
+                FILETIME creation{};
+                FILETIME exitTime{};
+                FILETIME kernel{};
+                FILETIME user{};
+                if (GetProcessTimes(handle, &creation, &exitTime, &kernel, &user)) {
+                    const ChildProcessTimes childTimes{
+                        (static_cast<std::uint64_t>(user.dwHighDateTime) << 32) | user.dwLowDateTime,
+                        (static_cast<std::uint64_t>(kernel.dwHighDateTime) << 32) | kernel.dwLowDateTime,
+                    };
+                    reapedChildProcessTimes.user += childTimes.user;
+                    reapedChildProcessTimes.kernel += childTimes.kernel;
+                    if (times != nullptr) *times = childTimes;
+                } else if (times != nullptr) {
+                    throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "wait4: GetProcessTimes failed");
                 }
                 encoded = ChildProcessWaitStatus(code);
                 CloseHandle(handle);

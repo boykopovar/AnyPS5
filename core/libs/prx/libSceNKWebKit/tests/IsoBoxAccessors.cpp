@@ -4,7 +4,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
 #include <stdexcept>
+#include <string_view>
 
 using namespace NKWebKit::IsoAbi;
 using NKWebKit::WtfAbi::String;
@@ -41,6 +43,15 @@ static String Latin1(const char* text) {
     return _ZN3WTF10StringImpl6createEPKhj(reinterpret_cast<const unsigned char*>(text), static_cast<unsigned>(std::strlen(text)));
 }
 
+static bool Same(const String& string, std::u16string_view text) {
+    const auto view = NKWebKit::WtfAbi::ViewOf(string.impl);
+    if (view.length != text.size()) return false;
+    for (unsigned i = 0; i < view.length; ++i) {
+        if (NKWebKit::WtfAbi::CodeUnitAt(view, i) != text[i]) return false;
+    }
+    return true;
+}
+
 static void BoxAndFullBox() {
     FullBox box{};
     box.box.size = 0x1'0000'0020ULL;
@@ -49,7 +60,12 @@ static void BoxAndFullBox() {
     box.version = 1;
     box.flags = 0x00abcdefU;
     Require(_ZNK7WebCore6ISOBox4sizeEv(&box.box) == 0x1'0000'0020ULL);
-    Require(_ZNK7WebCore6ISOBox7boxTypeEv(&box.box) == 0x7363686dU);
+    const std::uint32_t* boxType = _ZNK7WebCore6ISOBox7boxTypeEv(&box.box);
+    Require(boxType == &box.box.boxType && *boxType == 0x7363686dU);
+    Require(reinterpret_cast<const unsigned char*>(boxType) - reinterpret_cast<const unsigned char*>(&box.box) == 16);
+    box.box.boxType = 0x74656e63U;
+    Require(*boxType == 0x74656e63U);
+    box.box.boxType = 0x7363686dU;
     Require(&_ZNK7WebCore6ISOBox12extendedTypeEv(&box.box) == &box.box.extendedType);
     Require(_ZNK7WebCore10ISOFullBox7versionEv(&box) == 1);
     Require(_ZNK7WebCore10ISOFullBox5flagsEv(&box) == 0x00abcdefU);
@@ -132,11 +148,38 @@ static void WebVTTCueFields() {
     Require(ThrowsInvalidArgument([] { _ZNK7WebCore12ISOWebVTTCue7cueTextEv(nullptr); }));
 }
 
+static void WebVTTCueJSON() {
+    using NKWebKit::MediaAbi::MediaTime;
+
+    WebVTTCue cue{};
+    Require(Same(_ZNK7WebCore12ISOWebVTTCue12toJSONStringEv(&cue),
+        uR"({"text":"","sourceId":"","id":"","originalStartTime":"","settings":"","presentationTime":null,"duration":null})"));
+
+    const char16_t text[] = u"<caf\u00e9> \"hi\"\n";
+    cue.cueText = _ZN3WTF10StringImpl6createEPKDsj(text, std::size(text) - 1);
+    cue.sourceID = Latin1("cam\xe9ra / 1");
+    cue.identifier = Latin1("cue#1");
+    cue.originalStartTime = Latin1("00:00:01.500");
+    cue.settings = Latin1("align:start");
+    cue.presentationTime = MediaTime(1500, 1000, MediaTime::Valid);
+    cue.duration = MediaTime(250, 1000, MediaTime::Valid);
+    Require(Same(_ZNK7WebCore12ISOWebVTTCue12toJSONStringEv(&cue),
+        u"{\"text\":\"<caf\u00e9> \\\"hi\\\"\\n\",\"sourceId\":\"cam%C3%A9ra%20%2F%201\",\"id\":\"cue%231\","
+        u"\"originalStartTime\":\"00%3A00%3A01.500\",\"settings\":\"align%3Astart\",\"presentationTime\":1.5,\"duration\":0.25}"));
+    Require(ThrowsInvalidArgument([] { _ZNK7WebCore12ISOWebVTTCue12toJSONStringEv(nullptr); }));
+    const void* originalData = cue.cueText.impl->data;
+    cue.cueText.impl->data = nullptr;
+    const bool rejected = ThrowsInvalidArgument([&] { _ZNK7WebCore12ISOWebVTTCue12toJSONStringEv(&cue); });
+    cue.cueText.impl->data = originalData;
+    Require(rejected);
+}
+
 int main() {
     BoxAndFullBox();
     TrackEncryptionBoxFields();
     ProtectionSystemSpecificHeaderFields();
     WebVTTCueFields();
+    WebVTTCueJSON();
     std::puts("IsoBoxAccessors passed");
     return 0;
 }

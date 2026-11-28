@@ -3,6 +3,7 @@
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <relinker/analysis/SceCodeExtent.hpp>
 #include <relinker/analysis/RelativeJumpTables.hpp>
+#include <relinker/parsing/ElfReader.hpp>
 #include <relinker/parsing/RelrRelocations.hpp>
 #include <codegen/IInstructionScanner.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
@@ -42,9 +43,14 @@ public:
         for (const auto& [slot, target] : Values) result.push_back(target);
         return result;
     }
+    std::map<Domain::VirtualAddress, Domain::VirtualAddress> SlotTargets() const override {
+        return Values;
+    }
 };
 
 constexpr std::uint16_t RegisterBit(const unsigned index) { return static_cast<std::uint16_t>(1u << index); }
+
+constexpr std::size_t MaxZeroPaddingAfterTransfer = 64;
 
 bool UsedAsCodeAddress(const std::uint8_t* code, const std::size_t available, const std::size_t begin, const unsigned computed) {
     constexpr std::uint16_t arguments = RegisterBit(7) | RegisterBit(6) | RegisterBit(2) | RegisterBit(1) | RegisterBit(8) | RegisterBit(9);
@@ -261,6 +267,7 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
     std::set<std::uint64_t> roots;
     std::set<std::uint64_t> functionEntries;
     std::map<std::uint64_t, std::uint64_t> functions;
+    std::set<std::uint64_t> unwindBegins;
     std::map<std::uint64_t, std::uint64_t> tables;
     const auto inTable = [&](std::uint64_t address) { const auto after = tables.upper_bound(address); return after != tables.begin() && address < std::prev(after)->second; };
     const auto addRoot = [&](std::uint64_t address) { if (isCode(address) && !inTable(address)) roots.insert(address); };
@@ -355,7 +362,8 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
     const auto addAddressTakenRoot = [&](std::uint64_t address, const std::uint8_t* code, const Codegen::DecodedInstructionInfo& info) {
         if (!info.HasRipRelativeDisp || code[info.OpcodeOffset] != 0x8d || !(info.RexPrefix & 8)) return;
         const auto displacement = std::bit_cast<std::int32_t>(Io::ReadU32(bytes, fileOffset(address, info.Length) + info.RipRelativeDispOffset));
-        const auto target = address + info.Length + static_cast<std::int64_t>(displacement);
+        auto target = address + info.Length + static_cast<std::int64_t>(displacement);
+        if (info.AddressSize32) target = static_cast<std::uint32_t>(target);
         if (!sceFunctions.empty() || functions.empty() || !isCode(target) || inTable(target) || inFunction(target)) {
             addPointerRoot(target);
             return;
@@ -380,8 +388,12 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
         }
         if (!mapped) throw Domain::RelinkerException("Code analysis: function is not file-backed", begin);
         const auto [position, inserted] = functions.emplace(begin, begin + size);
-        if (!inserted && !symbolAlias && position->second != begin + size)
-            throw Domain::RelinkerException("Code analysis: conflicting function ranges", begin);
+        if (!inserted && !symbolAlias && position->second != begin + size) {
+            if (position->second < begin + size || unwindBegins.contains(begin))
+                throw Domain::RelinkerException("Code analysis: conflicting function ranges", begin);
+            position->second = begin + size;
+        }
+        if (!symbolAlias) unwindBegins.insert(begin);
         position->second = std::max(position->second, begin + size);
         roots.insert(begin);
     };
@@ -401,12 +413,20 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
         const auto nchain = Io::ReadU32(bytes, header + 4);
         if (nbucket == 0 || nchain == 0)
             throw Domain::RelinkerException("Code analysis: invalid SysV hash header", address);
+        if (static_cast<std::uint64_t>(nbucket) > (std::numeric_limits<std::uint32_t>::max() - 8) / 4 ||
+            static_cast<std::uint64_t>(nchain) > (std::numeric_limits<std::uint32_t>::max() - 8 - static_cast<std::uint64_t>(nbucket) * 4) / 4)
+            throw Domain::RelinkerException("Code analysis: invalid SysV hash geometry", address);
         const std::uint64_t hashSize = 8 + static_cast<std::uint64_t>(nbucket) * 4 + static_cast<std::uint64_t>(nchain) * 4;
         const auto start = fileOffset(address, hashSize);
         for (std::uint64_t index = 0; index < nbucket; ++index) {
             const auto bucket = Io::ReadU32(bytes, start + 8 + index * 4);
             if (bucket >= nchain)
                 throw Domain::RelinkerException("Code analysis: invalid SysV hash bucket index", address);
+        }
+        for (std::uint64_t index = 0; index < nchain; ++index) {
+            const auto chain = Io::ReadU32(bytes, start + 8 + static_cast<std::uint64_t>(nbucket) * 4 + index * 4);
+            if (chain >= nchain)
+                throw Domain::RelinkerException("Code analysis: invalid SysV hash chain index", address);
         }
         symbolCount = nchain;
     } else if (tags.contains(0x6ffffef5)) {
@@ -440,10 +460,13 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
                     throw Domain::RelinkerException("Code analysis: invalid GNU hash chain", address);
                 const auto chain = Io::ReadU32(bytes, fileOffset(address + offset, 4));
                 ++symbolCount;
-                if (symbolCount > std::numeric_limits<std::uint32_t>::max())
+                if (symbolCount > std::numeric_limits<std::uint32_t>::max() || symbolCount > bytes.size() / 24)
                     throw Domain::RelinkerException("Code analysis: invalid GNU hash chain", address);
                 if (chain & 1) break;
             }
+        } else {
+            const auto symbolOffset = table(6, 0x61000039, symbolCount * 24);
+            symbolCount = ElfReader(bytes).ReadDynamicSymbolCount(symbolOffset, firstSymbol);
         }
     }
     std::uint64_t symbols = 0;
@@ -575,8 +598,13 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
                 const auto tailBytes = end - address;
                 bool tailHasFsPrefix = false;
                 for (auto probe = address; probe < end; ++probe) {
-                    if (bytes[offset + probe - begin] == 0x64) {
+                    const auto b = bytes[offset + probe - begin];
+                    if (b == 0x64) {
                         tailHasFsPrefix = true;
+                        break;
+                    }
+                    if (b != 0x66 && b != 0x67 && b != 0xf0 && b != 0xf2 && b != 0xf3 &&
+                        b != 0x2e && b != 0x36 && b != 0x3e && b != 0x26 && (b < 0x40 || b > 0x4f)) {
                         break;
                     }
                 }
@@ -620,11 +648,16 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
         bool afterTransfer = false;
         for (std::size_t position = nextPaddedStart(0); position < size;) {
             if (progress && position % 65536 < 16) report(3500 + 2500 * (scannedBytes + position) / scanBytes);
-            const auto aligned = (position + 15) & ~std::size_t{15};
-            const bool zeroPadding = afterTransfer && aligned != position && aligned <= size && std::all_of(text + position, text + aligned, [](const std::uint8_t value) { return value == 0; });
+            std::size_t paddingEnd = position;
+            if (afterTransfer) {
+                const auto limit = std::min(size, position + MaxZeroPaddingAfterTransfer);
+                while (paddingEnd < limit && text[paddingEnd] == 0) ++paddingEnd;
+                if (paddingEnd % 16 != 0 && paddingEnd < limit) paddingEnd = position;
+                while (paddingEnd > position && paddingEnd % 16 != 0) --paddingEnd;
+            }
             afterTransfer = false;
-            if (zeroPadding) {
-                position = aligned;
+            if (paddingEnd != position) {
+                position = paddingEnd;
                 continue;
             }
             if (position + 1 < size && text[position] == 0 && text[position + 1] == 0) {
@@ -760,12 +793,10 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
             bool spanHasFsPrefix = false;
             if (const auto* header = findCodeHeader(address)) {
                 const auto base = header->Offset + address - header->MappedAddress;
-                for (auto probe = base; probe < base + (spanEnd - address) && probe < bytes.size(); ++probe) {
-                    if (bytes[probe] == 0x64) {
-                        spanHasFsPrefix = true;
-                        break;
-                    }
-                }
+                try {
+                    const auto dec = decoder.DecodeInstruction(bytes.data() + base, bytes.size() - base);
+                    if (dec.SegmentPrefix == 0x64 && dec.HasMemoryOperand) spanHasFsPrefix = true;
+                } catch (const Codegen::CodegenException&) {}
             }
             if (!spanHasFsPrefix) {
                 const auto previous = std::lower_bound(instructions.begin(), instructions.end(), address);
@@ -773,7 +804,10 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
                     const auto previousStart = *std::prev(previous);
                     if (const auto* header = findCodeHeader(previousStart)) {
                         const auto base = header->Offset + previousStart - header->MappedAddress;
-                        if (decoder.DecodeInstruction(bytes.data() + base, bytes.size() - base).SegmentPrefix == 0x64) spanHasFsPrefix = true;
+                        try {
+                            const auto dec = decoder.DecodeInstruction(bytes.data() + base, bytes.size() - base);
+                            if (dec.SegmentPrefix == 0x64 && dec.HasMemoryOperand) spanHasFsPrefix = true;
+                        } catch (const Codegen::CodegenException&) {}
                     }
                 }
             }

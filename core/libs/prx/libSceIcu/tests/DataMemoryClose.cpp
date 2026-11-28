@@ -119,9 +119,13 @@ void Mapping() {
     guarded.data.length = static_cast<std::int32_t>(pageSize);
     udata_close_nid_postfix(&guarded.data);
 
-    unsigned char residency = 0;
     errno = 0;
+#if defined(__APPLE__)
+    Require(msync(mapping, pageSize, MS_ASYNC) == -1);
+#else
+    unsigned char residency = 0;
     Require(mincore(mapping, pageSize, &residency) == -1);
+#endif
     Require(errno == ENOMEM);
     RequireInitialized(guarded.data);
     RequireGuards(guarded);
@@ -159,9 +163,13 @@ void Heap() {
     data->length = static_cast<std::int32_t>(pageSize);
     udata_close_nid_postfix(data);
 
-    unsigned char residency = 0;
     errno = 0;
+#if defined(__APPLE__)
+    Require(msync(mapping, pageSize, MS_ASYNC) == -1);
+#else
+    unsigned char residency = 0;
     Require(mincore(mapping, pageSize, &residency) == -1);
+#endif
     Require(errno == ENOMEM);
 #endif
 }

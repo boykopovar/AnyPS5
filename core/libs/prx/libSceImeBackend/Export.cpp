@@ -1,7 +1,9 @@
 #include "prx/libSceImeBackend/include/Api.hpp"
 #include "prx/libSceIme/Export.cpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -9,6 +11,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -40,20 +43,69 @@ struct State {
 std::mutex g_mutex;
 std::unique_ptr<State> g_state;
 
-void CopyText(const std::u16string& source, char16_t* output, std::size_t capacity) {
-    const std::size_t count = std::min(source.size(), capacity);
-    if (count != 0) std::memcpy(output, source.data(), count * sizeof(char16_t));
-    output[count] = 0;
+bool CopyInitialString(const char16_t* source, std::u16string& out, bool& tooLong) {
+    out.clear();
+    tooLong = false;
+    if (source == nullptr) return true;
+    constexpr std::size_t kPageSize = 4096;
+    const int savedErrno = errno;
+    const char16_t* cursor = source;
+    std::array<char16_t, 64> chunk{};
+    while (out.size() <= kInitialStringLimit) {
+        const std::size_t remaining = (kInitialStringLimit + 1) - out.size();
+        const std::uintptr_t address = reinterpret_cast<std::uintptr_t>(cursor);
+        const std::size_t bytesToPage = kPageSize - (address & (kPageSize - 1));
+        std::size_t units = std::min({remaining, chunk.size(), bytesToPage / sizeof(char16_t)});
+        if (units == 0) units = 1;
+        if (!GuestCopyIn_nid_no_patch(chunk.data(), cursor, units * sizeof(char16_t))) {
+            errno = savedErrno;
+            return false;
+        }
+        for (std::size_t i = 0; i < units; ++i) {
+            if (chunk[i] == 0) {
+                errno = savedErrno;
+                return true;
+            }
+            if (out.size() >= kInitialStringLimit) {
+                tooLong = true;
+                errno = savedErrno;
+                return true;
+            }
+            out.push_back(chunk[i]);
+        }
+        cursor += units;
+    }
+    tooLong = true;
+    errno = savedErrno;
+    return true;
 }
 
-int ValidateParam(const SceImeBackendParam& param) {
+bool CopyText(const std::u16string& source, char16_t* output, std::size_t capacity) {
+    if (output == nullptr) return false;
+    const std::size_t count = std::min(source.size(), capacity);
+    const std::size_t totalWords = count + 1;
+    const std::size_t totalBytes = totalWords * sizeof(char16_t);
+    const int savedErrno = errno;
+    const GuestArena::HostWrite write(output, totalBytes);
+    if (!write.Open() || !GuestWritable_nid_no_patch(output, totalBytes)) {
+        errno = savedErrno;
+        return false;
+    }
+    std::vector<char16_t> buffer(totalWords, 0);
+    if (count != 0) {
+        std::memcpy(buffer.data(), source.data(), count * sizeof(char16_t));
+    }
+    buffer[count] = 0;
+    const bool ok = GuestCopyOut_nid_no_patch(output, buffer.data(), totalBytes);
+    errno = savedErrno;
+    return ok;
+}
+
+int ValidateParam(const SceImeBackendParam& param, bool initialTooLong) {
     if (param.mode == -1 || param.mode == 0xff) return kInvalidMode;
     if (param.maxLength < 1 || param.maxLength > 0x1b) return kInvalidLength;
     if (param.type < 0 || param.type > 3) return kInvalidType;
-    if ((param.type & 2) != 0 && param.initialString != nullptr &&
-        std::char_traits<char16_t>::length(param.initialString) > kInitialStringLimit) {
-        return kInitialStringTooLong;
-    }
+    if ((param.type & 2) != 0 && initialTooLong) return kInitialStringTooLong;
     if (param.field18 < 0 || param.field18 > 1) return kInvalidField18;
     for (const std::uint8_t value : param.reserved) {
         if (value != 0) return kInvalidReservedField;
@@ -83,13 +135,27 @@ int APS5_VABI sceImeBackendOpen(const SceImeBackendParam* param, void* reserved)
     if (g_state != nullptr) return kAlreadyInitialized;
     if (param == nullptr) return kNullArgument;
     if (reserved != nullptr) return kInvalidReservedArgument;
-    const int result = ValidateParam(*param);
+    SceImeBackendParam localParam{};
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam))) {
+        errno = savedErrno;
+        return kNullArgument;
+    }
+    errno = savedErrno;
+    std::u16string initialText;
+    bool initialTooLong = false;
+    if ((localParam.type & 2) != 0 && localParam.initialString != nullptr) {
+        if (!CopyInitialString(localParam.initialString, initialText, initialTooLong)) {
+            return kNullArgument;
+        }
+    }
+    const int result = ValidateParam(localParam, initialTooLong);
     if (result != 0) return result;
     auto state = std::make_unique<State>();
-    state->maxLength = param->maxLength;
-    state->type = param->type;
-    if ((param->type & 2) != 0 && param->initialString != nullptr) {
-        state->text.assign(param->initialString);
+    state->maxLength = localParam.maxLength;
+    state->type = localParam.type;
+    if ((localParam.type & 2) != 0 && localParam.initialString != nullptr) {
+        state->text = std::move(initialText);
     }
     state->caret = state->text.size();
     g_state = std::move(state);
@@ -132,10 +198,12 @@ int APS5_VABI sceImeBackendEnterCharacter(std::uint32_t character, char16_t* out
         return 0;
     }
     if (state->text.size() >= static_cast<std::size_t>(state->maxLength)) return kNotAvailable;
-    state->text.insert(state->text.begin() + static_cast<std::ptrdiff_t>(state->caret),
-                       static_cast<char16_t>(character));
+    std::u16string nextText = state->text;
+    nextText.insert(nextText.begin() + static_cast<std::ptrdiff_t>(state->caret),
+                    static_cast<char16_t>(character));
+    if (!CopyText(nextText, output, kTextCapacity)) return kNullArgument;
+    state->text = std::move(nextText);
     ++state->caret;
-    CopyText(state->text, output, kTextCapacity);
     return 0;
 }
 
@@ -193,7 +261,7 @@ int APS5_VABI sceImeBackendGetString(int which, char16_t* output, std::uint16_t 
     if (state == nullptr) return kNotInitialized;
     if (output == nullptr) return kNullArgument;
     if (which != 0 && which != 1) return kInvalidStringSelector;
-    CopyText(state->text, output, capacity);
+    if (!CopyText(state->text, output, capacity)) return kNullArgument;
     return 0;
 }
 
@@ -202,7 +270,7 @@ int APS5_VABI sceImeBackendGetConvertString(char16_t* output) {
     State* state = CurrentState();
     if (state == nullptr) return kNotInitialized;
     if (output == nullptr) return kNullArgument;
-    CopyText(state->text, output, kTextCapacity);
+    if (!CopyText(state->text, output, kTextCapacity)) return kNullArgument;
     return 0;
 }
 
@@ -211,7 +279,7 @@ int APS5_VABI sceImeBackendGetConfirmString(char16_t* output) {
     State* state = CurrentState();
     if (state == nullptr) return kNotInitialized;
     if (output == nullptr) return kNullArgument;
-    CopyText(state->text, output, kTextCapacity);
+    if (!CopyText(state->text, output, kTextCapacity)) return kNullArgument;
     return 0;
 }
 
@@ -247,8 +315,21 @@ int APS5_VABI sceImeBackendGetCandidateList(std::uint16_t* selected, char16_t* o
     if (state == nullptr) return kNotInitialized;
     if (selected == nullptr || output == nullptr) return kNullArgument;
     if (state->status >= 2) return kNotAvailable;
-    *selected = 0;
-    output[0] = 0;
+    const int savedErrno = errno;
+    const GuestArena::HostWrite writeSel(selected, sizeof(*selected));
+    const GuestArena::HostWrite writeOut(output, sizeof(char16_t));
+    if (!writeSel.Open() || !writeOut.Open() ||
+        !GuestWritable_nid_no_patch(selected, sizeof(*selected)) ||
+        !GuestWritable_nid_no_patch(output, sizeof(char16_t))) {
+        errno = savedErrno;
+        return kNullArgument;
+    }
+    const std::uint16_t zeroSel = 0;
+    const char16_t zeroOut = 0;
+    const bool ok = GuestCopyOut_nid_no_patch(selected, &zeroSel, sizeof(zeroSel)) &&
+                    GuestCopyOut_nid_no_patch(output, &zeroOut, sizeof(zeroOut));
+    errno = savedErrno;
+    if (!ok) return kNullArgument;
     return 0;
 }
 
@@ -266,7 +347,16 @@ int APS5_VABI sceImeBackendGetCandidateSelect(std::uint16_t* selected) {
     if (state == nullptr) return kNotInitialized;
     if (selected == nullptr) return kNullArgument;
     if (state->status >= 2) return kNotAvailable;
-    *selected = 0;
+    const int savedErrno = errno;
+    const GuestArena::HostWrite write(selected, sizeof(*selected));
+    if (!write.Open() || !GuestWritable_nid_no_patch(selected, sizeof(*selected))) {
+        errno = savedErrno;
+        return kNullArgument;
+    }
+    const std::uint16_t zeroSel = 0;
+    const bool ok = GuestCopyOut_nid_no_patch(selected, &zeroSel, sizeof(zeroSel));
+    errno = savedErrno;
+    if (!ok) return kNullArgument;
     return 0;
 }
 
@@ -275,7 +365,16 @@ int APS5_VABI sceImeBackendGetConvertMode(int* mode) {
     State* state = CurrentState();
     if (state == nullptr) return kNotInitialized;
     if (mode == nullptr) return kNullArgument;
-    *mode = state->convertMode;
+    const int savedErrno = errno;
+    const GuestArena::HostWrite write(mode, sizeof(*mode));
+    if (!write.Open() || !GuestWritable_nid_no_patch(mode, sizeof(*mode))) {
+        errno = savedErrno;
+        return kNullArgument;
+    }
+    const int localMode = state->convertMode;
+    const bool ok = GuestCopyOut_nid_no_patch(mode, &localMode, sizeof(localMode));
+    errno = savedErrno;
+    if (!ok) return kNullArgument;
     return 0;
 }
 

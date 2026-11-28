@@ -527,7 +527,7 @@ private:
 class TraceFormat {
 public:
     using Clock = std::chrono::steady_clock;
-    static constexpr std::array<std::string_view, 5> WorkerBusyScopes{"Driver.Packet", "Driver.Suspend", "Driver.EndSubmission", "Driver.Rewind", "Driver.Completion"};
+    static constexpr std::array<std::string_view, 6> WorkerBusyScopes{"Driver.Packet", "Driver.Suspend", "Driver.EndSubmission", "Driver.Rewind", "Driver.Completion", "Driver.FinisherDrain"};
     static constexpr std::string_view WorkerWaitScope = "Driver.WorkerWait";
     static constexpr std::string_view WorkerPrefix = "queue worker ";
     static constexpr std::size_t TopPhases = 8;
@@ -691,6 +691,9 @@ public:
         output += ",\"worker_busy_pct\":{";
         bool firstWorker = true;
         std::map<std::string, Clock::duration> phases;
+        const bool allPhases = std::any_of(summary.environment.begin(), summary.environment.end(), [](const auto& entry) { return entry.first == "APS5_TRACE_ALL_PHASES" && entry.second == "1"; });
+        std::map<std::string, std::uint64_t> phaseCounts;
+        std::map<std::string, Clock::duration> waitedPhases;
         std::map<std::string, std::uint64_t> ownedCounts;
         std::map<std::string, std::uint64_t> graphicsCounts;
         bool dropped = summary.ownedDrawUnbound != 0;
@@ -717,7 +720,15 @@ public:
                 if (total.stage == nullptr && std::find(WorkerBusyScopes.begin(), WorkerBusyScopes.end(), scope) != WorkerBusyScopes.end()) busy += total.length;
                 if (total.stage == nullptr && GraphicsTrackScope(scope)) graphicsCounts[std::string(scope)] += total.count;
                 else if (scope.starts_with("OwnedDraw.") && total.stage == nullptr) ownedCounts[std::string(scope)] += total.count;
-                else if (scope != WorkerWaitScope) phases[Name(total.scope, total.stage)] += total.length;
+                else if (scope != WorkerWaitScope) {
+                    const auto name = Name(total.scope, total.stage);
+                    phases[name] += total.length;
+                    if (allPhases) phaseCounts[name] += total.count;
+                } else if (allPhases) {
+                    const auto name = Name(total.scope, total.stage);
+                    waitedPhases[name] += total.length;
+                    phaseCounts[name] += total.count;
+                }
             }
             if (!thread.name.starts_with(WorkerPrefix)) continue;
             if (!firstWorker) output += ',';
@@ -742,6 +753,21 @@ public:
             output += ':' + number(milliseconds(top[index].second) * perPresent);
         }
         output += "}";
+        if (allPhases) {
+            output += ",\"phase_totals\":{";
+            bool first = true;
+            const auto emitPhases = [&](const std::map<std::string, Clock::duration>& sums) {
+                for (const auto& [name, length] : sums) {
+                    if (!first) output += ',';
+                    first = false;
+                    AppendString(output, name);
+                    output += ":{\"count\":" + std::to_string(phaseCounts.at(name)) + ",\"sum_ms\":" + number(milliseconds(length)) + ",\"ms_per_present\":" + number(milliseconds(length) * perPresent) + "}";
+                }
+            };
+            emitPhases(phases);
+            emitPhases(waitedPhases);
+            output += "}";
+        }
         output += ",\"owned_draw_counts\":{";
         bool firstCount = true;
         for (const auto& [name, value] : ownedCounts) {
@@ -907,15 +933,7 @@ public:
     static void BindThread(const char* name, std::size_t capacity = TraceThread::DefaultCapacity);
     static void Present(std::uint32_t width, std::uint32_t height, const VulkanDevice* device);
 
-    static void GpuRange(const char* name, double beginNs, double endNs, std::uint64_t batch = 0) {
-        if (!buffering.load(std::memory_order_relaxed)) return;
-        std::lock_guard lock(gpuMutex);
-        if (gpuRanges.size() == gpuRanges.capacity()) {
-            ++gpuLost;
-            return;
-        }
-        gpuRanges.push_back({name, beginNs, endNs, batch});
-    }
+    static void GpuRange(const char* name, double beginNs, double endNs, std::uint64_t batch = 0);
 
     static bool Recording() {
         return AgcDriverTraceRecording_nid_postfix();
@@ -954,14 +972,15 @@ private:
 
     static std::atomic<bool> recording;
     static std::atomic<std::uint64_t> ownedDrawUnbound;
-    inline static std::atomic<bool> buffering{false};
+    static std::atomic<bool> buffering;
     inline static std::atomic<std::uint64_t> presentCount{0};
     static thread_local TraceThread* local;
     static thread_local const char* localName;
     static std::atomic<TraceThread* (*)()> binder;
-    inline static std::mutex gpuMutex;
-    inline static std::vector<TraceGpuRange> gpuRanges;
-    inline static std::uint64_t gpuLost = 0;
+    static std::mutex gpuMutex;
+    static std::vector<TraceGpuRange> gpuRanges;
+    static std::size_t gpuCapacity;
+    static std::uint64_t gpuLost;
 };
 
 }

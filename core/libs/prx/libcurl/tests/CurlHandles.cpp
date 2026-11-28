@@ -11,6 +11,94 @@ static void Require(bool condition) {
 
 static int callbackCount;
 
+struct MultiTimerFixture {
+    CURLM* first = nullptr;
+    CURLM* second = nullptr;
+    void* firstOpaque = nullptr;
+    void* secondOpaque = nullptr;
+    int firstCalls = 0;
+    int secondCalls = 0;
+    int64_t firstTimeout = -2;
+    int64_t secondTimeout = -2;
+};
+
+static MultiTimerFixture* activeFixture = nullptr;
+
+static int APS5_VABI RecordMultiTimer(CURLM* multi, int64_t timeout, void* opaque) {
+    Require(activeFixture != nullptr);
+    Require(timeout >= -1);
+    if (multi == activeFixture->first) {
+        Require(opaque == activeFixture->firstOpaque);
+        ++activeFixture->firstCalls;
+        activeFixture->firstTimeout = timeout;
+    } else if (multi == activeFixture->second) {
+        Require(opaque == activeFixture->secondOpaque);
+        ++activeFixture->secondCalls;
+        activeFixture->secondTimeout = timeout;
+    } else {
+        Require(false);
+    }
+    return 0;
+}
+
+static void ExerciseMultiTimer(CURLM* multi, int& calls, bool enabled) {
+    auto* easy = curl_easy_init_nid_postfix();
+    Require(easy != nullptr);
+    const int before = calls;
+    Require(curl_multi_add_handle_nid_postfix(multi, easy) == CURLM_OK);
+    if (enabled) Require(calls > before);
+    else Require(calls == before);
+    int running = -1;
+    Require(curl_multi_perform_nid_postfix(multi, &running) == CURLM_OK && running == 0);
+    if (enabled) Require(calls > before);
+    else Require(calls == before);
+    int remaining = -1;
+    auto* message = curl_multi_info_read_nid_postfix(multi, &remaining);
+    Require(message && message->msg == CURLMSG_DONE && message->easy_handle == easy);
+    Require(message->data.result == CURLE_URL_MALFORMAT);
+    Require(remaining == 0);
+    Require(curl_multi_remove_handle_nid_postfix(multi, easy) == CURLM_OK);
+    curl_easy_cleanup_nid_postfix(easy);
+}
+
+static void TestMultiTimerContextRebind() {
+    MultiTimerFixture fixture;
+    activeFixture = &fixture;
+    int initialOpaque = 0;
+    int reboundOpaque = 0;
+    int otherOpaque = 0;
+    fixture.first = curl_multi_init_nid_postfix();
+    fixture.second = curl_multi_init_nid_postfix();
+    Require(fixture.first != nullptr && fixture.second != nullptr && fixture.first != fixture.second);
+    fixture.firstOpaque = &initialOpaque;
+    fixture.secondOpaque = &otherOpaque;
+    Require(curl_multi_setopt_nid_postfix(fixture.first, CURLMOPT_TIMERFUNCTION, RecordMultiTimer) == CURLM_OK);
+    Require(curl_multi_setopt_nid_postfix(fixture.first, CURLMOPT_TIMERDATA, &initialOpaque) == CURLM_OK);
+    Require(curl_multi_setopt_nid_postfix(fixture.second, CURLMOPT_TIMERFUNCTION, RecordMultiTimer) == CURLM_OK);
+    Require(curl_multi_setopt_nid_postfix(fixture.second, CURLMOPT_TIMERDATA, &otherOpaque) == CURLM_OK);
+    ExerciseMultiTimer(fixture.first, fixture.firstCalls, true);
+    ExerciseMultiTimer(fixture.second, fixture.secondCalls, true);
+    Require(fixture.firstCalls > 0 && fixture.secondCalls > 0);
+    Require(fixture.firstTimeout == -1 && fixture.secondTimeout == -1);
+    const int secondBeforeRebind = fixture.secondCalls;
+    fixture.firstOpaque = &reboundOpaque;
+    Require(curl_multi_setopt_nid_postfix(fixture.first, CURLMOPT_TIMERDATA, &reboundOpaque) == CURLM_OK);
+    ExerciseMultiTimer(fixture.first, fixture.firstCalls, true);
+    Require(fixture.secondCalls == secondBeforeRebind);
+    ExerciseMultiTimer(fixture.second, fixture.secondCalls, true);
+    Require(fixture.secondCalls > secondBeforeRebind);
+    const int firstBeforeDisable = fixture.firstCalls;
+    Require(curl_multi_setopt_nid_postfix(fixture.first, CURLMOPT_TIMERFUNCTION, nullptr) == CURLM_OK);
+    ExerciseMultiTimer(fixture.first, fixture.firstCalls, false);
+    Require(fixture.firstCalls == firstBeforeDisable);
+    const int secondBeforeDisable = fixture.secondCalls;
+    ExerciseMultiTimer(fixture.second, fixture.secondCalls, true);
+    Require(fixture.secondCalls > secondBeforeDisable);
+    Require(curl_multi_cleanup_nid_postfix(fixture.second) == CURLM_OK);
+    Require(curl_multi_cleanup_nid_postfix(fixture.first) == CURLM_OK);
+    activeFixture = nullptr;
+}
+
 static void APS5_VABI Lock(CURL* easy, curl_lock_data data, curl_lock_access access, void* argument) {
     Require(easy == nullptr && data == CURL_LOCK_DATA_SHARE && access == CURL_LOCK_ACCESS_SINGLE);
     Require(argument == &callbackCount);
@@ -201,5 +289,6 @@ int main() {
     Require(Push_nid_no_patch(easy, nullptr, 0, nullptr, nullptr) == CURL_PUSH_DENY);
     curl_easy_cleanup_nid_postfix(nullptr);
     TestShareCookieLifetime();
+    TestMultiTimerContextRebind();
     curl_global_cleanup_nid_postfix();
 }

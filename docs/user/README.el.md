@@ -1,4 +1,4 @@
-[English](../../README.md) | [Português (Brasil)](README.pt-BR.md) | [Español](README.es.md) | [Català](README.ca.md) | [Italiano](README.it.md) | [简体中文](README.zh-CN.md) | [Русский](README.ru.md) | [Bahasa Indonesia](README.id.md) | [Polski](README.pl.md) | [日本語](README.ja.md) | [العربية](README.ar.md) | **Ελληνικά**
+[English](../../README.md) | [Português (Brasil)](README.pt-BR.md) | [Español](README.es.md) | [Català](README.ca.md) | [Italiano](README.it.md) | [简体中文](README.zh-CN.md) | [Русский](README.ru.md) | [Bahasa Indonesia](README.id.md) | [Polski](README.pl.md) | [日本語](README.ja.md) | [العربية](README.ar.md) | **Ελληνικά** | [Türkçe](README.tr.md) | [עברית](README.he.md) | [Deutsch](README.de.md)
 
 # Σχετικά
 
@@ -34,7 +34,7 @@
 
 ## Αντιστοίχιση εισόδου (Input mapping)
 
-Υποστηρίζονται χειριστήρια παιχνιδιών με αντιστοίχιση SDL, συμπεριλαμβανομένων των αναλογικών μοχλών και των σκανδαλών. Ο έλεγχος με πληκτρολόγιο και ποντίκι μπορεί να ρυθμιστεί μέσω ενός αρχείου nyps5-input.ini. Δείτε την [αντιστοίχιση εισόδου](INPUT_MAPPING.md) για τις υποστηριζόμενες συσκευές και τη μορφή ρύθμισης.
+Υποστηρίζονται χειριστήρια παιχνιδιών με αντιστοίχιση SDL, συμπεριλαμβανομένων των αναλογικών μοχλών και των σκανδαλών. Ο έλεγχος με πληκτρολόγιο και ποντίκι μπορεί να ρυθμιστεί μέσω ενός αρχείου `anyps5-input.ini`. Δείτε την [αντιστοίχιση εισόδου](INPUT_MAPPING.md) για τις υποστηριζόμενες συσκευές και τη μορφή ρύθμισης.
 
 ## Αποποίηση ευθυνών
 

@@ -121,7 +121,7 @@ constexpr auto MakeFormatLookupTable() {
 constexpr auto kFormatLookupTable = MakeFormatLookupTable();
 
 std::uint32_t remapGuestFormat(std::uint32_t guestFormat) {
-    return guestFormat == 30 || guestFormat == 34 || guestFormat == 36 || guestFormat == 37 || guestFormat == 41 || guestFormat == 43 || guestFormat == 44 || guestFormat == 48 ? 20 : guestFormat;
+    return guestFormat == 30 || guestFormat == 34 || guestFormat == 36 || guestFormat == 37 || guestFormat == 41 || guestFormat == 43 || guestFormat == 44 || guestFormat == 48 || guestFormat == 131 ? 20 : guestFormat;
 }
 
 std::atomic<unsigned long long> formatUse[kMaxGuestFormat + 1];
@@ -135,7 +135,7 @@ const FormatEntry& findFormatEntry(std::uint32_t guestFormat) {
         Require(false, "unsupported guest texture format " + std::to_string(guestFormat));
     }
     static const bool reporting = LibcRunReportEnabled_nid_no_patch();
-    if (reporting) formatUse[remapped].fetch_add(1, std::memory_order_relaxed);
+    if (reporting) formatUse[guestFormat].fetch_add(1, std::memory_order_relaxed);
     return *entry;
 }
 
@@ -165,6 +165,26 @@ std::uint32_t ScaledSampledFormats(PFN_vkGetPhysicalDeviceFormatProperties forma
         VkFormatProperties properties{};
         formatProperties(physical, ResolveTextureFormat(format), &properties);
         if ((properties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) != 0) formats |= ScaledSampledBit(format);
+    }
+    return formats;
+}
+
+constexpr std::array<std::uint32_t, 3> kOptionalTextureFormats{51u, 55u, 137u};
+
+std::uint32_t OptionalSampledBit(std::uint32_t guestFormat) {
+    for (std::uint32_t index = 0; index < kOptionalTextureFormats.size(); ++index) {
+        if (kOptionalTextureFormats[index] == guestFormat) return 1u << index;
+    }
+    return 0u;
+}
+
+std::uint32_t OptionalSampledFormats(PFN_vkGetPhysicalDeviceFormatProperties formatProperties, VkPhysicalDevice physical) {
+    std::uint32_t formats = 0;
+    for (const auto format : kOptionalTextureFormats) {
+        VkFormatProperties properties{};
+        formatProperties(physical, ResolveTextureFormat(format), &properties);
+        constexpr VkFormatFeatureFlags required = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+        if ((properties.optimalTilingFeatures & required) == required) formats |= OptionalSampledBit(format);
     }
     return formats;
 }
@@ -201,6 +221,8 @@ bool SampledDepth24S8(const Context& context) {
 VkFormat SampledTextureFormat(const Context& context, std::uint32_t guestFormat) {
     const auto scaled = ScaledSampledBit(guestFormat);
     Require(scaled == 0u || (context.scaledSampledFormats & scaled) != 0u, "unsupported guest texture format " + std::to_string(guestFormat));
+    const auto optional = OptionalSampledBit(guestFormat);
+    Require(optional == 0u || (context.optionalSampledFormats & optional) != 0u, "unsupported guest texture format " + std::to_string(guestFormat));
     if (IsRepackedTextureFormat(guestFormat) || guestFormat == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format11_11_10Float)) return VK_FORMAT_B10G11R11_UFLOAT_PACK32;
     const auto format = static_cast<ShaderRecompiler::IrBufferFormat>(guestFormat);
     if (format == ShaderRecompiler::IrBufferFormat::Format8_24UNorm && !SampledDepth24S8(context)) return VK_FORMAT_R32_SFLOAT;
@@ -241,10 +263,29 @@ bool IsSrgbTextureFormat(std::uint32_t guestFormat) {
     }
 }
 
+bool IsSrgbViewFormat(VkFormat format) {
+    switch (format) {
+        case VK_FORMAT_R8_SRGB:
+        case VK_FORMAT_R8G8_SRGB:
+        case VK_FORMAT_R8G8B8_SRGB:
+        case VK_FORMAT_B8G8R8_SRGB:
+        case VK_FORMAT_R8G8B8A8_SRGB:
+        case VK_FORMAT_B8G8R8A8_SRGB:
+        case VK_FORMAT_A8B8G8R8_SRGB_PACK32:
+        case VK_FORMAT_BC1_RGB_SRGB_BLOCK:
+        case VK_FORMAT_BC1_RGBA_SRGB_BLOCK:
+        case VK_FORMAT_BC2_SRGB_BLOCK:
+        case VK_FORMAT_BC3_SRGB_BLOCK:
+        case VK_FORMAT_BC7_SRGB_BLOCK: return true;
+        default: return false;
+    }
+}
+
 bool IgnoresForcedDegamma(std::uint32_t guestFormat) {
     switch (guestFormat) {
-        case 7u: case 8u: case 13u: case 22u: case 23u: case 24u: case 29u: case 36u: case 50u: case 64u: case 65u: case 66u: case 71u: case 77u:
-        case 132u: case 133u: case 134u: case 136u: case 175u: case 176u: case 177u: case 178u: case 179u: case 180u: return true;
+        case 7u: case 8u: case 11u: case 12u: case 13u: case 20u: case 21u: case 22u: case 23u: case 24u: case 27u: case 28u: case 29u: case 36u: case 50u: case 51u: case 54u: case 55u:
+        case 62u: case 63u: case 64u: case 65u: case 66u: case 69u: case 70u: case 71u: case 72u: case 73u: case 74u: case 75u: case 76u: case 77u:
+        case 132u: case 133u: case 134u: case 135u: case 136u: case 141u: case 175u: case 176u: case 177u: case 178u: case 179u: case 180u: return true;
         default: return false;
     }
 }

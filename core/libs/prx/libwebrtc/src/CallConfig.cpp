@@ -60,15 +60,9 @@ constexpr std::int32_t DefaultStartBitrateBps = 300000;
 using DeletingDestructor = void(APS5_VABI*)(void*);
 using ReleaseFunction = std::int32_t(APS5_VABI*)(const void*);
 
-struct ErrnoGuard {
-    int savedErrno = errno;
-    ~ErrnoGuard() { errno = savedErrno; }
-};
-
 void CopyInChecked(void* destination, const void* source, std::size_t bytes, const char* message) {
     if (!source)
         throw std::invalid_argument(message);
-    ErrnoGuard guard;
     if (!GuestCopyIn_nid_no_patch(destination, source, bytes))
         throw std::invalid_argument(message);
 }
@@ -76,7 +70,6 @@ void CopyInChecked(void* destination, const void* source, std::size_t bytes, con
 void CopyOutChecked(void* destination, const void* source, std::size_t bytes, const char* message) {
     if (!destination)
         throw std::invalid_argument(message);
-    ErrnoGuard guard;
     if (!GuestCopyOut_nid_no_patch(destination, source, bytes))
         throw std::invalid_argument(message);
 }
@@ -84,7 +77,6 @@ void CopyOutChecked(void* destination, const void* source, std::size_t bytes, co
 void RequireWritable(void* address, std::size_t bytes, const char* message) {
     if (!address)
         throw std::invalid_argument(message);
-    ErrnoGuard guard;
     if (!GuestWritable_nid_no_patch(address, bytes))
         throw std::invalid_argument(message);
 }

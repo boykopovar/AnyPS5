@@ -9,6 +9,7 @@ from test_windows_import_modules import consumer
 
 from test_guest_intel_trampolines import PLAIN_SITE, guest_fixture, main_fixture
 from test_guest_module_directories import module_with_soname, module_with_symbol, needed_libraries
+from test_macos_output import MachO
 
 
 NEEDED = b"needed.prx"
@@ -396,6 +397,17 @@ def main():
         result = subprocess.run([str(relinker), "--macos", str(source), str(case / "output")],
                                 capture_output=True, text=True, encoding="utf-8", timeout=30)
         assert result.returncode == 0, (result.stdout, result.stderr)
+        for needed in (b"libkernel.sprx", b"libkernel.suprx", b"libkernel.debug_prx"):
+            case = work / ("macos-console-suffix-" + needed.decode().split(".")[1])
+            (case / "sce_module").mkdir(parents=True)
+            source = case / "input.elf"
+            source.write_bytes(executable_with_needed(needed))
+            result = subprocess.run([str(relinker), "--macos", str(source), str(case / "output")],
+                                    capture_output=True, text=True, encoding="utf-8", timeout=30)
+            assert result.returncode == 0, (result.stdout, result.stderr)
+            dylibs = MachO((case / "output").read_bytes()).dylibs
+            assert "@rpath/libkernel.prx" in dylibs and "@rpath/libkernel_sys.prx" in dylibs, (needed, dylibs)
+            assert not any(name.endswith((".sprx", ".suprx", ".debug_prx")) for name in dylibs), (needed, dylibs)
     print("Guest needed module tests passed")
 
 

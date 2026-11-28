@@ -50,7 +50,16 @@ if(NOT WIN32)
     target_link_libraries(vorbis PRIVATE m)
 endif()
 
-add_library(vorbisfile STATIC EXCLUDE_FROM_ALL ${VORBIS_DIR}/lib/vorbisfile.c)
+set(vorbisfileSource "${VORBIS_DIR}/lib/vorbisfile.c")
+set(vorbisfilePatched "${CMAKE_CURRENT_BINARY_DIR}/vorbisfile.c")
+add_custom_command(
+    OUTPUT "${vorbisfilePatched}"
+    COMMAND "${CMAKE_COMMAND}" "-DSOURCE=${vorbisfileSource}" "-DOUTPUT=${vorbisfilePatched}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/PatchVorbisFile.cmake"
+    DEPENDS "${vorbisfileSource}" "${CMAKE_CURRENT_SOURCE_DIR}/PatchVorbisFile.cmake"
+    VERBATIM
+)
+add_library(vorbisfile STATIC EXCLUDE_FROM_ALL "${vorbisfilePatched}")
 target_include_directories(vorbisfile PRIVATE ${VORBIS_DIR}/lib)
 target_link_libraries(vorbisfile PUBLIC vorbis)
 set_target_properties(ogg vorbis vorbisfile PROPERTIES POSITION_INDEPENDENT_CODE ON C_VISIBILITY_PRESET hidden)
