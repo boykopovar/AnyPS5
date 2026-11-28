@@ -5,6 +5,6 @@
 
 bool SiginfoFaultHandlerInstalled(int guest);
 void RunSiginfoFaultHandler(int guest, std::int32_t code, std::uintptr_t address, std::uint32_t trap, void* ucontext);
-void InstallSiginfoFaultDelivery();
+void InstallSiginfoFaultDelivery(int guest);
 
 #endif

@@ -1295,18 +1295,33 @@ void DeliverFault(int hostSignal, siginfo_t* info, void* context) {
     ToHost(ucontext.mcontext, host);
 }
 
+struct sigaction FaultAction() {
+    struct sigaction action{};
+    action.sa_sigaction = DeliverFault;
+    action.sa_flags = SA_SIGINFO | SA_NODEFER;
+    sigemptyset(&action.sa_mask);
+    return action;
+}
+
 void InstallFaultDelivery() {
     static const bool installed = [] {
-        struct sigaction action{};
-        action.sa_sigaction = DeliverFault;
-        action.sa_flags = SA_SIGINFO | SA_NODEFER;
-        sigemptyset(&action.sa_mask);
+        const auto action = FaultAction();
         for (std::size_t i = 0; i < FaultSignals.size(); ++i)
             if (sigaction(FaultSignals[i], &action, &previousFaultActions[i]) != 0)
                 throw std::system_error(errno, std::generic_category(), "sceKernelInstallExceptionHandler: cannot install the host fault handler");
         return true;
     }();
     (void)installed;
+}
+
+void RebindFaultDelivery(int hostSignal) {
+    struct sigaction current{};
+    if (sigaction(hostSignal, nullptr, &current) != 0)
+        throw std::system_error(errno, std::generic_category(), "sigaction: cannot read the host fault handler");
+    if ((current.sa_flags & SA_SIGINFO) != 0 && current.sa_sigaction == DeliverFault) return;
+    const auto action = FaultAction();
+    if (sigaction(hostSignal, &action, nullptr) != 0)
+        throw std::system_error(errno, std::generic_category(), "sigaction: cannot install the host fault handler");
 }
 #endif
 
@@ -1460,9 +1475,14 @@ asm(".text\n"
     "    jmp *%r8\n");
 #endif
 
-void InstallSiginfoFaultDelivery() {
+void InstallSiginfoFaultDelivery(int guest) {
 #if defined(_WIN32) || defined(__linux__)
     InstallFaultDelivery();
+#endif
+#ifdef __linux__
+    if (guest == SignalFloatingPoint) RebindFaultDelivery(SIGFPE);
+#else
+    static_cast<void>(guest);
 #endif
 }
 

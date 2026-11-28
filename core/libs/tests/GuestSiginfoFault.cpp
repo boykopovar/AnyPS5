@@ -254,10 +254,21 @@ static void TestDivide(std::int32_t dividend, std::int32_t divisor) {
     Require(calls.load() == 1);
 }
 
+static void APS5_VABI PlainFpeHandler(int) {
+    std::abort();
+}
+
 static void TestIntegerDivide() {
     Install(GuestSigfpe, reinterpret_cast<std::uintptr_t>(&FpeHandler));
     TestDivide(1, 0);
     TestDivide(INT32_MIN, -1);
+    for (const std::uintptr_t previous : {std::uintptr_t{0}, std::uintptr_t{1}, reinterpret_cast<std::uintptr_t>(&PlainFpeHandler)}) {
+        GuestSigaction other{};
+        other.handler = previous;
+        Require(sigaction_nid_postfix(GuestSigfpe, &other, nullptr) == 0);
+        Install(GuestSigfpe, reinterpret_cast<std::uintptr_t>(&FpeHandler));
+        TestDivide(1, 0);
+    }
     GuestSigaction reset{};
     Require(sigaction_nid_postfix(GuestSigfpe, &reset, nullptr) == 0);
 }

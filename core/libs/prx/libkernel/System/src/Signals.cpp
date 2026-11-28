@@ -432,7 +432,7 @@ bool Install(int guest, const GuestSigaction& action) {
 #ifndef __linux__
         if (guest == GuestSigfpe) std::signal(SIGFPE, SIG_DFL);
 #endif
-        InstallSiginfoFaultDelivery();
+        InstallSiginfoFaultDelivery(guest);
         return true;
     }
     const int native = NativeSignal(guest);
