@@ -62,8 +62,8 @@ std::uint32_t bufferReadExtent(const BufferResource& buffer, std::uint32_t word3
         if ((buffer.formattedReadMask & (1u << output)) == 0u) continue;
         const auto selector = (word3 >> (output * 3u)) & 7u;
         if (selector <= 1u) continue;
-        if (selector < 4u || selector - 4u >= info.componentCount) return 0u;
-        sources |= 1u << (selector - 4u);
+        if (selector < 4u) return 0u;
+        sources |= 1u << ResolveFormattedSource(info, selector).component;
     }
     return sources == (1u << info.componentCount) - 1u ? info.byteSize : 0u;
 }

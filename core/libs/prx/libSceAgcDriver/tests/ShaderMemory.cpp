@@ -13802,14 +13802,20 @@ void verifyBaseFormattedReadExtent() {
         require(allocation.bindings.size() == 1u && allocation.bindings[0].bufferReadExtent.size() == 1u, "formatted read extent: candidate metadata missing");
         return allocation.bindings[0].bufferReadExtent[0];
     };
+    auto xyzw = memory;
+    xyzw.dataDwords = 4u;
+    const auto fourOutputs = track(xyzw, IrOpcode::LoadBufferU32x4);
     for (const auto& [format, components] : std::array<std::pair<std::uint32_t, std::uint32_t>, 4>{{{22u, 1u}, {62u, 2u}, {73u, 3u}, {77u, 4u}}}) {
         auto info = positive;
         info.buffers[0].formattedReadMask = (1u << components) - 1u;
         require(candidate(info, format, DstSel(4u, 5u, 6u, 7u)) == components * 4u, "formatted read extent: complete 32-bit element was not covered");
+        require(candidate(fourOutputs, format, DstSel(4u, 5u, 6u, 7u)) == components * 4u, "formatted read extent: four outputs lost the stored element extent");
     }
     require(candidate(positive, 30u, DstSel(4u, 5u, 6u)) == 0u, "formatted read extent: packed format gained a DWORD-count footprint");
     require(candidate(positive, 74u, DstSel(4u, 4u, 6u)) == 0u, "formatted read extent: incomplete source coverage was accepted");
-    require(candidate(positive, 74u, DstSel(4u, 5u, 7u)) == 0u, "formatted read extent: missing source component used modulo inference");
+    require(candidate(positive, 74u, DstSel(4u, 5u, 7u)) == 0u, "formatted read extent: repeated X hid a missing Z");
+    require(candidate(positive, 74u, DstSel(7u, 5u, 6u)) == 12u, "formatted read extent: W did not cover stored X in RGB32");
+    expectFailure([&] { candidate(fourOutputs, 74u, DstSel(4u, 5u, 6u, 2u)); }, "reserved component selector", "formatted read extent: reserved selector was accepted");
     require(candidate(positive, 74u, DstSel(6u, 4u, 5u)) == 12u, "formatted read extent: complete component permutation was rejected");
     auto altered = memory;
     altered.formatted = false;
