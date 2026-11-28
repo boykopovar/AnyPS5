@@ -417,10 +417,8 @@ std::filesystem::path EnvironmentPath(const wchar_t* wide, const char* narrow) {
     return path ? std::filesystem::path(path) : std::filesystem::path{};
 }
 
-void ApplyRecording(PadData& data, std::uint64_t sampleTime) {
-    static std::uint64_t recordedAt = 0;
-    recordedAt = std::max(recordedAt, sampleTime);
-    const std::uint64_t now = recordedAt;
+void ApplyRecording(PadData& data, std::uint64_t now) {
+    static std::optional<std::uint64_t> recordedAt;
     static std::optional<std::pair<Pad::RecordingPlayer, std::filesystem::path>> replay;
     if (!replay) {
         auto path = EnvironmentPath(L"APS5_PAD_REPLAY", "APS5_PAD_REPLAY");
@@ -451,11 +449,20 @@ void ApplyRecording(PadData& data, std::uint64_t sampleTime) {
         data.analog_buttons_l2 = replayed->triggers[0];
         data.analog_buttons_r2 = replayed->triggers[1];
     }
+    if (recordedAt && now < *recordedAt) return;
+    recordedAt = now;
     if (writer->Active()) writer->Record(now, {data.buttons, {data.left_stick_x, data.left_stick_y, data.right_stick_x, data.right_stick_y}, {data.analog_buttons_l2, data.analog_buttons_r2}});
 }
 
 std::uint64_t LatchExpiry(const PadSlot& slot) {
     return std::clamp(slot.readInterval + slot.readInterval / 2, kLatchExpiry, kLatchExpiryLimit);
+}
+
+PadData BufferedSample(PadSlot& slot, const std::pair<std::uint64_t, Pad::InputCommandFile::Input>& change, int port) {
+    auto input = change.second;
+    MergeScriptFrame(input);
+    input.buttons &= ~injectedHeldThroughCapture;
+    return BuildData(slot, slot.state, change.first, change.first, input, port);
 }
 }
 
@@ -477,7 +484,13 @@ PadData Pad::ReadState(int port) {
     slot.pressedSinceRead = 0;
     if (slot.lastReadAt != 0) slot.readInterval = now - slot.lastReadAt;
     slot.lastReadAt = now;
-    if (port == 0 && !withdrawn) ApplyRecording(data, now);
+    if (port == 0 && !withdrawn) {
+        for (const auto& change : InjectedCommands().PendingTransitions(now)) {
+            auto pending = BufferedSample(slot, change, port);
+            ApplyRecording(pending, change.first);
+        }
+        ApplyRecording(data, now);
+    }
     return data;
 }
 
@@ -502,10 +515,7 @@ int Pad::Read(PadData* data, int num, int port) {
         const std::size_t first = changes.size() > limit ? changes.size() - limit : 0;
         int count = 0;
         for (std::size_t index = first; index < changes.size(); ++index) {
-            auto change = changes[index].second;
-            MergeScriptFrame(change);
-            change.buttons &= ~injectedHeldThroughCapture;
-            data[count] = BuildData(slot, slot.state, changes[index].first, changes[index].first, change, port);
+            data[count] = BufferedSample(slot, changes[index], port);
             ApplyRecording(data[count++], changes[index].first);
         }
         data[count] = BuildData(slot, slot.state, now, now, injected, port);
