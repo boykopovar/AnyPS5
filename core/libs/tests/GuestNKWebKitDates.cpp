@@ -191,7 +191,10 @@ static void CurrentLocalTime() {
         Require(current.m_minute == expected.tm_min);
         Require(current.m_second == expected.tm_sec);
         Require(current.m_isDST == expected.tm_isdst);
-        Require(current.m_utcOffsetInMinute == expected.tm_gmtoff / 60);
+        GuestTm utc{};
+        Require(gmtime_r_nid_postfix(&before, &utc) != nullptr);
+        const int dayShift = expected.tm_year != utc.tm_year ? (expected.tm_year < utc.tm_year ? -1 : 1) : expected.tm_yday - utc.tm_yday;
+        Require(current.m_utcOffsetInMinute == (dayShift * 24 + expected.tm_hour - utc.tm_hour) * 60 + expected.tm_min - utc.tm_min);
         Require(current.m_utcOffsetInMinute == (expected.tm_isdst > 0 ? -240 : -300));
         return;
     }

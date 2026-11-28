@@ -42,13 +42,12 @@ static void CheckTimegm(const TimegmCase& test) {
     time.tm_wday = 9;
     time.tm_yday = 999;
     time.tm_isdst = 5;
-    time.tm_gmtoff = 77;
     if (timegm_nid_postfix(&time) != test.expected) {
         std::fprintf(stderr, "timegm(%d-%d-%d) returned the wrong time\n", test.year, test.mon, test.mday);
         std::abort();
     }
     Require(time.tm_mday == test.normalizedMday && time.tm_mon == test.normalizedMon && time.tm_year == test.normalizedYear
-        && time.tm_wday == test.wday && time.tm_yday == test.yday && time.tm_isdst == 0 && time.tm_gmtoff == 0,
+        && time.tm_wday == test.wday && time.tm_yday == test.yday && time.tm_isdst == 0,
         "timegm did not normalize the calendar fields");
 }
 
@@ -62,7 +61,7 @@ static void CheckReentrantConversions() {
         expected.tm_isdst = 0;
         Require(gmtime_r_nid_postfix(&timer, &actual) == &actual && Equal(actual, expected), "gmtime_r differs from gmtime_s");
         Require(localtime_s_nid_postfix(&timer, &expected) == &expected, "localtime_s rejected a representable time");
-        Require(localtime_r_nid_postfix(&timer, &actual) == &actual && Equal(actual, expected) && actual.tm_gmtoff == 7200,
+        Require(localtime_r_nid_postfix(&timer, &actual) == &actual && Equal(actual, expected),
             "localtime_r differs from localtime_s");
     }
     const std::int64_t epoch = 0;

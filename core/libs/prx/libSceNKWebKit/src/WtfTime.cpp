@@ -573,6 +573,14 @@ double APS5_VABI _ZNK3WTF7CPUTime23percentageCPUUsageSinceERKS0_(const WTF::CPUT
     return cpuUsageDelta * 100.0 / cpuTimeDelta;
 }
 
+static std::int64_t localOffsetSeconds(const GuestTm& local, std::int64_t time) {
+    GuestTm utc{};
+    if (gmtime_r_nid_postfix(&time, &utc) == nullptr) throw std::overflow_error("localOffsetSeconds: gmtime_r failed");
+    std::int64_t days = local.tm_yday - utc.tm_yday;
+    if (local.tm_year != utc.tm_year) days = local.tm_year < utc.tm_year ? -1 : 1;
+    return ((days * 24 + (local.tm_hour - utc.tm_hour)) * 60 + (local.tm_min - utc.tm_min)) * 60 + (local.tm_sec - utc.tm_sec);
+}
+
 void APS5_VABI _ZN3WTF17GregorianDateTime21setToCurrentLocalTimeEv(WTF::GregorianDateTime* self) {
     const std::int64_t localTime = time_nid_postfix(nullptr);
     GuestTm localTM{};
@@ -589,7 +597,7 @@ void APS5_VABI _ZN3WTF17GregorianDateTime21setToCurrentLocalTimeEv(WTF::Gregoria
     date.m_minute = localTM.tm_min;
     date.m_second = localTM.tm_sec;
     date.m_isDST = localTM.tm_isdst;
-    date.m_utcOffsetInMinute = static_cast<int>(localTM.tm_gmtoff / 60);
+    date.m_utcOffsetInMinute = static_cast<int>(localOffsetSeconds(localTM, localTime) / 60);
     if (!GuestCopyOut_nid_no_patch(self, &date, sizeof(date))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
@@ -625,7 +633,7 @@ WTF::LocalTimeOffset APS5_VABI _ZN3WTF24calculateLocalTimeOffsetEdNS_8TimeTypeE(
     if (localtime_r_nid_postfix(&localTime, &localTM) == nullptr) {
         throw std::overflow_error("calculateLocalTimeOffset: localtime_r failed");
     }
-    return WTF::LocalTimeOffset{localTM.tm_isdst > 0, static_cast<int>(localTM.tm_gmtoff * 1000)};
+    return WTF::LocalTimeOffset{localTM.tm_isdst > 0, static_cast<int>(localOffsetSeconds(localTM, localTime) * 1000)};
 }
 
 double APS5_VABI _ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb(const char* dateString, bool& isLocalTime) {

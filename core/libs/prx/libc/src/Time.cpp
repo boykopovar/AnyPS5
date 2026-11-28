@@ -132,14 +132,6 @@ std::tm toHostTm(const GuestTm& guest) {
     host.tm_wday = guest.tm_wday;
     host.tm_yday = guest.tm_yday;
     host.tm_isdst = guest.tm_isdst;
-#ifndef _WIN32
-    host.tm_gmtoff = static_cast<long>(guest.tm_gmtoff);
-#ifdef __APPLE__
-    host.tm_zone = const_cast<char*>(guest.tm_zone);
-#else
-    host.tm_zone = guest.tm_zone;
-#endif
-#endif
     return host;
 }
 
@@ -492,11 +484,7 @@ bool addConversion(FormatBuffer<TChar>& buffer, TFormatChar conversion, const Gu
     case 'y': addNumber(buffer, twoDigitYear(year), 100, "%02d"); return true;
     case 'Y': addNumber(buffer, year, 10000, "%04d"); return true;
     case 'z': addZoneOffset(buffer, time); return true;
-    case 'Z': {
-        const char* name = tzname_nid_postfix[time.tm_isdst > 0 ? 1 : 0];
-        addText(buffer, name != nullptr ? name : "");
-        return true;
-    }
+    case 'Z': return true;
     case '%': addText(buffer, "%"); return true;
     default: return false;
     }
@@ -749,13 +737,6 @@ GuestTm* APS5_VABI localtime_s_nid_postfix(const int64_t* timer, GuestTm* result
     }
     host.tm_year = static_cast<int>(year);
     copyCalendarFields(host, *result);
-    long standardBias = 0;
-    long daylightBias = 0;
-    _get_timezone(&standardBias);
-    _get_dstbias(&daylightBias);
-    const bool daylight = host.tm_isdst > 0;
-    result->tm_gmtoff = -static_cast<std::int64_t>(standardBias + (daylight ? daylightBias : 0));
-    result->tm_zone = GuestZoneName(daylight ? 1 : 0);
 #else
     const std::time_t t = static_cast<std::time_t>(*timer);
     if (localtime_r(&t, &host) == nullptr) {
@@ -763,8 +744,6 @@ GuestTm* APS5_VABI localtime_s_nid_postfix(const int64_t* timer, GuestTm* result
         return nullptr;
     }
     copyCalendarFields(host, *result);
-    result->tm_gmtoff = host.tm_gmtoff;
-    result->tm_zone = host.tm_zone;
 #endif
     return result;
 }
@@ -776,8 +755,6 @@ GuestTm* APS5_VABI gmtime_s_nid_postfix(const int64_t* timer, GuestTm* result) {
     }
     if (!utcCalendarFields(*timer, *result)) return nullptr;
     result->tm_isdst = -1;
-    result->tm_gmtoff = 0;
-    result->tm_zone = "UTC";
     return result;
 }
 
