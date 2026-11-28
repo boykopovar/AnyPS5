@@ -729,6 +729,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
             NoteDispatchDropped(address);
             return;
         } catch (const std::exception& error) {
+            if (resolving) throw;
             std::string dump;
             if (dumpShaders) {
                 const auto regions = shaderMemory->Regions();
