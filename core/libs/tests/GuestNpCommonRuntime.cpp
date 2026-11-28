@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <stdexcept>
 #include <cstring>
 #include <limits>
@@ -25,7 +26,10 @@
 #endif
 #include <windows.h>
 #else
+#include <csignal>
 #include <sys/mman.h>
+#include <sys/resource.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #endif
 
@@ -438,16 +442,76 @@ void* APS5_VABI WaitOnSemaphore(void* arg) {
     return nullptr;
 }
 
-void TestSemaphoreObjects() {
+void PanicOnUninitializedSemaphore(const char* mode, const std::filesystem::path& marker) {
     NpSemaphoreObject semaphore {};
     _ZN3sce2np9SemaphoreC1Ev(&semaphore);
-    bool refused = false;
     try {
-        _ZN3sce2np9Semaphore6SignalEv(&semaphore);
+        if (std::strcmp(mode, "--semaphore-panic-wait") == 0) _ZN3sce2np9Semaphore4WaitEj(&semaphore, 0);
+        else _ZN3sce2np9Semaphore6SignalEv(&semaphore);
     } catch (const std::invalid_argument&) {
-        refused = true;
     }
-    Require(semaphore.vtable != nullptr && !_ZNK3sce2np9Semaphore6IsInitEv(&semaphore) && refused, "a semaphore asserts that it is created before use");
+    std::FILE* file = std::fopen(marker.string().c_str(), "w");
+    if (file != nullptr) {
+        std::fputs("returned", file);
+        std::fclose(file);
+    }
+}
+
+struct PanicChildResult {
+    bool launched = false;
+    bool aborted = false;
+};
+
+PanicChildResult RunSemaphorePanicChild(const char* program, const char* mode, const std::filesystem::path& marker) {
+#ifdef _WIN32
+    std::wstring executable(32768, L'\0');
+    const DWORD length = GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size()));
+    Require(length != 0 && length < executable.size(), "the test executable path must be readable");
+    executable.resize(length);
+    const std::wstring wideMode(mode, mode + std::strlen(mode));
+    std::wstring command = L"\"" + executable + L"\" " + wideMode + L" \"" + marker.wstring() + L"\"";
+    STARTUPINFOW startup {};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION child {};
+    if (CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, TRUE, 0, nullptr, nullptr, &startup, &child) == 0) return {};
+    WaitForSingleObject(child.hProcess, INFINITE);
+    DWORD code = 0;
+    GetExitCodeProcess(child.hProcess, &code);
+    CloseHandle(child.hThread);
+    CloseHandle(child.hProcess);
+    constexpr DWORD WindowsAbortExitCode = 3;
+    constexpr DWORD WindowsFailFastExitCode = 0xC0000409;
+    return {true, code == WindowsAbortExitCode || code == WindowsFailFastExitCode};
+#else
+    const pid_t child = ::fork();
+    Require(child >= 0, "the panic child forks");
+    if (child == 0) {
+        const rlimit core {0, 0};
+        setrlimit(RLIMIT_CORE, &core);
+        ::execl(std::filesystem::absolute(program).c_str(), program, mode, marker.c_str(), static_cast<char*>(nullptr));
+        ::_exit(127);
+    }
+    int status = 0;
+    Require(::waitpid(child, &status, 0) == child, "the panic child is waited for");
+    return {true, WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT};
+#endif
+}
+
+void TestSemaphoreObjects(const char* program) {
+    NpSemaphoreObject semaphore {};
+    _ZN3sce2np9SemaphoreC1Ev(&semaphore);
+    Require(semaphore.vtable != nullptr && !_ZNK3sce2np9Semaphore6IsInitEv(&semaphore), "a semaphore starts uninitialized");
+    const std::filesystem::path marker = std::filesystem::temp_directory_path() /
+        ("np-semaphore-panic-" + std::to_string(static_cast<unsigned long long>(std::chrono::steady_clock::now().time_since_epoch().count())));
+    for (const char* mode : {"--semaphore-panic-wait", "--semaphore-panic-signal"}) {
+        std::error_code ignored;
+        std::filesystem::remove(marker, ignored);
+        const PanicChildResult result = RunSemaphorePanicChild(program, mode, marker);
+        Require(result.launched, "the uninitialized semaphore panic child starts");
+        Require(result.aborted && !std::filesystem::exists(marker), "an uninitialized semaphore halts on Wait and Signal instead of returning");
+    }
+    std::error_code ignored;
+    std::filesystem::remove(marker, ignored);
     Require(_ZN3sce2np9Semaphore6CreateEiiPKc(&semaphore, 3, 2, "NpSemaphoreBad") < 0 && !_ZNK3sce2np9Semaphore6IsInitEv(&semaphore),
         "a refused Create leaves the semaphore uninitialized");
     Require(_ZN3sce2np9Semaphore6CreateEiiPKc(&semaphore, 0, 2, "NpSemaphoreObject") == 0 && _ZNK3sce2np9Semaphore6IsInitEv(&semaphore),
@@ -2403,7 +2467,11 @@ void TestGetNthCharGuestPointers() {
         "long text spanning multiple chunks locates the target character");
 }
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc == 3 && (std::strcmp(argv[1], "--semaphore-panic-wait") == 0 || std::strcmp(argv[1], "--semaphore-panic-signal") == 0)) {
+        PanicOnUninitializedSemaphore(argv[1], argv[2]);
+        return 0;
+    }
     TestAtomics();
     TestSemaphoresAndFlags();
     TestEventFlagClearAndCancel();
@@ -2414,7 +2482,7 @@ int main() {
     TestObjects();
     TestAllocatorEx();
     TestObjectsThroughStoredAllocator();
-    TestSemaphoreObjects();
+    TestSemaphoreObjects(argv[0]);
     TestMutexAndCondObjects();
     TestAllocatorExRecorded();
     TestRingBuf();

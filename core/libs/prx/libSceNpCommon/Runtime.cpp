@@ -329,8 +329,8 @@ void* const NpSemaphoreVtable[] = {
     reinterpret_cast<void*>(&_ZN3sce2np9SemaphoreD1Ev), reinterpret_cast<void*>(&_ZN3sce2np9SemaphoreD0Ev),
 };
 
-void RequireSemaphoreInit(const NpSemaphoreObject* self, const char* message) {
-    if (self->state == 0) throw std::invalid_argument(message);
+void RequireSemaphoreInit(const NpSemaphoreObject* self) {
+    if (self->state == 0) sceNpPanic();
 }
 
 void ReleaseSemaphore(NpSemaphoreObject* self) {
@@ -1560,13 +1560,13 @@ void APS5_VABI _ZN3sce2np9Semaphore7DestroyEv(NpSemaphoreObject* self) {
 }
 
 int APS5_VABI _ZN3sce2np9Semaphore4WaitEj(NpSemaphoreObject* self, std::uint32_t usec) {
-    RequireSemaphoreInit(self, "sce::np::Semaphore::Wait: the semaphore is not initialized");
+    RequireSemaphoreInit(self);
     KernelUseconds timeout = usec;
     return NpResult(sceNpWaitSema(self->sema, usec != 0 ? &timeout : nullptr));
 }
 
 int APS5_VABI _ZN3sce2np9Semaphore6SignalEv(NpSemaphoreObject* self) {
-    RequireSemaphoreInit(self, "sce::np::Semaphore::Signal: the semaphore is not initialized");
+    RequireSemaphoreInit(self);
     return NpResult(sceNpSignalSema(self->sema));
 }
 void APS5_VABI _ZN3sce2np5MutexC1Ev(NpMutexObject* self) {
