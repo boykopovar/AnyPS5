@@ -2,19 +2,19 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/AsmMacros.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libkernel/File/include/FileFlags.hpp"
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#ifdef _WIN32
-#include "prx/libkernel/File/include/File.hpp"
-#include "prx/libkernel/File/include/FileFlags.hpp"
-#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#ifdef _WIN32
 #include <windows.h>
 #else
 #include <sys/mman.h>
@@ -211,7 +211,6 @@ static void TestReadNoAccess() {
     Require(calls.load() == 1);
 }
 
-#ifdef _WIN32
 static void TestReadPastEndOfFile() {
     constexpr std::size_t guestPage = 0x4000;
     const auto path = std::filesystem::path("anyps5-siginfo-past-end-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".bin");
@@ -234,7 +233,6 @@ static void TestReadPastEndOfFile() {
     Require(sceKernelClose(fd) == 0);
     Require(std::filesystem::remove(path));
 }
-#endif
 
 static void TestContextMask() {
     std::uint32_t original[4]{};
@@ -255,9 +253,7 @@ int main() {
     TestWriteToReadOnly();
     TestWriteToUntouchedReadOnly();
     TestReadNoAccess();
-#ifdef _WIN32
     TestReadPastEndOfFile();
-#endif
     TestContextMask();
     GuestSigaction reset{};
     Require(sigaction_nid_postfix(GuestSigsegv, &reset, nullptr) == 0);

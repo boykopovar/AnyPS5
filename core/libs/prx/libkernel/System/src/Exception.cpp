@@ -1281,6 +1281,8 @@ void DeliverFault(int hostSignal, siginfo_t* info, void* context) {
     Fault fault{};
     const bool deliverable = info->si_code > 0 && Classify(hostSignal, host, fault);
     if (deliverable && fault.trap.number == TrapPage && GuestWriteWatch::GuestWriteWatchHandleFault_nid_postfix(fault.trap.address)) return;
+    const bool pastObject = deliverable && hostSignal == SIGBUS && info->si_code == BUS_ADRERR && fault.trap.number == TrapPage;
+    if (pastObject) fault.signum = SignalSegmentation;
     const auto handler = deliverable ? Handler(fault.signum) : nullptr;
     const bool siginfo = deliverable && handler == nullptr && SiginfoFault(fault.signum);
     if ((handler == nullptr && !siginfo) || !GuestCode(static_cast<std::uintptr_t>(host.gregs[REG_RIP]))) {
@@ -1290,7 +1292,7 @@ void DeliverFault(int hostSignal, siginfo_t* info, void* context) {
     GuestUcontext ucontext{};
     FromHost(host, ucontext.mcontext);
     const bool hostClassified = hostSignal == SIGSEGV && fault.signum == SignalSegmentation && (info->si_code == SEGV_MAPERR || info->si_code == SEGV_ACCERR);
-    CallHandler(handler, fault.signum, ucontext, fault.trap, siginfo, hostClassified ? info->si_code : 0);
+    CallHandler(handler, fault.signum, ucontext, fault.trap, siginfo, pastObject ? SEGV_ACCERR : hostClassified ? info->si_code : 0);
     ToHost(ucontext.mcontext, host);
 }
 
