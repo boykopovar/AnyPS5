@@ -92,6 +92,64 @@ void decoding() {
     require(rejected(Bytes{0xC4, 0xE2, 0x75, 0x2E, 0x47}), "A truncated masked store was accepted");
 }
 
+Bytes halfFloatStore(bool wide, std::uint8_t source, std::uint8_t rexIndexBase, Bytes memory, std::uint8_t rounding, const Bytes& prefixes = {}) {
+    Bytes bytes = prefixes;
+    bytes.insert(bytes.end(), {0xC4,
+        static_cast<std::uint8_t>(((source & 8) != 0 ? 0 : 0x80) | ((rexIndexBase & 2) != 0 ? 0 : 0x40) | ((rexIndexBase & 1) != 0 ? 0 : 0x20) | 0x03),
+        static_cast<std::uint8_t>(0x79 | (wide ? 4 : 0)), 0x1D});
+    memory.at(0) = static_cast<std::uint8_t>(memory[0] | ((source & 7) << 3));
+    bytes.insert(bytes.end(), memory.begin(), memory.end());
+    bytes.push_back(rounding);
+    return bytes;
+}
+
+void halfFloatDecoding() {
+    for (const bool wide : {false, true}) {
+        for (std::uint8_t source = 0; source < 16; ++source) {
+            const auto bytes = halfFloatStore(wide, source, 0, {0x07}, 3);
+            const auto operands = Codegen::DecodeHalfFloatStore(bytes.data(), bytes.size());
+            require(operands && std::string(operands->Name) == "VCVTPS2PH" && operands->Bytes == (wide ? 16 : 8) && operands->Instruction == bytes, "VCVTPS2PH store decoding changed the width or the instruction");
+            require(operands->Memory.Rm == 7 && operands->Memory.Mod == 0 && operands->Memory.RexIndexBase == 0, "VCVTPS2PH store decoding changed the memory operand");
+        }
+    }
+    const auto extended = halfFloatStore(true, 9, 3, {0x84, 0xD1, 0x78, 0x56, 0x34, 0x12}, 0, {0x64});
+    const auto operands = Codegen::DecodeHalfFloatStore(extended.data(), extended.size());
+    require(operands && operands->Memory.RexIndexBase == 3 && operands->Memory.Sib == 0xD1 && operands->Memory.Displacement == 0x12345678 && operands->Memory.Prefixes == Bytes{0x64}, "VCVTPS2PH store extensions, SIB or prefixes were lost");
+    const auto rip = halfFloatStore(false, 2, 0, {0x05, 0x10, 0x00, 0x00, 0x00}, 4);
+    const auto ripOperands = Codegen::DecodeHalfFloatStore(rip.data(), rip.size());
+    require(ripOperands && ripOperands->Memory.RipRelative && ripOperands->DisplacementOffset == 5 && ripOperands->Memory.Displacement == 0x10, "RIP-relative VCVTPS2PH store was not recognised");
+    for (const auto& bytes : {
+             Bytes{0xC4, 0xE3, 0x79, 0x1D, 0xC7, 0x03}, Bytes{0xC4, 0xE3, 0xF9, 0x1D, 0x07, 0x03}, Bytes{0xC4, 0xE3, 0x78, 0x1D, 0x07, 0x03},
+             Bytes{0xC4, 0xE2, 0x79, 0x1D, 0x07, 0x03}, Bytes{0xC4, 0xE3, 0x79, 0x1C, 0x07, 0x03}, Bytes{0xC4, 0xE2, 0x79, 0x13, 0x07}})
+        require(!Codegen::DecodeHalfFloatStore(bytes.data(), bytes.size()), "A register form, VEX.W1, another prefix, map or opcode matched a VCVTPS2PH store");
+    bool thrown = false;
+    try {
+        const Bytes trailing{0xC4, 0xE3, 0x79, 0x1D, 0x07, 0x03, 0x00};
+        (void)Codegen::DecodeHalfFloatStore(trailing.data(), trailing.size());
+    } catch (const Codegen::CodegenException&) {
+        thrown = true;
+    }
+    require(thrown, "A VCVTPS2PH store with trailing bytes was accepted");
+}
+
+void halfFloatBody() {
+    const auto site = halfFloatStore(true, 9, 0, {0x07}, 3);
+    Codegen::StubBodyBuilder builder;
+    Codegen::EmitProbedStore(builder, *Codegen::DecodeHalfFloatStore(site.data(), site.size()));
+    const auto lowered = builder.Finish();
+    Bytes expected{0x48, 0x8D, 0x64, 0x24, 0x80, 0x9C, 0x50, 0x51, 0x48, 0x8D, 0x07, 0xF0, 0x80, 0x48, 0x00, 0x00, 0xF0, 0x80, 0x48, 0x0F, 0x00,
+        0x59, 0x58, 0x9D, 0x48, 0x8D, 0xA4, 0x24, 0x80, 0x00, 0x00, 0x00};
+    expected.insert(expected.end(), site.begin(), site.end());
+    require(Bytes(lowered.Bytes.begin(), lowered.Bytes.begin() + static_cast<std::ptrdiff_t>(lowered.ReturnBranchOffset)) == expected, "VCVTPS2PH stub does not probe the first and last byte before the store");
+    const auto intel = Codegen::MakeAmd64OnlyInstructionMatcher();
+    const auto rosetta = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
+    require(!intel->Match(site.data(), site.size()), "Intel mode lowered a VCVTPS2PH store");
+    const auto match = rosetta->Match(site.data(), site.size());
+    require(match && match->InstructionName == std::string("VCVTPS2PH") && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "Rosetta mode did not move a VCVTPS2PH store to a stub");
+    const Bytes registerForm{0xC4, 0xE3, 0x7D, 0x1D, 0xC8, 0x03};
+    require(!rosetta->Match(registerForm.data(), registerForm.size()), "Rosetta mode lowered a register VCVTPS2PH");
+}
+
 void body() {
     const auto site = maskedStore(kForms[1], false, 1, 2, 0, {0x07});
     Codegen::StubBodyBuilder builder;
@@ -360,8 +418,84 @@ void execution() {
     munmap(region, (kDataPages + 2) * kPage);
     std::cout << runs << " masked store executions\n";
 }
+
+void halfFloatExecution() {
+    const auto region = static_cast<std::uint8_t*>(mmap(nullptr, (kDataPages + 2) * kPage, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    require(region != MAP_FAILED, "Cannot map VCVTPS2PH test pages");
+    auto* const code = region;
+    auto* const data = region + kPage;
+    protectedPage = data + kDataPages * kPage;
+    struct sigaction action {};
+    action.sa_sigaction = onFault;
+    action.sa_flags = SA_SIGINFO;
+    sigemptyset(&action.sa_mask);
+    struct sigaction previousSegv {};
+    struct sigaction previousBus {};
+    sigaction(SIGSEGV, &action, &previousSegv);
+    sigaction(SIGBUS, &action, &previousBus);
+    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
+    std::uint64_t runs = 0;
+    for (const bool wide : {false, true}) {
+        const auto site = halfFloatStore(wide, 10, 0, {0x07}, 0);
+        if (!LoweringExecution::HostExecutes(site)) {
+            std::cout << "skipped: " << (wide ? "256-bit" : "128-bit") << " VCVTPS2PH execution, the host does not execute it\n";
+            continue;
+        }
+        const auto bytes = wide ? 16 : 8;
+        const auto match = matcher->Match(site.data(), site.size());
+        require(match && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "VCVTPS2PH stub was not produced");
+        for (const int offset : {-40, -bytes, -bytes + 1, -2, 0, 8}) {
+            auto* const target = protectedPage + offset;
+            auto* const stack = data + kDataPages / 2 * kPage;
+            Machine expected{};
+            for (unsigned reg = 0; reg < 16; ++reg)
+                for (unsigned lane = 0; lane < 8; ++lane) {
+                    const float value = static_cast<float>(reg) * 1.25f + static_cast<float>(lane) * -0.375f + 0.1f;
+                    std::memcpy(expected.Ymm[reg] + lane * sizeof(value), &value, sizeof(value));
+                }
+            expected.Gpr[Rdi] = reinterpret_cast<std::uint64_t>(target);
+            expected.Flags = (runs & 1) != 0 ? 0x8D7 : 0x002;
+            expected.Stack = reinterpret_cast<std::uint64_t>(stack);
+            expected.Code = reinterpret_cast<std::uint64_t>(code);
+            auto machine = expected;
+            require(mprotect(protectedPage, kPage, PROT_READ | PROT_WRITE) == 0, "Cannot unprotect the watched page");
+            std::memset(target - 16, kFill, 64);
+            auto direct = site;
+            direct.push_back(0xC3);
+            std::memcpy(code, direct.data(), direct.size());
+            run(expected);
+            std::array<std::uint8_t, 64> reference{};
+            std::memcpy(reference.data(), target - 16, reference.size());
+            std::memset(target - 16, kFill, 64);
+            std::memset(stack - 8 - 128, kSentinel, 128);
+            require(mprotect(protectedPage, kPage, PROT_READ) == 0, "Cannot protect the watched page");
+            auto body = match->StubBody;
+            Codegen::ApplyStubRelocations(body, match->Relocations, reinterpret_cast<std::uint64_t>(code), reinterpret_cast<std::uint64_t>(code), 0);
+            body.at(match->ReturnBranchOffset) = 0xC3;
+            std::memcpy(code, body.data(), body.size());
+            faults = 0;
+            const auto input = machine;
+            run(machine);
+            ++runs;
+            const bool touchesProtected = target + bytes > protectedPage;
+            require(std::memcmp(reference.data(), target - 16, reference.size()) == 0, "VCVTPS2PH stub stored other bytes than the instruction");
+            require(faults == (touchesProtected ? 1 : 0), "VCVTPS2PH stub did not fault exactly once on the protected page");
+            for (unsigned at = 0; at < 128; ++at)
+                require(stack[-8 - 128 + static_cast<int>(at)] == kSentinel, "VCVTPS2PH stub wrote into the red zone");
+            require(std::memcmp(machine.Ymm, input.Ymm, sizeof(input.Ymm)) == 0, "VCVTPS2PH stub changed a vector register");
+            require(std::memcmp(machine.Gpr, input.Gpr, sizeof(input.Gpr)) == 0, "VCVTPS2PH stub changed a general register");
+            require((machine.Flags & 0x8D5) == (input.Flags & 0x8D5), "VCVTPS2PH stub changed the flags");
+            require(machine.Stack == input.Stack, "VCVTPS2PH stub did not restore RSP");
+        }
+    }
+    sigaction(SIGSEGV, &previousSegv, nullptr);
+    sigaction(SIGBUS, &previousBus, nullptr);
+    munmap(region, (kDataPages + 2) * kPage);
+    std::cout << runs << " VCVTPS2PH store executions\n";
+}
 #else
 void execution() { std::cout << "Masked store execution checks require a Linux/macOS x86-64 build\n"; }
+void halfFloatExecution() { std::cout << "VCVTPS2PH execution checks require a Linux/macOS x86-64 build\n"; }
 #endif
 
 }
@@ -372,6 +506,9 @@ int main() {
         body();
         matching();
         execution();
+        halfFloatDecoding();
+        halfFloatBody();
+        halfFloatExecution();
         std::cout << "Masked store lowering checks passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

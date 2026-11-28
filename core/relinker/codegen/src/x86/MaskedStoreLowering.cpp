@@ -11,6 +11,8 @@ namespace {
 constexpr std::int32_t kFrameSize = 128 + 3 * 8;
 constexpr std::uint8_t kAddress = 0;
 constexpr std::uint8_t kVexMap0F38 = 0x02;
+constexpr std::uint8_t kVexMap0F3A = 0x03;
+constexpr std::uint8_t kVcvtps2ph = 0x1D;
 constexpr std::uint8_t kVexPp66 = 0x01;
 
 bool _prefix(std::uint8_t value) {
@@ -92,6 +94,37 @@ void EmitMaskedStore(StubBodyBuilder& body, const MaskedStoreOperands& operands)
         body.Raw(std::array<std::uint8_t, 5>{0xF6, 0xC1, static_cast<std::uint8_t>(1u << element), 0x74, static_cast<std::uint8_t>(probes.size())});
         body.Raw(probes);
     }
+    body.Raw(std::array<std::uint8_t, 11>{0x59, 0x58, 0x9D, 0x48, 0x8D, 0xA4, 0x24, 0x80, 0x00, 0x00, 0x00});
+    if (memory.RipRelative)
+        body.RipRelative(operands.Instruction, operands.DisplacementOffset, static_cast<std::int64_t>(memory.InstructionLength) + memory.Displacement);
+    else
+        body.Raw(operands.Instruction);
+}
+
+std::optional<ProbedStoreOperands> DecodeHalfFloatStore(const std::uint8_t* data, const std::size_t length) {
+    std::size_t vex = 0;
+    while (vex < length && _prefix(data[vex])) ++vex;
+    if (vex + 5 > length || data[vex] != 0xC4 || (data[vex + 1] & 0x1F) != kVexMap0F3A || (data[vex + 2] & 0x83) != kVexPp66 || data[vex + 3] != kVcvtps2ph || (data[vex + 4] >> 6) == 3)
+        return std::nullopt;
+    const auto extensions = static_cast<std::uint8_t>(~data[vex + 1]);
+    const auto rex = static_cast<std::uint8_t>(((extensions & 0x20) >> 5) | ((extensions & 0x40) >> 5));
+    auto memory = DecodeMemoryOperand(data, length, vex + 4, rex, {data, data + vex});
+    if (vex + 4 + memory.EncodedSize + 1 != length)
+        throw CodegenException("VCVTPS2PH memory operand is not followed by exactly its immediate");
+    const auto displacementOffset = vex + 5 + (memory.Rm == 4 ? 1 : 0);
+    return ProbedStoreOperands{"VCVTPS2PH", static_cast<std::uint8_t>((data[vex + 2] & 4) != 0 ? 16 : 8), std::move(memory), std::vector<std::uint8_t>(data, data + length), displacementOffset};
+}
+
+void EmitProbedStore(StubBodyBuilder& body, const ProbedStoreOperands& operands) {
+    const auto& memory = operands.Memory;
+    body.Raw(std::array<std::uint8_t, 8>{0x48, 0x8D, 0x64, 0x24, 0x80, 0x9C, 0x50, 0x51});
+    _address(body, memory);
+    std::vector<std::uint8_t> probes;
+    for (const auto offset : {0u, operands.Bytes - 1u}) {
+        probes.insert(probes.end(), memory.Prefixes.begin(), memory.Prefixes.end());
+        probes.insert(probes.end(), {0xF0, 0x80, 0x48, static_cast<std::uint8_t>(offset), 0x00});
+    }
+    body.Raw(probes);
     body.Raw(std::array<std::uint8_t, 11>{0x59, 0x58, 0x9D, 0x48, 0x8D, 0xA4, 0x24, 0x80, 0x00, 0x00, 0x00});
     if (memory.RipRelative)
         body.RipRelative(operands.Instruction, operands.DisplacementOffset, static_cast<std::int64_t>(memory.InstructionLength) + memory.Displacement);

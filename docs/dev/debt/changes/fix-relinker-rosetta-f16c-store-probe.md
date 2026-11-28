@@ -1,0 +1,5 @@
+# relinker
+
+## change [stub](../../../core/relinker/codegen/src/x86/MaskedStoreLowering.cpp)
+
+- Under Rosetta (M5, macOS 27.0.1), a VMASKMOVPS, VMASKMOVPD, VPMASKMOVD or VPMASKMOVQ store or load that faults on an element other than an active first one, or a VCVTPS2PH store to memory that faults, ends the process (`unexpectedly need to EmulateForward on a synchronous exception`) instead of raising SIGSEGV or SIGBUS, so such a store into a page the macOS write watch keeps read-only ends the title. `--to-rosetta` moves each masked or VCVTPS2PH store to a [stub](../../../core/relinker/codegen/src/x86/MaskedStoreLowering.cpp) that first writes the first and last byte of every active element, or of the 8- or 16-byte VCVTPS2PH destination, with `LOCK OR` of 0, which faults normally and changes nothing. A page made read-only again by another thread between those writes and the store still ends the process. A stack-relative displacement that exceeds signed disp32 after the spill frame throws. Masked loads are not converted.

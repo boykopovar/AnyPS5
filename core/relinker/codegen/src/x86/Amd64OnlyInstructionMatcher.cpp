@@ -307,6 +307,8 @@ std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::_matchRosetta(const D
         return _trampoline(kScalarCompare.Name, instr.Length, _outOfLine(instr.Length, trailing, [&](StubBodyBuilder& body) { _emitScalarCompare(body, instr, *compare); }), true);
     if (const auto masked = _target == Amd64OnlyTarget::Rosetta ? DecodeMaskedStore(instr.Data, instr.Length) : std::nullopt)
         return _trampoline(masked->Name, instr.Length, _outOfLine(instr.Length, trailing, [&](StubBodyBuilder& body) { EmitMaskedStore(body, *masked); }));
+    if (const auto probed = _target == Amd64OnlyTarget::Rosetta ? DecodeHalfFloatStore(instr.Data, instr.Length) : std::nullopt)
+        return _trampoline(probed->Name, instr.Length, _outOfLine(instr.Length, trailing, [&](StubBodyBuilder& body) { EmitProbedStore(body, *probed); }));
     if (const auto mulx = DecodeMulx(instr.Data, instr.Length))
         return _trampoline("MULX", instr.Length, _outOfLine(instr.Length, trailing, [&](StubBodyBuilder& body) { EmitMulx(body, *mulx); }));
     return std::nullopt;
@@ -407,6 +409,10 @@ const char* Amd64OnlyInstructionMatcher::_emitOutOfLine(StubBodyBuilder& body, c
     if (const auto masked = _target == Amd64OnlyTarget::Rosetta ? DecodeMaskedStore(instr.Data, instr.Length) : std::nullopt) {
         EmitMaskedStore(body, *masked);
         return masked->Name;
+    }
+    if (const auto probed = _target == Amd64OnlyTarget::Rosetta ? DecodeHalfFloatStore(instr.Data, instr.Length) : std::nullopt) {
+        EmitProbedStore(body, *probed);
+        return probed->Name;
     }
     if (const auto mulx = _lowersBmi() ? DecodeMulx(instr.Data, instr.Length) : std::nullopt) {
         EmitMulx(body, *mulx);
