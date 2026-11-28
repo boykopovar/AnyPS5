@@ -5,6 +5,7 @@
 #include <atomic>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/SyncTrace.hpp"
 #include "prx/libc/include/PrimedSharedMutex.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
@@ -142,7 +143,7 @@ bool RetireEventFlag(KernelEventFlag handle, const std::shared_ptr<EventFlagHand
 }
 
 static bool TraceSync() {
-    static const bool enabled = std::getenv("APS5_TRACE_SYNC") != nullptr;
+    static const bool enabled = std::getenv("APS5_TRACE_SYNC") != nullptr && SyncTraceRingMode_nid_no_patch() == 0;
     return enabled;
 }
 
