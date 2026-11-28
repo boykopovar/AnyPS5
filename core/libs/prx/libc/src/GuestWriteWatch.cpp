@@ -54,6 +54,14 @@
 #define APS5_LINUX_READ_TRAPS 1
 #endif
 
+#if defined(_WIN32)
+#define APS5_WINDOWS_READ_TRAPS 1
+#include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/WindowsMappings.hpp"
+#include "prx/libc/include/general/ThreadName.hpp"
+#include <windows.h>
+#endif
+
 namespace GuestWriteWatch {
 namespace {
 
@@ -1778,6 +1786,415 @@ private:
 };
 
 const bool g_opened = (Watch::Get(), true);
+#elif defined(APS5_WINDOWS_READ_TRAPS)
+constexpr std::uintptr_t PageBytes = 4096;
+
+class TrapLock {
+public:
+    void lock() {
+        while (_held.test_and_set(std::memory_order_acquire)) SwitchToThread();
+    }
+
+    void unlock() {
+        _held.clear(std::memory_order_release);
+    }
+
+private:
+    std::atomic_flag _held = ATOMIC_FLAG_INIT;
+};
+
+class ReadTraps {
+public:
+    static ReadTraps& Get() {
+        static auto* traps = new ReadTraps;
+        return *traps;
+    }
+
+    void Forget(std::uintptr_t begin, std::uintptr_t end) {
+        if (end <= begin) return;
+        const std::lock_guard lock(_lock);
+        std::vector<Trap> dropped;
+        for (auto it = _traps.begin(); it != _traps.end();) {
+            if (it->owner == 0 && it->first < pageEnd(end) && pageStart(begin) < it->last) {
+                dropped.push_back(std::move(*it));
+                it = _traps.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        for (const auto& trap : dropped) restore(trap);
+        if (!dropped.empty()) _dropped.fetch_add(1, std::memory_order_release);
+    }
+
+    bool SetResolver(void (*resolver)(std::uintptr_t, std::uintptr_t)) {
+        if (resolver == nullptr) return false;
+        std::call_once(_started, [this] { start(); });
+        if (!_running.load(std::memory_order_acquire)) return false;
+        _resolver.store(resolver, std::memory_order_release);
+        return true;
+    }
+
+    void SetBypass(bool (*bypass)()) {
+        _bypass.store(bypass, std::memory_order_release);
+    }
+
+    void Trapped(std::uintptr_t begin, std::uintptr_t end, void (*trapped)(void*, std::uintptr_t, std::uintptr_t), void* context) {
+        if (end <= begin || !_trapping.load(std::memory_order_acquire)) return;
+        std::vector<std::pair<std::uintptr_t, std::uintptr_t>> runs;
+        {
+            const std::lock_guard lock(_lock);
+            for (auto page = pageStart(begin); page < pageEnd(end); page += PageBytes) {
+                if (!closed(page)) continue;
+                if (!runs.empty() && runs.back().second == page) runs.back().second = page + PageBytes;
+                else runs.emplace_back(page, page + PageBytes);
+            }
+        }
+        for (const auto& [runBegin, runEnd] : runs) trapped(context, runBegin, runEnd);
+    }
+
+    bool TrapReads(std::uintptr_t begin, std::uintptr_t end) {
+        if (end <= begin || _resolver.load(std::memory_order_acquire) == nullptr) return false;
+        const auto first = pageStart(begin);
+        const auto last = pageEnd(end);
+        const auto held = [&] { return std::any_of(_traps.begin(), _traps.end(), [&](const Trap& trap) { return trap.owner == 0 && trap.begin == begin && trap.end == end; }); };
+        {
+            const std::lock_guard lock(_lock);
+            if (held()) return true;
+        }
+        if (!GuestArena::GuestArenaContains_nid_postfix(reinterpret_cast<const void*>(first), last - first) || GuestArena::WindowsMappings::Get().ProtectsItself(first, last - first)) return false;
+        Trap trap{begin, end, first, last, 0, 0, std::vector<std::uint8_t>((last - first) / PageBytes, 0)};
+        const std::lock_guard lock(_lock);
+        if (held()) return true;
+        for (const auto& [hostBegin, hostEnd] : _hostWrites)
+            if (hostBegin < last && first < hostEnd) return false;
+        if (std::any_of(_traps.begin(), _traps.end(), [&](const Trap& other) { return other.first < last && first < other.last; })) return false;
+        if (!readWrite(first, last)) return false;
+        if (!protect(first, last, PAGE_NOACCESS)) {
+            protect(first, last, PAGE_READWRITE);
+            return false;
+        }
+        _traps.push_back(std::move(trap));
+        _trapping.store(true, std::memory_order_release);
+        return true;
+    }
+
+    std::uint64_t Generation() const {
+        return _dropped.load(std::memory_order_acquire);
+    }
+
+    void ReleaseReads(std::uintptr_t begin, std::uintptr_t end) {
+        if (end <= begin) return;
+        const std::lock_guard lock(_lock);
+        const auto found = std::find_if(_traps.begin(), _traps.end(), [&](const Trap& trap) { return trap.owner == 0 && trap.begin == begin && trap.end == end; });
+        if (found == _traps.end()) return;
+        const auto released = std::move(*found);
+        _traps.erase(found);
+        _dropped.fetch_add(1, std::memory_order_release);
+        restore(released);
+    }
+
+    bool HandleFault(std::uintptr_t address) {
+        if (!_trapping.load(std::memory_order_acquire)) return false;
+        const KeepErrors keep;
+        const auto page = pageStart(address);
+        const auto self = GetCurrentThreadId();
+        {
+            const std::lock_guard lock(_lock);
+            if (!closed(page)) return retryOpen(page);
+            const auto bypass = _bypass.load(std::memory_order_acquire);
+            if (self == _resolverThread.load(std::memory_order_acquire) || ownedBy(page, self) || (bypass != nullptr && bypass())) {
+                for (auto& trap : _traps)
+                    if (trap.first <= page && page < trap.last) trap.open[(page - trap.first) / PageBytes] = 1;
+                ++_generation;
+                return protect(page, page + PageBytes, PAGE_READWRITE);
+            }
+        }
+        Slot* slot = nullptr;
+        while (slot == nullptr) {
+            for (auto& candidate : _slots) {
+                unsigned expected = Free;
+                if (candidate.state.compare_exchange_strong(expected, Claimed, std::memory_order_acq_rel)) {
+                    slot = &candidate;
+                    break;
+                }
+            }
+            if (slot == nullptr) SwitchToThread();
+        }
+        slot->page = page;
+        slot->thread.store(self, std::memory_order_release);
+        slot->state.store(Queued, std::memory_order_release);
+        ReleaseSemaphore(_wake, 1, nullptr);
+        WaitForSingleObject(slot->done, INFINITE);
+        slot->thread.store(0, std::memory_order_release);
+        slot->state.store(Free, std::memory_order_release);
+        return true;
+    }
+
+    bool Awaits(DWORD thread) const {
+        if (thread == 0) return false;
+        return std::any_of(_slots.begin(), _slots.end(), [&](const Slot& slot) { return slot.thread.load(std::memory_order_acquire) == thread; });
+    }
+
+    void BeginHostWrite(std::uintptr_t begin, std::uintptr_t end) {
+        if (end <= begin) return;
+        withoutTraps(begin, end, [&] { _hostWrites.emplace_back(pageStart(begin), pageEnd(end)); });
+    }
+
+    void EndHostWrite(std::uintptr_t begin, std::uintptr_t end) {
+        if (end <= begin) return;
+        const std::lock_guard lock(_lock);
+        const auto found = std::find(_hostWrites.begin(), _hostWrites.end(), std::pair{pageStart(begin), pageEnd(end)});
+        if (found != _hostWrites.end()) _hostWrites.erase(found);
+    }
+
+    bool BeginUntrapped(std::uintptr_t begin, std::uintptr_t end) {
+        if (end <= begin) return true;
+        const auto first = pageStart(begin);
+        const auto last = pageEnd(end);
+        const std::lock_guard lock(_lock);
+        if (std::any_of(_traps.begin(), _traps.end(), [&](const Trap& trap) { return trap.first < last && first < trap.last; })) return false;
+        _hostWrites.emplace_back(first, last);
+        return true;
+    }
+
+private:
+    static constexpr std::size_t ResolveSlots = 32;
+    static constexpr unsigned UntrappedRetries = 16;
+    static constexpr unsigned PageRetries = 1024;
+
+    enum SlotState : unsigned { Free, Claimed, Queued, Running, Done };
+
+    struct Slot {
+        std::atomic<unsigned> state{Free};
+        std::atomic<DWORD> thread{0};
+        std::uintptr_t page = 0;
+        HANDLE done = nullptr;
+    };
+
+    struct Trap {
+        std::uintptr_t begin;
+        std::uintptr_t end;
+        std::uintptr_t first;
+        std::uintptr_t last;
+        DWORD owner;
+        std::uint64_t batch;
+        std::vector<std::uint8_t> open;
+    };
+
+    struct KeepErrors {
+        int savedErrno = errno;
+        DWORD savedError = GetLastError();
+        ~KeepErrors() {
+            errno = savedErrno;
+            SetLastError(savedError);
+        }
+    };
+
+    static std::uintptr_t pageStart(std::uintptr_t address) {
+        return address & ~(PageBytes - 1);
+    }
+
+    static std::uintptr_t pageEnd(std::uintptr_t address) {
+        return (address + PageBytes - 1) & ~(PageBytes - 1);
+    }
+
+    static bool readWrite(std::uintptr_t first, std::uintptr_t last) {
+        for (auto cursor = first; cursor < last;) {
+            MEMORY_BASIC_INFORMATION memory{};
+            if (VirtualQuery(reinterpret_cast<const void*>(cursor), &memory, sizeof(memory)) != sizeof(memory)) return false;
+            if (memory.State != MEM_COMMIT || memory.Protect != PAGE_READWRITE) return false;
+            cursor = reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize;
+        }
+        return true;
+    }
+
+    static bool protect(std::uintptr_t first, std::uintptr_t last, DWORD protection) {
+        bool all = true;
+        for (auto cursor = first; cursor < last;) {
+            MEMORY_BASIC_INFORMATION memory{};
+            if (VirtualQuery(reinterpret_cast<const void*>(cursor), &memory, sizeof(memory)) != sizeof(memory)) return false;
+            const auto stop = std::min<std::uintptr_t>(last, reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize);
+            DWORD previous = 0;
+            if (memory.State != MEM_COMMIT || !VirtualProtect(reinterpret_cast<void*>(cursor), stop - cursor, protection, &previous)) all = false;
+            cursor = stop;
+        }
+        return all;
+    }
+
+    void start() {
+        _wake = CreateSemaphoreW(nullptr, 0, ResolveSlots, nullptr);
+        if (_wake == nullptr) return;
+        for (auto& slot : _slots) {
+            slot.done = CreateSemaphoreW(nullptr, 0, 1, nullptr);
+            if (slot.done == nullptr) return;
+        }
+        const auto thread = CreateThread(nullptr, 0, [](void* traps) -> DWORD {
+            static_cast<ReadTraps*>(traps)->resolveLoop();
+            return 0;
+        }, this, 0, nullptr);
+        if (thread == nullptr) return;
+        CloseHandle(thread);
+        while (_resolverThread.load(std::memory_order_acquire) == 0) SwitchToThread();
+        if (AddVectoredExceptionHandler(1, &ReadTraps::fault) == nullptr) return;
+        _running.store(true, std::memory_order_release);
+    }
+
+    static LONG CALLBACK fault(EXCEPTION_POINTERS* info) {
+        const auto* record = info->ExceptionRecord;
+        if (record->ExceptionCode != EXCEPTION_ACCESS_VIOLATION || record->NumberParameters < 2) return EXCEPTION_CONTINUE_SEARCH;
+        return Get().HandleFault(static_cast<std::uintptr_t>(record->ExceptionInformation[1])) ? EXCEPTION_CONTINUE_EXECUTION : EXCEPTION_CONTINUE_SEARCH;
+    }
+
+    void resolveLoop() {
+        static_cast<void>(ThreadName::SetCurrent("read traps"));
+        _resolverThread.store(GetCurrentThreadId(), std::memory_order_release);
+        for (;;) {
+            WaitForSingleObject(_wake, INFINITE);
+            for (auto& slot : _slots) {
+                unsigned expected = Queued;
+                if (!slot.state.compare_exchange_strong(expected, Running, std::memory_order_acq_rel)) continue;
+                const auto page = slot.page;
+                waitForResolving(page, page + PageBytes);
+                resolve(page, page + PageBytes);
+                slot.state.store(Done, std::memory_order_release);
+                ReleaseSemaphore(slot.done, 1, nullptr);
+            }
+        }
+    }
+
+    void resolve(std::uintptr_t begin, std::uintptr_t end) {
+        const auto self = GetCurrentThreadId();
+        std::vector<std::pair<std::uintptr_t, std::uintptr_t>> taken;
+        std::uint64_t batch = 0;
+        {
+            const std::lock_guard lock(_lock);
+            batch = ++_batches;
+            auto first = pageStart(begin);
+            auto last = pageEnd(end);
+            for (bool grew = true; grew;) {
+                grew = false;
+                for (auto& trap : _traps) {
+                    if (trap.owner != 0 || trap.last <= first || last <= trap.first) continue;
+                    trap.owner = self;
+                    trap.batch = batch;
+                    _dropped.fetch_add(1, std::memory_order_release);
+                    taken.emplace_back(trap.begin, trap.end);
+                    first = std::min(first, trap.first);
+                    last = std::max(last, trap.last);
+                    grew = true;
+                }
+            }
+        }
+        if (taken.empty()) return;
+        const auto resolver = _resolver.load(std::memory_order_acquire);
+        for (const auto& [first, last] : taken) resolver(first, last);
+        const std::lock_guard lock(_lock);
+        std::vector<Trap> resolved;
+        for (auto it = _traps.begin(); it != _traps.end();) {
+            if (it->batch == batch) {
+                resolved.push_back(std::move(*it));
+                it = _traps.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        for (const auto& trap : resolved) restore(trap);
+    }
+
+    void waitForResolving(std::uintptr_t begin, std::uintptr_t end) {
+        const auto self = GetCurrentThreadId();
+        const auto first = pageStart(begin);
+        const auto last = pageEnd(end);
+        for (;;) {
+            {
+                const std::lock_guard lock(_lock);
+                if (std::none_of(_traps.begin(), _traps.end(), [&](const Trap& trap) { return trap.owner != 0 && trap.owner != self && trap.first < last && first < trap.last; })) return;
+            }
+            SwitchToThread();
+        }
+    }
+
+    template <typename TFunction>
+    void withoutTraps(std::uintptr_t begin, std::uintptr_t end, TFunction function) {
+        const auto first = pageStart(begin);
+        const auto last = pageEnd(end);
+        const auto self = GetCurrentThreadId();
+        for (;;) {
+            if (_trapping.load(std::memory_order_acquire)) {
+                waitForResolving(first, last);
+                resolve(first, last);
+            }
+            const std::lock_guard lock(_lock);
+            if (std::any_of(_traps.begin(), _traps.end(), [&](const Trap& trap) { return trap.owner != self && trap.first < last && first < trap.last; })) continue;
+            function();
+            return;
+        }
+    }
+
+    bool closed(std::uintptr_t page) const {
+        return std::any_of(_traps.begin(), _traps.end(), [&](const Trap& trap) { return trap.first <= page && page < trap.last && trap.open[(page - trap.first) / PageBytes] == 0; });
+    }
+
+    bool ownedBy(std::uintptr_t page, DWORD thread) const {
+        return std::any_of(_traps.begin(), _traps.end(), [&](const Trap& trap) { return trap.owner == thread && trap.first <= page && page < trap.last; });
+    }
+
+    bool retryOpen(std::uintptr_t page) {
+        if (!readWrite(page, page + PageBytes)) return false;
+        thread_local std::uintptr_t retryPage = 0;
+        thread_local std::uint64_t retryGeneration = 0;
+        thread_local unsigned retries = 0;
+        thread_local unsigned pageRetries = 0;
+        if (retryPage != page) {
+            retryPage = page;
+            pageRetries = 0;
+            retryGeneration = _generation;
+            retries = 0;
+        } else if (retryGeneration != _generation) {
+            retryGeneration = _generation;
+            retries = 0;
+        }
+        return ++pageRetries <= PageRetries && ++retries <= UntrappedRetries;
+    }
+
+    void restore(const Trap& removed) {
+        std::uintptr_t runStart = 0;
+        std::uintptr_t runEnd = 0;
+        const auto flush = [&] {
+            if (runEnd > runStart) protect(runStart, runEnd, PAGE_READWRITE);
+            runStart = runEnd = 0;
+        };
+        for (auto page = removed.first; page < removed.last; page += PageBytes) {
+            const bool reopen = removed.open[(page - removed.first) / PageBytes] == 0 && !closed(page);
+            if (!reopen) {
+                flush();
+                continue;
+            }
+            if (runEnd != page) {
+                flush();
+                runStart = page;
+            }
+            runEnd = page + PageBytes;
+        }
+        flush();
+        ++_generation;
+    }
+
+    TrapLock _lock;
+    std::vector<Trap> _traps;
+    std::atomic<std::uint64_t> _dropped{1};
+    std::vector<std::pair<std::uintptr_t, std::uintptr_t>> _hostWrites;
+    std::uint64_t _generation = 0;
+    std::uint64_t _batches = 0;
+    std::atomic<bool> _trapping{false};
+    std::atomic<void (*)(std::uintptr_t, std::uintptr_t)> _resolver{nullptr};
+    std::atomic<bool (*)()> _bypass{nullptr};
+    std::once_flag _started;
+    std::atomic<bool> _running{false};
+    std::atomic<DWORD> _resolverThread{0};
+    HANDLE _wake = nullptr;
+    std::array<Slot, ResolveSlots> _slots;
+};
 #endif
 
 }
@@ -1820,6 +2237,10 @@ bool GuestWriteWatchUnregister_nid_postfix(const void* pointer, std::size_t byte
     ReadTraps::Get().Forget(begin, begin + bytes);
 #endif
     return Watch::Get().Unregister(begin, begin + bytes);
+#elif defined(APS5_WINDOWS_READ_TRAPS)
+    const auto begin = reinterpret_cast<std::uintptr_t>(pointer);
+    ReadTraps::Get().Forget(begin, begin + bytes);
+    return false;
 #else
     static_cast<void>(pointer);
     static_cast<void>(bytes);
@@ -1861,7 +2282,7 @@ bool GuestWriteWatchOverlaps_nid_postfix(std::uintptr_t address, std::size_t byt
 bool GuestWriteWatchHandleFault_nid_postfix(std::uintptr_t address) {
 #if defined(__APPLE__)
     return Watch::Get().HandleFault(address);
-#elif defined(APS5_LINUX_READ_TRAPS)
+#elif defined(APS5_LINUX_READ_TRAPS) || defined(APS5_WINDOWS_READ_TRAPS)
     return ReadTraps::Get().HandleFault(address);
 #else
     static_cast<void>(address);
@@ -1886,7 +2307,7 @@ void GuestWriteWatchBeginHostWrite_nid_postfix(const void* pointer, std::size_t 
 #if defined(__APPLE__)
     const auto begin = reinterpret_cast<std::uintptr_t>(pointer);
     Watch::Get().BeginHostWrite(begin, begin + bytes);
-#elif defined(APS5_LINUX_READ_TRAPS)
+#elif defined(APS5_LINUX_READ_TRAPS) || defined(APS5_WINDOWS_READ_TRAPS)
     const auto begin = reinterpret_cast<std::uintptr_t>(pointer);
     ReadTraps::Get().BeginHostWrite(begin, begin + bytes);
 #else
@@ -1899,7 +2320,7 @@ void GuestWriteWatchEndHostWrite_nid_postfix(const void* pointer, std::size_t by
 #if defined(__APPLE__)
     const auto begin = reinterpret_cast<std::uintptr_t>(pointer);
     Watch::Get().EndHostWrite(begin, begin + bytes);
-#elif defined(APS5_LINUX_READ_TRAPS)
+#elif defined(APS5_LINUX_READ_TRAPS) || defined(APS5_WINDOWS_READ_TRAPS)
     const auto begin = reinterpret_cast<std::uintptr_t>(pointer);
     ReadTraps::Get().EndHostWrite(begin, begin + bytes);
 #else
@@ -1984,7 +2405,7 @@ bool GuestWriteWatchCollectArmed_nid_postfix(std::uintptr_t address, std::size_t
 bool GuestWriteWatchSetReadTrapResolver_nid_postfix(void (*resolve)(std::uintptr_t begin, std::uintptr_t end)) {
 #if defined(__APPLE__)
     return Watch::Get().SetReadTrapResolver(resolve);
-#elif defined(APS5_LINUX_READ_TRAPS)
+#elif defined(APS5_LINUX_READ_TRAPS) || defined(APS5_WINDOWS_READ_TRAPS)
     return ReadTraps::Get().SetResolver(resolve);
 #else
     static_cast<void>(resolve);
@@ -1995,7 +2416,7 @@ bool GuestWriteWatchSetReadTrapResolver_nid_postfix(void (*resolve)(std::uintptr
 void GuestWriteWatchSetReadTrapBypass_nid_postfix(bool (*bypass)()) {
 #if defined(__APPLE__)
     Watch::Get().SetReadTrapBypass(bypass);
-#elif defined(APS5_LINUX_READ_TRAPS)
+#elif defined(APS5_LINUX_READ_TRAPS) || defined(APS5_WINDOWS_READ_TRAPS)
     ReadTraps::Get().SetBypass(bypass);
 #else
     static_cast<void>(bypass);
@@ -2005,7 +2426,7 @@ void GuestWriteWatchSetReadTrapBypass_nid_postfix(bool (*bypass)()) {
 bool GuestWriteWatchTrapReads_nid_postfix(std::uintptr_t address, std::size_t bytes) {
 #if defined(__APPLE__)
     return bytes != 0 && address + bytes > address && Watch::Get().TrapReads(address, address + bytes);
-#elif defined(APS5_LINUX_READ_TRAPS)
+#elif defined(APS5_LINUX_READ_TRAPS) || defined(APS5_WINDOWS_READ_TRAPS)
     return bytes != 0 && address + bytes > address && ReadTraps::Get().TrapReads(address, address + bytes);
 #else
     static_cast<void>(address);
@@ -2017,7 +2438,7 @@ bool GuestWriteWatchTrapReads_nid_postfix(std::uintptr_t address, std::size_t by
 void GuestWriteWatchReadTraps_nid_postfix(std::uintptr_t address, std::size_t bytes, void (*trapped)(void* context, std::uintptr_t begin, std::uintptr_t end), void* context) {
 #if defined(__APPLE__)
     if (bytes != 0 && address + bytes > address) Watch::Get().ReadTraps(address, address + bytes, trapped, context);
-#elif defined(APS5_LINUX_READ_TRAPS)
+#elif defined(APS5_LINUX_READ_TRAPS) || defined(APS5_WINDOWS_READ_TRAPS)
     if (bytes != 0 && address + bytes > address) ReadTraps::Get().Trapped(address, address + bytes, trapped, context);
 #else
     static_cast<void>(address);
@@ -2030,7 +2451,7 @@ void GuestWriteWatchReadTraps_nid_postfix(std::uintptr_t address, std::size_t by
 void GuestWriteWatchReleaseReads_nid_postfix(std::uintptr_t address, std::size_t bytes) {
 #if defined(__APPLE__)
     if (bytes != 0 && address + bytes > address) Watch::Get().ReleaseReads(address, address + bytes);
-#elif defined(APS5_LINUX_READ_TRAPS)
+#elif defined(APS5_LINUX_READ_TRAPS) || defined(APS5_WINDOWS_READ_TRAPS)
     if (bytes != 0 && address + bytes > address) ReadTraps::Get().ReleaseReads(address, address + bytes);
 #else
     static_cast<void>(address);
@@ -2039,7 +2460,7 @@ void GuestWriteWatchReleaseReads_nid_postfix(std::uintptr_t address, std::size_t
 }
 
 std::uint64_t GuestWriteWatchReadTrapGeneration_nid_postfix() {
-#if defined(APS5_LINUX_READ_TRAPS)
+#if defined(APS5_LINUX_READ_TRAPS) || defined(APS5_WINDOWS_READ_TRAPS)
     return ReadTraps::Get().Generation();
 #else
     static std::atomic<std::uint64_t> asked{1};
@@ -2048,7 +2469,7 @@ std::uint64_t GuestWriteWatchReadTrapGeneration_nid_postfix() {
 }
 
 bool GuestWriteWatchBeginUntrappedAccess_nid_postfix(const void* pointer, std::size_t bytes) {
-#if defined(APS5_LINUX_READ_TRAPS)
+#if defined(APS5_LINUX_READ_TRAPS) || defined(APS5_WINDOWS_READ_TRAPS)
     const auto begin = reinterpret_cast<std::uintptr_t>(pointer);
     return bytes == 0 || begin + bytes < begin || ReadTraps::Get().BeginUntrapped(begin, begin + bytes);
 #else
@@ -2059,7 +2480,7 @@ bool GuestWriteWatchBeginUntrappedAccess_nid_postfix(const void* pointer, std::s
 }
 
 void GuestWriteWatchEndUntrappedAccess_nid_postfix(const void* pointer, std::size_t bytes) {
-#if defined(APS5_LINUX_READ_TRAPS)
+#if defined(APS5_LINUX_READ_TRAPS) || defined(APS5_WINDOWS_READ_TRAPS)
     const auto begin = reinterpret_cast<std::uintptr_t>(pointer);
     if (bytes != 0 && begin + bytes > begin) ReadTraps::Get().EndHostWrite(begin, begin + bytes);
 #else
@@ -2071,6 +2492,8 @@ void GuestWriteWatchEndUntrappedAccess_nid_postfix(const void* pointer, std::siz
 bool GuestWriteWatchAwaitsReadTrap_nid_postfix(std::uint64_t thread) {
 #if defined(APS5_LINUX_READ_TRAPS)
     return ReadTraps::Get().Awaits(static_cast<pid_t>(thread));
+#elif defined(APS5_WINDOWS_READ_TRAPS)
+    return ReadTraps::Get().Awaits(static_cast<DWORD>(thread));
 #else
     static_cast<void>(thread);
     return false;

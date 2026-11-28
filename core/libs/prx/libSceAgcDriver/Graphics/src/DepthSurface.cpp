@@ -802,15 +802,11 @@ bool ProbeStencilShadowCopy(const Context& context, VkFormat format, std::uint32
             info.usage = usage;
             info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
             info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            auto owned = std::make_shared<OwnedImage>(context, VK_NULL_HANDLE, VK_NULL_HANDLE);
             VkImage image = VK_NULL_HANDLE;
             Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &info, nullptr, &image), "vkCreateImage stencil shadow probe");
-            auto owned = std::make_shared<OwnedImage>(context, image, VK_NULL_HANDLE);
-            try {
-                owned->Allocate(context, info, "vkAllocateMemory stencil shadow probe");
-            } catch (...) {
-                context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
-                throw;
-            }
+            owned->image = image;
+            owned->Allocate(context, info, "vkAllocateMemory stencil shadow probe");
             Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, owned->allocation.Memory(), owned->allocation.Offset()), "vkBindImageMemory stencil shadow probe");
             return owned;
         };
@@ -5437,7 +5433,12 @@ void RunDepthExpandPass(const Context& context, const DepthExpandPass& pass) {
         {
             std::lock_guard lock(surfacesMutex());
             const auto owner = depthOwners().find({context.device, source.address});
+            bool ownerOfOtherExtent = false;
             if (owner != depthOwners().end()) {
+                const auto& other = owner->second.surface->target;
+                if (sixteenBitDepth(other.format) == d16 && owner->second.surface->hostFormat == other.format && other.samples == 1 && (other.extent.width != source.extent.width || other.extent.height != source.extent.height)) ownerOfOtherExtent = true;
+            }
+            if (owner != depthOwners().end() && !ownerOfOtherExtent) {
                 auto* surface = owner->second.surface;
                 const auto& target = surface->target;
                 if (sixteenBitDepth(target.format) != d16 || surface->hostFormat != target.format || target.samples != 1 || target.extent.width != source.extent.width || target.extent.height != source.extent.height) throw failure(address, "from a depth surface of another extent, format or sample count");
