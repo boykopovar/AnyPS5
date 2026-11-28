@@ -1,3 +1,4 @@
+#include "IntermediateRepresentation/IrOpcode.hpp"
 #include "Translation/TranslationContext.hpp"
 #include "RdnaDecoder/RdnaMemoryOpDecoder.hpp"
 #include <array>
@@ -23,13 +24,15 @@ static void Check(std::uint32_t opcode, RdnaOpcode expected, std::uint32_t dword
     auto& block = program.CreateBlock();
     program.SetEntryBlock(block);
     TranslationContext context(program, block, 256);
-    bool threw = false;
-    try {
-        context.TranslateInstruction(instruction);
-    } catch (const std::runtime_error&) {
-        threw = true;
+    context.TranslateInstruction(instruction);
+    std::uint32_t loads = 0u;
+    std::uint32_t broadcasts = 0u;
+    for (const auto* value : block.Instructions()) {
+        if (value->Opcode() == IrOpcode::LoadAddressU32) loads++;
+        if (value->Opcode() == IrOpcode::ReadFirstLane) broadcasts++;
     }
-    Require(threw);
+    Require(loads == dwords);
+    Require(broadcasts == dwords);
 }
 int main() {
     Check(0x05u, RdnaOpcode::SScratchLoadDword, 1u);
