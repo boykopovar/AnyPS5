@@ -6,6 +6,7 @@
 #include FT_BITMAP_H
 #include FT_MODULE_H
 
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstdio>
@@ -16,6 +17,13 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 using namespace FreeType;
 
@@ -26,6 +34,55 @@ static void Check(bool value, int line) {
     }
 }
 #define Require(value) Check((value), __LINE__)
+
+class ReadOnlyBitmap {
+    void* memory;
+    std::size_t page;
+    GuestBitmap* data;
+public:
+    explicit ReadOnlyBitmap(const GuestBitmap& source) {
+#ifdef _WIN32
+        SYSTEM_INFO info;
+        GetSystemInfo(&info);
+        page = info.dwPageSize;
+        memory = VirtualAlloc(nullptr, page * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        Require(memory != nullptr);
+#else
+        page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        memory = mmap(nullptr, page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(memory != MAP_FAILED);
+#endif
+        data = reinterpret_cast<GuestBitmap*>(static_cast<unsigned char*>(memory) + page - sizeof(GuestBitmap));
+        std::memcpy(data, &source, sizeof(source));
+#ifdef _WIN32
+        DWORD previous;
+        Require(VirtualProtect(memory, page, PAGE_READONLY, &previous) != 0);
+        Require(VirtualProtect(static_cast<unsigned char*>(memory) + page, page, PAGE_NOACCESS, &previous) != 0);
+#else
+        Require(mprotect(memory, page, PROT_READ) == 0);
+        Require(mprotect(static_cast<unsigned char*>(memory) + page, page, PROT_NONE) == 0);
+#endif
+    }
+    ~ReadOnlyBitmap() {
+#ifdef _WIN32
+        VirtualFree(memory, 0, MEM_RELEASE);
+#else
+        munmap(memory, page * 2);
+#endif
+    }
+    GuestBitmap* Get() const { return data; }
+};
+
+template <typename TCall>
+static bool RefusesUnreadable(TCall call) {
+    errno = 71;
+    try {
+        call();
+    } catch (const std::invalid_argument&) {
+        return errno == 71;
+    }
+    return false;
+}
 
 static GuestBitmap Guest(const FT_Bitmap& bitmap) {
     return {bitmap.rows, bitmap.width, bitmap.pitch, bitmap.buffer, bitmap.num_grays, bitmap.pixel_mode, bitmap.palette_mode, bitmap.palette};
@@ -211,6 +268,34 @@ static void TestGlyphSlot(GuestLibrary* library, FT_Library oracle) {
     Require(finalizer.called);
 }
 
+static void TestUnreadableGuestPointers(GuestLibrary* library) {
+    auto* const unreadableLibrary = reinterpret_cast<GuestLibrary*>(std::uintptr_t{0x10});
+    auto* const unreadable = reinterpret_cast<GuestBitmap*>(std::uintptr_t{0x10});
+    GuestBitmap source{};
+    GuestBitmap target{};
+    Require(RefusesUnreadable([&] { FT_Bitmap_Copy_nid_postfix(unreadableLibrary, &source, &target); }));
+    Require(RefusesUnreadable([&] { FT_Bitmap_Convert_nid_postfix(unreadableLibrary, &source, &target, 1); }));
+    Require(RefusesUnreadable([&] { FT_Bitmap_Embolden_nid_postfix(unreadableLibrary, &target, 0, 0); }));
+    Require(RefusesUnreadable([&] { FT_Bitmap_Done_nid_postfix(unreadableLibrary, &target); }));
+    Require(RefusesUnreadable([&] { FT_Bitmap_New_nid_postfix(unreadable); }));
+    Require(RefusesUnreadable([&] { FT_Bitmap_Copy_nid_postfix(library, unreadable, &target); }));
+    Require(RefusesUnreadable([&] { FT_Bitmap_Copy_nid_postfix(library, &source, unreadable); }));
+    Require(RefusesUnreadable([&] { FT_Bitmap_Convert_nid_postfix(library, unreadable, &target, 1); }));
+    Require(RefusesUnreadable([&] { FT_Bitmap_Convert_nid_postfix(library, &source, unreadable, 1); }));
+    Require(RefusesUnreadable([&] { FT_Bitmap_Embolden_nid_postfix(library, unreadable, 0, 0); }));
+    Require(RefusesUnreadable([&] { FT_Bitmap_Done_nid_postfix(library, unreadable); }));
+
+    const GuestBitmap record{1, 2, 3, nullptr, 4, 5, 6, nullptr};
+    const ReadOnlyBitmap readOnly(record);
+    Require(RefusesUnreadable([&] { FT_Bitmap_New_nid_postfix(readOnly.Get()); }));
+    Require(RefusesUnreadable([&] { FT_Bitmap_Copy_nid_postfix(library, &source, readOnly.Get()); }));
+    Require(RefusesUnreadable([&] { FT_Bitmap_Convert_nid_postfix(library, &source, readOnly.Get(), 1); }));
+    Require(RefusesUnreadable([&] { FT_Bitmap_Embolden_nid_postfix(library, readOnly.Get(), 0, 0); }));
+    Require(RefusesUnreadable([&] { FT_Bitmap_Done_nid_postfix(library, readOnly.Get()); }));
+    Require(std::memcmp(readOnly.Get(), &record, sizeof(record)) == 0);
+    Require(target.buffer == nullptr && target.rows == 0 && target.width == 0);
+}
+
 static void TestReusedStorage(GuestLibrary* library) {
     const auto bytes = FontFixture::BuildFont(1, {});
     alignas(GuestFace) std::byte storage[sizeof(GuestFace)]{};
@@ -233,6 +318,7 @@ int main() {
     FT_Library oracle = nullptr;
     Require(FT_Init_FreeType_nid_postfix(&library) == 0 && library != nullptr);
     Require(FT_Init_FreeType(&oracle) == 0);
+    TestUnreadableGuestPointers(library);
 
     GuestBitmap empty{1, 2, 3, nullptr, 4, 5, 6, nullptr};
     FT_Bitmap_New_nid_postfix(&empty);
