@@ -14,6 +14,7 @@ import tempfile
 from fractions import Fraction
 from pathlib import Path
 
+import title_run_provenance
 
 TOOLS_DIR = Path(__file__).resolve().parent
 PLACEHOLDER = re.compile(r"\{(worktree|build_dir|result_dir|commit)\}")
@@ -110,10 +111,9 @@ def sample_summary(path, title_id, commit):
     built_commit = build.get("commit")
     if not isinstance(built_commit, str) or not 7 <= len(built_commit) <= 40 or not commit.startswith(built_commit) or build.get("dirty") is not False:
         raise ValueError(f"{path}: measured build is not the requested clean commit {commit}")
-    machine = summary.get("machine")
     titles = summary.get("titles")
     title = titles.get(title_id) if isinstance(titles, dict) else None
-    if not isinstance(machine, dict) or not isinstance(title, dict):
+    if not isinstance(title, dict):
         raise ValueError(f"{path}: title runner summary is missing machine or title data")
     run_list = title.get("runs")
     if not isinstance(run_list, list) or len(run_list) != 1 or not isinstance(run_list[0], dict):
@@ -122,6 +122,19 @@ def sample_summary(path, title_id, commit):
     fps = run.get("fps")
     if run.get("outcome") != "rendering" or type(fps) not in (int, float) or not 0 < fps <= sys.float_info.max:
         raise ValueError(f"{path}: title did not render with a finite positive FPS measurement")
+    native = title_run_provenance.qualification(run, {"commit": commit, "dirty": False})
+    if native["status"] != "matched":
+        raise ValueError(f"{path}: native runtime provenance is {native['status']}; expected clean commit {commit}")
+    if "machine" in run:
+        machine = run["machine"]
+        if not isinstance(machine, dict) or any(not isinstance(machine.get(key), str) for key in ("os", "gpu", "driver", "cpu")):
+            raise ValueError(f"{path}: measured run has incomplete or malformed machine data")
+        if any(not machine[key].strip() for key in ("os", "gpu", "driver")):
+            raise ValueError(f"{path}: measured run has missing required machine data")
+    else:
+        machine = summary.get("machine")
+        if len(titles) != 1 or not isinstance(machine, dict):
+            raise ValueError(f"{path}: legacy machine data does not identify the measured run")
     identity = {key: machine.get(key, "") for key in ("os", "gpu", "driver", "cpu")}
     identity.update(title_id=title_id, title=title.get("name", ""), content_version=title.get("version", ""))
     invalid = [key for key in ("os", "gpu", "driver", "cpu", "title")
