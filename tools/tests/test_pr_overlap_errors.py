@@ -21,6 +21,12 @@ def fake_run(command, **kwargs):
 
 
 class ErrorReportTests(unittest.TestCase):
+    def setUp(self):
+        for name in ("BASE_REF", "REPO"):
+            patcher = patch.object(pr_overlap, name, getattr(pr_overlap, name, None), create=True)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     def test_missing_github_cli_reports_a_setup_error_without_traceback(self):
         with patch.object(subprocess, "run", side_effect=FileNotFoundError(2, "No such file or directory", "gh")):
             with self.assertRaises(SystemExit) as raised:
