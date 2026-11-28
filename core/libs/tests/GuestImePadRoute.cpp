@@ -1,5 +1,6 @@
 #include "prx/libSceIme/include/ImeInput.hpp"
 #include "prx/libSceIme/include/ImeKeyboardView.hpp"
+#include "prx/libScePad/include/HostVolume.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
@@ -25,6 +26,41 @@ bool Provide(ImeKeyboardView& view) {
     view.columns = 10;
     view.keys.push_back({2, 4, 1, 1, u"g", ImeKeySymbol::None, {}, true});
     return true;
+}
+
+void VerifyHostVolumeFocusMute() {
+    HostVolume mutedFocus;
+    Require(!mutedFocus.SetMuteOnFocusLoss(true), "enabling mute on focus loss while focused does not notify");
+    Require(mutedFocus.ToggleMute(), "manual mute activates");
+    Require(mutedFocus.Silent() && mutedFocus.Gain() == 0, "manual mute silences output");
+
+    Require(!mutedFocus.FocusChanged(false), "losing focus while manually muted suppresses change notification");
+    Require(!mutedFocus.Focused() && mutedFocus.FocusMuted() && mutedFocus.Silent() && mutedFocus.Gain() == 0, "losing focus while muted updates focus state and stays silent");
+
+    Require(!mutedFocus.FocusChanged(true), "regaining focus while manually muted suppresses change notification");
+    Require(mutedFocus.Focused() && !mutedFocus.FocusMuted() && mutedFocus.Silent() && mutedFocus.Gain() == 0, "regaining focus while muted updates focus state and stays silent");
+
+    HostVolume unfocusedMuted;
+    Require(unfocusedMuted.ToggleMute(), "manual mute activates before focus loss");
+    Require(!unfocusedMuted.FocusChanged(false), "losing focus with mute on focus loss disabled stays silent");
+    Require(!unfocusedMuted.SetMuteOnFocusLoss(true), "enabling mute on focus loss while unfocused and manually muted suppresses change notification");
+    Require(unfocusedMuted.MuteOnFocusLoss() && unfocusedMuted.FocusMuted() && unfocusedMuted.Silent() && unfocusedMuted.Gain() == 0, "enabling mute on focus loss while muted updates focus-mute state");
+    Require(!unfocusedMuted.SetMuteOnFocusLoss(false), "disabling mute on focus loss while unfocused and manually muted suppresses change notification");
+    Require(!unfocusedMuted.MuteOnFocusLoss() && !unfocusedMuted.FocusMuted() && unfocusedMuted.Silent() && unfocusedMuted.Gain() == 0, "disabling mute on focus loss while muted clears focus-mute state");
+
+    HostVolume unmutedFocus;
+    Require(!unmutedFocus.SetMuteOnFocusLoss(true), "enabling mute on focus loss while focused and unmuted does not notify");
+    Require(unmutedFocus.FocusChanged(false), "losing focus while unmuted notifies");
+    Require(unmutedFocus.Gain() == 0 && unmutedFocus.Silent() && unmutedFocus.FocusMuted() && !unmutedFocus.Focused(), "losing focus while unmuted zeroes gain");
+    Require(unmutedFocus.FocusChanged(true), "regaining focus while unmuted notifies");
+    Require(unmutedFocus.Gain() == HostVolume::UnityGain && !unmutedFocus.Silent() && !unmutedFocus.FocusMuted() && unmutedFocus.Focused(), "regaining focus while unmuted restores unity gain");
+
+    Require(!unmutedFocus.SetMuteOnFocusLoss(false), "disabling mute on focus loss while focused does not notify");
+    Require(!unmutedFocus.FocusChanged(false), "losing focus with mute on focus loss disabled does not notify");
+    Require(unmutedFocus.SetMuteOnFocusLoss(true), "enabling mute on focus loss while unfocused and unmuted notifies");
+    Require(unmutedFocus.Gain() == 0 && unmutedFocus.Silent() && unmutedFocus.FocusMuted(), "enabling mute on focus loss while unfocused and unmuted zeroes gain");
+    Require(unmutedFocus.SetMuteOnFocusLoss(false), "disabling mute on focus loss while unfocused and unmuted notifies");
+    Require(unmutedFocus.Gain() == HostVolume::UnityGain && !unmutedFocus.Silent() && !unmutedFocus.FocusMuted(), "disabling mute on focus loss while unfocused and unmuted restores unity gain");
 }
 
 }
@@ -53,6 +89,7 @@ int main() {
     Require(g_received.size() == 1, "a released pad reaches no sink");
     ImeKeyboardView cleared;
     Require(!ImeReadKeyboardView_nid_postfix(cleared), "a cleared provider gives no view");
+    VerifyHostVolumeFocusMute();
     std::printf("ime pad route tests passed\n");
     return 0;
 }
