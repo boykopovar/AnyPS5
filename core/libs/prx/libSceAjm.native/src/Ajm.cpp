@@ -2268,6 +2268,8 @@ int APS5_VABI sceAjmBatchStart(uint32_t context, const AjmBatchInfo* info, int p
     if (!localInfo.p_buffer || localInfo.offset > localInfo.size || localInfo.offset == 0) return SCE_AJM_ERROR_INVALID_PARAMETER;
     if (priority < SCE_AJM_PRIORITY_MIN || priority > SCE_AJM_PRIORITY_MAX) return SCE_AJM_ERROR_INVALID_PRIORITY;
     AJM_TRACE("[ajm] batch start: context %u, priority %d, %llu of %llu buffer bytes used\n", context, priority, static_cast<unsigned long long>(localInfo.offset), static_cast<unsigned long long>(localInfo.size));
+    const auto batchAddress = reinterpret_cast<std::uintptr_t>(localInfo.p_buffer);
+    if (localInfo.offset > std::numeric_limits<std::uintptr_t>::max() - batchAddress) return SCE_AJM_ERROR_INVALID_PARAMETER;
     const auto* cursor = static_cast<const std::uint8_t*>(localInfo.p_buffer);
     auto remaining = localInfo.offset;
     struct ParsedJob {
@@ -2393,10 +2395,10 @@ int APS5_VABI sceAjmBatchStartBuffer(uint32_t context, const uint8_t* batch, uin
     std::vector<std::uint8_t> jobStorage;
     ConsoleRefusal refusal;
     const auto batchAddress = reinterpret_cast<std::uintptr_t>(batch);
+    if (batch_size > std::numeric_limits<std::uintptr_t>::max() - batchAddress) return SCE_AJM_ERROR_INVALID_PARAMETER;
     std::size_t offset = 0;
     bool accepted = batch_size % 8 == 0;
     while (accepted && offset < batch_size) {
-        if (offset > std::numeric_limits<std::uintptr_t>::max() - batchAddress) return SCE_AJM_ERROR_INVALID_PARAMETER;
         const std::uint8_t* guestJob = batch + offset;
         refusal = ConsoleRefusal{};
         refusal.job = guestJob;
@@ -2413,8 +2415,7 @@ int APS5_VABI sceAjmBatchStartBuffer(uint32_t context, const uint8_t* batch, uin
         }
         const auto kind = ConsoleChunkKind(words[0]);
         if (kind == ConsoleChunk::Job) {
-            if (bodyOffset > std::numeric_limits<std::uintptr_t>::max() - batchAddress ||
-                !CopyGuestInChunked(jobStorage, batch + bodyOffset, words[1])) {
+            if (!CopyGuestInChunked(jobStorage, batch + bodyOffset, words[1])) {
                 return SCE_AJM_ERROR_INVALID_PARAMETER;
             }
             accepted = ReadConsoleJob(ConsoleChunkPayload(words[0]), guestJob, jobStorage.data(), jobStorage.data() + jobStorage.size(), jobs.emplace_back(), refusal);
