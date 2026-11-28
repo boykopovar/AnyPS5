@@ -490,10 +490,10 @@ static Port* getPort(int handle) {
     return &g_ports[idx];
 }
 
-static bool g_closedHandles[PORTS_MAX];
+static bool g_closedMainHandles[PORTS_MAX];
 
 static int missingPortError(int handle) {
-    return handle > 0 && handle <= PORTS_MAX && g_closedHandles[handle - 1] ? -2144993279 : -2144993277;
+    return handle > 0 && handle <= PORTS_MAX && g_closedMainHandles[handle - 1] ? -2144993279 : -2144993277;
 }
 
 static int allocatePort(int type, std::uint32_t len, std::uint32_t freq, Format format) {
@@ -502,7 +502,7 @@ static int allocatePort(int type, std::uint32_t len, std::uint32_t freq, Format 
         if (!g_ports[i].used) {
             Port& port = g_ports[i];
             port.used = true;
-            g_closedHandles[i] = false;
+            g_closedMainHandles[i] = false;
             port.generation = ++g_portGenerations;
             port.type = type;
             port.samplesNum = len;
@@ -605,10 +605,11 @@ int APS5_VABI sceAudioOutClose(int handle) {
     if (port == nullptr) {
         return -2144993277;
     }
+    const bool wasMain = port->type == PORT_TYPE_MAIN;
     closeDevice(*port);
     if (port->type == PORT_TYPE_VIBRATION) PadClearLegacyAudioHaptics_nid_postfix(handle);
     *port = Port{};
-    g_closedHandles[handle - 1] = true;
+    g_closedMainHandles[handle - 1] = wasMain;
     return 0;
 }
 
