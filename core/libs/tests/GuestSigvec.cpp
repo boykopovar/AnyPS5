@@ -152,6 +152,25 @@ void GuestBackedOutput() {
     Require(sceKernelReleaseDirectMemory(physical, bytes) == 0, "release guest signal storage");
 }
 
+void UnreadableReplacement() {
+    constexpr int signal = 30;
+    GuestSigaction initial{};
+    Require(sigaction_nid_postfix(signal, nullptr, &initial) == 0, "save unreadable-replacement disposition");
+    const GuestSignalVector installed{reinterpret_cast<std::uintptr_t>(&Handler), 9, 0};
+    Require(sigvec_nid_disambig1(signal, &installed, nullptr) == 0, "install known vector");
+    const auto* unreadable = reinterpret_cast<const GuestSignalVector*>(std::uintptr_t{0x10});
+    const GuestSignalVector sentinel{0x12345678, -123, 0x345};
+    GuestSignalVector output = sentinel;
+    *__error_nid_postfix() = 0;
+    Require(sigvec_nid_disambig1(signal, unreadable, nullptr) == -1 && *__error_nid_postfix() == 14, "unreadable replacement was not rejected");
+    *__error_nid_postfix() = 0;
+    Require(sigvec_nid_disambig1(signal, unreadable, &output) == -1 && *__error_nid_postfix() == 14, "unreadable replacement with output was not rejected");
+    Require(Equal(output, sentinel), "unreadable replacement changed the previous output");
+    GuestSignalVector current{};
+    Require(sigvec_nid_disambig1(signal, nullptr, &current) == 0 && Equal(current, installed), "unreadable replacement changed the disposition");
+    Require(sigaction_nid_postfix(signal, &initial, nullptr) == 0, "restore unreadable-replacement disposition");
+}
+
 void MissingBackend() {
     const auto saved = Mask();
     const GuestSignalVector sentinel{0x12345678, -123, 0x345};
@@ -174,5 +193,6 @@ void MissingBackend() {
 int main() {
     Vectors();
     GuestBackedOutput();
+    UnreadableReplacement();
     MissingBackend();
 }

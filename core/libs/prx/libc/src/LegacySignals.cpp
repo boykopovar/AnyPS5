@@ -1,4 +1,5 @@
 #include "prx/libc/libc.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include <atomic>
 #include <bit>
@@ -22,9 +23,14 @@ int LegacySigvec_nid_no_patch(int signal, const GuestSignalVector* replacement, 
     if (forward == nullptr) throw std::runtime_error("sigvec: libkernel has not registered sigaction");
     GuestSigaction action{};
     if (replacement != nullptr) {
-        action.handler = replacement->handler;
-        action.flags = replacement->flags ^ 2;
-        action.mask.bits[0] = static_cast<std::uint32_t>(replacement->mask);
+        GuestSignalVector copied{};
+        if (!GuestCopyIn_nid_no_patch(&copied, replacement, sizeof(copied))) {
+            *__error_nid_postfix() = 14;
+            return -1;
+        }
+        action.handler = copied.handler;
+        action.flags = copied.flags ^ 2;
+        action.mask.bits[0] = static_cast<std::uint32_t>(copied.mask);
     }
     std::optional<GuestArena::HostWrite> access;
     if (previous != nullptr) {
@@ -37,9 +43,14 @@ int LegacySigvec_nid_no_patch(int signal, const GuestSignalVector* replacement, 
     GuestSigaction old{};
     const int result = forward(signal, replacement == nullptr ? nullptr : &action, previous == nullptr ? nullptr : &old);
     if (result == 0 && previous != nullptr) {
-        previous->handler = old.handler;
-        previous->mask = std::bit_cast<std::int32_t>(old.mask.bits[0]);
-        previous->flags = old.flags ^ 2;
+        GuestSignalVector output{};
+        output.handler = old.handler;
+        output.mask = std::bit_cast<std::int32_t>(old.mask.bits[0]);
+        output.flags = old.flags ^ 2;
+        if (!GuestCopyOut_nid_no_patch(previous, &output, sizeof(output))) {
+            *__error_nid_postfix() = 14;
+            return -1;
+        }
     }
     return result;
 }
