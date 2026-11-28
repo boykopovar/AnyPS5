@@ -999,13 +999,13 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     const bool embedded = !result.vertexInputs.empty() && inputInfo.vertex != nullptr && inputInfo.vertex->fetchEmbedded;
     if (embedded) PrepareVertexInputSpecialization(result);
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-    result.spirv = ValidateAndOptimizeSpirv(result.spirv, request.target.vulkanVersion, request.target.spirvVersion, request.target.nonConstantImageOffsets, !embedded);
+    result.spirv = ValidateAndOptimizeSpirv(result.spirv.Words(), request.target.vulkanVersion, request.target.spirvVersion, request.target.nonConstantImageOffsets, !embedded);
     if (embedded) {
         std::array<std::uint32_t, ShaderVertexStageInfo::MaxResources> classes{};
         for (std::uint32_t kind = 1u; kind < 3u; ++kind) {
             classes.fill(kind);
             const auto specialized = SpecializeVertexInputTypes(result, classes);
-            static_cast<void>(ValidateAndOptimizeSpirv(specialized, request.target.vulkanVersion, request.target.spirvVersion, request.target.nonConstantImageOffsets, false));
+            static_cast<void>(ValidateAndOptimizeSpirv(specialized.Words(), request.target.vulkanVersion, request.target.spirvVersion, request.target.nonConstantImageOffsets, false));
         }
     }
 #endif

@@ -84,15 +84,17 @@ void Run(AgcDriver::VulkanDevice& device, bool integer) {
         for (const bool cached : {true, false}) {
             request.useCache = cached;
             const auto materialized = MaterializeShader(request, *capture, *handle);
-            Require(materialized->spirv.data() == pixel->spirv.data() && materialized->PipelineVariantId() == pixel->PipelineVariantId(), "export mapping did not reuse its specialized module");
+            const auto materializedWords = materialized->spirv.Words();
+            const auto pixelWords = pixel->spirv.Words();
+            Require(materializedWords.data() == pixelWords.data() && materialized->PipelineVariantId() == pixel->PipelineVariantId(), "export mapping did not reuse its specialized module");
             if (device.Target().registrationModules) {
                 Require(materialized->PipelineVariantId() == first->PipelineVariantId(), "registration modules: the export mapping specialized the fragment module");
                 continue;
             }
-            for (std::size_t cursor = 5; cursor < materialized->spirv.size();) {
-                const auto count = materialized->spirv[cursor] >> 16u;
-                Require(count != 0u && count <= materialized->spirv.size() - cursor, "invalid specialized fragment instruction");
-                Require((materialized->spirv[cursor] & 0xffffu) != static_cast<std::uint32_t>(spv::OpVectorExtractDynamic), "fragment export retained a dynamic channel selection");
+            for (std::size_t cursor = 5; cursor < materializedWords.size();) {
+                const auto count = materializedWords[cursor] >> 16u;
+                Require(count != 0u && count <= materializedWords.size() - cursor, "invalid specialized fragment instruction");
+                Require((materializedWords[cursor] & 0xffffu) != static_cast<std::uint32_t>(spv::OpVectorExtractDynamic), "fragment export retained a dynamic channel selection");
                 cursor += count;
             }
         }

@@ -446,7 +446,8 @@ std::pair<float, float> HostDepthBounds(const Context& context, const State& sta
 }
 
 std::vector<std::uint32_t> QuantizeFragmentDepth16(const CompiledShader& shader) {
-    const auto words = shader.program->spirv.Words();
+    const auto lease = shader.program->spirv.Words();
+    const std::span<const std::uint32_t> words = lease;
     Require(words.size() >= 5 && words[0] == spv::MagicNumber && words[3] != 0, "invalid fragment SPIR-V header");
     std::uint32_t glslStd450Id = 0;
     std::uint32_t entryPointId = 0;
@@ -901,7 +902,8 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         for (std::uint32_t i = 0; i < shaders.size(); ++i) {
             const auto& shader = *shaders[i].program;
             const auto patched = (barycentricPatches || state.rectList) && shaders[i].stage == ShaderRecompiler::ShaderStage::Vertex ? DemoteVertexLayerOutput(shader.spirv.Words()) : quantizeDepth16 && shaders[i].stage == ShaderRecompiler::ShaderStage::Fragment ? QuantizeFragmentDepth16(shaders[i]) : std::vector<std::uint32_t>{};
-            const auto words = patched.empty() ? shader.spirv.Words() : std::span<const std::uint32_t>(patched);
+            const auto leased = shader.spirv.Words();
+            const std::span<const std::uint32_t> words = patched.empty() ? std::span<const std::uint32_t>(leased) : std::span<const std::uint32_t>(patched);
             _modules[i] = CreateShaderModule(context, words.data(), words.size() * sizeof(std::uint32_t), "vkCreateShaderModule graphics");
             const auto stage = VulkanStage(shaders[i].stage);
             stages[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;

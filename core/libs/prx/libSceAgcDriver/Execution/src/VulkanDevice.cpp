@@ -3081,7 +3081,7 @@ void VulkanDevice::PrebuildComputePipeline(const ShaderRecompiler::RecompileResu
         const std::array<Graphics::CompiledShader, 1> shaders{{{ShaderRecompiler::ShaderStage::Compute, &shader, 0}}};
         const auto pushStages = Graphics::PushConstantStages(shaders);
         key = ComputePipelineKey::Of(shader, pushStages != 0);
-        if (shader.spirv.size() < 5 || shader.spirv[0] != 0x07230203u) {
+        if (shader.spirv.size() < 5) {
             settle(true);
             return;
         }
@@ -3127,7 +3127,7 @@ void VulkanDevice::AbandonComputePipelineAhead(const ShaderRecompiler::Recompile
 }
 
 VulkanDevice::PipelineAhead VulkanDevice::ComputePipelineAhead(const ShaderRecompiler::RecompileResult& shader) {
-    if (shader.spirv.size() < 5 || shader.spirv[0] != 0x07230203u) return PipelineAhead::Unavailable;
+    if (shader.spirv.size() < 5) return PipelineAhead::Unavailable;
     const std::array<Graphics::CompiledShader, 1> shaders{{{ShaderRecompiler::ShaderStage::Compute, &shader, 0}}};
     const auto pushStages = Graphics::PushConstantStages(shaders);
     if (pushStages != 0 && state->properties.limits.maxPushConstantsSize < Graphics::ComputePushConstantBytes) return PipelineAhead::Unavailable;
@@ -5963,7 +5963,7 @@ std::shared_ptr<PreparedDispatch> VulkanDevice::PrepareDispatch(const ShaderReco
     ShaderRecompiler::RuntimeAbi::RequireVersion(shader.runtimeAbiVersion);
     // APS5_LOCKED_BUILD=1: the whole build under the mutex, as before the split.
     static const bool lockedBuild = std::getenv("APS5_LOCKED_BUILD") != nullptr;
-    if (lockedBuild || shader.spirv.size() < 5 || shader.spirv[0] != 0x07230203u) return nullptr;
+    if (lockedBuild || shader.spirv.size() < 5) return nullptr;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto start = std::chrono::steady_clock::now();
     const Graphics::CompiledShader compute{ShaderRecompiler::ShaderStage::Compute, &shader, 0, registeredImageViews};
@@ -6603,9 +6603,11 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::createComputePipeline(cons
     objects->destroyModule = state->DeviceFunction<PFN_vkDestroyShaderModule>("vkDestroyShaderModule");
     objects->destroyLayout = state->DeviceFunction<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout");
     objects->destroyPipeline = state->DeviceFunction<PFN_vkDestroyPipeline>("vkDestroyPipeline");
-    objects->module = Graphics::CreateShaderModule(state->DeviceFunction<PFN_vkCreateShaderModule>("vkCreateShaderModule"), state->device, state->graphicsPipelineLibrary, shader.spirv.data(), shader.spirv.size() * sizeof(std::uint32_t), "vkCreateShaderModule");
+    const auto lease = shader.spirv.Words();
+    const std::span<const std::uint32_t> words = lease;
+    if (words.size() < 5 || words[0] != 0x07230203u) throw std::runtime_error("Vulkan compute pipeline: invalid SPIR-V");
+    objects->module = Graphics::CreateShaderModule(state->DeviceFunction<PFN_vkCreateShaderModule>("vkCreateShaderModule"), state->device, state->graphicsPipelineLibrary, words.data(), words.size_bytes(), "vkCreateShaderModule");
     objects->resourcesLayout = setLayout;
-    const auto words = shader.spirv.Words();
     for (std::size_t cursor = 5; cursor < words.size() && (words[cursor] >> 16u) != 0u && (words[cursor] & 0xffffu) != spv::OpFunction; cursor += words[cursor] >> 16u) {
         if ((words[cursor] & 0xffffu) == spv::OpDecorate && (words[cursor] >> 16u) == 4u && cursor + 3u < words.size() && words[cursor + 2u] == spv::DecorationSpecId && words[cursor + 3u] == ShaderRecompiler::PipelineSpecialization::StorePages) objects->storePages = true;
     }
@@ -6674,7 +6676,10 @@ VkPipeline VulkanDevice::specializedComputePipeline(const Graphics::Context& con
     for (std::uint32_t component = 0; component < ShaderRecompiler::PipelineSpecialization::WorkgroupOffsetWords; ++component) replaced.push_back({ShaderRecompiler::PipelineSpecialization::WorkgroupOffsetBase + component, base[component]});
     if (storePages) replaced.push_back({ShaderRecompiler::PipelineSpecialization::StorePages, 1u});
     const Graphics::PipelineSpecialization specialization(shader, context.atomicLockTable, replaced);
-    VkShaderModule module = Graphics::CreateShaderModule(state->DeviceFunction<PFN_vkCreateShaderModule>("vkCreateShaderModule"), state->device, state->graphicsPipelineLibrary, shader.spirv.data(), shader.spirv.size() * sizeof(std::uint32_t), "vkCreateShaderModule");
+    const auto lease = shader.spirv.Words();
+    const std::span<const std::uint32_t> words = lease;
+    if (words.size() < 5 || words[0] != 0x07230203u) throw std::runtime_error("Vulkan compute pipeline: invalid SPIR-V");
+    VkShaderModule module = Graphics::CreateShaderModule(state->DeviceFunction<PFN_vkCreateShaderModule>("vkCreateShaderModule"), state->device, state->graphicsPipelineLibrary, words.data(), words.size_bytes(), "vkCreateShaderModule");
     VkPipeline pipeline = VK_NULL_HANDLE;
     try {
         CreateComputePipeline(state->device, state->DeviceFunction<PFN_vkCreateComputePipelines>("vkCreateComputePipelines"), context.pipelineCache, module, objects.layout, computePipelineFlags(), computeStageFlags(shader), specialization.Info(), computeSubgroupSize(shader), &pipeline, context.pipelineCacheSynchronization);
@@ -6746,7 +6751,7 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
     if (arguments != 0) std::snprintf(groupsText, sizeof(groupsText), "indirect");
     else std::snprintf(groupsText, sizeof(groupsText), "%ux%ux%u", x, y, z);
     APS5_LOG_OUT_DEBUG("Dispatch groups=%s spirvWords=%zu bindings=%zu pushConstants=%zu", groupsText, shader.spirv.size(), shader.bindings.size(), shader.pushConstants.size());
-    if (shader.spirv.size() < 5 || shader.spirv[0] != 0x07230203u) {
+    if (shader.spirv.size() < 5) {
         throw std::runtime_error("Vulkan dispatch: invalid SPIR-V");
     }
     const std::array<Graphics::CompiledShader, 1> shaders{{{ShaderRecompiler::ShaderStage::Compute, &shader, 0, registeredImageViews}}};

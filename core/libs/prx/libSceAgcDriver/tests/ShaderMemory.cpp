@@ -447,7 +447,7 @@ void verifySpecializedModuleRelease() {
     require(again.specializationId == specializationId, "specialized module release: a module built again from its key got another specialization ID");
     require(std::ranges::equal(again.spirv.Words(), words), "specialized module release: a module built again from its key has other words");
     const auto shared = Recompile(pixel);
-    require(shared.spirv.data() == again.spirv.data(), "specialized module release: a second result of a live module copied its words");
+    require(shared.spirv.Words().data() == again.spirv.Words().data(), "specialized module release: a second result of a live module copied its words");
 }
 
 void verifyLayerSpecializationRelease() {
@@ -495,7 +495,7 @@ void verifyLayerSpecializationRelease() {
     require(again.specialization == expected, "layer module release: rebuilding the words lost the layer constants");
     require(again.specializationId == specializationId && std::ranges::equal(again.spirv.Words(), words), "layer module release: rebuilding changed the module identity or words");
     const auto shared = Recompile(request);
-    require(shared.specialization == expected && shared.spirv.data() == again.spirv.data(), "layer module release: a live cache hit lost constants or copied the words");
+    require(shared.specialization == expected && shared.spirv.Words().data() == again.spirv.Words().data(), "layer module release: a live cache hit lost constants or copied the words");
 }
 
 const std::vector<std::uint32_t>& resultMemoPixelCode() {
@@ -3862,7 +3862,7 @@ void verifyImageTableKeys() {
         require(mapB[Abi::HeaderTableCount] == 1u && mapB[Abi::TableHeader(0) + Abi::TableKeyCount] == Entries, "image table keys: the large table was not snapshotted whole");
         if (code.size() == TableWholeCode.size()) require(mapB[Abi::HeaderElementCount] > 2000u, "image table keys: the large table's entries were not bound");
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-        static_cast<void>(ValidateAndOptimizeSpirv(a.spirv, request.target.vulkanVersion, request.target.spirvVersion));
+        static_cast<void>(ValidateAndOptimizeSpirv(a.spirv.Words(), request.target.vulkanVersion, request.target.spirvVersion));
 #endif
     }
 }
@@ -5423,15 +5423,15 @@ void verifyImageTables() {
     require(map.at(codes[0] + Abi::ImageRecordElement) == 0u && map.at(codes[1] + Abi::ImageRecordElement) == 1u && modes.at(modeOf(codes[0])).numericClass == IrTextureNumericClass::Float && modes.at(modeOf(codes[1])).numericClass == IrTextureNumericClass::Uint, "image tables: the records are wrong");
     require(map.at(codes[1] + Abi::ImageRecordDword3) == heap[1][3], "image tables: the record does not carry the T# swizzle word");
     require(result.imageTableFaults == 0u, "image tables: a narrowed table expects faults");
-    const auto uniform = ScanTableSpirv(result.spirv);
+    const auto uniform = ScanTableSpirv(result.spirv.Words());
     require(uniform.runtimeArray && uniform.dynamicIndexing && uniform.switched, "image tables: the SPIR-V does not index the table");
     require(!uniform.shaderNonUniform && !uniform.nonUniform, "image tables: a single-subgroup workgroup was decorated NonUniform");
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-    static_cast<void>(ValidateAndOptimizeSpirv(result.spirv, request.target.vulkanVersion, request.target.spirvVersion));
+    static_cast<void>(ValidateAndOptimizeSpirv(result.spirv.Words(), request.target.vulkanVersion, request.target.spirvVersion));
 #endif
 
     const auto split = CompileTable(TableRequest(TableMaterialCode, userData, 64u));
-    const auto splitScan = ScanTableSpirv(split.result->spirv);
+    const auto splitScan = ScanTableSpirv(split.result->spirv.Words());
     require(splitScan.shaderNonUniform && splitScan.nonUniform, "image tables: a split wave's table index is not decorated NonUniform");
 
     for (const auto unmapped : {9u, 0xffffffffu}) {
@@ -5486,7 +5486,7 @@ void verifyImageTables() {
     require(queryCodes.size() == 4u && queryCodes[0] == queryCodes[3] && queryCodes[2] == Abi::NullCode && queryCodes[1] != queryCodes[0], "image tables: the queried and sampled table's map is wrong");
     require(!query.result->spirv.empty(), "image tables: a T# both queried and sampled did not compile");
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-    static_cast<void>(ValidateAndOptimizeSpirv(query.result->spirv, request.target.vulkanVersion, request.target.spirvVersion));
+    static_cast<void>(ValidateAndOptimizeSpirv(query.result->spirv.Words(), request.target.vulkanVersion, request.target.spirvVersion));
 #endif
 
     heap[0][3] = (heap[0][3] & 0x0fffffffu) | (1u << 28u);
@@ -6498,7 +6498,7 @@ void verifyPointerImageTable() {
     require((invalidFlags & Abi::PoisonFlag) != 0u && compiled.result->imageTablePoison.at(invalidFlags & ~Abi::PoisonFlag).reason == static_cast<std::uint32_t>(Abi::PoisonReason::NotImage), "pointer image table: an invalid entry is not NotImage poison");
     require(compiled.result->imageTableRanges == tables.ranges && map[Abi::TableHeader(0) + Abi::TableBaseLow] == static_cast<std::uint32_t>(base) && map[Abi::TableHeader(0) + Abi::TableBaseHigh] == static_cast<std::uint32_t>(base >> 32u), "pointer image table: the compiled table is wrong");
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-    static_cast<void>(ValidateAndOptimizeSpirv(compiled.result->spirv, masked.target.vulkanVersion, masked.target.spirvVersion));
+    static_cast<void>(ValidateAndOptimizeSpirv(compiled.result->spirv.Words(), masked.target.vulkanVersion, masked.target.spirvVersion));
 #endif
     for (const std::uint32_t addend : {32u, 64u}) {
         auto offsetCode = maskedCode;
@@ -6518,7 +6518,7 @@ void verifyPointerImageTable() {
         for (std::size_t i = 0; i < snapshot.words.size(); ++i) require(offsetSnapshot.words.at(i).dwords == snapshot.words[i].dwords, "pointer image table masked addend: the descriptor words changed");
         require(TableCovered(offsetCompiled.regions, root + Palette / 4u, Entries * 32u), "pointer image table masked addend: the descriptor bytes were not captured");
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-        static_cast<void>(ValidateAndOptimizeSpirv(offsetCompiled.result->spirv, offsetRequest.target.vulkanVersion, offsetRequest.target.spirvVersion));
+        static_cast<void>(ValidateAndOptimizeSpirv(offsetCompiled.result->spirv.Words(), offsetRequest.target.vulkanVersion, offsetRequest.target.spirvVersion));
 #endif
     }
 
@@ -7013,7 +7013,7 @@ void verifyPointerChainImageTable() {
     const auto& changed = relinked.capture->snapshot.tables.tables.at(0);
     require(changed.codes[1] == changed.codes[2] && changed.codes[1] != changed.codes[0], "pointer chain image table: changing the second pointer of a record did not change its T#");
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-    static_cast<void>(ValidateAndOptimizeSpirv(compiled.result->spirv, request.target.vulkanVersion, request.target.spirvVersion));
+    static_cast<void>(ValidateAndOptimizeSpirv(compiled.result->spirv.Words(), request.target.vulkanVersion, request.target.spirvVersion));
 #endif
     store(links[1].data() + 4u, address(descriptors[1].data()));
 
@@ -7290,9 +7290,9 @@ void verifyDescriptorPhis() {
         const auto memoryRegions = memory.Regions();
         request.context.memory = memoryRegions;
         const auto compiled = Recompile(request, *capture);
-        require(countOps(compiled->spirv, OpImageSampleExplicitLod) == 2u, "descriptor Phi: the specialized SPIR-V does not sample once per edge");
+        require(countOps(compiled->spirv.Words(), OpImageSampleExplicitLod) == 2u, "descriptor Phi: the specialized SPIR-V does not sample once per edge");
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-        static_cast<void>(ValidateAndOptimizeSpirv(compiled->spirv, request.target.vulkanVersion, request.target.spirvVersion));
+        static_cast<void>(ValidateAndOptimizeSpirv(compiled->spirv.Words(), request.target.vulkanVersion, request.target.spirvVersion));
 #endif
         return capture;
     };
@@ -7321,7 +7321,7 @@ void verifyDescriptorPhis() {
     const auto twoLaneCapture = twoLaneMemory.Capture(twoLane);
     const auto twoLaneRegions = twoLaneMemory.Regions();
     twoLane.context.memory = twoLaneRegions;
-    require(countOps(Recompile(twoLane, *twoLaneCapture)->spirv, OpImageSampleExplicitLod) == 4u, "descriptor Phi: the specialized two-lane SPIR-V does not sample once per edge and half");
+    require(countOps(Recompile(twoLane, *twoLaneCapture)->spirv.Words(), OpImageSampleExplicitLod) == 4u, "descriptor Phi: the specialized two-lane SPIR-V does not sample once per edge and half");
 
     auto dynamic = makeRequest(dynamicCode);
     const auto dynamicPlan = GetResourcePlan(dynamic);
@@ -7332,7 +7332,7 @@ void verifyDescriptorPhis() {
     dynamic.context.memory = dynamicRegions;
     const auto dynamicCompiled = Recompile(dynamic, *dynamicCapture);
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-    static_cast<void>(ValidateAndOptimizeSpirv(dynamicCompiled->spirv, dynamic.target.vulkanVersion, dynamic.target.spirvVersion));
+    static_cast<void>(ValidateAndOptimizeSpirv(dynamicCompiled->spirv.Words(), dynamic.target.vulkanVersion, dynamic.target.spirvVersion));
 #endif
 
     const std::vector<std::uint32_t> loopCode{0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xf40c0200u, 0xfa000000u, 0xbe910380u, 0xbf8cc07fu, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf068011u, 0xbf850003u, 0xf40c0200u, 0xfa000000u, 0xbf820002u, 0xf40c0200u, 0xfa000060u, 0xbf8cc07fu, 0x80118111u, 0xbf0a8211u, 0xbf85fff0u, 0xbf810000u};
@@ -7850,7 +7850,7 @@ void verifyLanesOutsideHostSubgroup() {
 
 void verifyFusedExactArithmetic() {
     using namespace ShaderRecompiler;
-    const auto pixel = [](bool fused) {
+    const auto pixel = [](bool fused) -> SharedSpirv::Lease {
         static const std::vector<std::uint32_t> code{0x7e000200u, 0x10020100u, 0x06040101u, 0x08060302u, 0x7e000303u, 0xf800180fu, 0u, 0xbf810000u};
         ShaderPixelStageInfo info{};
         info.inputAddr = PixelInputBit(PixelInput::PositionX);
@@ -7867,7 +7867,7 @@ void verifyFusedExactArithmetic() {
         request.target.fusedExactArithmetic = fused;
         request.layout.pushConstantSizeBytes = 128;
         request.useCache = false;
-        return Recompile(request).spirv;
+        return Recompile(request).spirv.Words();
     };
     struct Counts {
         std::uint32_t exactArithmetic = 0;
@@ -7901,7 +7901,7 @@ void verifyFusedExactArithmetic() {
 void verifyHalfWaveReduction() {
     using namespace ShaderRecompiler;
     static constexpr std::array<std::uint32_t, 5> capabilities{spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle, spv::CapabilityGroupNonUniformArithmetic, spv::CapabilityClipDistance};
-    const auto pixel = [](std::span<const std::uint32_t> code, std::uint32_t subgroupSize, bool arithmetic) {
+    const auto pixel = [](std::span<const std::uint32_t> code, std::uint32_t subgroupSize, bool arithmetic) -> SharedSpirv::Lease {
         ShaderPixelStageInfo info{};
         info.inputAddr = PixelInputBit(PixelInput::PositionX);
         info.posX = true;
@@ -7917,7 +7917,7 @@ void verifyHalfWaveReduction() {
         if (arithmetic) request.target.supportedCapabilities = capabilities;
         request.layout.pushConstantSizeBytes = 128;
         request.useCache = false;
-        return Recompile(request).spirv;
+        return Recompile(request).spirv.Words();
     };
     const auto reductions = [](std::span<const std::uint32_t> spirv, spv::Op opcode) {
         std::uint32_t count = 0;
@@ -8014,7 +8014,7 @@ void verifyHalfWaveReduction() {
         const auto wide = "half-wave reduction: a wave64 scan reduced by SPIR-V opcode " + std::to_string(reduction.reduce) + " did not read lanes 31 and 63 as reductions of host invocations 0-31 and 32-63 on 64 lanes";
         require(halves(pixel(scan(reduction.identity, reduction.vector, reduction.scalar), 64u, true), reduction.reduce, reduction.identity), wide.c_str());
     }
-    const auto vertex = [](std::vector<std::uint32_t> code, std::uint32_t subgroupSize) {
+    const auto vertex = [](std::vector<std::uint32_t> code, std::uint32_t subgroupSize) -> SharedSpirv::Lease {
         *std::find(code.begin(), code.end(), 0xf800180fu) = 0xf80008cfu;
         RecompileRequest request{};
         request.shader = {ShaderStage::Vertex, 0x10000u, code, 0, {}};
@@ -8027,11 +8027,11 @@ void verifyHalfWaveReduction() {
         request.target.fragmentShaderBarycentricEnabled = false;
         request.layout.pushConstantSizeBytes = 128;
         request.useCache = false;
-        return Recompile(request).spirv;
+        return Recompile(request).spirv.Words();
     };
     require(reductions(vertex(scan(0xffffffffu, 0x26000000u, 0x83800000u), 32u), spv::OpGroupNonUniformUMin) == 1u, "half-wave reduction: the wave64 vertex UMin scan, whose entry EXEC is every invocation, did not read lane 31 as a subgroup UMin on 32 lanes");
     require(halves(vertex(scan(0x80000000u, 0x24000000u, 0x84000000u), 64u), spv::OpGroupNonUniformSMax, 0x80000000u), "half-wave reduction: the wave64 vertex SMax scan did not read lanes 31 and 63 as reductions of host invocations 0-31 and 32-63 on 64 lanes");
-    const auto domain = [](std::vector<std::uint32_t> code, std::uint32_t subgroupSize) {
+    const auto domain = [](std::vector<std::uint32_t> code, std::uint32_t subgroupSize) -> SharedSpirv::Lease {
         *std::find(code.begin(), code.end(), 0xf800180fu) = 0xf80008cfu;
         *std::find(code.begin(), code.end(), 0x7e160f00u) = 0x7e160f01u;
         RecompileRequest request{};
@@ -8046,7 +8046,7 @@ void verifyHalfWaveReduction() {
         request.layout.pushConstantSizeBytes = 128;
         request.graphics = GraphicsCompileContext{0u, {}, std::nullopt, TessellationConfiguration{3u, 3u, 1u, 2u, 2u}, {}};
         request.useCache = false;
-        return Recompile(request).spirv;
+        return Recompile(request).spirv.Words();
     };
     require(reductions(domain(scan(0xffffffffu, 0x26000000u, 0x83800000u), 32u), spv::OpGroupNonUniformUMin) == 1u, "half-wave reduction: the wave64 domain UMin scan under s_orn2_saveexec_b64 vcc, exec did not read lane 31 as a subgroup UMin on 32 lanes");
     require(halves(domain(scan(0u, 0x38000000u, 0x88000000u), 64u), spv::OpGroupNonUniformBitwiseOr, 0u), "half-wave reduction: the wave64 domain OR scan did not read lanes 31 and 63 as reductions of host invocations 0-31 and 32-63 on 64 lanes");
@@ -8144,7 +8144,7 @@ void verifyEntryLaneProofBudget() {
     request.target.supportedCapabilities = capabilities;
     request.layout.pushConstantSizeBytes = 128u;
     request.useCache = false;
-    const auto spirv = Recompile(request).spirv;
+    const auto spirv = Recompile(request).spirv.Words();
     std::uint32_t reductions = 0;
     for (std::size_t cursor = 5; cursor < spirv.size() && (spirv[cursor] >> 16u) != 0u; cursor += spirv[cursor] >> 16u) {
         if ((spirv[cursor] & 0xffffu) == static_cast<std::uint32_t>(spv::OpGroupNonUniformUMin) && (spirv[cursor] >> 16u) == 6u && spirv[cursor + 4u] == spv::GroupOperationReduce) ++reductions;
@@ -8171,8 +8171,8 @@ void verifyNarrowVertexWave() {
         request.layout.pushConstantSizeBytes = 128;
         return request;
     };
-    const auto prepared = [&vertex](std::span<const std::uint32_t> code, std::uint32_t subgroupSize, std::uint32_t userDataBase = 8u) {
-        return GetPreparedArtifact(*PrepareShader(vertex(code, 64u, subgroupSize, userDataBase))).spirv;
+    const auto prepared = [&vertex](std::span<const std::uint32_t> code, std::uint32_t subgroupSize, std::uint32_t userDataBase = 8u) -> SharedSpirv::Lease {
+        return GetPreparedArtifact(*PrepareShader(vertex(code, 64u, subgroupSize, userDataBase))).spirv.Words();
     };
     const auto prepares = [&prepared](std::span<const std::uint32_t> code, std::uint32_t subgroupSize, std::uint32_t userDataBase = 8u) {
         return !prepared(code, subgroupSize, userDataBase).empty();
@@ -8205,7 +8205,7 @@ void verifyNarrowVertexWave() {
     const auto otherKeys = patched({{7, 0x360e0a82u}});
     auto withoutArithmetic = vertex(otherKeys, 64u, 32u, 8u);
     withoutArithmetic.target.supportedCapabilities = noArithmetic;
-    const auto shuffled = GetPreparedArtifact(*PrepareShader(withoutArithmetic)).spirv;
+    const auto shuffled = GetPreparedArtifact(*PrepareShader(withoutArithmetic)).spirv.Words();
     require(!shuffled.empty() && reductions(shuffled) == 0u, "narrow vertex wave: without subgroup arithmetic, the scan did not keep lane 31 as a shuffle with lane 63 read as 0");
     require(prepares(patched({{5, 0x7da82aa0u}, {6, 0xbf800000u}}), 32u), "narrow vertex wave: the scan keyed on lanes below 32 did not prepare on 32 lanes");
     expectFailure([&] { static_cast<void>(prepares(patched({{5, 0x7da82aa1u}, {6, 0xbf800000u}}), 32u)); }, lane63, "narrow vertex wave: a scan keyed on lanes below 33 read lane 63");
@@ -8388,8 +8388,8 @@ void verifySingleLaneVertexWave() {
         request.useCache = false;
         return request;
     };
-    const auto compiled = [&vertex](std::span<const std::uint32_t> code, std::uint32_t subgroupSize, bool vertexSubgroups) {
-        return Recompile(vertex(code, subgroupSize, vertexSubgroups)).spirv;
+    const auto compiled = [&vertex](std::span<const std::uint32_t> code, std::uint32_t subgroupSize, bool vertexSubgroups) -> SharedSpirv::Lease {
+        return Recompile(vertex(code, subgroupSize, vertexSubgroups)).spirv.Words();
     };
     const auto usesSubgroups = [](std::span<const std::uint32_t> spirv) {
         for (std::size_t cursor = 5; cursor < spirv.size() && (spirv[cursor] >> 16u) != 0u; cursor += spirv[cursor] >> 16u) {
@@ -8488,7 +8488,7 @@ void verifySingleLaneVertexWave() {
     pixel.target.vertexSubgroups = false;
     pixel.layout.pushConstantSizeBytes = 128;
     pixel.useCache = false;
-    require(usesSubgroups(Recompile(pixel).spirv), "single-lane vertex wave: a pixel program stopped using subgroups when only the vertex stage lacks them");
+    require(usesSubgroups(Recompile(pixel).spirv.Words()), "single-lane vertex wave: a pixel program stopped using subgroups when only the vertex stage lacks them");
 
     auto request = vertex(waveInfo, 32u, false);
     const auto replay = RequestSerializer{}.Deserialize(RequestSerializer{}.Serialize(request));
@@ -8599,8 +8599,8 @@ void verifySingleLaneDomainWave() {
         request.useCache = false;
         return request;
     };
-    const auto compiled = [&domain](std::span<const std::uint32_t> code, std::uint32_t subgroupSize, bool domainSubgroups) {
-        return Recompile(domain(code, subgroupSize, domainSubgroups)).spirv;
+    const auto compiled = [&domain](std::span<const std::uint32_t> code, std::uint32_t subgroupSize, bool domainSubgroups) -> SharedSpirv::Lease {
+        return Recompile(domain(code, subgroupSize, domainSubgroups)).spirv.Words();
     };
     const auto usesSubgroups = [](std::span<const std::uint32_t> spirv) {
         for (std::size_t cursor = 5; cursor < spirv.size() && (spirv[cursor] >> 16u) != 0u; cursor += spirv[cursor] >> 16u) {
@@ -8627,11 +8627,11 @@ void verifySingleLaneDomainWave() {
         require(withoutSubgroups == compiled(code, 4u, false), "single-lane domain wave: the program without tessellation evaluation subgroups depended on the device subgroup size");
         auto vertexOnly = domain(code, 32u, true);
         vertexOnly.target.vertexSubgroups = false;
-        require(usesSubgroups(Recompile(vertexOnly).spirv), "single-lane domain wave: a domain program stopped using subgroups when only the vertex stage lacks them");
+        require(usesSubgroups(Recompile(vertexOnly).spirv.Words()), "single-lane domain wave: a domain program stopped using subgroups when only the vertex stage lacks them");
         auto vertex = domain(code, 32u, false);
         vertex.shader.stage = ShaderStage::Vertex;
         vertex.graphics.reset();
-        require(usesSubgroups(Recompile(vertex).spirv), "single-lane domain wave: a vertex program stopped using subgroups when only the tessellation evaluation stage lacks them");
+        require(usesSubgroups(Recompile(vertex).spirv.Words()), "single-lane domain wave: a vertex program stopped using subgroups when only the tessellation evaluation stage lacks them");
     }
     expectFailure([&] { static_cast<void>(compiled(lane31, 32u, false)); }, "v_readlane_b32 of lane 31 is outside the 1-lane host subgroup", "single-lane domain wave: a domain program without tessellation evaluation subgroups read lane 31");
     require(!compiled(lane31, 32u, true).empty(), "single-lane domain wave: lane 31 of a 32-lane tessellation evaluation subgroup did not build");
@@ -10380,7 +10380,7 @@ void verifyComputedTexelOffsets() {
     };
     const auto computed = program(0x100u, 0u);
     const auto constant = program(0xffu, 0x3fu | (1u << 8u));
-    const auto recompile = [&](std::span<const std::uint32_t> code, bool offsets) {
+    const auto recompile = [&](std::span<const std::uint32_t> code, bool offsets) -> SharedSpirv::Lease {
         RecompileRequest request{};
         request.shader = {ShaderStage::Compute, 0x30000u, code, 0, {}};
         request.target = BufferTarget();
@@ -10399,7 +10399,7 @@ void verifyComputedTexelOffsets() {
         static_cast<void>(memory.Capture(request));
         const auto memoryRegions = memory.Regions();
         request.context.memory = memoryRegions;
-        return Recompile(request).spirv;
+        return Recompile(request).spirv.Words();
     };
     const auto sampleOperands = [](std::span<const std::uint32_t> words) {
         std::uint32_t mask = 0;
@@ -10450,7 +10450,7 @@ void verifyShaderClockScopes() {
         static_cast<void>(memory.Capture(request));
         const auto memoryRegions = memory.Regions();
         request.context.memory = memoryRegions;
-        const auto words = Recompile(request).spirv;
+        const auto words = Recompile(request).spirv.Words();
         std::map<std::uint32_t, std::uint32_t> constants;
         std::vector<std::uint32_t> scopeIds;
         for (std::size_t cursor = 5; cursor < words.size();) {
@@ -10565,38 +10565,38 @@ void verifyInt64AtomicCapabilities() {
     };
     for (const auto* code : {&globalSwap, &globalSwapBufferInc}) {
         const auto lockedGlobal = compile(*code, spv::CapabilityShader);
-        require(!declares(lockedGlobal.spirv, spv::CapabilityInt64Atomics), "64-bit atomics: a global_atomic_swap_x2 compiled without shaderBufferInt64Atomics declares Int64Atomics");
+        require(!declares(lockedGlobal.spirv.Words(), spv::CapabilityInt64Atomics), "64-bit atomics: a global_atomic_swap_x2 compiled without shaderBufferInt64Atomics declares Int64Atomics");
         require(asksForLockTable(lockedGlobal), "64-bit atomics: a global_atomic_swap_x2 compiled without shaderBufferInt64Atomics does not ask for the atomic lock table");
         const auto nativeGlobal = compile(*code, spv::CapabilityInt64Atomics);
-        require(declares(nativeGlobal.spirv, spv::CapabilityInt64Atomics), "64-bit atomics: a global_atomic_swap_x2 does not declare Int64Atomics");
+        require(declares(nativeGlobal.spirv.Words(), spv::CapabilityInt64Atomics), "64-bit atomics: a global_atomic_swap_x2 does not declare Int64Atomics");
         require(!asksForLockTable(nativeGlobal), "64-bit atomics: a global_atomic_swap_x2 compiled with shaderBufferInt64Atomics asks for the atomic lock table");
     }
     const auto lockedBuffer = compile(bufferAtomic, spv::CapabilityShader);
-    require(!declares(lockedBuffer.spirv, spv::CapabilityInt64Atomics), "64-bit atomics: a buffer_atomic_inc_x2 compiled without shaderBufferInt64Atomics declares Int64Atomics");
+    require(!declares(lockedBuffer.spirv.Words(), spv::CapabilityInt64Atomics), "64-bit atomics: a buffer_atomic_inc_x2 compiled without shaderBufferInt64Atomics declares Int64Atomics");
     require(asksForLockTable(lockedBuffer), "64-bit atomics: a buffer_atomic_inc_x2 compiled without shaderBufferInt64Atomics does not ask for the atomic lock table");
-    require(declares(compile(bufferAtomic, spv::CapabilityInt64Atomics).spirv, spv::CapabilityInt64Atomics), "64-bit atomics: a buffer_atomic_inc_x2 does not declare Int64Atomics");
+    require(declares(compile(bufferAtomic, spv::CapabilityInt64Atomics).spirv.Words(), spv::CapabilityInt64Atomics), "64-bit atomics: a buffer_atomic_inc_x2 does not declare Int64Atomics");
     const std::array<std::pair<const std::vector<std::uint32_t>*, spv::Op>, 3> bitwise{{{&bufferOr, spv::OpAtomicOr}, {&bufferAnd, spv::OpAtomicAnd}, {&bufferXor, spv::OpAtomicXor}}};
     for (const auto& [code, atomic] : bitwise) {
         const auto split = compile(*code, spv::CapabilityShader);
-        require(!declares(split.spirv, spv::CapabilityInt64Atomics), "64-bit atomics: an unused-result bitwise buffer atomic declares Int64Atomics on a device without it");
+        require(!declares(split.spirv.Words(), spv::CapabilityInt64Atomics), "64-bit atomics: an unused-result bitwise buffer atomic declares Int64Atomics on a device without it");
         require(!asksForLockTable(split), "64-bit atomics: an unused-result bitwise buffer atomic asks for the atomic lock table on a device without Int64Atomics");
-        verifySplit(split.spirv, atomic);
-        require(declares(compile(*code, spv::CapabilityInt64Atomics).spirv, spv::CapabilityInt64Atomics), "64-bit atomics: an unused-result bitwise buffer atomic does not use the 64-bit atomic where the device has it");
+        verifySplit(split.spirv.Words(), atomic);
+        require(declares(compile(*code, spv::CapabilityInt64Atomics).spirv.Words(), spv::CapabilityInt64Atomics), "64-bit atomics: an unused-result bitwise buffer atomic does not use the 64-bit atomic where the device has it");
     }
-    require(!declares(compile(bufferOrTwice, spv::CapabilityShader).spirv, spv::CapabilityInt64Atomics), "64-bit atomics: two buffer_atomic_or_x2 of one program declare Int64Atomics on a device without it");
+    require(!declares(compile(bufferOrTwice, spv::CapabilityShader).spirv.Words(), spv::CapabilityInt64Atomics), "64-bit atomics: two buffer_atomic_or_x2 of one program declare Int64Atomics on a device without it");
     const auto lockedPair = compile(bufferOrAnd, spv::CapabilityShader);
-    require(!declares(lockedPair.spirv, spv::CapabilityInt64Atomics) && asksForLockTable(lockedPair), "64-bit atomics: a buffer_atomic_or_x2 and a buffer_atomic_and_x2 of one program compiled without shaderBufferInt64Atomics do not take the atomic lock table");
-    require(declares(compile(bufferOrAnd, spv::CapabilityInt64Atomics).spirv, spv::CapabilityInt64Atomics), "64-bit atomics: a buffer_atomic_or_x2 and a buffer_atomic_and_x2 of one program do not use the 64-bit atomics where the device has them");
+    require(!declares(lockedPair.spirv.Words(), spv::CapabilityInt64Atomics) && asksForLockTable(lockedPair), "64-bit atomics: a buffer_atomic_or_x2 and a buffer_atomic_and_x2 of one program compiled without shaderBufferInt64Atomics do not take the atomic lock table");
+    require(declares(compile(bufferOrAnd, spv::CapabilityInt64Atomics).spirv.Words(), spv::CapabilityInt64Atomics), "64-bit atomics: a buffer_atomic_or_x2 and a buffer_atomic_and_x2 of one program do not use the 64-bit atomics where the device has them");
     const auto locked = compile(imageAtomic, spv::CapabilityShader);
-    require(!declares(locked.spirv, spv::CapabilityInt64ImageEXT) && !declares(locked.spirv, spv::CapabilityInt64Atomics), "64-bit atomics: an image_atomic_swap on a 32_32 image compiled without shaderImageInt64Atomics declares 64-bit atomics");
+    require(!declares(locked.spirv.Words(), spv::CapabilityInt64ImageEXT) && !declares(locked.spirv.Words(), spv::CapabilityInt64Atomics), "64-bit atomics: an image_atomic_swap on a 32_32 image compiled without shaderImageInt64Atomics declares 64-bit atomics");
     require(asksForLockTable(locked), "64-bit atomics: an image_atomic_swap on a 32_32 image compiled without shaderImageInt64Atomics does not ask for the atomic lock table");
-    require(declares(locked.spirv, spv::CapabilityStorageImageExtendedFormats) && !declares(locked.spirv, spv::CapabilityStorageImageReadWithoutFormat) && !declares(locked.spirv, spv::CapabilityStorageImageWriteWithoutFormat), "64-bit atomics: an image_atomic_swap on a 32_32 image compiled without shaderImageInt64Atomics does not declare its image as Rg32ui");
+    require(declares(locked.spirv.Words(), spv::CapabilityStorageImageExtendedFormats) && !declares(locked.spirv.Words(), spv::CapabilityStorageImageReadWithoutFormat) && !declares(locked.spirv.Words(), spv::CapabilityStorageImageWriteWithoutFormat), "64-bit atomics: an image_atomic_swap on a 32_32 image compiled without shaderImageInt64Atomics does not declare its image as Rg32ui");
     const auto native = compile(imageAtomic, spv::CapabilityInt64ImageEXT);
-    require(declares(native.spirv, spv::CapabilityInt64ImageEXT), "64-bit atomics: an image_atomic_swap on a 32_32 image does not declare Int64ImageEXT");
+    require(declares(native.spirv.Words(), spv::CapabilityInt64ImageEXT), "64-bit atomics: an image_atomic_swap on a 32_32 image does not declare Int64ImageEXT");
     require(!asksForLockTable(native), "64-bit atomics: an image_atomic_swap on a 32_32 image compiled with shaderImageInt64Atomics asks for the atomic lock table");
     const std::array<std::pair<const std::vector<std::uint32_t>*, const char*>, 2> updates{{{&imageAtomicInc, "image_atomic_inc"}, {&imageAtomicDec, "image_atomic_dec"}}};
     for (const auto& [code, name] : updates) {
-        const auto words = compile(*code, spv::CapabilityInt64ImageEXT).spirv;
+        const auto words = compile(*code, spv::CapabilityInt64ImageEXT).spirv.Words();
         std::set<std::uint32_t> texelPointers;
         std::size_t exchanges = 0;
         std::size_t loads = 0;
@@ -10708,7 +10708,7 @@ void verifyCoherentGds() {
     request.target.fragmentShaderBarycentricEnabled = false;
     request.layout.pushConstantSizeBytes = 128;
     request.useCache = false;
-    const auto words = Recompile(request).spirv;
+    const auto words = Recompile(request).spirv.Words();
     std::uint32_t gds = 0u;
     std::map<std::uint32_t, std::vector<std::uint32_t>> decorations;
     for (std::size_t cursor = 5; cursor < words.size();) {
@@ -10759,7 +10759,7 @@ void verifyCoherentBufferAccesses() {
         request.target.fragmentShaderBarycentricEnabled = false;
         request.layout.pushConstantSizeBytes = 128;
         request.useCache = false;
-        const auto words = Recompile(request).spirv;
+        const auto words = Recompile(request).spirv.Words();
         Module module;
         std::map<std::uint32_t, std::uint32_t> bases;
         const auto base = [&](std::uint32_t pointer) {
@@ -11341,7 +11341,7 @@ void verifyTwoLaneUniformValues() {
         const auto capture = memory.Capture(request);
         const auto memoryRegions = memory.Regions();
         request.context.memory = memoryRegions;
-        const auto words = Recompile(request, *capture)->spirv;
+        const auto words = Recompile(request, *capture)->spirv.Words();
         std::size_t count = 0;
         for (std::size_t cursor = 5; cursor < words.size();) {
             const auto length = words[cursor] >> 16u;
@@ -11363,7 +11363,7 @@ void verifyBdaReadFallbackFunctions() {
     alignas(256) static std::array<std::uint32_t, 32> output{};
     const auto outputAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
     const std::array<std::uint32_t, 8> userData{0x10000000u, 0u, 0u, 0u, static_cast<std::uint32_t>(outputAddress), static_cast<std::uint32_t>((outputAddress >> 32u) & 0xffffu), 128u, 0x01016facu};
-    const auto compile = [&](std::uint32_t loads, bool barrier, bool coherent, std::uint32_t stride) {
+    const auto compile = [&](std::uint32_t loads, bool barrier, bool coherent, std::uint32_t stride) -> SharedSpirv::Lease {
         std::vector<std::uint32_t> code{0x7e020200u, 0x7e040201u};
         for (std::uint32_t load = 0; load < loads; ++load) {
             code.push_back(0xdc308000u | (coherent ? 0x10000u : 0u) | (stride * load + 4u));
@@ -11388,7 +11388,7 @@ void verifyBdaReadFallbackFunctions() {
         request.target.fragmentShaderBarycentricEnabled = false;
         request.layout.pushConstantSizeBytes = 128;
         request.useCache = false;
-        return Recompile(request).spirv;
+        return Recompile(request).spirv.Words();
     };
     for (const bool barrier : {false, true}) {
         for (const bool coherent : {false, true}) {
@@ -11486,7 +11486,7 @@ void verifyBdaAnchors() {
     alignas(256) static std::array<std::uint32_t, 32> output{};
     const auto outputAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
     const std::array<std::uint32_t, 8> userData{0x10000000u, 0u, 0u, 0u, static_cast<std::uint32_t>(outputAddress), static_cast<std::uint32_t>((outputAddress >> 32u) & 0xffffu), 128u, 0x01016facu};
-    const auto compile = [&](std::uint32_t scalarBase, std::uint32_t stride) {
+    const auto compile = [&](std::uint32_t scalarBase, std::uint32_t stride) -> SharedSpirv::Lease {
         std::vector<std::uint32_t> code{0x7e020200u, 0x7e040201u};
         for (std::uint32_t load = 0; load < scalarBase; ++load) {
             code.push_back(0xdc308000u | (stride * load + 4u));
@@ -11512,7 +11512,7 @@ void verifyBdaAnchors() {
         request.target.fragmentShaderBarycentricEnabled = false;
         request.layout.pushConstantSizeBytes = 128;
         request.useCache = false;
-        return Recompile(request).spirv;
+        return Recompile(request).spirv.Words();
     };
     for (const std::uint32_t stride : {4u, 32u}) {
         for (const std::uint32_t loads : {0u, 1u, 2u, 4u}) {
@@ -11564,7 +11564,7 @@ void verifyBdaAnchors() {
     plain.target.fragmentShaderBarycentricEnabled = false;
     plain.layout.pushConstantSizeBytes = 128;
     plain.useCache = false;
-    const auto plainWords = Recompile(plain).spirv;
+    const auto plainWords = Recompile(plain).spirv.Words();
     for (std::size_t cursor = 5; cursor < plainWords.size();) {
         const auto length = plainWords[cursor] >> 16u;
         require(length != 0 && length <= plainWords.size() - cursor, "BDA anchors: truncated SPIR-V instruction");
@@ -11985,7 +11985,7 @@ void verifyGuardedDirectRoot() {
     const auto validResult = Recompile(branch.request, *valid);
     require(validResult->poisonedSrtReads == 0u, "guarded direct root: the mapped program reports poison");
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-    static_cast<void>(ValidateAndOptimizeSpirv(validResult->spirv, branch.request.target.vulkanVersion, branch.request.target.spirvVersion));
+    static_cast<void>(ValidateAndOptimizeSpirv(validResult->spirv.Words(), branch.request.target.vulkanVersion, branch.request.target.spirvVersion));
 #endif
     std::cout << "guarded direct root: mapped taken load passed\n";
     root[4] = 0u;
@@ -11997,7 +11997,7 @@ void verifyGuardedDirectRoot() {
     const auto mappedSkippedResult = Recompile(branch.request, *mappedSkipped);
     require(mappedSkippedResult->poisonedSrtReads == 0u, "guarded direct root: the mapped skipped program reports poison");
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-    static_cast<void>(ValidateAndOptimizeSpirv(mappedSkippedResult->spirv, branch.request.target.vulkanVersion, branch.request.target.spirvVersion));
+    static_cast<void>(ValidateAndOptimizeSpirv(mappedSkippedResult->spirv.Words(), branch.request.target.vulkanVersion, branch.request.target.spirvVersion));
 #endif
     std::cout << "guarded direct root: mapped skipped load passed\n";
     root[4] = 1u;
@@ -12083,7 +12083,7 @@ void verifyGuardedDirectRoot() {
     const auto skippedResult = Recompile(branch.request, *skipped);
     require(skippedResult->poisonedSrtReads == 0u, "guarded direct root: the skipped program reports poison");
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-    static_cast<void>(ValidateAndOptimizeSpirv(skippedResult->spirv, branch.request.target.vulkanVersion, branch.request.target.spirvVersion));
+    static_cast<void>(ValidateAndOptimizeSpirv(skippedResult->spirv.Words(), branch.request.target.vulkanVersion, branch.request.target.spirvVersion));
 #endif
     std::cout << "guarded direct root: inaccessible skipped load passed\n";
 #ifdef _WIN32
@@ -12191,7 +12191,7 @@ void verifyGuardedNullPointers() {
             require(replay.poisonedSrtReads == condition && samePipeline(replay, *result), "guarded pointer: a replay of the captured regions did not reproduce the poison");
             verifyResult(*result, replay);
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-            static_cast<void>(ValidateAndOptimizeSpirv(result->spirv, branch.request.target.vulkanVersion, branch.request.target.spirvVersion));
+            static_cast<void>(ValidateAndOptimizeSpirv(result->spirv.Words(), branch.request.target.vulkanVersion, branch.request.target.spirvVersion));
 #endif
         }
     }
@@ -12326,7 +12326,7 @@ void verifyGuardedNullPointers() {
         const auto result = Recompile(vertex.request, *capture);
         require(result->poisonedSrtReads == guard * 4u && faultBinding(*result) && !result->spirv.empty(), "guarded pointer: a vertex capture has the wrong poison count or no fault buffer");
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-        static_cast<void>(ValidateAndOptimizeSpirv(result->spirv, vertex.request.target.vulkanVersion, vertex.request.target.spirvVersion));
+        static_cast<void>(ValidateAndOptimizeSpirv(result->spirv.Words(), vertex.request.target.vulkanVersion, vertex.request.target.spirvVersion));
 #endif
     }
     NestedRequest rootless(branchCode, nullptr);
@@ -13063,11 +13063,11 @@ void verifySpannedShuffleThroughMemory() {
     const std::span<const std::uint32_t> straight{code};
     const auto native = compile(straight, 32u, true, false);
     require(native.fullSubgroups, "spanned shuffle: the wave64 compute program did not span two 32-lane subgroups");
-    const auto nativeCounts = count(native.spirv);
+    const auto nativeCounts = count(native.spirv.Words());
     require(nativeCounts.shuffles >= 1u && nativeCounts.subgroupBarriers == 0u, "spanned shuffle: without the flag the lane read is not the native subgroup shuffle");
     const auto exchanged = compile(straight, 32u, true, true);
     require(exchanged.fullSubgroups, "spanned shuffle: the flagged wave64 compute program did not span two 32-lane subgroups");
-    const auto exchangedCounts = count(exchanged.spirv);
+    const auto exchangedCounts = count(exchanged.spirv.Words());
     require(exchangedCounts.shuffles == 0u, "spanned shuffle: with the flag the lane read still uses OpGroupNonUniformShuffle, which NVIDIA's compiler crashes on in the title's shader");
     require(exchangedCounts.workgroupVariables >= 1u && exchangedCounts.workgroupBarriers >= nativeCounts.workgroupBarriers + 2u, "spanned shuffle: with the flag the lane read does not go through a workgroup array between two more workgroup-scope barriers");
     require(exchangedCounts.subgroupBarriers == 0u, "spanned shuffle: with the flag the exchange uses a subgroup-scope barrier, which did not make LDS writes visible on NVIDIA");
@@ -13076,9 +13076,9 @@ void verifySpannedShuffleThroughMemory() {
     require(!unspanned.fullSubgroups && unspanned.spirv == unspannedNative.spirv, "spanned shuffle: the flag changed a program that does not span subgroups");
     const auto predicatedNative = compile(lanePredicated, 32u, true, false);
     const auto predicated = compile(lanePredicated, 32u, true, true);
-    require(predicated.fullSubgroups && count(predicated.spirv).shuffles == 0u && count(predicated.spirv).workgroupBarriers >= count(predicatedNative.spirv).workgroupBarriers + 2u, "spanned shuffle: a lane-predicated lane read did not go through the workgroup exchange");
-    require(!SpannedBarrierInDivergentFlow(predicated.spirv).has_value(), "spanned shuffle: the exchange's workgroup barriers of a lane-predicated lane read sit in divergent control flow, which would hang instead of crash");
-    require(!SpannedBarrierInDivergentFlow(exchanged.spirv).has_value(), "spanned shuffle: the exchange's workgroup barriers sit in divergent control flow, which would hang instead of crash");
+    require(predicated.fullSubgroups && count(predicated.spirv.Words()).shuffles == 0u && count(predicated.spirv.Words()).workgroupBarriers >= count(predicatedNative.spirv.Words()).workgroupBarriers + 2u, "spanned shuffle: a lane-predicated lane read did not go through the workgroup exchange");
+    require(!SpannedBarrierInDivergentFlow(predicated.spirv.Words()).has_value(), "spanned shuffle: the exchange's workgroup barriers of a lane-predicated lane read sit in divergent control flow, which would hang instead of crash");
+    require(!SpannedBarrierInDivergentFlow(exchanged.spirv.Words()).has_value(), "spanned shuffle: the exchange's workgroup barriers sit in divergent control flow, which would hang instead of crash");
 }
 
 void verifyPixelQuadPermReads() {
@@ -14209,48 +14209,50 @@ int main(int argc, char** argv) {
         auto invalidSpirv = first.spirv;
         invalidSpirv[0] = 0;
         expectFailure([&] { static_cast<void>(ValidateAndOptimizeSpirv(invalidSpirv, request.target.vulkanVersion, request.target.spirvVersion)); }, "SPIR-V validation before optimization failed", "invalid SPIR-V passed validation");
-        expectFailure([&] { static_cast<void>(ValidateAndOptimizeSpirv(first.spirv, 0x00400000u, 0x00010600u)); }, "unsupported Vulkan/SPIR-V target", "incompatible target accepted");
-        expectFailure([&] { static_cast<void>(ValidateAndOptimizeSpirv(first.spirv, 0x00405000u, 0x00010600u)); }, "unsupported Vulkan target", "unknown Vulkan target accepted");
+        expectFailure([&] { static_cast<void>(ValidateAndOptimizeSpirv(first.spirv.Words(), 0x00400000u, 0x00010600u)); }, "unsupported Vulkan/SPIR-V target", "incompatible target accepted");
+        expectFailure([&] { static_cast<void>(ValidateAndOptimizeSpirv(first.spirv.Words(), 0x00405000u, 0x00010600u)); }, "unsupported Vulkan target", "unknown Vulkan target accepted");
 #endif
         const auto readOnly = [&](const char* name) {
+            const auto words = first.spirv.Words();
             std::optional<std::uint32_t> id;
             bool decorated = false;
-            for (std::size_t at = 5; at < first.spirv.size() && (first.spirv[at] >> 16u) != 0u; at += first.spirv[at] >> 16u) {
-                const auto opcode = first.spirv[at] & 0xffffu;
-                if (opcode == spv::OpName && std::strcmp(reinterpret_cast<const char*>(&first.spirv[at + 2u]), name) == 0) id = first.spirv[at + 1u];
+            for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0u; at += words[at] >> 16u) {
+                const auto opcode = words[at] & 0xffffu;
+                if (opcode == spv::OpName && std::strcmp(reinterpret_cast<const char*>(&words[at + 2u]), name) == 0) id = words[at + 1u];
             }
-            for (std::size_t at = 5; id && at < first.spirv.size() && (first.spirv[at] >> 16u) != 0u; at += first.spirv[at] >> 16u) {
-                decorated = decorated || ((first.spirv[at] & 0xffffu) == spv::OpDecorate && first.spirv[at + 1u] == *id && first.spirv[at + 2u] == spv::DecorationNonWritable);
+            for (std::size_t at = 5; id && at < words.size() && (words[at] >> 16u) != 0u; at += words[at] >> 16u) {
+                decorated = decorated || ((words[at] & 0xffffu) == spv::OpDecorate && words[at + 1u] == *id && words[at + 2u] == spv::DecorationNonWritable);
             }
             return std::pair{id.has_value(), decorated};
         };
         require(readOnly("flattened_srt") == std::pair{true, true}, "the flattened SRT is not decorated NonWritable");
         {
+            const auto words = first.spirv.Words();
             std::uint32_t srtId = 0u;
-            for (std::size_t at = 5; at < first.spirv.size() && (first.spirv[at] >> 16u) != 0u; at += first.spirv[at] >> 16u) {
-                if ((first.spirv[at] & 0xffffu) == spv::OpName && std::strcmp(reinterpret_cast<const char*>(&first.spirv[at + 2u]), "flattened_srt") == 0) srtId = first.spirv[at + 1u];
+            for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0u; at += words[at] >> 16u) {
+                if ((words[at] & 0xffffu) == spv::OpName && std::strcmp(reinterpret_cast<const char*>(&words[at + 2u]), "flattened_srt") == 0) srtId = words[at + 1u];
             }
             require(srtId != 0u, "the flattened SRT variable is not named");
             std::set<std::uint32_t> chains;
             std::size_t srtUses = 0;
-            for (std::size_t at = 5; at < first.spirv.size() && (first.spirv[at] >> 16u) != 0u; at += first.spirv[at] >> 16u) {
-                const auto opcode = first.spirv[at] & 0xffffu;
-                const auto count = first.spirv[at] >> 16u;
+            for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0u; at += words[at] >> 16u) {
+                const auto opcode = words[at] & 0xffffu;
+                const auto count = words[at] >> 16u;
                 if (opcode == spv::OpName || opcode == spv::OpDecorate || opcode == spv::OpEntryPoint || opcode == spv::OpVariable) continue;
                 for (std::size_t operand = 1; operand < count; ++operand) {
-                    if (first.spirv[at + operand] != srtId) continue;
+                    if (words[at + operand] != srtId) continue;
                     ++srtUses;
-                    require((opcode == spv::OpAccessChain || opcode == spv::OpInBoundsAccessChain) && operand == 3u, "the flattened SRT is used by something other than the base of an access chain");
-                    chains.insert(first.spirv[at + 2u]);
+                    require((opcode == spv::OpAccessChain || opcode == spv::OpInBoundsAccessChain) && operand == 3u, "a flattened SRT is used by something other than the base of an access chain");
+                    chains.insert(words[at + 2u]);
                 }
             }
             require(srtUses != 0u && !chains.empty(), "the flattened SRT is never read through an access chain");
-            for (std::size_t at = 5; at < first.spirv.size() && (first.spirv[at] >> 16u) != 0u; at += first.spirv[at] >> 16u) {
-                const auto opcode = first.spirv[at] & 0xffffu;
-                const auto count = first.spirv[at] >> 16u;
+            for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0u; at += words[at] >> 16u) {
+                const auto opcode = words[at] & 0xffffu;
+                const auto count = words[at] >> 16u;
                 if (opcode == spv::OpName || opcode == spv::OpAccessChain || opcode == spv::OpInBoundsAccessChain) continue;
                 for (std::size_t operand = 1; operand < count; ++operand) {
-                    if (chains.contains(first.spirv[at + operand])) require(opcode == spv::OpLoad && operand == 3u, "a flattened SRT access chain is used by something other than a load");
+                    if (chains.contains(words[at + operand])) require(opcode == spv::OpLoad && operand == 3u, "a flattened SRT access chain is used by something other than a load");
                 }
             }
         }

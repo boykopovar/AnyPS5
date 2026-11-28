@@ -20,7 +20,7 @@ std::uint32_t checkStagingInitialized(const ShaderRecompiler::RecompileResult& r
     std::uint32_t outputStores = 0;
     for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
         const auto op = static_cast<spv::Op>(words[at] & 0xffffu);
-        const auto instruction = words.subspan(at, words[at] >> 16u);
+        const auto instruction = std::span<const std::uint32_t>(words).subspan(at, words[at] >> 16u);
         if (op == spv::OpVariable) variables[instruction[2]] = instruction;
         if (op == spv::OpConstantNull || op == spv::OpConstant || op == spv::OpConstantComposite) constants[instruction[2]] = op;
         if (op == spv::OpAccessChain || op == spv::OpInBoundsAccessChain) {

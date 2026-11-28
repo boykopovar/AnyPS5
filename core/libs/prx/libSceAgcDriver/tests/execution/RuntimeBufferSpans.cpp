@@ -154,15 +154,16 @@ std::vector<std::uint32_t> Code(std::uint32_t components, bool coherent, bool ba
 }
 
 bool HasVectorSpan(const ShaderRecompiler::SharedSpirv& spirv, std::uint32_t mask) {
+    const auto words = spirv.Words();
     std::map<std::uint32_t, std::string> names;
     std::map<std::uint32_t, std::uint32_t> constants;
-    for (std::size_t at = 5; at < spirv.size();) {
-        const auto count = spirv[at] >> 16u;
-        const auto opcode = spirv[at] & 0xffffu;
-        Require(count != 0u && count <= spirv.size() - at, "runtime buffer spans: malformed SPIR-V");
-        if (opcode == spv::OpName && count >= 3u) names[spirv[at + 1u]] = reinterpret_cast<const char*>(spirv.data() + at + 2u);
-        if (opcode == spv::OpConstant && count == 4u) constants[spirv[at + 2u]] = spirv[at + 3u];
-        if (opcode == spv::OpFunctionCall && count == 8u && names[spirv[at + 3u]].starts_with("read_bda_span") && constants[spirv[at + 6u]] == mask) return true;
+    for (std::size_t at = 5; at < words.size();) {
+        const auto count = words[at] >> 16u;
+        const auto opcode = words[at] & 0xffffu;
+        Require(count != 0u && count <= words.size() - at, "runtime buffer spans: malformed SPIR-V");
+        if (opcode == spv::OpName && count >= 3u) names[words[at + 1u]] = reinterpret_cast<const char*>(words.data() + at + 2u);
+        if (opcode == spv::OpConstant && count == 4u) constants[words[at + 2u]] = words[at + 3u];
+        if (opcode == spv::OpFunctionCall && count == 8u && names[words[at + 3u]].starts_with("read_bda_span") && constants[words[at + 6u]] == mask) return true;
         at += count;
     }
     return false;

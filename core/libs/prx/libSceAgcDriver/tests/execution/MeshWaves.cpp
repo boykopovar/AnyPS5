@@ -137,7 +137,8 @@ FunctionControls HelperFunctions(const ShaderRecompiler::SpirvTarget& target, st
     };
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
-    const std::span<const std::uint32_t> words(result.spirv.Words());
+    const auto leased = result.spirv.Words();
+    const std::span<const std::uint32_t> words(leased);
     std::vector<std::uint32_t> entries;
     FunctionControls controls;
     for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
