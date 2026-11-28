@@ -69,7 +69,7 @@ std::shared_ptr<const ShaderSnapshot> ReadRawShader(std::uint64_t address, const
     const auto drain = [](std::uint64_t first, std::size_t bytes) {
         if (!DrawPipeline::Active()) return;
         auto& pipeline = DrawPipeline::Queue0();
-        if (pipeline.Busy() && pipeline.Overlaps(first, bytes)) pipeline.Drain(DrawPipeline::DrainReason::Capture, 0x100, "shader_code");
+        if (pipeline.Busy() && pipeline.Overlaps(first, bytes)) pipeline.Drain(DrawPipeline::DrainReason::Capture);
     };
     static std::mutex cacheMutex;
     static std::list<std::shared_ptr<const ShaderSnapshot>> cache;
@@ -833,6 +833,7 @@ bool LazyShaderPreparation() {
 using PreparedAtUse = std::optional<std::vector<const ShaderRecompiler::SourceHandle*>>;
 
 PreparedAtUse PrepareDeferredAbis(const ShaderSnapshot& snapshot, std::unique_lock<std::mutex>& lock);
+std::optional<std::vector<const ShaderRecompiler::SourceHandle*>> StartDeferredAbisInBackground(const ShaderSnapshot& snapshot, std::unique_lock<std::mutex>& lock);
 
 struct DeferredAbiUseCounters {
     std::atomic<std::uint64_t> firstUses{0};
@@ -933,8 +934,11 @@ std::shared_ptr<const ShaderRecompiler::SourceHandle> SourceHandleFor(const Shad
     }
     NoteOwnPreparation(preparedAtUse);
     ReportPreparedAtUse(snapshot, request);
+    lock.unlock();
     auto handle = PrepareShaderWithDiagnostics(request);
-    snapshot.prepared->entries.push_back({codeOffset, handle});
+    lock.lock();
+    const auto duplicate = std::ranges::any_of(snapshot.prepared->entries, [&](const auto& existing) { return existing.codeOffset == codeOffset && existing.handle->artifact == handle->artifact; });
+    if (!duplicate) snapshot.prepared->entries.push_back({codeOffset, handle});
     return handle;
 }
 
@@ -1656,6 +1660,7 @@ namespace {
 
 struct PendingPreparation {
     std::mutex mutex;
+    std::condition_variable done;
     bool finished = false;
     bool waited = false;
     std::shared_ptr<const ShaderRecompiler::SourceHandle> handle;
@@ -1672,7 +1677,7 @@ PendingPreparations& pendingPreparations() {
     return *pending;
 }
 
-std::shared_ptr<const ShaderRecompiler::SourceHandle> PrepareInBackground(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& source, std::span<const std::uint64_t> key) {
+std::shared_ptr<const ShaderRecompiler::SourceHandle> PrepareAtUse(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& source, std::span<const std::uint64_t> key, bool deferPreparation) {
     const auto keyWords = std::span<const std::uint32_t>(reinterpret_cast<const std::uint32_t*>(key.data()), key.size() * 2u);
     const auto flags = (source.context.convertedSamples ? 1u : 0u) | (source.context.layerRowSamples ? 2u : 0u);
     const std::tuple id{&snapshot, codeOffset, ShaderRecompiler::HashSpirvWords(source.shader.code, ShaderRecompiler::HashSpirvWords(keyWords, flags))};
@@ -1688,6 +1693,41 @@ std::shared_ptr<const ShaderRecompiler::SourceHandle> PrepareInBackground(const 
         }
         job = slot;
     }
+    if (!deferPreparation) {
+        if (!started) {
+            std::unique_lock jobLock(job->mutex);
+            job->done.wait(jobLock, [&] { return job->finished; });
+            if (job->failure != nullptr) std::rethrow_exception(job->failure);
+            return job->handle;
+        }
+        std::shared_ptr<const ShaderRecompiler::SourceHandle> handle;
+        struct Complete {
+            PendingPreparations& pending;
+            const std::tuple<const ShaderSnapshot*, std::size_t, std::uint64_t>& id;
+            const std::shared_ptr<PendingPreparation>& job;
+            std::shared_ptr<const ShaderRecompiler::SourceHandle> handle;
+            std::exception_ptr failure;
+            ~Complete() {
+                {
+                    std::lock_guard jobLock(job->mutex);
+                    job->handle = std::move(handle);
+                    job->failure = failure;
+                    job->finished = true;
+                }
+                job->done.notify_all();
+                std::lock_guard lock(pending.mutex);
+                if (const auto found = pending.byKey.find(id); found != pending.byKey.end() && found->second == job) pending.byKey.erase(found);
+            }
+        } complete{pending, id, job, {}, {}};
+        try {
+            handle = PrepareShaderWithDiagnostics(source);
+            complete.handle = handle;
+        } catch (...) {
+            complete.failure = std::current_exception();
+            throw;
+        }
+        return handle;
+    }
     if (started) {
         const auto owned = OwnRecompileRequest(source, source.context.memory);
         SubmitLibraryPrebuild([job, owned] {
@@ -1698,23 +1738,30 @@ std::shared_ptr<const ShaderRecompiler::SourceHandle> PrepareInBackground(const 
             } catch (...) {
                 failure = std::current_exception();
             }
-            std::lock_guard lock(job->mutex);
-            job->handle = std::move(handle);
-            job->failure = failure;
-            job->finished = true;
+            {
+                std::lock_guard lock(job->mutex);
+                job->handle = std::move(handle);
+                job->failure = failure;
+                job->finished = true;
+            }
+            job->done.notify_all();
         });
     }
     AwaitBackgroundJob(job->mutex, job->finished, job->waited);
+    std::shared_ptr<const ShaderRecompiler::SourceHandle> handle;
+    std::exception_ptr failure;
     {
         std::lock_guard lock(job->mutex);
         if (!job->finished) throw DrawCompilePending("the draw's shader is still being prepared in the background");
+        handle = job->handle;
+        failure = job->failure;
     }
     {
         std::lock_guard lock(pending.mutex);
         if (const auto found = pending.byKey.find(id); found != pending.byKey.end() && found->second == job) pending.byKey.erase(found);
     }
-    if (job->failure != nullptr) std::rethrow_exception(job->failure);
-    return job->handle;
+    if (failure != nullptr) std::rethrow_exception(failure);
+    return handle;
 }
 
 }
@@ -1735,6 +1782,11 @@ ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& s
         source.context.linkedCallFallbacks = linked.fallbacks;
     }
     std::unique_lock lock(snapshot.prepared->mutex);
+    if (deferPreparation && snapshot.prepared->pending) {
+        PrioritizeRegistrationPreparation(*snapshot.prepared);
+        lock.unlock();
+        throw DrawCompilePending("the draw's shader is still being prepared at registration");
+    }
     AwaitRegisteredPreparation(*snapshot.prepared, lock);
     if (std::ranges::find(snapshot.prepared->convertedSamples, codeOffset) != snapshot.prepared->convertedSamples.end()) source.context.convertedSamples = true;
     if (std::ranges::find(snapshot.prepared->layerRowSamples, codeOffset) != snapshot.prepared->layerRowSamples.end()) source.context.layerRowSamples = true;
@@ -1743,7 +1795,10 @@ ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& s
     auto& key = HostThreadLocal<std::vector<std::uint64_t>, PreparedKeyStorage>();
     ShaderRecompiler::BuildPreparedShaderKey(source, key);
     PreparedAtUse preparedAtUse;
-    if (!snapshot.prepared->deferredAbis.empty() || snapshot.prepared->deferredPreparing) preparedAtUse = PrepareDeferredAbis(snapshot, lock);
+    if (!snapshot.prepared->deferredAbis.empty() || snapshot.prepared->deferredPreparing) {
+        if (deferPreparation) static_cast<void>(StartDeferredAbisInBackground(snapshot, lock));
+        else preparedAtUse = PrepareDeferredAbis(snapshot, lock);
+    }
     for (auto& entry : snapshot.prepared->entries) {
         if (entry.codeOffset != codeOffset) continue;
         invocationRequest.shader.code = ShaderRecompiler::GetPreparedCode(*entry.handle);
@@ -1755,7 +1810,8 @@ ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& s
     }
     NoteOwnPreparation(preparedAtUse);
     ReportPreparedAtUse(snapshot, source);
-    std::shared_ptr<const ShaderRecompiler::SourceHandle> handle = deferPreparation ? PrepareInBackground(snapshot, codeOffset, source, key) : PrepareShaderWithDiagnostics(source);
+    lock.unlock();
+    std::shared_ptr<const ShaderRecompiler::SourceHandle> handle = PrepareAtUse(snapshot, codeOffset, source, key, deferPreparation);
     invocationRequest = source;
     invocationRequest.shader.code = ShaderRecompiler::GetPreparedCode(*handle);
     auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(invocationRequest, handle, key);
@@ -1765,7 +1821,9 @@ ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& s
         invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(invocationRequest, handle, key);
     }
     if (!invocation.has_value()) throw std::runtime_error("AGC driver: an artifact prepared at use does not match its invocation");
-    snapshot.prepared->entries.push_back({codeOffset, std::move(handle)});
+    lock.lock();
+    const auto duplicate = std::ranges::any_of(snapshot.prepared->entries, [&](const auto& existing) { return existing.codeOffset == codeOffset && existing.handle->artifact == handle->artifact; });
+    if (!duplicate) snapshot.prepared->entries.push_back({codeOffset, std::move(handle)});
     return std::move(*invocation);
 }
 
@@ -2127,6 +2185,105 @@ PreparedAtUse PrepareDeferredAbis(const ShaderSnapshot& snapshot, std::unique_lo
     }
     DeferredAbiCounters().entries.fetch_add(added.size(), std::memory_order_relaxed);
     return added;
+}
+
+std::optional<std::vector<const ShaderRecompiler::SourceHandle*>> StartDeferredAbisInBackground(const ShaderSnapshot& snapshot, std::unique_lock<std::mutex>& lock) {
+    auto& prepared = *snapshot.prepared;
+    if (prepared.deferredPreparing) {
+        lock.unlock();
+        throw DrawCompilePending("the draw's deferred ABI is still being prepared in the background");
+    }
+    if (prepared.deferredAbis.empty()) return std::nullopt;
+    std::vector<PreparedShaders::DeferredAbi> deferred;
+    deferred.swap(prepared.deferredAbis);
+    prepared.deferredPreparing = true;
+    lock.unlock();
+    struct OwnedDeferredPlans {
+        ShaderSnapshot snapshot;
+        std::vector<std::unique_ptr<RegisteredPreparation>> plans;
+    };
+    auto owned = std::make_shared<OwnedDeferredPlans>(OwnedDeferredPlans{snapshot, {}});
+    bool submitted = false;
+    struct ResetPreparing {
+        std::shared_ptr<PreparedShaders> prepared;
+        bool& submitted;
+        ~ResetPreparing() {
+            if (submitted) return;
+            std::lock_guard guard(prepared->mutex);
+            prepared->deferredPreparing = false;
+            prepared->settled.notify_all();
+        }
+    } reset{snapshot.prepared, submitted};
+    for (const auto& abi : deferred) {
+        const auto device = abi.device.lock();
+        if (device == nullptr || owned->snapshot.registeredState == nullptr) continue;
+        QueueState state{};
+        state.shader = owned->snapshot.registeredState->shader.Expand();
+        state.context = owned->snapshot.registeredState->context.Expand();
+        state.userConfig = owned->snapshot.registeredState->userConfig.Expand();
+        for (const auto& [offset, value] : abi.context) state.context[offset] = value;
+        for (const auto& [offset, value] : abi.primitive) state.userConfig[offset] = value;
+        try {
+            auto plan = PlanRegistered(owned->snapshot, *device, state, false);
+            if (plan == nullptr) continue;
+            plan->prebuildDevice = device;
+            owned->plans.push_back(std::move(plan));
+        } catch (const std::exception& error) {
+            APS5_LOG_ERR("Shader 0x%llx could not be prepared at its first use for its resolved ABI (%s); preparing it for the use instead", static_cast<unsigned long long>(owned->snapshot.codeAddress), error.what());
+        }
+    }
+    if (owned->plans.empty()) {
+        submitted = true;
+        lock.lock();
+        prepared.deferredPreparing = false;
+        prepared.settled.notify_all();
+        return std::nullopt;
+    }
+    submitted = true;
+    const auto preparedPtr = snapshot.prepared;
+    const auto codeAddress = snapshot.codeAddress;
+    try {
+        SubmitLibraryPrebuild([preparedPtr, codeAddress, owned = std::move(owned)] {
+            std::vector<PreparedShaders::Entry> entries;
+            struct Finish {
+                std::shared_ptr<PreparedShaders> prepared;
+                std::vector<PreparedShaders::Entry>& entries;
+                ~Finish() {
+                    std::lock_guard finishLock(prepared->mutex);
+                    std::size_t added = 0;
+                    for (auto& entry : entries) {
+                        const auto duplicate = std::ranges::any_of(prepared->entries, [&](const auto& existing) { return existing.codeOffset == entry.codeOffset && existing.handle->artifact == entry.handle->artifact; });
+                        if (duplicate) continue;
+                        entry.fromDeferredAbi = true;
+                        prepared->entries.push_back(std::move(entry));
+                        ++added;
+                    }
+                    if (added != 0) DeferredAbiCounters().entries.fetch_add(added, std::memory_order_relaxed);
+                    prepared->deferredPreparing = false;
+                    prepared->settled.notify_all();
+                }
+            } finish{preparedPtr, entries};
+            for (const auto& plan : owned->plans) {
+                try {
+                    auto made = PrepareRegistered(*plan);
+                    std::ranges::move(made, std::back_inserter(entries));
+                } catch (const std::exception& error) {
+                    APS5_LOG_ERR("Shader 0x%llx could not be prepared at its first use for its resolved ABI (%s); preparing it for the use instead", static_cast<unsigned long long>(codeAddress), error.what());
+                }
+            }
+        });
+    } catch (...) {
+        std::lock_guard errorLock(preparedPtr->mutex);
+        preparedPtr->deferredPreparing = false;
+        preparedPtr->settled.notify_all();
+        throw;
+    }
+    lock.lock();
+    if (preparedPtr->deferredPreparing) {
+        lock.unlock();
+        throw DrawCompilePending("the draw's deferred ABI is still being prepared in the background");
+    }
+    return std::nullopt;
 }
 
 void DeferPipelineStage(PreparedShaderState& prepared, const ShaderSnapshot& snapshot, const char* reason) {
