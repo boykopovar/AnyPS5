@@ -6,11 +6,23 @@
 #include "prx/libc/include/GuestLocale.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -155,6 +167,100 @@ void CheckGlobalLocale() {
     Require(_Getgloballocale_nid_postfix() == nullptr, "clearing the global locale stores null");
 }
 
+void CheckGuardedGuestPointers() {
+    struct GuardedPages {
+        unsigned char* base = nullptr;
+        std::size_t pageSize = 4096;
+
+        GuardedPages() {
+#ifdef _WIN32
+            SYSTEM_INFO info{};
+            GetSystemInfo(&info);
+            pageSize = info.dwPageSize ? static_cast<std::size_t>(info.dwPageSize) : 4096;
+            base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+            Require(base != nullptr, "allocate guarded pages");
+            DWORD oldProtect = 0;
+            Require(VirtualProtect(base + pageSize, pageSize, PAGE_READONLY, &oldProtect) != 0, "protect read-only page");
+            Require(VirtualProtect(base + pageSize * 2, pageSize, PAGE_NOACCESS, &oldProtect) != 0, "protect guard page");
+#else
+            const long size = sysconf(_SC_PAGESIZE);
+            pageSize = size > 0 ? static_cast<std::size_t>(size) : 4096;
+            void* mapped = mmap(nullptr, pageSize * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            Require(mapped != MAP_FAILED, "allocate guarded pages");
+            base = static_cast<unsigned char*>(mapped);
+            Require(mprotect(base + pageSize, pageSize, PROT_READ) == 0, "protect read-only page");
+            Require(mprotect(base + pageSize * 2, pageSize, PROT_NONE) == 0, "protect guard page");
+#endif
+        }
+
+        ~GuardedPages() {
+            if (!base) return;
+#ifdef _WIN32
+            VirtualFree(base, 0, MEM_RELEASE);
+#else
+            munmap(base, pageSize * 3);
+#endif
+        }
+
+        unsigned char* ReadOnly() const { return base + pageSize; }
+        unsigned char* Guard() const { return base + pageSize * 2; }
+    };
+
+    GuardedPages pages;
+    GuestLocale::Implementation validImpl{};
+    _ZNSt6locale7_LocimpC2Eb_nid_postfix(&validImpl, false);
+    GuestLocaleFacade validFacade{&validImpl};
+    GuestLocaleFacade outFacade{};
+
+    errno = 53;
+    Require(Throws([&] { _ZNSt6locale7_LocimpC2Eb_nid_postfix(reinterpret_cast<GuestLocale::Implementation*>(pages.Guard()), false); }),
+        "_LocimpC2Eb rejects guard page");
+    Require(Throws([&] { _ZNSt6locale7_LocimpC2Eb_nid_postfix(reinterpret_cast<GuestLocale::Implementation*>(pages.ReadOnly()), false); }),
+        "_LocimpC2Eb rejects read-only page");
+
+    Require(Throws([&] { _ZNSt6locale6globalERKS__nid_postfix(reinterpret_cast<GuestLocaleFacade*>(pages.Guard()), &validFacade); }),
+        "locale::global rejects guard result");
+    Require(Throws([&] { _ZNSt6locale6globalERKS__nid_postfix(reinterpret_cast<GuestLocaleFacade*>(pages.ReadOnly()), &validFacade); }),
+        "locale::global rejects read-only result");
+    Require(Throws([&] { _ZNSt6locale6globalERKS__nid_postfix(&outFacade, reinterpret_cast<const GuestLocaleFacade*>(pages.Guard())); }),
+        "locale::global rejects guard locale");
+    GuestLocaleFacade guardImplFacade{reinterpret_cast<GuestLocale::Implementation*>(pages.Guard())};
+    Require(Throws([&] { _ZNSt6locale6globalERKS__nid_postfix(&outFacade, &guardImplFacade); }),
+        "locale::global rejects guard locale implementation");
+
+    Require(Throws([&] { _Deletegloballocale_nid_postfix(pages.Guard()); }),
+        "_Deletegloballocale rejects guard reference");
+
+    auto* guardLocale = reinterpret_cast<GuestLocale::Implementation*>(pages.Guard());
+    Require(Throws([&] { _Deletegloballocale_nid_postfix(&guardLocale); }),
+        "_Deletegloballocale rejects guard locale object");
+
+    GuestLocale::Implementation badVtableLocale{};
+    badVtableLocale.base.vtable = reinterpret_cast<const GuestLocale::FacetVtable*>(pages.Guard());
+    GuestLocale::Implementation* badVtableRef = &badVtableLocale;
+    Require(Throws([&] { _Deletegloballocale_nid_postfix(&badVtableRef); }),
+        "_Deletegloballocale rejects guard vtable");
+
+    GuestLocale::FacetVtable nonExecVtable{CountingDestroy, CountingDelete, CountingRetain,
+        reinterpret_cast<GuestLocale::Facet* (APS5_VABI*)(GuestLocale::Facet*)>(pages.ReadOnly())};
+    GuestLocale::Implementation nonExecLocale{};
+    nonExecLocale.base.vtable = &nonExecVtable;
+    GuestLocale::Implementation* nonExecRef = &nonExecLocale;
+    Require(Throws([&] { _Deletegloballocale_nid_postfix(&nonExecRef); }),
+        "_Deletegloballocale rejects non-executable release callback");
+
+    GuestLocale::FacetVtable nonExecDeleteVtable{CountingDestroy,
+        reinterpret_cast<void (APS5_VABI*)(GuestLocale::Facet*)>(pages.ReadOnly()), CountingRetain, CountingRelease};
+    GuestLocale::Implementation nonExecDeleteLocale{};
+    nonExecDeleteLocale.base.vtable = &nonExecDeleteVtable;
+    nonExecDeleteLocale.base.references = 1;
+    GuestLocale::Implementation* nonExecDeleteRef = &nonExecDeleteLocale;
+    Require(Throws([&] { _Deletegloballocale_nid_postfix(&nonExecDeleteRef); }),
+        "_Deletegloballocale rejects non-executable delete callback");
+
+    Require(errno == 53, "guarded pointer checks preserve errno");
+}
+
 }
 
 int main() {
@@ -165,6 +271,7 @@ int main() {
         reinterpret_cast<void*>(&TestPosixAlign), nullptr, nullptr, nullptr};
     ApplicationHeapRegister_nid_no_patch(api.data());
 
+    CheckGuardedGuestPointers();
     CheckLocinfo();
     CheckLocimpCopy();
     CheckDeletegloballocale();
