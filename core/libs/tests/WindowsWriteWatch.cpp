@@ -1,5 +1,6 @@
 #define NOMINMAX
 #include "prx/libc/include/WindowsMappings.hpp"
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <iostream>
@@ -16,6 +17,20 @@ std::atomic<unsigned> faults{0};
 
 void Require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
+}
+
+bool ProtectEachRegion(void* address, std::size_t bytes, DWORD protection) {
+    auto cursor = reinterpret_cast<std::uintptr_t>(address);
+    const auto end = cursor + bytes;
+    while (cursor < end) {
+        MEMORY_BASIC_INFORMATION memory{};
+        if (VirtualQuery(reinterpret_cast<const void*>(cursor), &memory, sizeof(memory)) != sizeof(memory)) return false;
+        const auto regionEnd = std::min(end, reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize);
+        DWORD previous = 0;
+        if (!VirtualProtect(reinterpret_cast<void*>(cursor), regionEnd - cursor, protection, &previous)) return false;
+        cursor = regionEnd;
+    }
+    return true;
 }
 
 LONG CALLBACK HandleWrite(EXCEPTION_POINTERS* exception) {
@@ -1058,7 +1073,7 @@ void CheckResidentRunNoAccessTransitions() {
     Require(mappings.ResidentRunHasNoAccess(address), "a resident run mapped PAGE_NOACCESS did not mark hasNoAccess");
     Require(!tryCollect(address, Large).first, "a resident run mapped PAGE_NOACCESS was collected");
     mappings.SetProtection(address, Large, PAGE_READWRITE);
-    Require(VirtualProtect(first, Large, PAGE_READWRITE, &previous), "cannot restore full resident run protection");
+    Require(ProtectEachRegion(first, Large, PAGE_READWRITE), "cannot restore full resident run protection");
     Require(!mappings.ResidentRunHasNoAccess(address), "restoring a full resident run via SetProtection did not clear hasNoAccess");
     Require(tryCollect(address, Large).first, "a full resident run restored via SetProtection failed to collect");
 
