@@ -27,6 +27,7 @@
 #include "prx/libfontconfig/include/InventoryExports.hpp"
 #include "prx/libfontconfig/include/Sets.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "FontconfigData.hpp"
 #include "prx/libfontconfig/include/FormatAccess.hpp"
 
@@ -42,15 +43,54 @@
 #include <list>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <new>
 #include <set>
 #include <string>
 #include <string_view>
+#include <unordered_set>
+
+struct FcLangSet;
+
+namespace {
+
+struct LangSetRegistry {
+    std::mutex mutex;
+    std::unordered_set<const FcLangSet*> live;
+    std::unordered_set<FcLangSet*> owned;
+};
+
+LangSetRegistry& GetLangSetRegistry() {
+    static auto* registry = new LangSetRegistry();
+    return *registry;
+}
+
+}
 
 struct FcLangSet {
     std::array<bool, std::size(fontconfig_data::Languages)> known{};
     std::set<std::string> extra;
     std::vector<std::string> extraOrder;
+
+    FcLangSet() {
+        auto& registry = GetLangSetRegistry();
+        std::lock_guard lock(registry.mutex);
+        registry.live.insert(this);
+    }
+
+    FcLangSet(const FcLangSet& other) : known(other.known), extra(other.extra), extraOrder(other.extraOrder) {
+        auto& registry = GetLangSetRegistry();
+        std::lock_guard lock(registry.mutex);
+        registry.live.insert(this);
+    }
+
+    FcLangSet& operator=(const FcLangSet& other) = default;
+
+    ~FcLangSet() {
+        auto& registry = GetLangSetRegistry();
+        std::lock_guard lock(registry.mutex);
+        registry.live.erase(this);
+    }
 };
 
 namespace {
@@ -196,15 +236,65 @@ int CompareLanguageIndex(std::string_view known, std::string_view language) {
     return CompareIgnoringCase(known.substr(2), language.substr(2));
 }
 
+struct ErrnoGuard {
+    int savedErrno = errno;
+    ~ErrnoGuard() { errno = savedErrno; }
+};
+
+class GuestWriteScope {
+public:
+    GuestWriteScope(void* pointer, std::size_t bytes, const char* caller)
+        : saved(), guard(pointer ? pointer : nullptr, pointer ? bytes : 0) {
+        if (!bytes) return;
+        if (!pointer || !guard.Open() || !GuestWritable_nid_no_patch(pointer, bytes))
+            NotImplemented_nid_no_patch(caller);
+    }
+    GuestWriteScope(const GuestWriteScope&) = delete;
+    GuestWriteScope& operator=(const GuestWriteScope&) = delete;
+
+private:
+    ErrnoGuard saved;
+    GuestArena::HostWrite guard;
+};
+
+FcLangSet& RequireLangSet(FcLangSet* set, const char* caller) {
+    if (!set) NotImplemented_nid_no_patch(caller);
+    auto& registry = GetLangSetRegistry();
+    std::lock_guard lock(registry.mutex);
+    const auto it = registry.live.find(set);
+    if (it == registry.live.end()) NotImplemented_nid_no_patch(caller);
+    return *const_cast<FcLangSet*>(*it);
+}
+
+const FcLangSet& RequireLangSet(const FcLangSet* set, const char* caller) {
+    if (!set) NotImplemented_nid_no_patch(caller);
+    auto& registry = GetLangSetRegistry();
+    std::lock_guard lock(registry.mutex);
+    const auto it = registry.live.find(set);
+    if (it == registry.live.end()) NotImplemented_nid_no_patch(caller);
+    return **it;
+}
+
 struct ReleaseCharSet {
     void operator()(FcCharSet* set) const { FcCharSetDestroy(set); }
 };
 
 using CharSetValue = std::unique_ptr<FcCharSet, ReleaseCharSet>;
 
-CharSetValue RetainCharSet(const FcCharSet* source) {
+CharSetValue RetainCharSet(const FcCharSet* source, const char* caller = "RetainCharSet") {
     auto* set = const_cast<FcCharSet*>(source);
-    if (set) set->references.fetch_add(1, std::memory_order_relaxed);
+    if (set) {
+        if (reinterpret_cast<std::uintptr_t>(set) % alignof(FcCharSet) != 0)
+            NotImplemented_nid_no_patch(caller);
+        {
+            ErrnoGuard guard;
+            GuestArena::GuestArenaPrepareHostRead_nid_no_patch(set, sizeof(FcCharSet));
+            if (!GuestReadable_nid_no_patch(set, sizeof(FcCharSet)))
+                NotImplemented_nid_no_patch(caller);
+        }
+        GuestWriteScope writeScope(set, sizeof(FcCharSet), caller);
+        set->references.fetch_add(1, std::memory_order_relaxed);
+    }
     return CharSetValue(set);
 }
 
@@ -244,18 +334,19 @@ struct PatternValue {
 
 template <typename T>
 void ReadGuestValue(T& destination, const T* source, const char* caller) {
-    const int savedErrno = errno;
-    const bool ok = GuestCopyIn_nid_no_patch(&destination, source, sizeof(destination));
-    errno = savedErrno;
-    if (!ok) NotImplemented_nid_no_patch(caller);
+    if (!source) NotImplemented_nid_no_patch(caller);
+    ErrnoGuard guard;
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(source, sizeof(destination));
+    if (!GuestReadable_nid_no_patch(source, sizeof(destination)) || !GuestCopyIn_nid_no_patch(&destination, source, sizeof(destination)))
+        NotImplemented_nid_no_patch(caller);
 }
 
 template <typename T>
 void WriteGuestValue(T* destination, const T& value, const char* caller) {
-    const int savedErrno = errno;
-    const bool ok = GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
-    errno = savedErrno;
-    if (!ok) NotImplemented_nid_no_patch(caller);
+    if (!destination) NotImplemented_nid_no_patch(caller);
+    GuestWriteScope writeScope(destination, sizeof(value), caller);
+    if (!GuestCopyOut_nid_no_patch(destination, &value, sizeof(value)))
+        NotImplemented_nid_no_patch(caller);
 }
 
 template <typename T, typename TExtract>
@@ -312,17 +403,54 @@ struct FcPattern {
 
 namespace {
 
+struct PatternRegistry {
+    std::mutex mutex;
+    std::unordered_set<FcPattern*> live;
+};
+
+PatternRegistry& GetPatternRegistry() {
+    static auto* registry = new PatternRegistry();
+    return *registry;
+}
+
+FcPattern* RegisterPattern(std::unique_ptr<FcPattern> pattern) {
+    FcPattern* raw = pattern.get();
+    auto& registry = GetPatternRegistry();
+    std::lock_guard lock(registry.mutex);
+    registry.live.insert(raw);
+    return pattern.release();
+}
+
+FcPattern& RequirePattern(FcPattern* pattern, const char* caller) {
+    if (!pattern) NotImplemented_nid_no_patch(caller);
+    auto& registry = GetPatternRegistry();
+    std::lock_guard lock(registry.mutex);
+    const auto it = registry.live.find(pattern);
+    if (it == registry.live.end()) NotImplemented_nid_no_patch(caller);
+    return **it;
+}
+
+const FcPattern& RequirePattern(const FcPattern* pattern, const char* caller) {
+    if (!pattern) NotImplemented_nid_no_patch(caller);
+    auto& registry = GetPatternRegistry();
+    std::lock_guard lock(registry.mutex);
+    const auto it = registry.live.find(const_cast<FcPattern*>(pattern));
+    if (it == registry.live.end()) NotImplemented_nid_no_patch(caller);
+    return **it;
+}
+
 FcBool AddValue(FcPattern* pattern, const char* object, PatternValue value, const char* caller) {
     if (!pattern || !object) NotImplemented_nid_no_patch(caller);
+    auto& validated = RequirePattern(pattern, caller);
     const std::string name = FontconfigReadGuestCString_nid_no_patch(object, caller);
     if (!ValidType(name, value.type)) return 0;
-    const auto found = pattern->objects.find(name);
-    if (found != pattern->objects.end()) {
+    const auto found = validated.objects.find(name);
+    if (found != validated.objects.end()) {
         found->second.push_back(std::move(value));
     } else {
         std::list<PatternValue> values;
         values.push_back(std::move(value));
-        pattern->objects.emplace(name, std::move(values));
+        validated.objects.emplace(name, std::move(values));
     }
     return 1;
 }
@@ -530,29 +658,48 @@ bool IsNameLanguage(std::string_view object) {
 extern "C" {
 
 FcLangSet* APS5_VABI FcLangSetCreate() {
-    return new (std::nothrow) FcLangSet;
+    try {
+        auto created = std::make_unique<FcLangSet>();
+        auto& registry = GetLangSetRegistry();
+        std::lock_guard lock(registry.mutex);
+        registry.owned.insert(created.get());
+        return created.release();
+    } catch (const std::bad_alloc&) {
+        return nullptr;
+    }
 }
 
 void APS5_VABI FcLangSetDestroy(FcLangSet* set) {
-    delete set;
+    if (!set) return;
+    FcLangSet* victim = nullptr;
+    {
+        auto& registry = GetLangSetRegistry();
+        std::lock_guard lock(registry.mutex);
+        const auto it = registry.owned.find(set);
+        if (it == registry.owned.end()) NotImplemented_nid_no_patch(__func__);
+        victim = *it;
+        registry.owned.erase(it);
+    }
+    delete victim;
 }
 
 FcBool APS5_VABI FcLangSetAdd(FcLangSet* set, const FcChar8* language) {
     if (!set || !language) NotImplemented_nid_no_patch(__func__);
+    auto& validated = RequireLangSet(set, __func__);
     try {
         const std::string name = FontconfigReadGuestCString_nid_no_patch(reinterpret_cast<const char*>(language), __func__);
         const auto entry = std::lower_bound(std::begin(fontconfig_data::Languages), std::end(fontconfig_data::Languages), std::string_view(name),
             [](auto known, auto candidate) { return CompareLanguageIndex(known, candidate) < 0; });
         if (entry != std::end(fontconfig_data::Languages) && CompareLanguageIndex(*entry, name) == 0) {
-            set->known[entry - std::begin(fontconfig_data::Languages)] = true;
+            validated.known[entry - std::begin(fontconfig_data::Languages)] = true;
             return 1;
         }
-        const auto [insertedEntry, inserted] = set->extra.emplace(name);
+        const auto [insertedEntry, inserted] = validated.extra.emplace(name);
         if (inserted) {
             try {
-                set->extraOrder.emplace_back(name);
+                validated.extraOrder.emplace_back(name);
             } catch (...) {
-                set->extra.erase(insertedEntry);
+                validated.extra.erase(insertedEntry);
                 throw;
             }
         }
@@ -564,44 +711,66 @@ FcBool APS5_VABI FcLangSetAdd(FcLangSet* set, const FcChar8* language) {
 
 FcLangResult APS5_VABI FcLangSetHasLang(const FcLangSet* set, const FcChar8* language) {
     if (!set || !language) NotImplemented_nid_no_patch(__func__);
+    const auto& validated = RequireLangSet(set, __func__);
     const std::string name = FontconfigReadGuestCString_nid_no_patch(reinterpret_cast<const char*>(language), __func__);
     const auto entry = std::lower_bound(std::begin(fontconfig_data::Languages), std::end(fontconfig_data::Languages), std::string_view(name),
         [](auto known, auto candidate) { return CompareLanguageIndex(known, candidate) < 0; });
     const auto index = static_cast<int>(entry - std::begin(fontconfig_data::Languages));
-    if (entry != std::end(fontconfig_data::Languages) && CompareLanguageIndex(*entry, name) == 0 && set->known[index])
+    if (entry != std::end(fontconfig_data::Languages) && CompareLanguageIndex(*entry, name) == 0 && validated.known[index])
         return FcLangEqual;
     auto best = FcLangDifferentLang;
     for (int i = index - 1; i >= 0; --i) {
         const auto result = CompareLanguages(name, fontconfig_data::Languages[i]);
         if (result == FcLangDifferentLang) break;
-        if (set->known[i]) best = std::min(best, result);
+        if (validated.known[i]) best = std::min(best, result);
     }
     for (auto i = static_cast<std::size_t>(index); i < std::size(fontconfig_data::Languages); ++i) {
         const auto result = CompareLanguages(name, fontconfig_data::Languages[i]);
         if (result == FcLangDifferentLang) break;
-        if (set->known[i]) best = std::min(best, result);
+        if (validated.known[i]) best = std::min(best, result);
     }
-    for (const auto& extra : set->extra) best = std::min(best, CompareLanguages(name, extra));
+    for (const auto& extra : validated.extra) best = std::min(best, CompareLanguages(name, extra));
     return best;
 }
 
 FcPattern* APS5_VABI FcPatternCreate() {
-    return new (std::nothrow) FcPattern;
+    try {
+        return RegisterPattern(std::make_unique<FcPattern>());
+    } catch (const std::bad_alloc&) {
+        return nullptr;
+    }
 }
 
 void APS5_VABI FcPatternDestroy_nid_postfix(FcPattern* pattern) {
-    if (pattern && pattern->references.fetch_sub(1, std::memory_order_acq_rel) == 1) delete pattern;
+    if (!pattern) return;
+    FcPattern* victim = nullptr;
+    {
+        auto& registry = GetPatternRegistry();
+        std::lock_guard lock(registry.mutex);
+        const auto it = registry.live.find(pattern);
+        if (it == registry.live.end()) NotImplemented_nid_no_patch(__func__);
+        if ((*it)->references.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+            victim = *it;
+            registry.live.erase(it);
+        }
+    }
+    delete victim;
 }
 
 void APS5_VABI FcPatternReference(FcPattern* pattern) {
     if (!pattern) NotImplemented_nid_no_patch(__func__);
-    pattern->references.fetch_add(1, std::memory_order_relaxed);
+    auto& registry = GetPatternRegistry();
+    std::lock_guard lock(registry.mutex);
+    const auto it = registry.live.find(pattern);
+    if (it == registry.live.end()) NotImplemented_nid_no_patch(__func__);
+    (*it)->references.fetch_add(1, std::memory_order_relaxed);
 }
 
 FcPattern* APS5_VABI FcPatternDuplicate_nid_postfix(const FcPattern* pattern) {
     if (!pattern) return nullptr;
+    const auto& validated = RequirePattern(pattern, __func__);
     try {
-        return new FcPattern(*pattern);
+        return RegisterPattern(std::make_unique<FcPattern>(validated));
     } catch (const std::bad_alloc&) {
         return nullptr;
     }
@@ -610,6 +779,7 @@ FcPattern* APS5_VABI FcPatternDuplicate_nid_postfix(const FcPattern* pattern) {
 FcPattern* APS5_VABI FcPatternFilter(FcPattern* pattern, const FcObjectSet* objects) {
     if (!objects) return FcPatternDuplicate_nid_postfix(pattern);
     if (!pattern) NotImplemented_nid_no_patch(__func__);
+    const auto& validated = RequirePattern(pattern, __func__);
     FcObjectSet objectSet{};
     ReadGuestValue(objectSet, objects, __func__);
     if (objectSet.nobject < 0 || (objectSet.nobject > 0 && !objectSet.objects)) NotImplemented_nid_no_patch(__func__);
@@ -622,22 +792,33 @@ FcPattern* APS5_VABI FcPatternFilter(FcPattern* pattern, const FcObjectSet* obje
             const char* namePointer = nullptr;
             ReadGuestValue(namePointer, reinterpret_cast<const char* const*>(arrayBase + offset * sizeof(const char*)), __func__);
             const std::string name = FontconfigReadGuestCString_nid_no_patch(namePointer, __func__);
-            const auto entry = pattern->objects.find(name);
-            if (entry == pattern->objects.end()) continue;
+            const auto entry = validated.objects.find(name);
+            if (entry == validated.objects.end()) continue;
             auto& values = copy->objects[entry->first];
             for (const auto& value : entry->second) values.push_back(value);
         }
-        return copy.release();
+        return RegisterPattern(std::move(copy));
     } catch (const std::bad_alloc&) {
         return nullptr;
     }
 }
 
 FcBool APS5_VABI FcPatternEqual(const FcPattern* first, const FcPattern* second) {
-    if (first == second) return 1;
-    if (!first || !second || first->objects.empty() || first->objects.size() != second->objects.size()) return 0;
-    auto right = second->objects.begin();
-    for (const auto& [object, values] : first->objects) {
+    if (first == second) {
+        if (!first) return 1;
+        RequirePattern(first, __func__);
+        return 1;
+    }
+    if (!first || !second) {
+        if (first) RequirePattern(first, __func__);
+        if (second) RequirePattern(second, __func__);
+        return 0;
+    }
+    const auto& left = RequirePattern(first, __func__);
+    const auto& rightPattern = RequirePattern(second, __func__);
+    if (left.objects.empty() || left.objects.size() != rightPattern.objects.size()) return 0;
+    auto right = rightPattern.objects.begin();
+    for (const auto& [object, values] : left.objects) {
         if (object != right->first || values.size() != right->second.size()) return 0;
         if (!std::equal(values.begin(), values.end(), right->second.begin(), ValuesEqual)) return 0;
         ++right;
@@ -647,20 +828,22 @@ FcBool APS5_VABI FcPatternEqual(const FcPattern* first, const FcPattern* second)
 
 FcBool APS5_VABI FcPatternDel_nid_postfix(FcPattern* pattern, const char* object) {
     if (!pattern || !object) NotImplemented_nid_no_patch(__func__);
+    auto& validated = RequirePattern(pattern, __func__);
     const std::string name = FontconfigReadGuestCString_nid_no_patch(object, __func__);
-    const auto entry = pattern->objects.find(name);
-    if (entry == pattern->objects.end()) return 0;
-    pattern->objects.erase(entry);
+    const auto entry = validated.objects.find(name);
+    if (entry == validated.objects.end()) return 0;
+    validated.objects.erase(entry);
     return 1;
 }
 
 FcBool APS5_VABI FcPatternRemove(FcPattern* pattern, const char* object, int id) {
     if (!pattern || !object) NotImplemented_nid_no_patch(__func__);
+    auto& validated = RequirePattern(pattern, __func__);
     const std::string name = FontconfigReadGuestCString_nid_no_patch(object, __func__);
-    const auto entry = pattern->objects.find(name);
-    if (entry == pattern->objects.end() || id < 0 || static_cast<std::size_t>(id) >= entry->second.size()) return 0;
+    const auto entry = validated.objects.find(name);
+    if (entry == validated.objects.end() || id < 0 || static_cast<std::size_t>(id) >= entry->second.size()) return 0;
     entry->second.erase(std::next(entry->second.begin(), id));
-    if (entry->second.empty()) pattern->objects.erase(entry);
+    if (entry->second.empty()) validated.objects.erase(entry);
     return 1;
 }
 
@@ -668,8 +851,9 @@ FcResult APS5_VABI FcPatternGet_nid_postfix(const FcPattern* pattern, const char
     if (!object) NotImplemented_nid_no_patch(__func__);
     const std::string name = FontconfigReadGuestCString_nid_no_patch(object, __func__);
     if (!pattern) return FcResultNoMatch;
-    const auto entry = pattern->objects.find(name);
-    if (entry == pattern->objects.end()) return FcResultNoMatch;
+    const auto& validated = RequirePattern(pattern, __func__);
+    const auto entry = validated.objects.find(name);
+    if (entry == validated.objects.end()) return FcResultNoMatch;
     if (id < 0 || static_cast<std::size_t>(id) >= entry->second.size()) return FcResultNoId;
     if (!value) NotImplemented_nid_no_patch(__func__);
     WriteGuestValue(value, std::next(entry->second.begin(), id)->View(), __func__);
@@ -748,28 +932,32 @@ FcBool APS5_VABI FcPatternAddString(FcPattern* pattern, const char* object, cons
 
 FcBool APS5_VABI FcPatternAddCharSet(FcPattern* pattern, const char* object, const FcCharSet* value) {
     if (!pattern || !object) NotImplemented_nid_no_patch(__func__);
+    RequirePattern(pattern, __func__);
     if (!value) return 0;
     try {
         PatternValue entry;
         entry.type = FcTypeCharSet;
-        entry.charset = RetainCharSet(value);
+        entry.charset = RetainCharSet(value, __func__);
         return AddValue(pattern, object, std::move(entry), __func__);
     } catch (const std::bad_alloc&) { return 0; }
 }
 
 FcBool APS5_VABI FcPatternAddLangSet(FcPattern* pattern, const char* object, const FcLangSet* value) {
     if (!pattern || !object) NotImplemented_nid_no_patch(__func__);
+    RequirePattern(pattern, __func__);
     if (!value) return 0;
+    const auto& validated = RequireLangSet(value, __func__);
     try {
         PatternValue entry;
         entry.type = FcTypeLangSet;
-        entry.langset = std::make_unique<FcLangSet>(*value);
+        entry.langset = std::make_unique<FcLangSet>(validated);
         return AddValue(pattern, object, std::move(entry), __func__);
     } catch (const std::bad_alloc&) { return 0; }
 }
 
 FcBool APS5_VABI FcPatternAddMatrix(FcPattern* pattern, const char* object, const FcMatrix* value) {
     if (!pattern || !object) NotImplemented_nid_no_patch(__func__);
+    RequirePattern(pattern, __func__);
     if (!value) return 0;
     try {
         PatternValue entry;
@@ -782,15 +970,17 @@ FcBool APS5_VABI FcPatternAddMatrix(FcPattern* pattern, const char* object, cons
 
 FcPattern* APS5_VABI FcFontRenderPrepare(FcConfig* config, FcPattern* pattern, FcPattern* font) {
     if (!pattern || !font) NotImplemented_nid_no_patch(__func__);
+    const auto& validatedPattern = RequirePattern(pattern, __func__);
+    const auto& validatedFont = RequirePattern(font, __func__);
     try {
         auto prepared = std::make_unique<FcPattern>();
-        for (const auto& [object, values] : font->objects) {
+        for (const auto& [object, values] : validatedFont.objects) {
             if (IsNameLanguage(object)) continue;
             if (object == "family" || object == "style" || object == "fullname") {
                 const auto language = object + "lang";
-                const auto fontLanguages = font->objects.find(language);
-                const auto patternLanguages = pattern->objects.find(language);
-                if (fontLanguages != font->objects.end() && patternLanguages != pattern->objects.end()) {
+                const auto fontLanguages = validatedFont.objects.find(language);
+                const auto patternLanguages = validatedPattern.objects.find(language);
+                if (fontLanguages != validatedFont.objects.end() && patternLanguages != validatedPattern.objects.end()) {
                     std::size_t chosen = 1;
                     if (!CompareLists(Matcher::Lang, patternLanguages->second, fontLanguages->second, nullptr, &chosen))
                         return nullptr;
@@ -813,14 +1003,14 @@ FcPattern* APS5_VABI FcFontRenderPrepare(FcConfig* config, FcPattern* pattern, F
                     prepared->objects.emplace(language, std::move(languages));
                     continue;
                 }
-                if (fontLanguages != font->objects.end()) {
+                if (fontLanguages != validatedFont.objects.end()) {
                     prepared->objects.emplace(object, values);
                     prepared->objects.emplace(language, fontLanguages->second);
                     continue;
                 }
             }
-            const auto requested = pattern->objects.find(object);
-            if (requested == pattern->objects.end()) {
+            const auto requested = validatedPattern.objects.find(object);
+            if (requested == validatedPattern.objects.end()) {
                 prepared->objects.emplace(object, values);
                 continue;
             }
@@ -830,10 +1020,10 @@ FcPattern* APS5_VABI FcFontRenderPrepare(FcConfig* config, FcPattern* pattern, F
             chosen.push_back(std::move(best));
             prepared->objects.emplace(object, std::move(chosen));
         }
-        for (const auto& [object, values] : pattern->objects)
-            if (!font->objects.contains(object) && !IsNameLanguage(object)) prepared->objects.emplace(object, values);
+        for (const auto& [object, values] : validatedPattern.objects)
+            if (!validatedFont.objects.contains(object) && !IsNameLanguage(object)) prepared->objects.emplace(object, values);
         if (FcConfigReference(config)) NotImplemented_nid_no_patch(__func__);
-        return prepared.release();
+        return RegisterPattern(std::move(prepared));
     } catch (const std::bad_alloc&) {
         return nullptr;
     }
@@ -852,9 +1042,13 @@ std::string FontconfigReadGuestCString_nid_no_patch(const char* source, const ch
         const std::size_t toPageEnd = 4096u - (current % 4096u);
         const std::size_t chunk = toPageEnd < 256u ? toPageEnd : 256u;
         char buffer[256];
-        const int savedErrno = errno;
-        const bool ok = GuestCopyIn_nid_no_patch(buffer, reinterpret_cast<const void*>(current), chunk);
-        errno = savedErrno;
+        bool ok = false;
+        {
+            ErrnoGuard guard;
+            const auto* address = reinterpret_cast<const void*>(current);
+            GuestArena::GuestArenaPrepareHostRead_nid_no_patch(address, chunk);
+            ok = GuestReadable_nid_no_patch(address, chunk) && GuestCopyIn_nid_no_patch(buffer, address, chunk);
+        }
         if (!ok) NotImplemented_nid_no_patch(caller);
         if (const auto* end = static_cast<const char*>(std::memchr(buffer, '\0', chunk))) {
             result.append(buffer, static_cast<std::size_t>(end - buffer));
@@ -866,15 +1060,16 @@ std::string FontconfigReadGuestCString_nid_no_patch(const char* source, const ch
 }
 
 std::vector<std::string> FontconfigLanguages_nid_no_patch(const FcLangSet* set, bool enumerate) {
+    const auto& validated = RequireLangSet(set, __func__);
     std::vector<std::string> result;
     const auto* order = enumerate ? fontconfig_data::Languages : fontconfig_data::FormatLanguages;
     for (std::size_t i = 0; i < std::size(fontconfig_data::Languages); ++i) {
         const auto language = order[i];
         const auto found = std::lower_bound(std::begin(fontconfig_data::Languages), std::end(fontconfig_data::Languages), language);
         if (found != std::end(fontconfig_data::Languages) && *found == language &&
-            set->known[found - std::begin(fontconfig_data::Languages)]) result.emplace_back(language);
+            validated.known[found - std::begin(fontconfig_data::Languages)]) result.emplace_back(language);
     }
-    for (const auto& extra : set->extraOrder) result.push_back(extra);
+    for (const auto& extra : validated.extraOrder) result.push_back(extra);
     return result;
 }
 

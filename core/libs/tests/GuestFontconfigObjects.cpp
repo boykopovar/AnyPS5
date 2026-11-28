@@ -11,6 +11,10 @@
 #include <stdexcept>
 
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #else
 #include <sys/mman.h>
@@ -554,6 +558,27 @@ static void GuestPointerChecks() {
     EXPECT_REJECTED(FcPatternGetMatrix(pattern, "matrix", 0, static_cast<FcMatrix**>(roPage)));
     EXPECT_REJECTED(FcPatternGetCharSet(pattern, "charset", 0, static_cast<FcCharSet**>(roPage)));
     EXPECT_REJECTED(FcPatternGetLangSet(pattern, "lang", 0, static_cast<FcLangSet**>(roPage)));
+
+    auto* badLang = reinterpret_cast<FcLangSet*>(noAccessPage);
+    auto* badPattern = reinterpret_cast<FcPattern*>(noAccessPage);
+    auto* badCharSet = reinterpret_cast<FcCharSet*>(noAccessPage);
+    EXPECT_REJECTED(FcLangSetAdd(badLang, Text("en")));
+    EXPECT_REJECTED(FcLangSetHasLang(badLang, Text("en")));
+    EXPECT_REJECTED(FcLangSetDestroy(badLang));
+    EXPECT_REJECTED(FcPatternDestroy_nid_postfix(badPattern));
+    EXPECT_REJECTED(FcPatternReference(badPattern));
+    EXPECT_REJECTED(FcPatternDuplicate_nid_postfix(badPattern));
+    EXPECT_REJECTED(FcPatternFilter(badPattern, &boundaryEntrySet));
+    EXPECT_REJECTED(FcPatternEqual(badPattern, pattern));
+    EXPECT_REJECTED(FcPatternEqual(pattern, badPattern));
+    EXPECT_REJECTED(FcPatternDel_nid_postfix(badPattern, "family"));
+    EXPECT_REJECTED(FcPatternRemove(badPattern, "family", 0));
+    EXPECT_REJECTED(FcPatternGet_nid_postfix(badPattern, "family", 0, &foundValue));
+    EXPECT_REJECTED(FcPatternAddInteger_nid_postfix(badPattern, "weight", 80));
+    EXPECT_REJECTED(FcPatternAddLangSet(pattern, "lang", badLang));
+    EXPECT_REJECTED(FcPatternAddCharSet(pattern, "charset", badCharSet));
+    EXPECT_REJECTED(FcFontRenderPrepare(nullptr, badPattern, pattern));
+    EXPECT_REJECTED(FcFontRenderPrepare(nullptr, pattern, badPattern));
 #ifdef _WIN32
     VirtualFree(guardedPages, 0, MEM_RELEASE);
     VirtualFree(roPage, 0, MEM_RELEASE);
