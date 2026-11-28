@@ -48,8 +48,10 @@ static int Fail(int error) {
 static PosixSemaphore* Get(void* sem) {
     if (!sem) return nullptr;
     PosixSemaphore* semaphore = nullptr;
-    std::memcpy(&semaphore, sem, sizeof(semaphore));
-    return semaphore;
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(&semaphore, sem, sizeof(semaphore));
+    errno = savedErrno;
+    return ok ? semaphore : nullptr;
 }
 
 struct NamedSemaphoreMapping {
@@ -119,17 +121,20 @@ extern "C" {
 int APS5_VABI sem_init_nid_postfix(void* sem, int pshared, unsigned int value) {
     (void)pshared;
     if (!sem || value > GUEST_SEM_VALUE_MAX) return Fail(PosixThread::GUEST_EINVAL);
-    auto* semaphore = new PosixSemaphore();
+    auto semaphore = std::make_unique<PosixSemaphore>();
     semaphore->count = value;
-    std::memcpy(sem, &semaphore, sizeof(semaphore));
+    PosixSemaphore* raw = semaphore.get();
+    if (!GuestCopyOut_nid_no_patch(sem, &raw, sizeof(raw))) return Fail(PosixThread::GUEST_EINVAL);
+    semaphore.release();
     return 0;
 }
 
 int APS5_VABI sem_destroy_nid_postfix(void* sem) {
     auto* semaphore = Get(sem);
     if (!semaphore || IsNamed(sem)) return Fail(PosixThread::GUEST_EINVAL);
+    PosixSemaphore* cleared = nullptr;
+    if (!GuestCopyOut_nid_no_patch(sem, &cleared, sizeof(cleared))) return Fail(PosixThread::GUEST_EINVAL);
     delete semaphore;
-    std::memset(sem, 0, sizeof(semaphore));
     return 0;
 }
 
@@ -185,8 +190,12 @@ int APS5_VABI sem_post_nid_postfix(void* sem) {
 int APS5_VABI sem_getvalue_nid_postfix(void* sem, int* value) {
     auto* semaphore = Get(sem);
     if (!semaphore || !value) return Fail(PosixThread::GUEST_EINVAL);
-    std::lock_guard lock(semaphore->lock);
-    *value = static_cast<int>(semaphore->count);
+    int current = 0;
+    {
+        std::lock_guard lock(semaphore->lock);
+        current = static_cast<int>(semaphore->count);
+    }
+    if (!GuestCopyOut_nid_no_patch(value, &current, sizeof(current))) return Fail(PosixThread::GUEST_EINVAL);
     return 0;
 }
 
