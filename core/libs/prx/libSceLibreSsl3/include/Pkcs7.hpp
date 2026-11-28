@@ -23,6 +23,13 @@ struct LibreSsl3Pkcs7Signed {
     LibreSsl3Pkcs7* contents;
 };
 
+struct LibreSsl3Pkcs7Digest {
+    Asn1String* version;
+    LibreSsl3X509Algor* md;
+    LibreSsl3Pkcs7* contents;
+    Asn1String* digest;
+};
+
 struct LibreSsl3Pkcs7IssuerAndSerial {
     LibreSslX509Name* issuer;
     Asn1String* serial;
@@ -48,6 +55,10 @@ static_assert(sizeof(LibreSsl3Pkcs7) == 40);
 static_assert(offsetof(LibreSsl3Pkcs7, type) == 24);
 static_assert(sizeof(LibreSsl3Pkcs7Signed) == 48);
 static_assert(offsetof(LibreSsl3Pkcs7Signed, contents) == 40);
+static_assert(sizeof(LibreSsl3Pkcs7Digest) == 32);
+static_assert(offsetof(LibreSsl3Pkcs7Digest, md) == 8);
+static_assert(offsetof(LibreSsl3Pkcs7Digest, contents) == 16);
+static_assert(offsetof(LibreSsl3Pkcs7Digest, digest) == 24);
 static_assert(sizeof(LibreSsl3Pkcs7IssuerAndSerial) == 16);
 static_assert(sizeof(LibreSsl3Pkcs7SignerInfo) == 64);
 static_assert(offsetof(LibreSsl3Pkcs7SignerInfo, unauthAttr) == 48);
