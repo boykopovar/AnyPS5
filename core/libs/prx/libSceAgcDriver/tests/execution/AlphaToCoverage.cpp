@@ -1541,6 +1541,103 @@ void DccPublishGateTests(AgcDriver::VulkanDevice& device) {
     cleanup.Finish();
 }
 
+AgcDriver::Graphics::MapImportGate::Stripes StripesOfRange(std::uint64_t begin, std::uint64_t end) {
+    return AgcDriver::Graphics::MapImportGate::StripesOf(begin, end);
+}
+
+std::uint32_t LowestStripe(const AgcDriver::Graphics::MapImportGate::Stripes& stripes) {
+    for (std::uint32_t index = 0; index < stripes.size(); ++index) {
+        if (stripes[index]) return index;
+    }
+    return static_cast<std::uint32_t>(stripes.size());
+}
+
+std::uint32_t HighestStripe(const AgcDriver::Graphics::MapImportGate::Stripes& stripes) {
+    for (std::uint32_t index = static_cast<std::uint32_t>(stripes.size()); index-- > 0;) {
+        if (stripes[index]) return index;
+    }
+    return 0;
+}
+
+void ResolvePublicationOrderTests(AgcDriver::VulkanDevice& device) {
+    namespace Gate = AgcDriver::Graphics::MapImportGate;
+    const ColorTargetLayout layout(Width, Height, ColorTileMode::RenderTarget, 8);
+    std::vector<std::unique_ptr<Block>> spacers;
+    std::vector<std::unique_ptr<Block>> sources;
+    std::vector<std::unique_ptr<Block>> metadata;
+    std::vector<std::unique_ptr<Block>> destinations;
+    const auto sourceStripes = [&](std::size_t index) {
+        const auto begin = std::min(sources[index]->Address(), metadata[index]->Address());
+        const auto end = std::max(sources[index]->Address() + sources[index]->bytes, metadata[index]->Address() + metadata[index]->bytes);
+        return StripesOfRange(begin, end);
+    };
+    const auto destinationStripes = [&](std::size_t index) { return StripesOfRange(destinations[index]->Address(), destinations[index]->Address() + destinations[index]->bytes); };
+    std::optional<std::pair<std::size_t, std::size_t>> chosen;
+    for (std::uint32_t round = 0; round < 8 && !chosen; ++round) {
+        if (round != 0) spacers.push_back(std::make_unique<Block>(std::size_t{1} << Gate::StripeShift));
+        sources.push_back(std::make_unique<Block>(layout.Bytes() * 4u));
+        metadata.push_back(std::make_unique<Block>(BlockBytes));
+        destinations.push_back(std::make_unique<Block>(layout.Bytes()));
+        for (std::size_t s = 0; s < sources.size() && !chosen; ++s) {
+            const auto held = sourceStripes(s);
+            if (held.all()) continue;
+            for (std::size_t d = 0; d < destinations.size() && !chosen; ++d) {
+                const auto missing = destinationStripes(d) & ~held;
+                if (missing.any() && LowestStripe(missing) < HighestStripe(held)) chosen = std::pair{s, d};
+            }
+        }
+    }
+    Require(chosen.has_value(), "the guest arena gave no resolve destination below a multisampled source in the map-time import gate stripes");
+    auto& source = *sources[chosen->first];
+    auto& dcc = *metadata[chosen->first];
+    auto& resolved = *destinations[chosen->second];
+    const auto used = sourceStripes(chosen->first) | destinationStripes(chosen->second);
+    Require(!used.all(), "the resolve test leaves no free map-time import gate stripe");
+    Gate::Stripes importStripes;
+    importStripes.set(LowestStripe(~used));
+    DccUnwatchCleanup cleanup{device};
+    std::memset(source.data, 0, source.bytes);
+    std::memset(dcc.data, 0xc0, dcc.bytes);
+    std::memset(resolved.data, 0, resolved.bytes);
+    auto target = DecodeTarget(source, 4u);
+    target.dccAddress = dcc.Address();
+    target.dccPipeAligned = true;
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        Draw(device, target, false, Float32Export, Program({0.25f, 0.25f, 0.25f, 0.25f}, Float32Export, 1u), false, true);
+    }
+    std::atomic<bool> importHeld{false};
+    std::atomic<bool> importReleased{false};
+    std::atomic<bool> resolveFinished{false};
+    std::jthread import([&] {
+        const Gate::ImportHold hold(importStripes);
+        importHeld.store(true, std::memory_order_release);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!resolveFinished.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+        importReleased.store(true, std::memory_order_release);
+    });
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (!importHeld.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+    Require(importHeld.load(std::memory_order_acquire), "the map-time import did not take its stripe");
+    const auto before = Gate::CountersForTest();
+    AgcDriver::Graphics::ColorMetadataPass pass{};
+    pass.mode = AgcDriver::Graphics::ColorMetadataPass::Mode::Resolve;
+    pass.source = target;
+    pass.targets = {DecodeTarget(resolved)};
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        device.ColorMetadataPass(pass);
+    }
+    const bool resolvedWhileHeld = !importReleased.load(std::memory_order_acquire);
+    resolveFinished.store(true, std::memory_order_release);
+    import.join();
+    const auto after = Gate::CountersForTest();
+    Require(resolvedWhileHeld, "the resolve waited for a map-time import of an unrelated stripe");
+    Require(after.stripedPublications - before.stripedPublications >= 2, "the resolve did not publish through the map-time import gate stripes");
+    std::printf("multisample resolve: source stripes %u-%u, destination from stripe %u, import on stripe %u, %llu striped publications\n", LowestStripe(sourceStripes(chosen->first)), HighestStripe(sourceStripes(chosen->first)), LowestStripe(destinationStripes(chosen->second)), LowestStripe(importStripes), static_cast<unsigned long long>(after.stripedPublications - before.stripedPublications));
+    cleanup.Finish();
+}
+
 #ifndef _WIN32
 const char* DccComparedImportTests(AgcDriver::VulkanDevice& device, std::uint32_t selectedSamples) {
     const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
@@ -1708,18 +1805,18 @@ const char* DccComparedImportTests(AgcDriver::VulkanDevice& device, std::uint32_
 int main(int argc, char** argv) {
     try {
         std::unique_lock setup(AgcDriver::GuestMemory::GpuMutex(), std::defer_lock);
-        if (argc == 2 && (std::string_view(argv[1]) == "--dcc-unwatch" || std::string_view(argv[1]) == "--dcc-publish-gate")) setup.lock();
+        if (argc == 2 && (std::string_view(argv[1]) == "--dcc-unwatch" || std::string_view(argv[1]) == "--dcc-publish-gate" || std::string_view(argv[1]) == "--resolve-publication-order")) setup.lock();
         const auto device = OpenVulkanTestDevice();
         if (setup.owns_lock()) setup.unlock();
         if (!device) return VulkanTestSkipped;
-        if (argc == 2 && (std::string_view(argv[1]) == "--dcc-unwatch" || std::string_view(argv[1]) == "--dcc-publish-gate")) {
+        if (argc == 2 && (std::string_view(argv[1]) == "--dcc-unwatch" || std::string_view(argv[1]) == "--dcc-publish-gate" || std::string_view(argv[1]) == "--resolve-publication-order")) {
             if (!AgcDriver::GuestMemory::WriteWatched()) {
                 std::puts("skipped, multisample DCC unwatch tests require the guest write watch");
                 return VulkanTestSkipped;
             }
             const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
             const bool unwatch = std::string_view(argv[1]) == "--dcc-unwatch";
-            if (!unwatch && context.hostImportAlignment == 0) {
+            if (std::string_view(argv[1]) == "--dcc-publish-gate" && context.hostImportAlignment == 0) {
                 std::puts("skipped, host imports are unavailable for the multisample DCC publication gate test");
                 return VulkanTestSkipped;
             }
@@ -1735,6 +1832,10 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--dcc-publish-gate") {
             DccPublishGateTests(*device);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--resolve-publication-order") {
+            ResolvePublicationOrderTests(*device);
             return 0;
         }
         if (argc == 3 && std::string_view(argv[1]) == "--dcc-srgb-clear") {
