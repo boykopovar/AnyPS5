@@ -584,4 +584,10 @@ int APS5_VABI sceUserServiceGetIsSpartacusEnabled(std::int32_t userId, bool* ena
 int APS5_VABI libSceUserServiceUnknown_ErTMkmSho4E_nid_no_patch(std::uint32_t userId, char* path, std::size_t size);
 }
 
+namespace UserService1360 {
+void SetHearingAssistUserId(std::int32_t userId);
+std::int32_t GetHearingAssistUserId();
+void RegisterResetHook(void (*hook)());
+}
+
 #endif
