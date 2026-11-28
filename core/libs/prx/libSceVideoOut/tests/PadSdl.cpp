@@ -256,6 +256,82 @@ void InjectedPressAfterUnreadRelease(PadInput& padInput, const DisplayWindow& wi
     ModalDialogSetPresenter_nid_postfix(false);
 }
 
+void ControllerHotkeysAfterModal(PadInput& padInput, DisplayWindow& window, int device, const std::filesystem::path& configPath) {
+    constexpr std::uint32_t Cross = 0x4000;
+    constexpr std::uint32_t Circle = 0x2000;
+    constexpr std::uint32_t Square = 0x8000;
+    SDL_Joystick* joystick = SDL_JoystickFromInstanceID(SDL_JoystickGetDeviceInstanceID(device));
+    Require(joystick != nullptr);
+    const auto button = [&](SDL_GameControllerButton which, bool down) {
+        Require(SDL_JoystickSetVirtualButton(joystick, which, down ? 1 : 0) == 0);
+        SDL_GameControllerUpdate();
+        SDL_Event event{};
+        event.type = down ? SDL_CONTROLLERBUTTONDOWN : SDL_CONTROLLERBUTTONUP;
+        event.cbutton.which = SDL_JoystickInstanceID(joystick);
+        event.cbutton.button = which;
+        padInput.HandleEvent(event, window);
+    };
+    const auto checkMapping = [&](std::uint32_t expected, std::source_location where = std::source_location::current()) {
+        button(SDL_CONTROLLER_BUTTON_A, true);
+        Require((Pad::ReadState(0).buttons & (Cross | Circle | Square)) == expected, where);
+        button(SDL_CONTROLLER_BUTTON_A, false);
+    };
+    const auto writeConfig = [&](const char* buttonName) {
+        std::ofstream config(configPath, std::ios::trunc);
+        config << "SDLButton:a = " << buttonName << "\nReloadInputMapping = KEY:F1\nReloadInputMapping = PAD:R1\n";
+        Require(config.good());
+    };
+    const auto reloadMapping = [&] {
+        SDL_Event reload{};
+        reload.key.keysym.scancode = SDL_SCANCODE_F1;
+        reload.type = SDL_KEYDOWN;
+        padInput.HandleEvent(reload, window);
+        reload.type = SDL_KEYUP;
+        padInput.HandleEvent(reload, window);
+    };
+    writeConfig("Circle");
+    reloadMapping();
+    checkMapping(Circle);
+
+    writeConfig("Square");
+    button(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, true);
+    checkMapping(Square);
+    writeConfig("Cross");
+
+    ModalDialogSetPresenter_nid_postfix(true);
+    ModalDialogRequest request;
+    request.message = u"Continue?";
+    request.buttons = {u"OK"};
+    Require(ModalDialogOpen_nid_postfix(request));
+    Require(ModalDialogCapturesInput_nid_postfix());
+    button(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, false);
+    ModalDialogClose_nid_postfix();
+    Require(!ModalDialogCapturesInput_nid_postfix());
+    button(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, true);
+    checkMapping(Cross);
+    button(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, false);
+
+    writeConfig("Circle");
+    Require(ModalDialogOpen_nid_postfix(request));
+    Require(ModalDialogCapturesInput_nid_postfix());
+    button(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, true);
+    ModalDialogClose_nid_postfix();
+    Require(!ModalDialogCapturesInput_nid_postfix());
+    checkMapping(Cross);
+    button(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, false);
+    button(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, true);
+    checkMapping(Circle);
+    button(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, false);
+    ModalDialogReset_nid_postfix();
+    ModalDialogSetPresenter_nid_postfix(false);
+
+    {
+        std::ofstream config(configPath, std::ios::trunc);
+        Require(config.good());
+    }
+    reloadMapping();
+}
+
 void ControllerRemapping(PadInput& padInput, DisplayWindow& window, int device, const std::filesystem::path& configPath) {
     constexpr std::uint32_t Cross = 0x4000;
     constexpr std::uint32_t Circle = 0x2000;
@@ -488,6 +564,7 @@ int main() {
     Require(!padInput.SlotOccupied(1));
     Require(padInput.SlotOccupied(2));
     HandOff(padInput, window, dev0);
+    ControllerHotkeysAfterModal(padInput, window, dev0, configPath);
     ControllerRemapping(padInput, window, dev0, configPath);
 
     const SDL_JoystickID id1 = SDL_JoystickGetDeviceInstanceID(dev1);

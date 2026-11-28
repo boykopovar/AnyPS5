@@ -3,7 +3,9 @@
 #include "prx/libSceSysmodule/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/File/include/File.hpp"
+#include "prx/libkernel/File/include/FileFlags.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/include/Api.hpp"
 
 #include <algorithm>
 #include <array>
@@ -12,9 +14,12 @@
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace {
 
@@ -81,7 +86,7 @@ int ReadPath(const GuestString& path, std::string& text) {
 
 class GifFile {
 public:
-    explicit GifFile(const char* path) : fd(sceKernelOpen(path, 0, 0)) {}
+    explicit GifFile(const char* path, std::string* snapshot = nullptr) : fd(sceKernelOpen(path, 0, 0)), snapshot(snapshot) {}
     ~GifFile() { if (fd >= 0) sceKernelClose(fd); }
     GifFile(const GifFile&) = delete;
     GifFile& operator=(const GifFile&) = delete;
@@ -94,6 +99,8 @@ public:
                 if (count <= 0) return false;
                 pos = 0;
                 end = static_cast<std::size_t>(count);
+                filled += end;
+                if (snapshot) snapshot->append(reinterpret_cast<const char*>(buffer.data()), end);
             }
             const auto count = std::min(size, end - pos);
             if (destination) {
@@ -123,11 +130,15 @@ public:
         return !(packed & 0x80) || Read(nullptr, 6u << (packed & 7));
     }
 
+    std::size_t Offset() const { return filled - (end - pos); }
+
 private:
     int fd;
+    std::string* snapshot;
     std::array<std::uint8_t, 8192> buffer;
     std::size_t pos = 0;
     std::size_t end = 0;
+    std::size_t filled = 0;
 };
 
 std::uint16_t Little16(const std::uint8_t* bytes) {
@@ -143,7 +154,7 @@ struct Gif {
     std::string comment;
 };
 
-bool Extension(GifFile& file, Gif& gif) {
+bool Extension(GifFile& file, Gif& gif, std::string_view* tag = nullptr) {
     std::uint8_t label = 0;
     if (!file.Read(&label, 1)) return false;
     if (label == 0xf9) {
@@ -165,10 +176,24 @@ bool Extension(GifFile& file, Gif& gif) {
     if (name == "PSGIF_TI") text = &gif.title;
     if (name == "PSGIF_CM") text = &gif.comment;
     if (text) text->clear();
+    if (tag && text) *tag = text == &gif.title ? "PSGIF_TI" : "PSGIF_CM";
     return file.Blocks(text);
 }
 
-int Parse(GifFile& file, Gif& gif) {
+struct Block {
+    std::size_t begin;
+    std::size_t end;
+    bool image;
+    bool frame;
+    std::string_view tag;
+};
+
+struct Layout {
+    std::size_t header = 0;
+    std::vector<Block> blocks;
+};
+
+int Parse(GifFile& file, Gif& gif, Layout* layout = nullptr) {
     std::array<std::uint8_t, 13> header{};
     if (!file.Read(header.data(), header.size())) return kFileError;
     const std::string_view signature(reinterpret_cast<const char*>(header.data()), 6);
@@ -176,15 +201,19 @@ int Parse(GifFile& file, Gif& gif) {
     gif.width = Little16(header.data() + 6);
     gif.height = Little16(header.data() + 8);
     if (!file.Palette(header[10])) return kFileError;
+    if (layout) layout->header = file.Offset();
     bool afterExtension = false;
     std::uint8_t marker = 0;
     while (file.Read(&marker, 1)) {
+        const auto begin = file.Offset() - 1;
         if (marker == 0x3b) {
             if (gif.frames < 2) gif.durationMs = 0;
             return 0;
         }
         if (marker == 0x21) {
-            if (!Extension(file, gif)) return kFileError;
+            std::string_view tag;
+            if (!Extension(file, gif, &tag)) return kFileError;
+            if (layout) layout->blocks.push_back({begin, file.Offset(), false, false, tag});
             afterExtension = true;
             continue;
         }
@@ -193,6 +222,7 @@ int Parse(GifFile& file, Gif& gif) {
         if (!file.Read(image.data(), image.size()) || !file.Palette(image[8]) ||
             !file.Read(nullptr, 1) || !file.Blocks())
             return kFileError;
+        if (layout) layout->blocks.push_back({begin, file.Offset(), true, afterExtension, {}});
         if (afterExtension) ++gif.frames;
         afterExtension = false;
     }
@@ -240,6 +270,65 @@ struct RtcUse {
     RtcUse() { sceSysmoduleLoadModuleInternal(kRtcModule); }
     ~RtcUse() { sceSysmoduleUnloadModuleInternal(kRtcModule); }
 };
+
+constexpr const char* kTemporaryDirectory = "/user/av_contents/content_tmp";
+constexpr const char* kTemporaryPath = "/user/av_contents/content_tmp/DFC73C9C-72CB-4609-AC4C-82D98752290C.gif";
+std::mutex writerMutex;
+
+std::optional<std::string> Given(void* meta, std::string_view key) {
+    using Getter = int(APS5_VABI*)(void*, const GuestString*, MetadataValue*);
+    const auto get = Virtual<Getter>(meta, 0x10);
+    GuestString name{};
+    name.size = key.size();
+    name.capacity = 15;
+    std::memcpy(name.bytes, key.data(), key.size());
+    MetadataValue value{2, 0, {.text = nullptr}};
+    const int result = get(meta, &name, &value);
+    if (result == 1) return std::nullopt;
+    if (result != 0) NotImplemented_nid_no_patch("gifParserWriteMetadata: a metadata lookup result other than 0 or 1");
+    if (value.size == 0) return std::nullopt;
+    if (value.size < 0 || value.text == nullptr) throw std::invalid_argument("GIF metadata: invalid metadata text");
+    std::string text(static_cast<std::size_t>(value.size), '\0');
+    CopyIn(text.data(), value.text, text.size());
+    return text;
+}
+
+void AppendApplication(std::string& out, std::string_view identifier, const std::string& text) {
+    out.append("\x21\xff\x0b", 3);
+    out.append(identifier);
+    out.append(3, '\0');
+    for (std::size_t pos = 0; pos < text.size(); pos += 255) {
+        const auto count = std::min<std::size_t>(255, text.size() - pos);
+        out.push_back(static_cast<char>(count));
+        out.append(text, pos, count);
+    }
+    out.push_back('\0');
+}
+
+void Replace(const std::string& path, const std::string& bytes) {
+    static_cast<void>(sceKernelMkdir("/user", 0777));
+    static_cast<void>(sceKernelMkdir("/user/av_contents", 0777));
+    static_cast<void>(sceKernelMkdir(kTemporaryDirectory, 0777));
+    int fd = sceKernelOpen(kTemporaryPath, SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL, 0666);
+    if (fd < 0) NotImplemented_nid_no_patch("gifParserWriteMetadata: cannot create the temporary file exclusively");
+    try {
+        std::size_t done = 0;
+        while (done < bytes.size()) {
+            const auto count = sceKernelWrite(fd, bytes.data() + done, bytes.size() - done);
+            if (count <= 0) NotImplemented_nid_no_patch("gifParserWriteMetadata: a failing write");
+            done += static_cast<std::size_t>(count);
+        }
+        const int closed = sceKernelClose(fd);
+        fd = -1;
+        if (closed != 0) NotImplemented_nid_no_patch("gifParserWriteMetadata: a failing close");
+        if (sceKernelRename(kTemporaryPath, path.c_str()) != 0)
+            NotImplemented_nid_no_patch("gifParserWriteMetadata: a failing rename");
+    } catch (...) {
+        if (fd >= 0) sceKernelClose(fd);
+        sceKernelUnlink(kTemporaryPath);
+        throw;
+    }
+}
 
 } // namespace
 
@@ -293,3 +382,43 @@ extern "C" int APS5_VABI libSceGifParserUnknown_T8p1TeFElWo_nid_no_patch(const v
     return 0;
 }
 APS5_EXPORT("T8p1TeFElWo", libSceGifParserUnknown_T8p1TeFElWo_nid_no_patch);
+
+extern "C" int APS5_VABI libSceGifParserUnknown_SZeQGmAx_plus_N0_nid_no_patch(const void* path, void* meta) {
+    const RtcUse rtc;
+    static_cast<void>(GifParser::GetAllocator_nid_no_patch());
+    GuestString pathObject{};
+    CopyIn(&pathObject, path, sizeof(pathObject));
+    std::string filename;
+    if (const int error = ReadPath(pathObject, filename); error != 0) return error;
+    FileStat temporary{};
+    static_cast<void>(sceKernelStat(kTemporaryPath, &temporary));
+    const auto title = Given(meta, "title");
+    const auto comment = Given(meta, "comment");
+    const std::lock_guard lock(writerMutex);
+    const bool writing = title || comment;
+    std::string source;
+    Gif gif;
+    Layout layout;
+    int parsed;
+    {
+        GifFile file(filename.c_str(), writing ? &source : nullptr);
+        parsed = Parse(file, gif, writing ? &layout : nullptr);
+    }
+    if (!writing) {
+        if (parsed != 0) NotImplemented_nid_no_patch("gifParserWriteMetadata: no key given for a source that does not parse");
+        return 0;
+    }
+    if (parsed != 0) return parsed;
+    std::string written = source.substr(0, layout.header);
+    if (comment) AppendApplication(written, "PSGIF_CM", *comment);
+    if (title) AppendApplication(written, "PSGIF_TI", *title);
+    for (const auto& block : layout.blocks) {
+        if (block.image && !block.frame) continue;
+        if ((title && block.tag == "PSGIF_TI") || (comment && block.tag == "PSGIF_CM")) continue;
+        written.append(source, block.begin, block.end - block.begin);
+    }
+    written.push_back(0x3b);
+    Replace(filename, written);
+    return 0;
+}
+APS5_EXPORT("SZeQGmAx+N0", libSceGifParserUnknown_SZeQGmAx_plus_N0_nid_no_patch);

@@ -170,14 +170,29 @@ std::uint32_t CubeAxis(SpirvEmitterState& state, std::uint32_t value) {
     return Binary(state, spv::OpFSub, TypeF32(state), value, ConstantF32(state, 0x3f800000u));
 }
 
-std::uint32_t CubeLayer(SpirvEmitterState& state, std::uint32_t value) {
-    const auto guest = state.module.AllocateId();
-    state.module.AddFunction(spv::OpConvertFToU, TypeU32(state), guest, value);
-    const auto padding = Binary(state, spv::OpShiftLeftLogical, TypeU32(state), Binary(state, spv::OpShiftRightLogical, TypeU32(state), guest, ConstantU32(state, 3)), ConstantU32(state, 1));
-    const auto host = Binary(state, spv::OpISub, TypeU32(state), guest, padding);
-    const auto result = state.module.AllocateId();
-    state.module.AddFunction(spv::OpConvertUToF, TypeF32(state), result, host);
-    return result;
+std::uint32_t CubeLayer(SpirvEmitterState& state, const ImageEmitAccess& access, std::uint32_t value) {
+    if (GcnGuestShaders()) {
+        const auto guest = Unary(state, spv::OpConvertFToU, TypeU32(state), value);
+        const auto padding = Binary(state, spv::OpShiftLeftLogical, TypeU32(state), Binary(state, spv::OpShiftRightLogical, TypeU32(state), guest, ConstantU32(state, 3)), ConstantU32(state, 1));
+        return Unary(state, spv::OpConvertUToF, TypeF32(state), Binary(state, spv::OpISub, TypeU32(state), guest, padding));
+    }
+    const auto i32 = TypeI32(state);
+    const auto ext = [&](std::uint32_t op, std::uint32_t a, std::uint32_t b) {
+        const auto id = state.module.AllocateId();
+        state.module.AddFunction(spv::OpExtInst, i32, id, GlslStd450(state), op, a, b);
+        return id;
+    };
+    const auto guest = Unary(state, spv::OpConvertFToS, i32, value);
+    const auto face = ext(GLSLstd450SMin, Binary(state, spv::OpBitwiseAnd, i32, guest, ConstantI32(state, 7)), ConstantI32(state, 5));
+    state.module.EmitCapability(spv::CapabilityImageQuery);
+    const auto size = state.module.AllocateId();
+    state.module.AddFunction(spv::OpImageQuerySizeLod, TypeI32Vector(state, 3), size, LoadSampledImageDescriptor(state, access.mem.resource), ConstantU32(state, 0u));
+    const auto layers = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeExtract, i32, layers, size, 2u);
+    const auto lastCube = ext(GLSLstd450SMax, Binary(state, spv::OpISub, i32, Binary(state, spv::OpSDiv, i32, layers, ConstantI32(state, 6)), ConstantI32(state, 1)), ConstantI32(state, 0));
+    const auto cube = ext(GLSLstd450SMin, ext(GLSLstd450SMax, Binary(state, spv::OpShiftRightArithmetic, i32, guest, ConstantI32(state, 3)), ConstantI32(state, 0)), lastCube);
+    const auto host = Binary(state, spv::OpIAdd, i32, Binary(state, spv::OpIMul, i32, cube, ConstantI32(state, 6)), face);
+    return Unary(state, spv::OpConvertSToF, TypeF32(state), host);
 }
 
 std::uint32_t CoordF32(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, std::uint32_t first, std::uint32_t components, std::uint32_t encoded, bool gradient = false) {
@@ -204,7 +219,7 @@ std::uint32_t CoordF32(SpirvValueEmitContext& ctx, const ImageEmitAccess& access
     if (components == 3u) {
         auto z = (access.image.depthCompare && (access.mem.imageDimension == RdnaImageDimension::Dim1DArray || (access.image.remappedDepth1D && access.image.dimension == RdnaImageDimension::Dim2DArray))) ? component(1u) : component(2u);
         if (cube) {
-            z = CubeLayer(ctx.state, z);
+            z = CubeLayer(ctx.state, access, z);
         }
         ctx.state.module.AddFunction(spv::OpCompositeConstruct, TypeF32Vector(ctx.state, 3), result, x, y, z);
     } else {
@@ -353,14 +368,35 @@ std::uint32_t ResultVector(SpirvValueEmitContext& ctx, const ImageEmitAccess& ac
             const auto low = scalar(lowIndex);
             const auto high = highIndex < mem.componentCount ? scalar(highIndex) : SampledComponentZero(state, valueClass);
             if (integer) {
-                const auto lowBits = SampledComponentBits(ctx, low, valueClass);
-                const auto highBits = SampledComponentBits(ctx, high, valueClass);
+                const auto saturate = [&](std::uint32_t bits) {
+                    const auto clamped = state.module.AllocateId();
+                    if (valueClass == IrTextureNumericClass::Uint) {
+                        state.module.AddFunction(spv::OpExtInst, TypeU32(state), clamped, GlslStd450(state), GLSLstd450UMin, bits, ConstantU32(state, 0xffffu));
+                        return clamped;
+                    }
+                    state.module.AddFunction(spv::OpExtInst, TypeI32(state), clamped, GlslStd450(state), GLSLstd450SClamp, Unary(state, spv::OpBitcast, TypeI32(state), bits), ConstantI32(state, -32768), ConstantI32(state, 32767));
+                    return Unary(state, spv::OpBitcast, TypeU32(state), clamped);
+                };
+                const auto lowBits = saturate(SampledComponentBits(ctx, low, valueClass));
+                const auto highBits = saturate(SampledComponentBits(ctx, high, valueClass));
                 const auto mask = ConstantU32(state, 0xffffu);
                 packed[word] = Binary(state, spv::OpBitwiseOr, TypeU32(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), lowBits, mask), Binary(state, spv::OpShiftLeftLogical, TypeU32(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), highBits, mask), ConstantU32(state, 16u)));
             } else {
                 const auto pair = state.module.AllocateId();
                 state.module.AddFunction(spv::OpCompositeConstruct, TypeF32Vector(state, 2), pair, low, high);
-                packed[word] = EmitPackHalf2x16(state, pair);
+                const auto towardZero = access.image.table == NoTable && !state.registrationModules ? Binary(state, spv::OpINotEqual, TypeBool(state), state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::D16TowardZeroBase + mem.resource, 0u), ConstantU32(state, 0u)) : ConstantBool(state, false);
+                const auto rounded = Select(state, TypeU32(state), towardZero, EmitPackFloat2x16Rtz(state, low, high), EmitPackHalf2x16(state, pair));
+                const auto keepNan = [&](std::uint32_t value, std::uint32_t half) {
+                    const auto bits = Unary(state, spv::OpBitcast, TypeU32(state), value);
+                    const auto mantissa = Binary(state, spv::OpBitwiseAnd, TypeU32(state), Binary(state, spv::OpShiftRightLogical, TypeU32(state), bits, ConstantU32(state, 13u)), ConstantU32(state, 0x3ffu));
+                    const auto payload = Select(state, TypeU32(state), Binary(state, spv::OpIEqual, TypeBool(state), mantissa, ConstantU32(state, 0u)), ConstantU32(state, 1u), mantissa);
+                    const auto sign = Binary(state, spv::OpBitwiseAnd, TypeU32(state), Binary(state, spv::OpShiftRightLogical, TypeU32(state), bits, ConstantU32(state, 16u)), ConstantU32(state, 0x8000u));
+                    const auto nan = Binary(state, spv::OpBitwiseOr, TypeU32(state), sign, Binary(state, spv::OpBitwiseOr, TypeU32(state), ConstantU32(state, 0x7c00u), payload));
+                    return Select(state, TypeU32(state), Unary(state, spv::OpIsNan, TypeBool(state), value), nan, half);
+                };
+                const auto lowHalf = keepNan(low, Binary(state, spv::OpBitwiseAnd, TypeU32(state), rounded, ConstantU32(state, 0xffffu)));
+                const auto highHalf = keepNan(high, Binary(state, spv::OpShiftRightLogical, TypeU32(state), rounded, ConstantU32(state, 16u)));
+                packed[word] = Binary(state, spv::OpBitwiseOr, TypeU32(state), lowHalf, Binary(state, spv::OpShiftLeftLogical, TypeU32(state), highHalf, ConstantU32(state, 16u)));
             }
         }
         const auto result = state.module.AllocateId();
@@ -647,17 +683,38 @@ std::uint32_t ExpandFmaskTexel(SpirvEmitterState& state, const ImageEmitAccess& 
     const auto sampleBits = Binary(state, spv::OpBitwiseAnd, u32, layout, ConstantU32(state, 0xffu));
     const auto samples = Binary(state, spv::OpBitwiseAnd, u32, Binary(state, spv::OpShiftRightLogical, u32, layout, ConstantU32(state, 8u)), ConstantU32(state, 0xffu));
     const auto fragments = Binary(state, spv::OpShiftRightLogical, u32, layout, ConstantU32(state, 16u));
-    const auto packed = state.module.AllocateId();
-    state.module.AddFunction(spv::OpCompositeExtract, u32, packed, texel, 0u);
-    auto expanded = ConstantU32(state, 0u);
-    for (std::uint32_t sample = 0; sample < 8u; ++sample) {
-        const auto field = state.module.AllocateId();
-        state.module.AddFunction(spv::OpBitFieldUExtract, u32, field, packed, Binary(state, spv::OpIMul, u32, sampleBits, ConstantU32(state, sample)), sampleBits);
-        const auto fragment = Select(state, u32, Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), field, fragments), ConstantU32(state, 8u), field);
-        const auto nibble = Select(state, u32, Binary(state, spv::OpULessThan, TypeBool(state), ConstantU32(state, sample), samples), fragment, ConstantU32(state, 0u));
-        expanded = Binary(state, spv::OpBitwiseOr, u32, expanded, Binary(state, spv::OpShiftLeftLogical, u32, nibble, ConstantU32(state, sample * 4u)));
+    const auto fragmentMask = Binary(state, spv::OpISub, u32, fragments, ConstantU32(state, 1u));
+    const auto packedLow = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeExtract, u32, packedLow, texel, 0u);
+    const auto packedHigh = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeExtract, u32, packedHigh, texel, 1u);
+    auto expandedLow = ConstantU32(state, 0u);
+    auto expandedHigh = ConstantU32(state, 0u);
+    for (std::uint32_t sample = 0; sample < 16u; ++sample) {
+        const auto offset = Binary(state, spv::OpIMul, u32, sampleBits, ConstantU32(state, sample));
+        const auto shift = Binary(state, spv::OpBitwiseAnd, u32, offset, ConstantU32(state, 31u));
+        const auto lowField = state.module.AllocateId();
+        state.module.AddFunction(spv::OpBitFieldUExtract, u32, lowField, packedLow, shift, sampleBits);
+        const auto highField = state.module.AllocateId();
+        state.module.AddFunction(spv::OpBitFieldUExtract, u32, highField, packedHigh, shift, sampleBits);
+        const auto field = Select(state, u32, Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), offset, ConstantU32(state, 32u)), highField, lowField);
+        const auto index = Binary(state, spv::OpBitwiseAnd, u32, field, fragmentMask);
+        const auto unknown = Binary(state, spv::OpINotEqual, TypeBool(state), Binary(state, spv::OpBitwiseAnd, u32, field, fragments), ConstantU32(state, 0u));
+        const auto nibbleValue = Select(state, u32, unknown, Binary(state, spv::OpBitwiseOr, u32, index, ConstantU32(state, 8u)), index);
+        const auto nibble = Select(state, u32, Binary(state, spv::OpULessThan, TypeBool(state), ConstantU32(state, sample), samples), nibbleValue, ConstantU32(state, 0u));
+        const auto masked = Binary(state, spv::OpBitwiseAnd, u32, nibble, ConstantU32(state, 0xfu));
+        auto& expanded = sample < 8u ? expandedLow : expandedHigh;
+        expanded = Binary(state, spv::OpBitwiseOr, u32, expanded, Binary(state, spv::OpShiftLeftLogical, u32, masked, ConstantU32(state, (sample & 7u) * 4u)));
     }
-    const std::array<std::uint32_t, 4> components{expanded, ConstantU32(state, 0u), ConstantU32(state, 0u), ConstantU32(state, 0u)};
+    const auto firstShift = Binary(state, spv::OpBitwiseAnd, u32, Binary(state, spv::OpIMul, u32, samples, ConstantU32(state, 4u)), ConstantU32(state, 31u));
+    const auto secondShift = Binary(state, spv::OpBitwiseAnd, u32, Binary(state, spv::OpIMul, u32, samples, ConstantU32(state, 8u)), ConstantU32(state, 31u));
+    const auto replicate = Binary(state, spv::OpINotEqual, TypeBool(state), format, ConstantU32(state, static_cast<std::uint32_t>(IrBufferFormat::Fmask8_S2_F2)));
+    const auto firstReplicationShift = Select(state, u32, replicate, firstShift, ConstantU32(state, 0u));
+    const auto secondReplicationShift = Select(state, u32, replicate, secondShift, ConstantU32(state, 0u));
+    auto replicatedLow = Binary(state, spv::OpBitwiseOr, u32, expandedLow, Binary(state, spv::OpShiftLeftLogical, u32, expandedLow, firstReplicationShift));
+    replicatedLow = Binary(state, spv::OpBitwiseOr, u32, replicatedLow, Binary(state, spv::OpShiftLeftLogical, u32, replicatedLow, secondReplicationShift));
+    const auto wide = Binary(state, spv::OpUGreaterThan, TypeBool(state), samples, ConstantU32(state, 8u));
+    const std::array<std::uint32_t, 4> components{replicatedLow, expandedHigh, Select(state, u32, wide, replicatedLow, ConstantU32(state, 0u)), Select(state, u32, wide, expandedHigh, ConstantU32(state, 0u))};
     std::uint32_t selected[4] = {};
     for (std::uint32_t component = 0; component < 4u; component++) selected[component] = RuntimeSwizzledComponent(state, RuntimeImageSwizzle(state, resource, component), components);
     const auto result = state.module.AllocateId();
@@ -1239,7 +1296,7 @@ std::uint32_t PackedStoreTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess
         }
         const auto bits = info.componentBits[component];
         const auto offset = info.componentBitOffset[component];
-        const bool exact = (info.type == SpirvFormatComponentType::Uint && numericClass == IrTextureNumericClass::Uint) || (bits == 32u && ((info.type == SpirvFormatComponentType::Sint && numericClass == IrTextureNumericClass::Uint) || (info.type == SpirvFormatComponentType::Float && numericClass == IrTextureNumericClass::Float)));
+        const bool exact = ((info.type == SpirvFormatComponentType::Uint || info.type == SpirvFormatComponentType::Sint) && numericClass == IrTextureNumericClass::Uint) || (bits == 32u && info.type == SpirvFormatComponentType::Float && numericClass == IrTextureNumericClass::Float);
         if (!exact || offset % 32u + bits > 32u) {
             ctx.Fail(access.inst, "stores packed texels of a format whose bits are not reproducible through the view");
         }
@@ -1410,6 +1467,11 @@ void EmitReadOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     if (access.mem.imageDimension == RdnaImageDimension::Dim3D && (access.image.dimension == RdnaImageDimension::Dim2D || access.image.dimension == RdnaImageDimension::Dim1D)) {
         condition = Binary(state, spv::OpLogicalAnd, TypeBool(state), condition, Binary(state, spv::OpIEqual, TypeBool(state), AddressU32(ctx, access, 2u), ConstantU32(state, 0u)));
     }
+    const bool layeredAddress = access.mem.imageDimension == RdnaImageDimension::Dim1DArray || access.mem.imageDimension == RdnaImageDimension::Dim2DArray;
+    if (layeredAddress && !GcnGuestShaders() && !access.image.layerRows && (access.image.dimension == RdnaImageDimension::Dim2D || access.image.dimension == RdnaImageDimension::Dim1D)) {
+        const auto layer = AddressU32(ctx, access, AddressDimension(access).coordinateComponents - 1u);
+        condition = Binary(state, spv::OpLogicalAnd, TypeBool(state), condition, Binary(state, spv::OpIEqual, TypeBool(state), layer, ConstantU32(state, 0u)));
+    }
     if (VolumeSliceAddress(access)) {
         condition = Binary(state, spv::OpLogicalAnd, TypeBool(state), condition, VolumeSliceInRange(ctx, access, LoadSampledImageDescriptor(state, access.mem.resource), LodU32(ctx, access)));
     }
@@ -1440,8 +1502,31 @@ std::uint32_t ImageSampleIndex(SpirvValueEmitContext& ctx, const ImageEmitAccess
     return AddressU32(ctx, access, addressInfo.coordinateComponents);
 }
 
+std::array<std::uint32_t, PipelineSpecialization::StoreQuantizeWords> StoreQuantizeWordValues(SpirvEmitterState& state, std::uint32_t resource) {
+    const auto u32 = TypeU32(state);
+    std::array<std::uint32_t, PipelineSpecialization::StoreQuantizeWords> words{};
+    if (!state.registrationModules) {
+        const auto first = PipelineSpecialization::StoreQuantizeBase + resource * PipelineSpecialization::StoreQuantizeWords;
+        for (std::uint32_t index = 0; index < words.size(); ++index) words[index] = state.module.SpecializationConstant(u32, first + index, 0u);
+        return words;
+    }
+    words.fill(ConstantU32(state, 0u));
+    const auto& image = state.program.Info().images.at(resource);
+    if (image.resourceClass != ImageResourceClass::Storage || !image.written || image.atomic) return words;
+    const auto code = EmitAndConstant(state, Binary(state, spv::OpShiftRightLogical, u32, RuntimeImageDword(state, resource, offsetof(RuntimeAbi::ResourceMetadata, descriptor) / sizeof(std::uint32_t) + 1u), ConstantU32(state, 20u)), 0x1ffu);
+    const auto unquantized = StoreQuantizeValues(0u);
+    for (std::uint32_t index = 0; index < words.size(); ++index) words[index] = ConstantU32(state, unquantized[index]);
+    for (std::uint32_t value = 0; value <= 0x1ffu; ++value) {
+        const auto values = StoreQuantizeValues(value);
+        if (values[0] == 0u) continue;
+        const auto match = Binary(state, spv::OpIEqual, TypeBool(state), code, ConstantU32(state, value));
+        for (std::uint32_t index = 0; index < words.size(); ++index) words[index] = Select(state, u32, match, ConstantU32(state, values[index]), words[index]);
+    }
+    return words;
+}
+
 std::uint32_t QuantizeStoreTexel(SpirvEmitterState& state, std::uint32_t resource, std::uint32_t texel) {
-    const auto first = PipelineSpecialization::StoreQuantizeBase + resource * PipelineSpecialization::StoreQuantizeWords;
+    const auto words = StoreQuantizeWordValues(state, resource);
     const auto f32 = TypeF32(state);
     const auto vec4 = TypeF32Vector(state, 4u);
     const auto bvec4 = state.module.Type(spv::OpTypeVector, TypeBool(state), 4u);
@@ -1450,7 +1535,7 @@ std::uint32_t QuantizeStoreTexel(SpirvEmitterState& state, std::uint32_t resourc
         state.module.AddFunction(spv::OpCompositeConstruct, type, result, scalar, scalar, scalar, scalar);
         return result;
     };
-    const auto word = [&](std::uint32_t index) { return state.module.SpecializationConstant(TypeU32(state), first + index, 0u); };
+    const auto word = [&](std::uint32_t index) { return words.at(index); };
     const auto enabled = Binary(state, spv::OpINotEqual, TypeBool(state), word(0u), ConstantU32(state, 0u));
     const auto scale = splat(vec4, Unary(state, spv::OpBitcast, f32, word(1u)));
     const auto reciprocal = splat(vec4, Unary(state, spv::OpBitcast, f32, word(2u)));
@@ -1501,12 +1586,71 @@ std::uint32_t QuantizeStoreTexel(SpirvEmitterState& state, std::uint32_t resourc
     return result;
 }
 
+void EmitPackedByStoreOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
+    auto& state = ctx.state;
+    const auto elements = access.mem.imageByElements;
+    if (access.image.dimension != RdnaImageDimension::Dim2D || access.mem.dataDwords != 1u || access.mem.dmask != 1u || access.mem.dataBits != 32u) {
+        ctx.Fail(access.inst, "is a MIMG PCK2/PCK4 store outside the measured 2D, one-dword subset");
+    }
+    const auto info = PackedTexelFormat(ctx, access);
+    std::uint32_t texelBits = 0;
+    for (std::uint32_t component = 0; component < info.componentCount; ++component) texelBits += info.componentBits[component];
+    if (texelBits == 0u || texelBits % 8u != 0u || texelBits * elements > 32u) ctx.Fail(access.inst, "is a MIMG PCK2/PCK4 store whose elements do not fit one dword");
+    const auto groupTexels = 32u / texelBits;
+    state.module.EmitCapability(spv::CapabilityImageQuery);
+    EmitIfCondition(state, ctx.Arg(access.inst, 3), [&]() {
+        const auto image = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, ImageType(state, access.image), image, StorageImageDescriptorPointer(state, access.mem.resource));
+        const auto x = AddressU32(ctx, access, 0);
+        const auto y = AddressU32(ctx, access, 1);
+        const auto lod = access.mem.imageHasMip ? LodU32(ctx, access) : ConstantU32(state, 0u);
+        const auto shiftLod = Select(state, TypeU32(state), Binary(state, spv::OpUGreaterThan, TypeBool(state), lod, ConstantU32(state, 31u)), ConstantU32(state, 31u), lod);
+        const auto size = state.module.AllocateId();
+        state.module.AddFunction(spv::OpImageQuerySize, ImageViewSizeType(state, access.image.dimension), size, image);
+        const auto levelExtent = [&](std::uint32_t axis) {
+            const auto base = state.module.AllocateId();
+            state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), base, size, axis);
+            const auto shifted = Binary(state, spv::OpShiftRightLogical, TypeU32(state), base, shiftLod);
+            return Select(state, TypeU32(state), Binary(state, spv::OpUGreaterThan, TypeBool(state), shifted, ConstantU32(state, 1)), shifted, ConstantU32(state, 1));
+        };
+        const auto width = levelExtent(0u);
+        const auto height = levelExtent(1u);
+        auto inside = Binary(state, spv::OpLogicalAnd, TypeBool(state), Binary(state, spv::OpULessThan, TypeBool(state), x, width), Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), Binary(state, spv::OpISub, TypeU32(state), width, x), ConstantU32(state, elements)));
+        inside = Binary(state, spv::OpLogicalAnd, TypeBool(state), inside, Binary(state, spv::OpULessThan, TypeBool(state), y, height));
+        const auto lane = Binary(state, spv::OpBitwiseAnd, TypeU32(state), x, ConstantU32(state, groupTexels - 1u));
+        const auto word = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), word, ctx.Arg(access.inst, 2), 0u);
+        const auto mipLod = access.image.mipMode == ImageMipMode::DynamicStorage ? lod : 0u;
+        for (std::uint32_t element = 0; element < elements; ++element) {
+            const auto enabled = Binary(state, spv::OpLogicalAnd, TypeBool(state), inside, Binary(state, spv::OpULessThan, TypeBool(state), Binary(state, spv::OpIAdd, TypeU32(state), lane, ConstantU32(state, element)), ConstantU32(state, groupTexels)));
+            EmitIfCondition(state, enabled, [&]() {
+                const auto coord = state.module.AllocateId();
+                state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 2), coord, Binary(state, spv::OpIAdd, TypeU32(state), x, ConstantU32(state, element)), y);
+                const auto shifted = element == 0u ? word : Binary(state, spv::OpShiftRightLogical, TypeU32(state), word, ConstantU32(state, element * texelBits));
+                const auto bits = Binary(state, spv::OpBitwiseAnd, TypeU32(state), shifted, ConstantU32(state, (1u << texelBits) - 1u));
+                const auto source = state.module.AllocateId();
+                state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 4), source, bits, ConstantU32(state, 0u), ConstantU32(state, 0u), ConstantU32(state, 0u));
+                EmitStorageImageWrite(state, access.mem.resource, mipLod, coord, PackedStoreTexel(ctx, access, source), ImageSampleIndex(ctx, access));
+            });
+        }
+    });
+}
+
 void EmitWriteOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
+    if (access.mem.imagePacked && access.mem.imageByElements != 0u) {
+        EmitPackedByStoreOp(ctx, access);
+        return;
+    }
     auto& state = ctx.state;
     const bool uintImage = access.image.numericClass == IrTextureNumericClass::Uint;
     auto condition = ctx.Arg(access.inst, 3);
     if (access.mem.imageDimension == RdnaImageDimension::Dim2DArray && access.image.dimension == RdnaImageDimension::Dim1D) {
         condition = Binary(state, spv::OpLogicalAnd, TypeBool(state), condition, Binary(state, spv::OpIEqual, TypeBool(state), AddressU32(ctx, access, 2u), ConstantU32(state, 0u)));
+    }
+    const bool layeredAddress = access.mem.imageDimension == RdnaImageDimension::Dim1DArray || access.mem.imageDimension == RdnaImageDimension::Dim2DArray;
+    if (layeredAddress && !GcnGuestShaders() && !access.image.layerRows && (access.image.dimension == RdnaImageDimension::Dim2D || (access.image.dimension == RdnaImageDimension::Dim1D && access.mem.imageDimension == RdnaImageDimension::Dim1DArray))) {
+        const auto layer = AddressU32(ctx, access, AddressDimension(access).coordinateComponents - 1u);
+        condition = Binary(state, spv::OpLogicalAnd, TypeBool(state), condition, Binary(state, spv::OpIEqual, TypeBool(state), layer, ConstantU32(state, 0u)));
     }
     if (VolumeSliceAddress(access) || ArraySliceAddress(access)) {
         if (access.image.mipMode == ImageMipMode::DynamicStorage) ctx.Fail(access.inst, "stores a 2D-array address to a 3D image or a 3D address to a 2D-array image with dynamic mips, which is not implemented");
@@ -1518,7 +1662,7 @@ void EmitWriteOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
         const auto mipLod = access.image.mipMode == ImageMipMode::DynamicStorage ? LodU32(ctx, access) : 0u;
         const auto coord = CoordU32(ctx, access);
         auto texel = access.mem.imagePacked ? PackedStoreTexel(ctx, access, ctx.Arg(access.inst, 2)) : StoreTexel(ctx, access, ctx.Arg(access.inst, 2), uintImage);
-        if (!uintImage && !access.mem.imagePacked && !access.image.atomic && access.image.table == NoTable && !state.registrationModules && access.image.conversionFormat == IrBufferFormat::Invalid) texel = QuantizeStoreTexel(state, access.mem.resource, texel);
+        if (!uintImage && !access.mem.imagePacked && !access.image.atomic && access.image.table == NoTable && access.image.conversionFormat == IrBufferFormat::Invalid) texel = QuantizeStoreTexel(state, access.mem.resource, texel);
         EmitStorageImageWrite(state, access.mem.resource, mipLod, coord, texel, ImageSampleIndex(ctx, access));
     });
 }
@@ -1605,7 +1749,12 @@ std::uint32_t LockedImageAtomic64(SpirvValueEmitContext& ctx, const ImageEmitAcc
 void EmitAtomicOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     auto& state = ctx.state;
     const auto opcode = access.inst.Opcode();
-    const auto condition = ctx.Arg(access.inst, access.inst.ArgumentCount() - 1u);
+    auto condition = ctx.Arg(access.inst, access.inst.ArgumentCount() - 1u);
+    const bool layeredAddress = access.mem.imageDimension == RdnaImageDimension::Dim1DArray || access.mem.imageDimension == RdnaImageDimension::Dim2DArray;
+    if (layeredAddress && !GcnGuestShaders() && !access.image.layerRows && (access.image.dimension == RdnaImageDimension::Dim2D || access.image.dimension == RdnaImageDimension::Dim1D)) {
+        const auto layer = AddressU32(ctx, access, AddressDimension(access).coordinateComponents - 1u);
+        condition = Binary(state, spv::OpLogicalAnd, TypeBool(state), condition, Binary(state, spv::OpIEqual, TypeBool(state), layer, ConstantU32(state, 0u)));
+    }
     if (IsImageAtomic64Opcode(opcode) && state.requirements.imageAtomicLocks) {
         ctx.Define(access.inst, EmitValueOrDefaultIfCondition(state, condition, TypeU64(state), ConstantU64(state, 0u), [&]() { return LockedImageAtomic64(ctx, access); }));
         return;
@@ -1668,7 +1817,8 @@ void EmitAtomicOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
 
 SampleSetup MakeSampleSetup(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     const auto& dimensionInfo = RdnaImageDimensionInfoFor(access.image.dimension);
-    const auto layout = Layout(access.mem);
+    auto layout = Layout(access.mem);
+    if (access.image.cube) layout.offset = NoImageComponent;
     const bool dref = HasFlag(access.mem, RdnaImageSampleFlagCompare);
     if (dref && access.image.conversionFormat != IrBufferFormat::Invalid) {
         ctx.Fail(access.inst, "uses depth comparison with a packed integer image");
@@ -1792,6 +1942,8 @@ void EmitPackedHorizontalGatherOp(SpirvValueEmitContext& ctx, const ImageEmitAcc
     ctx.Define(access.inst, result);
 }
 
+void EmitEmulatedSample(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, const SampleSetup& setup, bool converted, bool gather);
+
 void EmitGatherOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, const SampleSetup& setup) {
     auto& state = ctx.state;
     const auto& mem = access.mem;
@@ -1800,7 +1952,9 @@ void EmitGatherOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
         ctx.Fail(access.inst, "is a gather with an LOD clamp, which is not implemented");
     }
     if (setup.dref && (access.image.emulatedCompare & EmulatedCompare::Enabled) != 0u) {
-        ctx.Fail(access.inst, "is a comparison gather of a color texture, which is not implemented");
+        if (HasFlag(mem, RdnaImageSampleFlagGatherHorizontal)) ctx.Fail(access.inst, "is a horizontal comparison gather of a color texture, which is not implemented");
+        EmitEmulatedSample(ctx, access, setup, false, true);
+        return;
     }
     if (dimension == RdnaImageDimension::Dim1D || dimension == RdnaImageDimension::Dim1DArray || access.image.remappedDepth1D) {
         if (setup.dref || !HasFlag(mem, RdnaImageSampleFlagLevelZero) || HasFlag(mem, RdnaImageSampleFlagGatherHorizontal) || access.image.remappedDepth1D) {
@@ -1872,7 +2026,7 @@ void EmitGatherOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
     ctx.Define(access.inst, ResultVector(ctx, access, UnpackImageGather(ctx, access, gathered), resultNumericClass, false, true));
 }
 
-void EmitEmulatedSample(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, const SampleSetup& setup, bool converted) {
+void EmitEmulatedSample(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, const SampleSetup& setup, bool converted, bool gather) {
     auto& state = ctx.state;
     const auto& mem = access.mem;
     const auto& image = access.image;
@@ -1988,6 +2142,17 @@ void EmitEmulatedSample(SpirvValueEmitContext& ctx, const ImageEmitAccess& acces
     const auto mix = [&](std::uint32_t first, std::uint32_t second, std::uint32_t weight) {
         return ext(filteredType, GLSLstd450FMix, {first, second, vector({weight, weight, weight, weight})});
     };
+    if (gather) {
+        const auto half = f32Constant(0.5f);
+        const auto x0 = Binary(state, spv::OpIAdd, i32, Unary(state, spv::OpConvertFToS, i32, ext(f32, GLSLstd450Floor, {Binary(state, spv::OpFSub, f32, scaledU, half)})), offsetX);
+        const auto y0 = Binary(state, spv::OpIAdd, i32, Unary(state, spv::OpConvertFToS, i32, ext(f32, GLSLstd450Floor, {Binary(state, spv::OpFSub, f32, scaledV, half)})), offsetY);
+        const auto x1 = Binary(state, spv::OpIAdd, i32, x0, ConstantI32(state, 1));
+        const auto y1 = Binary(state, spv::OpIAdd, i32, y0, ConstantI32(state, 1));
+        const auto gathered = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeConstruct, TypeF32Vector(state, 4), gathered, compareTexel(x0, y1)[0], compareTexel(x1, y1)[0], compareTexel(x1, y0)[0], compareTexel(x0, y0)[0]);
+        ctx.Define(access.inst, ResultVector(ctx, access, gathered, IrTextureNumericClass::Float, false, true));
+        return;
+    }
     const auto filtered = EmitValueIfElse(state, equal(parameter(1u), 0u), filteredType, [&] {
         return vector(compareTexel(texelIndex(scaledU, offsetX), texelIndex(scaledV, offsetY)));
     }, [&] {
@@ -2037,11 +2202,11 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
     const auto& mem = access.mem;
     const auto& image = access.image;
     if (setup.dref && (image.emulatedCompare & EmulatedCompare::Enabled) != 0u) {
-        EmitEmulatedSample(ctx, access, setup, false);
+        EmitEmulatedSample(ctx, access, setup, false, false);
         return;
     }
     if (!setup.dref && IsConvertedUnormTextureFormat(image.conversionFormat)) {
-        EmitEmulatedSample(ctx, access, setup, true);
+        EmitEmulatedSample(ctx, access, setup, true, false);
         return;
     }
     const bool explicitLod = ImageSampleExplicitLod(mem.imageSampleFlags, state.program.Resources().stage);
@@ -2572,7 +2737,7 @@ void EmitImageMode(SpirvValueEmitContext& ctx, const IrValue& inst, const ImageR
         const auto& to = RdnaImageDimensionInfoFor(addressed);
         const bool gradients = (mem.imageSampleFlags & RdnaImageSampleFlagDerivative) != 0u;
         const auto removed = from.coordinateComponents + (gradients ? 2u * from.spatialComponents : 0u);
-        const auto added = to.coordinateComponents + (gradients ? 2u * to.spatialComponents : 0u);
+        const auto added = to.coordinateComponents + to.multisampled + (gradients ? 2u * to.spatialComponents : 0u);
         if (mem.imageAddressComponents < removed) ctx.Fail(inst, "has fewer GCN image address components than its coordinates");
         gcnMemory.imageDimension = addressed;
         gcnMemory.imageAddressComponents = mem.imageAddressComponents - removed + added;
@@ -2967,7 +3132,7 @@ void EmitImageBvhIntersectRay(SpirvValueEmitContext& ctx, const IrValue& inst) {
             return node64 ? inRange : both(op(spv::OpINotEqual, boolean, baseUnits, BdaConstant(state, 0u)), inRange);
         };
         const auto valid = within(spv::OpULessThanEqual);
-        const auto isTriangle = both(valid, op(spv::OpULessThanEqual, boolean, type, uint(1u)));
+        const auto isTriangle = both(valid, op(spv::OpULessThanEqual, boolean, type, uint(3u)));
         const auto isBox16 = both(valid, op(spv::OpIEqual, boolean, type, uint(4u)));
         const auto isBox32 = both(within(spv::OpULessThan), op(spv::OpIEqual, boolean, type, uint(5u)));
 
@@ -3037,14 +3202,18 @@ void EmitImageBvhIntersectRay(SpirvValueEmitContext& ctx, const IrValue& inst) {
 
         const auto triangle = [&] {
             const auto d = nodeDwords(16u);
-            const auto second = op(spv::OpIEqual, boolean, type, uint(1u));
+            const auto isType = [&](std::uint32_t value) { return op(spv::OpIEqual, boolean, type, uint(value)); };
+            const auto vertex = [&](std::array<std::uint32_t, 4> byType, std::uint32_t axis) {
+                const auto at = [&](std::uint32_t index) { return asFloat(d[index * 3u + axis]); };
+                return selectF(isType(3u), at(byType[3]), selectF(isType(2u), at(byType[2]), selectF(isType(1u), at(byType[1]), at(byType[0]))));
+            };
             std::array<std::uint32_t, 3> v1{};
             std::array<std::uint32_t, 3> v2{};
             std::array<std::uint32_t, 3> v3{};
             for (std::uint32_t axis = 0; axis < 3u; ++axis) {
-                v1[axis] = selectF(second, asFloat(d[3u + axis]), asFloat(d[axis]));
-                v2[axis] = selectF(second, asFloat(d[9u + axis]), asFloat(d[3u + axis]));
-                v3[axis] = asFloat(d[6u + axis]);
+                v1[axis] = vertex({0u, 1u, 2u, 2u}, axis);
+                v2[axis] = vertex({1u, 3u, 3u, 4u}, axis);
+                v3[axis] = vertex({2u, 2u, 4u, 0u}, axis);
             }
             const auto e1 = sub(v2, v1);
             const auto e2 = sub(v3, v1);
@@ -3061,17 +3230,20 @@ void EmitImageBvhIntersectRay(SpirvValueEmitContext& ctx, const IrValue& inst) {
             const auto zero = real(0u);
             const auto one = real(0x3f800000u);
             const auto missed = either(either(either(op(spv::OpFOrdLessThan, boolean, u, zero), op(spv::OpFOrdGreaterThan, boolean, u, one)), either(op(spv::OpFOrdLessThan, boolean, v, zero), op(spv::OpFOrdGreaterThan, boolean, op(spv::OpFAdd, f32, u, v), one))), op(spv::OpFOrdLessThan, boolean, t, zero));
+            const auto signedInfinity = asFloat(op(spv::OpBitwiseOr, u32, op(spv::OpBitwiseAnd, u32, asUint(tDenom), uint(0x80000000u)), uint(0x7f800000u)));
+            const auto baryNum = selectF(missed, signedInfinity, tNum);
             tNum = selectF(missed, real(0x7f800000u), tNum);
+            const auto realDenom = tDenom;
             tDenom = selectF(missed, one, tDenom);
             const auto triangleId = d[15];
             const auto shift = op(spv::OpShiftLeftLogical, u32, type, uint(3u));
             const auto barycentric = [&](std::uint32_t sourceShift) {
                 const auto source = op(spv::OpBitwiseAnd, u32, op(spv::OpShiftRightLogical, u32, triangleId, op(spv::OpIAdd, u32, shift, uint(sourceShift))), uint(3u));
-                const auto rest = op(spv::OpFSub, f32, op(spv::OpFSub, f32, tDenom, iNum), jNum);
+                const auto rest = op(spv::OpFSub, f32, op(spv::OpFSub, f32, realDenom, iNum), jNum);
                 return selectF(op(spv::OpIEqual, boolean, source, uint(1u)), iNum, selectF(op(spv::OpIEqual, boolean, source, uint(2u)), jNum, rest));
             };
             const auto hit = Unary(state, spv::OpLogicalNot, boolean, missed);
-            return compose({asUint(tNum), asUint(tDenom), selectU(barycentrics, asUint(barycentric(0u)), triangleId), selectU(barycentrics, asUint(barycentric(2u)), selectU(hit, uint(1u), uint(0u)))});
+            return compose({selectU(barycentrics, asUint(baryNum), asUint(tNum)), selectU(barycentrics, asUint(realDenom), asUint(tDenom)), selectU(barycentrics, asUint(barycentric(0u)), op(spv::OpIAdd, u32, triangleId, type)), selectU(barycentrics, asUint(barycentric(2u)), selectU(hit, uint(1u), uint(0u)))});
         };
 
         const auto boxes = [&](bool fp16) {
@@ -3084,12 +3256,14 @@ void EmitImageBvhIntersectRay(SpirvValueEmitContext& ctx, const IrValue& inst) {
                 const auto packed = d[4u + position / 2u];
                 return EmitF16BitsToF32(state, position % 2u == 0u ? op(spv::OpBitwiseAnd, u32, packed, uint(0xffffu)) : op(spv::OpShiftRightLogical, u32, packed, uint(16u)));
             };
-            const auto nanMax = [&](std::uint32_t a, std::uint32_t b) { return selectF(either(isNan(a), op(spv::OpFOrdGreaterThan, boolean, a, b)), a, b); };
-            const auto nanMin = [&](std::uint32_t a, std::uint32_t b) { return selectF(either(isNan(a), op(spv::OpFOrdLessThan, boolean, a, b)), a, b); };
+            const auto nanMax = [&](std::uint32_t a, std::uint32_t b) { return selectF(either(isNan(b), op(spv::OpFOrdGreaterThan, boolean, a, b)), a, b); };
+            const auto nanMin = [&](std::uint32_t a, std::uint32_t b) { return selectF(either(isNan(b), op(spv::OpFOrdLessThan, boolean, a, b)), a, b); };
             const auto zero = real(0u);
             const auto growFactor = op(spv::OpFAdd, f32, real(0x3f800000u), op(spv::OpFMul, f32, Unary(state, spv::OpConvertUToF, f32, boxGrow), real(0x33800000u)));
             std::array<std::uint32_t, 4> children{};
             std::array<std::uint32_t, 4> keys{};
+            auto rayNan = either(isNan(origin[0]), isNan(inverse[0]));
+            for (std::uint32_t axis = 1; axis < 3u; ++axis) rayNan = either(rayNan, either(isNan(origin[axis]), isNan(inverse[axis])));
             for (std::uint32_t child = 0; child < 4u; ++child) {
                 std::uint32_t enter = 0;
                 std::uint32_t leave = 0;
@@ -3102,7 +3276,7 @@ void EmitImageBvhIntersectRay(SpirvValueEmitContext& ctx, const IrValue& inst) {
                     enter = axis == 0u ? near : nanMax(enter, near);
                     leave = axis == 0u ? far : nanMin(leave, far);
                 }
-                const auto nan = either(isNan(enter), isNan(leave));
+                const auto nan = either(rayNan, either(isNan(enter), isNan(leave)));
                 const auto minT = selectF(nan, real(0x7f800000u), selectF(op(spv::OpFOrdGreaterThan, boolean, enter, zero), enter, zero));
                 const auto maxT = selectF(nan, real(0xff800000u), selectF(op(spv::OpFOrdLessThan, boolean, leave, extent), leave, extent));
                 const auto hit = op(spv::OpFOrdLessThanEqual, boolean, minT, op(spv::OpFMul, f32, maxT, growFactor));

@@ -41,6 +41,15 @@ class SanitizerReportTests(unittest.TestCase):
             code = sanitizer_report.main([str(arg) for arg in args])
         return code, stdout.getvalue(), stderr.getvalue()
 
+    def test_main_uses_one_junit_parse_for_outcomes_and_diagnostics(self):
+        path = self.write(suite(case("broken", "fail", '<system-err>ERROR: AddressSanitizer: sample</system-err>')))
+        original_parse = sanitizer_report.ET.parse
+        with unittest.mock.patch.object(sanitizer_report.ET, "parse", wraps=original_parse) as parse:
+            code, stdout, stderr = self.run_main(path, "--json")
+        self.assertEqual((code, stderr), (1, ""))
+        self.assertEqual(json.loads(stdout)["tests"][0]["report"], "ERROR: AddressSanitizer: sample")
+        parse.assert_called_once_with(path)
+
     def test_classifies_passed_skipped_failed_and_not_run_tests(self):
         path = self.write(suite(
             case("passes"),
@@ -334,6 +343,16 @@ class SanitizerReportTests(unittest.TestCase):
                       "| `overread` | SUMMARY: AddressSanitizer: heap-buffer-overflow in A\\|B |\n"
                       "| `plain` |  |\n"
                       "| `ub` | /a.cpp:1:2: runtime error: shift exponent 64 |\n", stdout)
+
+    def test_reports_include_junit_failure_and_error_diagnostics(self):
+        summary = "SUMMARY: AddressSanitizer: example"
+        for tag in ("failure", "error"):
+            for element in (f'<{tag} message="{summary}"/>', f"<{tag}>{summary}</{tag}>"):
+                with self.subTest(element=element):
+                    junit = self.write(suite(case("unit", "fail", element)))
+                    code, stdout, _ = self.run_main(junit, "--json")
+                    self.assertEqual(code, 1)
+                    self.assertEqual(json.loads(stdout)["tests"][0]["report"], summary)
 
     def test_failed_tests_without_reports_keep_the_single_column_table(self):
         code, stdout, _ = self.run_main(self.write(suite(case("plain", "fail", '<failure message=""/><system-out>FAIL</system-out>'))))

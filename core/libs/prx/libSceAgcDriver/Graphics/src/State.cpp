@@ -7,6 +7,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -1296,8 +1297,13 @@ bool SampleMaskFollowsOrder(const State& state, const SampleOrder& order) {
     return std::ranges::any_of(order, [&](std::uint32_t word) { return (HostSampleBits(mask, word) & full) != mask; });
 }
 
-std::array<std::uint16_t, 4> QuadSampleMasks(const State& state, const SampleOrder& order) {
-    if (!SampleMaskFollowsOrder(state, order)) return QuadSampleMasks(state);
+bool SampleMaskInShader(const State& state, const SampleOrder& order, bool staticMaskStopsShading) {
+    if (SampleMaskFollowsOrder(state, order)) return true;
+    return !staticMaskStopsShading && state.perSampleShading && PartialSampleMask(state) && UniformSampleMask(state);
+}
+
+std::array<std::uint16_t, 4> QuadSampleMasks(const State& state, const SampleOrder& order, bool staticMaskStopsShading) {
+    if (!SampleMaskInShader(state, order, staticMaskStopsShading)) return QuadSampleMasks(state);
     const auto mask = static_cast<std::uint16_t>(state.quadSampleMask[0] & ((1u << state.samples) - 1u));
     return {mask, mask, mask, mask};
 }
@@ -2453,7 +2459,7 @@ GuestTextureResource SurfaceForTarget(const ColorTarget& color) {
     surface.dstSelY = 5;
     surface.dstSelZ = 6;
     surface.dstSelW = 7;
-    surface.dccAddress = color.dccAddress != 0 ? color.dccAddress : color.chainDccAddress;
+    surface.dccAddress = color.chainDccAddress != 0 ? color.chainDccAddress : color.dccAddress;
     surface.dccAlphaOnMsb = color.dccAlphaOnMsb;
     surface.dccPipeAligned = color.dccPipeAligned;
     if (ColorTileModeIsGcn(color.tileMode)) surface.gcnPitch = surface.width;
@@ -2743,6 +2749,9 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
             color.chainDccAddress = dccBase;
             color.dccAlphaOnMsb = DccAlphaOnMsb(color.format, swap);
             color.dccPipeAligned = ((attrib3 >> 30u) & 1u) != 0;
+            if (color.dccPipeAligned && ColorTextureTileMode(color.tileMode) == TextureTileMode::kR64KBX && !RuntimeSwitches::Set(RuntimeSwitch::NoDccMipFastClear)) {
+                if (const auto offset = DccMipKeyOffset(color.surfaceExtent.width, color.surfaceExtent.height, color.elementBytes, color.mipCount, std::min(firstTailLevel, color.mipCount), color.mip)) color.dccAddress = dccBase + *offset;
+            }
         } else {
             static bool reported = false;
             if (!reported) {

@@ -7,9 +7,20 @@
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#include <limits>
 #include <source_location>
+#include <stdexcept>
 #include <string>
 #include <vector>
+
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -76,10 +87,10 @@ const std::vector<unsigned char> P256Point = Hex(
     "0460fed4ba255a9d31c961eb74c6356d68c049b8923b61fa6ce669622e60f29fb6"
     "7903fe1008b8bc99a41ae9e95628bc64f2f1b20c2d7e9f5177a3c294d4462299");
 
-void RequireGroup(const EcKey* key, int nid) {
-    Require(key != nullptr && key->group != nullptr);
-    Require(key->group->curve.nid == nid);
-    Require(key->group->asn1Flag == 1);
+void RequireGroup(const EcKey* key, int nid, std::source_location location = std::source_location::current()) {
+    Require(key != nullptr && key->group != nullptr, location);
+    Require(key->group->curve.nid == nid, location);
+    Require(key->group->asn1Flag == 1, location);
 }
 
 void SignsAndVerifies(EcKey* key) {
@@ -225,6 +236,149 @@ void RejectsMalformedDer() {
     Fails("050100", 0, {NullWrongLength, Nested, Nested, D2iFailure, EcLibraryFailure});
     Fails("1000", 0, {SequenceNotConstructed, Nested, Nested, D2iFailure, EcLibraryFailure});
     Fails(P256, -1, 0, {D2iFailure, EcLibraryFailure}, std::source_location::current());
+    Fails(P256, std::int64_t{std::numeric_limits<std::int32_t>::max()} + 1, 0, {D2iFailure, EcLibraryFailure}, std::source_location::current());
+    Fails(P256, std::numeric_limits<std::int64_t>::max(), 0, {D2iFailure, EcLibraryFailure}, std::source_location::current());
+}
+
+void RejectsOversizedLengthFields() {
+    for (int count = 1; count <= 126; ++count) {
+        for (const unsigned char fill : {static_cast<unsigned char>(0xff), static_cast<unsigned char>(0x7f)}) {
+            std::vector<unsigned char> der{0x06, static_cast<unsigned char>(0x80 | count)};
+            der.insert(der.end(), static_cast<std::size_t>(count), fill);
+            der.resize(der.size() + 16, 0);
+            ERR_clear_error_nid_postfix();
+            const unsigned char* cursor = der.data();
+            Require(d2i_ECParameters_nid_postfix(nullptr, &cursor, static_cast<std::int64_t>(der.size())) == nullptr && cursor == der.data());
+        }
+    }
+}
+
+void BoundsWhatItCopies() {
+    std::vector<unsigned char> padded = P256;
+    padded.resize(5000, 0);
+    ERR_clear_error_nid_postfix();
+    const unsigned char* cursor = padded.data();
+    EcKey* key = d2i_ECParameters_nid_postfix(nullptr, &cursor, static_cast<std::int64_t>(padded.size()));
+    Require(key != nullptr && cursor == padded.data() + P256.size());
+    RequireGroup(key, Secp256r1);
+    EC_KEY_free_nid_postfix(key);
+}
+
+void RejectsCallerPointersThatCannotBeWritten() {
+#ifdef _WIN32
+    SYSTEM_INFO info;
+    GetSystemInfo(&info);
+    const std::size_t page = info.dwPageSize;
+    void* base = VirtualAlloc(nullptr, page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    Require(base != nullptr);
+#else
+    const std::size_t page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* base = mmap(nullptr, page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(base != MAP_FAILED);
+#endif
+    EcKey* existing = EC_KEY_new_by_curve_name_nid_postfix(Secp384r1);
+    Require(existing != nullptr);
+    const EcGroup* const group = existing->group;
+    auto* keySlot = static_cast<EcKey**>(base);
+    auto* cursorSlot = reinterpret_cast<const unsigned char**>(reinterpret_cast<unsigned char*>(base) + sizeof(EcKey*));
+    *keySlot = existing;
+    *cursorSlot = P256.data();
+#ifdef _WIN32
+    DWORD previous;
+    Require(VirtualProtect(base, page, PAGE_READONLY, &previous));
+#else
+    Require(mprotect(base, page, PROT_READ) == 0);
+#endif
+    const unsigned char* cursor = P256.data();
+    bool threw = false;
+    try {
+        d2i_ECParameters_nid_postfix(keySlot, &cursor, static_cast<std::int64_t>(P256.size()));
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw && cursor == P256.data() && *keySlot == existing && existing->group == group);
+    EcKey* none = nullptr;
+    threw = false;
+    try {
+        d2i_ECParameters_nid_postfix(&none, cursorSlot, static_cast<std::int64_t>(P256.size()));
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw && none == nullptr && *cursorSlot == P256.data());
+    EcKey* kept = existing;
+    threw = false;
+    try {
+        d2i_ECParameters_nid_postfix(&kept, cursorSlot, static_cast<std::int64_t>(P256.size()));
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw && kept == existing && existing->group == group && *cursorSlot == P256.data());
+    EC_KEY_free_nid_postfix(existing);
+#ifdef _WIN32
+    VirtualFree(base, 0, MEM_RELEASE);
+#else
+    munmap(base, page);
+#endif
+}
+
+void ReadsOnlyTheBytesTheEncodingNeeds() {
+#ifdef _WIN32
+    SYSTEM_INFO info;
+    GetSystemInfo(&info);
+    const std::size_t page = info.dwPageSize;
+    auto* base = static_cast<unsigned char*>(VirtualAlloc(nullptr, 2 * page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(base != nullptr);
+    DWORD previous;
+    Require(VirtualProtect(base + page, page, PAGE_NOACCESS, &previous));
+#else
+    const std::size_t page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    auto* base = static_cast<unsigned char*>(mmap(nullptr, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(base != MAP_FAILED);
+    Require(mprotect(base + page, page, PROT_NONE) == 0);
+#endif
+    for (const char* text : {"06082a8648ce3d030107", "0681082a8648ce3d030107", "068200082a8648ce3d030107", "1f06082a8648ce3d030107"}) {
+        const std::vector<unsigned char> der = Hex(text);
+        unsigned char* const end = base + page - der.size();
+        std::memcpy(end, der.data(), der.size());
+        for (const std::int64_t length : {std::int64_t{4096}, std::int64_t{5000}, std::int64_t{std::numeric_limits<std::int32_t>::max()}}) {
+            const unsigned char* cursor = end;
+            ERR_clear_error_nid_postfix();
+            EcKey* key = d2i_ECParameters_nid_postfix(nullptr, &cursor, length);
+            RequireGroup(key, Secp256r1);
+            Require(cursor == end + der.size());
+            EC_KEY_free_nid_postfix(key);
+        }
+    }
+    for (const char* text : {"0680", "06ff"}) {
+        const std::vector<unsigned char> invalid = Hex(text);
+        unsigned char* const end = base + page - invalid.size();
+        std::memcpy(end, invalid.data(), invalid.size());
+        const unsigned char* cursor = end;
+        ERR_clear_error_nid_postfix();
+        Require(d2i_ECParameters_nid_postfix(nullptr, &cursor, 4096) == nullptr && cursor == end);
+    }
+#ifdef _WIN32
+    VirtualFree(base, 0, MEM_RELEASE);
+#else
+    munmap(base, 2 * page);
+#endif
+}
+
+void RejectsARangeThatWrapsTheAddressSpace() {
+    EcKey* key = EC_KEY_new_by_curve_name_nid_postfix(Secp384r1);
+    Require(key != nullptr);
+    EcKey* const original = key;
+    const EcGroup* const group = key->group;
+    const unsigned char* const top = reinterpret_cast<const unsigned char*>(std::numeric_limits<std::uintptr_t>::max() - 4);
+    const unsigned char* cursor = top;
+    bool threw = false;
+    try {
+        d2i_ECParameters_nid_postfix(&key, &cursor, 8);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw && cursor == top && key == original && key->group == group);
+    EC_KEY_free_nid_postfix(key);
 }
 
 void RejectsANullInput() {
@@ -249,6 +403,11 @@ int main() {
     FillsOrReusesTheCallersKey();
     RejectsCurvesItCannotName();
     RejectsMalformedDer();
+    RejectsOversizedLengthFields();
+    BoundsWhatItCopies();
+    RejectsCallerPointersThatCannotBeWritten();
+    ReadsOnlyTheBytesTheEncodingNeeds();
+    RejectsARangeThatWrapsTheAddressSpace();
     RejectsANullInput();
     std::puts("libSceLibreSsl3 d2i_ECParameters tests passed");
 }

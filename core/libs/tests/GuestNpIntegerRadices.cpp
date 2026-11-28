@@ -66,7 +66,23 @@ static void CheckUnwritableOutputs() {
     Require(std::string(output.data()) == "42");
 }
 
+static void CheckUtilSettingGetters() {
+    Require(sceNpUtilGetSandboxMode() == 0);
+    Require(sceNpGetSandboxMode() == 0);
+    Require(sceNpUtilGetDateSetAuto() == 0);
+    Require(sceNpUtilGetFakeDisplayNameMode() == 0);
+    Require(sceNpUtilGetFakeRateLimit() == 100);
+    Require(sceNpUtilGetIgnoreNpTitleId() == 0);
+    Require(sceNpUtilGetNpDebug() == 0);
+    Require(sceNpUtilGetNpTestPatch() == 0);
+    Require(sceNpUtilGetShareTitleCheck() == 0);
+    Require(sceNpUtilGetTrcNotify() == 0);
+    Require(sceNpUtilGetWebApi2FakeRateLimit() == 0);
+    Require(sceNpUtilGetWebTraceSetting() == 0);
+}
+
 int main() {
+    CheckUtilSettingGetters();
     CheckUnwritableOutputs();
     for (std::uint32_t radix = 2; radix <= 36; ++radix) {
         for (std::uint32_t flags = 0; flags < 8; ++flags) {

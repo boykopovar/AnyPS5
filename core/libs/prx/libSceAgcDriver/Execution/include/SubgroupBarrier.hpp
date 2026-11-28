@@ -6,7 +6,10 @@
 
 namespace AgcDriver {
 
-inline bool SubgroupControlBarrierUsable(VkDriverId driver) {
+inline constexpr std::uint32_t NvidiaSubgroupControlBarrierDriverVersion = 596u << 22u;
+
+inline bool SubgroupControlBarrierUsable(VkDriverId driver, std::uint32_t driverVersion) {
+    if (driver == VK_DRIVER_ID_NVIDIA_PROPRIETARY) return driverVersion >= NvidiaSubgroupControlBarrierDriverVersion;
     return driver != VK_DRIVER_ID_AMD_PROPRIETARY && driver != VK_DRIVER_ID_MOLTENVK;
 }
 

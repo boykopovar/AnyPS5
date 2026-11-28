@@ -5,6 +5,7 @@
 #include <functional>
 #include <initializer_list>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace {
@@ -45,6 +46,9 @@ enum Id : std::uint32_t {
     PushConstantUintPointer,
     PushConstants,
     Zero,
+    PrivatePointer,
+    Parity,
+    Selector,
     First = 100u,
 };
 
@@ -53,7 +57,6 @@ public:
     Module() {
         words = {spv::MagicNumber, 0x00010300u, 0u, 1000u, 0u};
         emit(spv::OpCapability, {spv::CapabilityShader});
-
         emit(spv::OpMemoryModel, {spv::AddressingModelLogical, spv::MemoryModelGLSL450});
         emit(spv::OpEntryPoint, {spv::ExecutionModelGLCompute, Main, 0x6e69616du, 0u, Index, WorkgroupId});
         emit(spv::OpExecutionMode, {Main, spv::ExecutionModeLocalSize, 64u, 1u, 1u});
@@ -61,7 +64,6 @@ public:
         emit(spv::OpTypeVoid, {Void});
         emit(spv::OpTypeBool, {Bool});
         emit(spv::OpTypeInt, {Uint, 32u, 0u});
-
         emit(spv::OpTypeVector, {Vec3Uint, Uint, 3u});
         emit(spv::OpTypeFunction, {FunctionType, Void});
         emit(spv::OpTypePointer, {InputPointer, spv::StorageClassInput, Uint});
@@ -128,11 +130,155 @@ public:
 
 bool failed = false;
 
-void expect(const char* name, const Module& module, bool rejected, std::span<const std::uint32_t> snapshots = {}) {
-    const auto reason = ShaderRecompiler::SpannedBarrierInDivergentFlow(module.words, snapshots);
+void expect(const char* name, const Module& module, bool rejected, std::span<const std::uint32_t> snapshots = {}, bool unreachableExits = true) {
+    const auto reason = ShaderRecompiler::SpannedBarrierInDivergentFlow(module.words, snapshots, unreachableExits);
     if (reason.has_value() == rejected) return;
     std::fprintf(stderr, "%s: expected %s, got %s\n", name, rejected ? "a rejection" : "no rejection", reason ? reason->c_str() : "none");
     failed = true;
+}
+
+void expectReason(const char* name, const Module& module, const char* part) {
+    const auto reason = ShaderRecompiler::SpannedBarrierInDivergentFlow(module.words, {});
+    if (reason.has_value() && reason->find(part) != std::string::npos) return;
+    std::fprintf(stderr, "%s: expected a rejection naming \"%s\", got %s\n", name, part, reason ? reason->c_str() : "none");
+    failed = true;
+}
+
+void expectStray(const char* name, const Module& module, bool stray) {
+    const auto reason = ShaderRecompiler::SpannedUnreachableOutsideSpecializedSwitch(module.words);
+    if (reason.has_value() == stray) return;
+    std::fprintf(stderr, "%s: expected %s, got %s\n", name, stray ? "a stray OpUnreachable" : "none", reason ? reason->c_str() : "none");
+    failed = true;
+}
+
+Module guardedUnreachable(spv::Op selector, bool branchedTo) {
+    Module module;
+    module.emit(spv::OpTypePointer, {PrivatePointer, spv::StorageClassPrivate, Uint});
+    module.emit(spv::OpVariable, {PrivatePointer, Parity, spv::StorageClassPrivate});
+    module.emit(selector, {Uint, Selector, 0u});
+    module.function(Main);
+    module.emit(spv::OpLabel, {First});
+    module.lane(First + 1u);
+    module.emit(spv::OpULessThan, {Bool, First + 2u, First + 1u, Three});
+    module.emit(spv::OpSelectionMerge, {First + 4u, spv::SelectionControlMaskNone});
+    module.emit(spv::OpBranchConditional, {First + 2u, First + 3u, First + 4u});
+    module.emit(spv::OpLabel, {First + 3u});
+    module.emit(spv::OpSelectionMerge, {First + 6u, spv::SelectionControlMaskNone});
+    module.emit(spv::OpSwitch, {Selector, First + 5u, 0u, First + 6u, 1u, branchedTo ? First + 5u : First + 6u});
+    module.emit(spv::OpLabel, {First + 5u});
+    module.emit(spv::OpUnreachable, {});
+    module.emit(spv::OpLabel, {First + 6u});
+    module.emit(spv::OpBranch, {First + 4u});
+    module.emit(spv::OpLabel, {First + 4u});
+    module.emit(spv::OpStore, {Parity, Two});
+    module.emit(spv::OpBranch, {First + 7u});
+    module.emit(spv::OpLabel, {First + 7u});
+    module.emit(spv::OpLoopMerge, {First + 10u, First + 9u, spv::LoopControlMaskNone});
+    module.emit(spv::OpBranch, {First + 8u});
+    module.emit(spv::OpLabel, {First + 8u});
+    module.barrier();
+    module.emit(spv::OpBranch, {First + 9u});
+    module.emit(spv::OpLabel, {First + 9u});
+    module.emit(spv::OpLoad, {Uint, First + 11u, Parity});
+    module.emit(spv::OpIEqual, {Bool, First + 12u, First + 11u, Two});
+    module.emit(spv::OpBranchConditional, {First + 12u, First + 10u, First + 7u});
+    module.emit(spv::OpLabel, {First + 10u});
+    module.end();
+    return module;
+}
+
+Module uniformEarlyReturn() {
+    Module module;
+    module.function(Main);
+    module.emit(spv::OpLabel, {First});
+    module.emit(spv::OpLoad, {Vec3Uint, First + 1u, WorkgroupId});
+    module.emit(spv::OpCompositeExtract, {Uint, First + 2u, First + 1u, 0u});
+    module.emit(spv::OpAccessChain, {PushConstantUintPointer, First + 3u, PushConstants, Zero});
+    module.emit(spv::OpLoad, {Uint, First + 4u, First + 3u});
+    module.emit(spv::OpAccessChain, {StorageBufferUintPointer, First + 5u, StorageBufferVariable, Zero, First + 4u});
+    module.emit(spv::OpLoad, {Uint, First + 6u, First + 5u});
+    module.emit(spv::OpIAdd, {Uint, First + 7u, First + 2u, First + 6u});
+    module.emit(spv::OpINotEqual, {Bool, First + 8u, First + 7u, Two});
+    module.emit(spv::OpSelectionMerge, {First + 12u, spv::SelectionControlMaskNone});
+    module.emit(spv::OpBranchConditional, {First + 8u, First + 9u, First + 10u});
+    module.emit(spv::OpLabel, {First + 9u});
+    module.emit(spv::OpReturn, {});
+    module.emit(spv::OpLabel, {First + 10u});
+    module.barrier();
+    module.barrier();
+    module.barrier();
+    module.barrier();
+    module.emit(spv::OpBranch, {First + 12u});
+    module.emit(spv::OpLabel, {First + 12u});
+    module.end();
+    return module;
+}
+
+Module sequentialBarriers() {
+    Module module;
+    module.function(Main);
+    module.emit(spv::OpLabel, {First});
+    module.barrier();
+    module.barrier();
+    module.barrier();
+    module.end();
+    return module;
+}
+
+Module switchBypass(bool perLane) {
+    Module module;
+    module.function(Main);
+    module.emit(spv::OpLabel, {First});
+    std::uint32_t selector = Zero;
+    if (perLane) {
+        module.lane(First + 1u);
+        selector = First + 1u;
+    }
+    module.emit(spv::OpSelectionMerge, {First + 4u, spv::SelectionControlMaskNone});
+    module.emit(spv::OpSwitch, {selector, First + 4u, 0u, First + 3u});
+    module.emit(spv::OpLabel, {First + 3u});
+    module.barrier();
+    module.emit(spv::OpBranch, {First + 4u});
+    module.emit(spv::OpLabel, {First + 4u});
+    module.barrier();
+    module.end();
+    return module;
+}
+
+Module nestedLoops(bool barrierInsideSelection) {
+    Module module;
+    module.function(Main);
+    module.emit(spv::OpLabel, {First});
+    module.lane(First + 1u);
+    module.emit(spv::OpULessThan, {Bool, First + 2u, First + 1u, Three});
+    module.emit(spv::OpBranch, {First + 10u});
+    module.emit(spv::OpLabel, {First + 10u});
+    module.emit(spv::OpLoopMerge, {First + 17u, First + 16u, spv::LoopControlMaskNone});
+    module.emit(spv::OpBranch, {First + 11u});
+    module.emit(spv::OpLabel, {First + 11u});
+    module.emit(spv::OpBranch, {First + 12u});
+    module.emit(spv::OpLabel, {First + 12u});
+    module.emit(spv::OpLoopMerge, {First + 15u, First + 14u, spv::LoopControlMaskNone});
+    module.emit(spv::OpBranch, {First + 13u});
+    module.emit(spv::OpLabel, {First + 13u});
+    module.emit(spv::OpSelectionMerge, {First + 18u, spv::SelectionControlMaskNone});
+    module.emit(spv::OpBranchConditional, {First + 2u, First + 19u, First + 18u});
+    module.emit(spv::OpLabel, {First + 19u});
+    if (barrierInsideSelection) module.barrier();
+    module.emit(spv::OpBranch, {First + 18u});
+    module.emit(spv::OpLabel, {First + 18u});
+    if (!barrierInsideSelection) module.barrier();
+    module.emit(spv::OpBranch, {First + 14u});
+    module.emit(spv::OpLabel, {First + 14u});
+    module.emit(spv::OpBranchConditional, {True, First + 15u, First + 12u});
+    module.emit(spv::OpLabel, {First + 15u});
+    module.emit(spv::OpBranch, {First + 16u});
+    module.emit(spv::OpLabel, {First + 16u});
+    module.emit(spv::OpBranchConditional, {True, First + 17u, First + 10u});
+    module.emit(spv::OpLabel, {First + 17u});
+    module.barrier();
+    module.end();
+    return module;
 }
 
 Module selection(bool perLane) {
@@ -247,100 +393,6 @@ Module unmergedContinue(bool perLane) {
     return module;
 }
 
-Module uniformEarlyReturn() {
-    Module module;
-    module.function(Main);
-    module.emit(spv::OpLabel, {First});
-    module.emit(spv::OpLoad, {Vec3Uint, First + 1u, WorkgroupId});
-    module.emit(spv::OpCompositeExtract, {Uint, First + 2u, First + 1u, 0u});
-    module.emit(spv::OpAccessChain, {PushConstantUintPointer, First + 3u, PushConstants, Zero});
-    module.emit(spv::OpLoad, {Uint, First + 4u, First + 3u});
-    module.emit(spv::OpAccessChain, {StorageBufferUintPointer, First + 5u, StorageBufferVariable, Zero, First + 4u});
-    module.emit(spv::OpLoad, {Uint, First + 6u, First + 5u});
-    module.emit(spv::OpIAdd, {Uint, First + 7u, First + 2u, First + 6u});
-    module.emit(spv::OpINotEqual, {Bool, First + 8u, First + 7u, Two});
-    module.emit(spv::OpSelectionMerge, {First + 12u, spv::SelectionControlMaskNone});
-    module.emit(spv::OpBranchConditional, {First + 8u, First + 9u, First + 10u});
-    module.emit(spv::OpLabel, {First + 9u});
-    module.emit(spv::OpReturn, {});
-    module.emit(spv::OpLabel, {First + 10u});
-    module.barrier();
-    module.barrier();
-    module.barrier();
-    module.barrier();
-    module.emit(spv::OpBranch, {First + 12u});
-    module.emit(spv::OpLabel, {First + 12u});
-    module.end();
-    return module;
-}
-
-Module sequentialBarriers() {
-    Module module;
-    module.function(Main);
-    module.emit(spv::OpLabel, {First});
-    module.barrier();
-    module.barrier();
-    module.barrier();
-    module.end();
-    return module;
-}
-
-Module switchBypass(bool perLane) {
-    Module module;
-    module.function(Main);
-    module.emit(spv::OpLabel, {First});
-    std::uint32_t selector = Zero;
-    if (perLane) {
-        module.lane(First + 1u);
-        selector = First + 1u;
-    }
-    module.emit(spv::OpSelectionMerge, {First + 4u, spv::SelectionControlMaskNone});
-    module.emit(spv::OpSwitch, {selector, First + 4u, 0u, First + 3u});
-    module.emit(spv::OpLabel, {First + 3u});
-    module.barrier();
-    module.emit(spv::OpBranch, {First + 4u});
-    module.emit(spv::OpLabel, {First + 4u});
-    module.barrier();
-    module.end();
-    return module;
-}
-
-Module nestedLoops(bool barrierInsideSelection) {
-    Module module;
-    module.function(Main);
-    module.emit(spv::OpLabel, {First});
-    module.lane(First + 1u);
-    module.emit(spv::OpULessThan, {Bool, First + 2u, First + 1u, Three});
-    module.emit(spv::OpBranch, {First + 10u});
-    module.emit(spv::OpLabel, {First + 10u});
-    module.emit(spv::OpLoopMerge, {First + 17u, First + 16u, spv::LoopControlMaskNone});
-    module.emit(spv::OpBranch, {First + 11u});
-    module.emit(spv::OpLabel, {First + 11u});
-    module.emit(spv::OpBranch, {First + 12u});
-    module.emit(spv::OpLabel, {First + 12u});
-    module.emit(spv::OpLoopMerge, {First + 15u, First + 14u, spv::LoopControlMaskNone});
-    module.emit(spv::OpBranch, {First + 13u});
-    module.emit(spv::OpLabel, {First + 13u});
-    module.emit(spv::OpSelectionMerge, {First + 18u, spv::SelectionControlMaskNone});
-    module.emit(spv::OpBranchConditional, {First + 2u, First + 19u, First + 18u});
-    module.emit(spv::OpLabel, {First + 19u});
-    if (barrierInsideSelection) module.barrier();
-    module.emit(spv::OpBranch, {First + 18u});
-    module.emit(spv::OpLabel, {First + 18u});
-    if (!barrierInsideSelection) module.barrier();
-    module.emit(spv::OpBranch, {First + 14u});
-    module.emit(spv::OpLabel, {First + 14u});
-    module.emit(spv::OpBranchConditional, {True, First + 15u, First + 12u});
-    module.emit(spv::OpLabel, {First + 15u});
-    module.emit(spv::OpBranch, {First + 16u});
-    module.emit(spv::OpLabel, {First + 16u});
-    module.emit(spv::OpBranchConditional, {True, First + 17u, First + 10u});
-    module.emit(spv::OpLabel, {First + 17u});
-    module.barrier();
-    module.end();
-    return module;
-}
-
 Module joined(const std::function<void(Module&)>& condition) {
     Module module;
     module.function(Main);
@@ -369,6 +421,38 @@ void laneSplit(Module& module, std::uint32_t merge) {
 
 int main() {
     expect("a barrier under a lane comparison", selection(true), true);
+    expectReason("a barrier under a lane comparison names the built-in", selection(true), "the branch at the end of block %100 on %102 decides it, and %102 comes from a load of the LocalInvocationIndex built-in");
+    expectReason("a barrier under a phi joining a per-lane selection names the phi", joined([](Module& module) {
+        laneSplit(module, First + 4u);
+        module.emit(spv::OpBranch, {First + 4u});
+        module.emit(spv::OpLabel, {First + 4u});
+        module.emit(spv::OpPhi, {Bool, First + 8u, True, First + 3u, True, First});
+    }), "comes from a phi of block %104, where divergent flow merges");
+    expectReason("a barrier under a variable stored on one side of a per-lane selection names the store's block", joined([](Module& module) {
+        module.emit(spv::OpStore, {First + 20u, Two});
+        laneSplit(module, First + 4u);
+        module.emit(spv::OpStore, {First + 20u, Three});
+        module.emit(spv::OpBranch, {First + 4u});
+        module.emit(spv::OpLabel, {First + 4u});
+        module.emit(spv::OpLoad, {Uint, First + 5u, First + 20u});
+        module.emit(spv::OpIEqual, {Bool, First + 8u, First + 5u, Two});
+    }), "comes from a load of %120, which is stored in divergent flow in block %103");
+    expectReason("a barrier under a variable stored a lane value names the value's root", joined([](Module& module) {
+        module.emit(spv::OpStore, {First + 20u, First + 1u});
+        module.emit(spv::OpLoad, {Uint, First + 5u, First + 20u});
+        module.emit(spv::OpIEqual, {Bool, First + 8u, First + 5u, Two});
+    }), "comes from a load of %120, which is stored %101, which comes from a load of the LocalInvocationIndex built-in");
+    expectReason("a barrier under an atomic result names the atomic", joined([](Module& module) {
+        module.emit(spv::OpAccessChain, {WorkgroupPointer, First + 5u, Exchange, Two});
+        module.emit(spv::OpAtomicIAdd, {Uint, First + 6u, First + 5u, Two, Semantics, Three});
+        module.emit(spv::OpIEqual, {Bool, First + 8u, First + 6u, Two});
+    }), "comes from an atomic or subgroup instruction");
+    expectReason("a barrier under a workgroup word read after a store names the unfenced load", joined([](Module& module) {
+        module.emit(spv::OpAccessChain, {WorkgroupPointer, First + 5u, Exchange, Two});
+        module.emit(spv::OpStore, {First + 5u, Three});
+        module.emit(spv::OpLoad, {Uint, First + 6u, First + 5u});
+        module.emit(spv::OpIEqual, {Bool, First + 8u, First + 6u, Two});
+    }), "with no barrier before the load");
     expect("a barrier under a constant comparison", selection(false), false);
     expect("a barrier in a loop a lane value leaves", loop(true, false), true);
     expect("a barrier in a uniform loop after a per-lane selection", loop(false, true), false);
@@ -476,5 +560,12 @@ int main() {
     };
     expect("a barrier under a snapshot word read at a uniform index with the default", joined(snapshotRead(Snapshot)), false, snapshotsFor(nullptr));
     expect("a barrier under a snapshot word read at a uniform index with the opt-out set", joined(snapshotRead(Snapshot)), true, snapshotsFor("1"));
+    const auto guarded = guardedUnreachable(spv::OpSpecConstant, false);
+    expect("a barrier in a loop on a private word stored after a per-lane guard holding an OpUnreachable, counted as an exit", guarded, true);
+    expect("a barrier in a loop on a private word stored after a per-lane guard holding an OpUnreachable, not counted as an exit", guarded, false, {}, false);
+    expect("a barrier after a per-lane return with OpUnreachable not counted as an exit", early(true, spv::OpReturn), true, {}, false);
+    expectStray("an OpUnreachable only reached as the default of a specialization-constant switch", guarded, false);
+    expectStray("an OpUnreachable reached as the default of a constant switch", guardedUnreachable(spv::OpConstant, false), true);
+    expectStray("an OpUnreachable also reached as a case of a specialization-constant switch", guardedUnreachable(spv::OpSpecConstant, true), true);
     return failed ? EXIT_FAILURE : EXIT_SUCCESS;
 }

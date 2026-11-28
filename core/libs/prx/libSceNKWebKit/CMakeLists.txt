@@ -66,6 +66,9 @@ if(BUILD_TESTING)
         if(testName STREQUAL "wtffilesystemlinks" OR testName STREQUAL "jscstackoverflow")
             target_link_libraries(nkwebkit_${testName}_tests PRIVATE libkernel)
         endif()
+        if(testName STREQUAL "asyncfilestream")
+            target_link_libraries(nkwebkit_${testName}_tests PRIVATE libkernel)
+        endif()
         add_test(NAME nkwebkit_${testName} COMMAND nkwebkit_${testName}_tests)
         if(ANYPS5_ENABLE_ASAN AND testName STREQUAL "wtf")
             add_asan_test_options(nkwebkit_${testName} allocator_may_return_null=1)
@@ -86,6 +89,8 @@ if(BUILD_TESTING)
             endif()
         endif()
     endforeach()
+
+    target_compile_definitions(nkwebkit_graphemeclusters_tests PRIVATE ANYPS5_GRAPHEME_BREAK_TEST="${ICU_SOURCE_DIR}/test/testdata/GraphemeBreakTest.txt")
 
     add_test_executable(nkwebkit_wtftext_allocation_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/allocation/WtfTextAllocation.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StringBuilder.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/WtfString.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/WtfNumberFormat.cpp

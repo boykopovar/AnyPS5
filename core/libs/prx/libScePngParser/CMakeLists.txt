@@ -1,11 +1,12 @@
 add_library(libScePngParser SHARED EXCLUDE_FROM_ALL Export.cpp)
 target_include_directories(libScePngParser PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libScePngParser PRIVATE libSceRtc libSceSysmodule libkernel libc)
 configure_windows_unwind(libScePngParser)
 
 if(BUILD_TESTING)
     add_test_executable(guest_png_parser_tests ${LIBS_INCLUDE_DIR}/tests/GuestPngParser.cpp)
     target_include_directories(guest_png_parser_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_png_parser_tests PRIVATE libScePngParser libc)
+    target_link_libraries(guest_png_parser_tests PRIVATE libScePngParser libSceSysmodule libkernel libc)
     configure_windows_unwind(guest_png_parser_tests)
     add_test(NAME guest_png_parser COMMAND guest_png_parser_tests)
     if(WIN32)

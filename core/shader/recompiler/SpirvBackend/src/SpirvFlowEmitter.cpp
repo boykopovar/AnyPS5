@@ -416,6 +416,7 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::FPAdd16x2: return Invoke(EmitFPAdd16x2, ctx, inst);
         case IrOpcode::FPMul16x2: return Invoke(EmitFPMul16x2, ctx, inst);
         case IrOpcode::FPFma16x2: return Invoke(EmitFPFma16x2, ctx, inst);
+        case IrOpcode::SplatLowU16x2: return Invoke(EmitSplatLowU16x2, ctx, inst);
         case IrOpcode::IAdd16x2: return Invoke(EmitIAdd16x2, ctx, inst);
         case IrOpcode::ISub16x2: return Invoke(EmitISub16x2, ctx, inst);
         case IrOpcode::IMul16x2: return Invoke(EmitIMul16x2, ctx, inst);
@@ -1481,7 +1482,7 @@ void EmitMeshSoftwareBarrier(SpirvEmitterState& state) {
     state.module.AddFunction(spv::OpAtomicStore, arrival, scope, release, ConstantU32(state, 0u));
     state.module.AddFunction(spv::OpAtomicIAdd, TypeU32(state), state.module.AllocateId(), generation, scope, release, ConstantU32(state, 1u));
     state.module.AddFunction(spv::OpBranch, releaseMerge);
-    // Reconverge the release and non-release arms before any invocation enters the wait loop.
+
     EmitLabel(state, releaseMerge);
     state.module.AddFunction(spv::OpBranch, done);
     EmitLabel(state, waitBlock);
@@ -1493,7 +1494,7 @@ void EmitMeshSoftwareBarrier(SpirvEmitterState& state) {
     state.module.AddFunction(spv::OpAtomicLoad, TypeU32(state), observedGeneration, generation, scope, acquire);
     const auto advanced = Binary(state, spv::OpINotEqual, TypeBool(state), observedGeneration, currentGeneration);
     const auto waiting = Unary(state, spv::OpLogicalNot, TypeBool(state), advanced);
-    // The last ticket has already released the generation and must never participate in the wait ballot.
+
     const auto notLast = Binary(state, spv::OpINotEqual, TypeBool(state), ticket, ConstantU32(state, participants - 1u));
     const auto waitingBeforeRelease = Binary(state, spv::OpLogicalAnd, TypeBool(state), notLast, waiting);
     const auto anyWaiting = EmitHostSubgroupAny(state, waitingBeforeRelease);

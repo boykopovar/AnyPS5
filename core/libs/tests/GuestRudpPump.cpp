@@ -18,6 +18,7 @@ static void Require(bool value, int line) {
 int main() {
     constexpr int notInitialized = static_cast<int>(0x80770001);
     constexpr int invalidArgument = static_cast<int>(0x80770004);
+    constexpr int internalIoThreadEnabled = static_cast<int>(0x80770010);
     constexpr int notAcceptable = static_cast<int>(0x80770011);
     constexpr int invalidSocket = static_cast<int>(0x80770019);
     std::uint16_t segmentSize = 0x5a5a;
@@ -46,6 +47,9 @@ int main() {
         CHECK(sceRudpNetReceived(7, &packet, 1, address, length) == invalidSocket);
     }
     CHECK(sceRudpEnableInternalIOThread2(0x4000, 0, 0x3) == 0);
+    CHECK(sceRudpEnableInternalIOThread2(0, 0, 0) == internalIoThreadEnabled);
+    CHECK(sceRudpEnableInternalIOThread(0, 0) == internalIoThreadEnabled);
+    CHECK(sceRudpProcessEvents(0) == internalIoThreadEnabled);
     CHECK(sceRudpGetMaxSegmentSize(nullptr) == invalidArgument);
     CHECK(sceRudpGetMaxSegmentSize(&segmentSize) == 0);
     CHECK(segmentSize == 1410);
@@ -55,6 +59,8 @@ int main() {
     CHECK(sceRudpSetMaxSegmentSize(1200) == 0);
     int context = -1;
     CHECK(sceRudpCreateContext(nullptr, nullptr, &context) == 0);
+    CHECK(sceRudpEnableInternalIOThread2(0, 0, 0) == notAcceptable);
+    CHECK(sceRudpEnableInternalIOThread(0, 0) == notAcceptable);
     CHECK(sceRudpSetMaxSegmentSize(1000) == notAcceptable);
     CHECK(sceRudpBind(context, 7, 0x2711, 2) == 0);
     CHECK(sceRudpNetReceived(7, &packet, 0, nullptr, 0) == 0);
@@ -62,6 +68,10 @@ int main() {
     CHECK(sceRudpNetReceived(7, &packet, 1, address, sizeof(address)) == 0);
     CHECK(sceRudpTerminate(context) == 0);
     CHECK(sceRudpSetMaxSegmentSize(1000) == 0);
+    CHECK(sceRudpEnd() == 0);
+    CHECK(sceRudpInit_nid_postfix(pool, sizeof(pool)) == 0);
+    CHECK(sceRudpProcessEvents(0) == 0);
+    CHECK(sceRudpEnableInternalIOThread(0, 0) == 0);
     CHECK(sceRudpEnd() == 0);
 
     segmentSize = 0x5a5a;

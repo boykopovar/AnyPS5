@@ -1,5 +1,6 @@
 #include <relinker/pipeline/RelinkerPipeline.hpp>
 #include <elfpatcher/general/ElfConstants.hpp>
+#include <relinker/analysis/PathconfImport.hpp>
 #include <relinker/analysis/UnusedNidFilter/PltCompactor.hpp>
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <relinker/analysis/SceCodeExtent.hpp>
@@ -29,6 +30,20 @@ constexpr std::uint16_t kEtRel = 1;
 constexpr std::uint16_t kEtCore = 4;
 constexpr std::uint16_t kEtSceDynExec = 0xfe10;
 constexpr std::uint16_t kEtSceDynamic = 0xfe18;
+
+const NidReference* FindPathconfImport(const std::vector<NidReference>& nidRefs) {
+    const NidReference* candidate = nullptr;
+    for (const auto& ref : nidRefs) {
+        if (ref.Addend != 0 || !IsPathconfImportLibrary(ref.Library) || !IsPathconfImportSymbolType(ref.SymbolType) || !IsPathconfImportName(ref.Nid))
+            continue;
+        const unsigned rank = PathconfRelocationRank(ref.RelocationTypeValue);
+        if (rank == 0)
+            continue;
+        if (!candidate || rank > PathconfRelocationRank(candidate->RelocationTypeValue))
+            candidate = &ref;
+    }
+    return candidate;
+}
 
 }
 
@@ -302,6 +317,47 @@ RelinkResult RelinkerPipeline::Relink() {
         if (!dynSymTabBound || sceSymTabSize < *dynSymTabBound)
             dynSymTabBound = sceSymTabSize;
     }
+    if (!dynSymTabBound && (hasTag(DT_HASH) || hasTag(DT_GNU_HASH))) {
+        const auto readHashWord = [&](const FileByteOffset offset) {
+            if (offset > raw.size() || raw.size() - offset < 4)
+                throw RelinkerException("Dynamic symbol table: unmapped address", offset);
+            std::uint32_t word = 0;
+            std::memcpy(&word, raw.data() + offset, sizeof(word));
+            return word;
+        };
+        std::uint64_t symbolCount = 0;
+        if (hasTag(DT_HASH)) {
+            const FileByteOffset table = elfReader->TranslateVirtualAddress(getTagValue(DT_HASH));
+            const auto bucketCount = readHashWord(table);
+            symbolCount = readHashWord(table + 4);
+            if (bucketCount == 0 || symbolCount == 0)
+                throw RelinkerException("Dynamic symbol table: invalid SysV hash header", table);
+        } else {
+            const FileByteOffset table = elfReader->TranslateVirtualAddress(getTagValue(DT_GNU_HASH));
+            const auto bucketCount = readHashWord(table);
+            const auto firstSymbol = readHashWord(table + 4);
+            const auto bloomCount = readHashWord(table + 8);
+            if (bucketCount == 0 || bloomCount == 0 || firstSymbol == 0)
+                throw RelinkerException("Dynamic symbol table: invalid GNU hash header", table);
+            const std::uint64_t buckets = table + 16 + static_cast<std::uint64_t>(bloomCount) * 8;
+            std::uint64_t lastBucket = 0;
+            for (std::uint64_t index = 0; index < bucketCount; ++index) {
+                const auto bucket = readHashWord(buckets + index * 4);
+                if (bucket != 0 && bucket < firstSymbol)
+                    throw RelinkerException("Dynamic symbol table: invalid GNU hash bucket", table);
+                lastBucket = std::max<std::uint64_t>(lastBucket, bucket);
+            }
+            symbolCount = firstSymbol;
+            if (lastBucket != 0) {
+                const std::uint64_t chains = buckets + static_cast<std::uint64_t>(bucketCount) * 4;
+                symbolCount = lastBucket;
+                while ((readHashWord(chains + (symbolCount - firstSymbol) * 4) & 1) == 0)
+                    ++symbolCount;
+                ++symbolCount;
+            }
+        }
+        dynSymTabBound = symbolCount * symEntSize;
+    }
     validateSceTableRange(DT_OS_SYMTAB, dynSymTabOffset, dynSymTabSize.value_or(0), "Dynamic symbol table");
 
     if (dynStrTabOffset > raw.size() || dynStrTabSize > raw.size() - dynStrTabOffset)
@@ -413,6 +469,7 @@ RelinkResult RelinkerPipeline::Relink() {
         return definedTlsSymbolValue(symIdx, pos).has_value();
     };
 
+    std::uint64_t ignoredGlobDatAddends = 0;
     auto extractRela = [&](const FileByteOffset relaOff, const ByteCount relaSize, const bool plt) {
         for (ByteCount off = 0; relaSize >= relaEntSize && off <= relaSize - relaEntSize; off += relaEntSize) {
             const FileByteOffset pos = relaEntryPos(relaOff, off);
@@ -473,12 +530,21 @@ RelinkResult RelinkerPipeline::Relink() {
             const bool weak = (raw[symOff + 4] >> 4) == STB_WEAK;
             const auto symbolType = static_cast<std::uint8_t>(raw[symOff + 4] & 15);
             const bool function = symbolType == STT_FUNC;
-            nidRefs.push_back({name, Domain::ImportModule(name, importModules, neededLibraries, ownModules), relType, pos, rOffset, rAddend, weak, function, symbolType});
+            if (relType == R_X86_64_JUMP_SLOT && rAddend != 0)
+                throw RelinkerException("JUMP_SLOT relocation has a nonzero addend", pos);
+            if (relType == R_X86_64_GLOB_DAT && rAddend != 0)
+                ++ignoredGlobDatAddends;
+            nidRefs.push_back({name, Domain::ImportModule(name, importModules, neededLibraries, ownModules), relType, pos, rOffset, relType == R_X86_64_GLOB_DAT ? 0 : rAddend, weak, function, symbolType});
         }
     };
 
     extractRela(dynRelaOffset, dynRelaSize, false);
     extractRela(dynJmpRelOffset, dynJmpRelSize, true);
+    if (ignoredGlobDatAddends != 0) {
+        std::ostringstream message;
+        message << "GLOB_DAT addends ignored per the x86-64 psABI: " << ignoredGlobDatAddends << "\n";
+        progress.Message(message.str());
+    }
 
     std::vector<std::pair<VirtualAddress, VirtualAddress>> unwindRanges;
     std::vector<std::vector<CodeRange>> segmentUnwindRanges(executableSegments.size());
@@ -521,10 +587,12 @@ RelinkResult RelinkerPipeline::Relink() {
     for (std::size_t index = 0; index < executableSegments.size(); ++index) {
         auto& [segment, segmentVAddr, segmentFileOffset] = executableSegments[index];
         auto& scanSegment = scanSegments[index];
+        std::vector<RoutedSyscallStub> segmentRoutedStubs;
         std::vector<std::size_t> syscallTraps;
         try {
-            syscallTraps = syscallScanner->ScanCodeSectionForSyscalls(scanSegment, segmentVAddr, scanSegment.size(), {}, segmentUnwindRanges[index]);
+            syscallTraps = syscallScanner->ScanCodeSectionForSyscalls(scanSegment, segmentVAddr, scanSegment.size(), {}, segmentUnwindRanges[index], &segmentRoutedStubs);
         } catch (const RelinkerException& error) {
+            if (!error.HasFailureOffset) throw;
             const auto cause = DescribeReplacedPltStubReaching(replacedStubs[index], segment, segmentVAddr, error.FailureOffset);
             if (cause.empty()) throw;
             RelinkerException explained(error.what() + cause, error.FailureOffset);
@@ -537,6 +605,49 @@ RelinkResult RelinkerPipeline::Relink() {
             segment[offset] = scanSegment[offset] = 0x0F;
             segment[offset + 1] = scanSegment[offset + 1] = 0x0B;
             syscallPatches.push_back({segmentFileOffset + offset, {0x0F, 0x0B}});
+        }
+
+        for (const auto& routed : segmentRoutedStubs) {
+            if (routed.SyscallNumber == 191) {
+                const auto* pathconfRef = FindPathconfImport(nidRefs);
+                if (pathconfRef != nullptr) {
+                    const VirtualAddress stubVAddr = segmentVAddr + routed.StubOffset;
+                    if (routed.StubOffset + routed.StubLength > segment.size())
+                        throw RelinkerException("Syscall route patch exceeds executable segment", stubVAddr);
+                    const VirtualAddress targetAddr = pathconfRef->RelocationAddress;
+                    const VirtualAddress ripAfterDisp = stubVAddr + 6;
+                    const std::int64_t disp = static_cast<std::int64_t>(targetAddr) - static_cast<std::int64_t>(ripAfterDisp);
+                    if (disp < std::numeric_limits<std::int32_t>::min() || disp > std::numeric_limits<std::int32_t>::max())
+                        throw RelinkerException("Syscall stub relocation distance exceeds 32-bit displacement", stubVAddr);
+                    const auto disp32 = static_cast<std::uint32_t>(static_cast<std::int32_t>(disp));
+                    std::vector<std::uint8_t> patchBytes = {
+                        0xFF, 0x25,
+                        static_cast<std::uint8_t>(disp32 & 0xFF),
+                        static_cast<std::uint8_t>((disp32 >> 8) & 0xFF),
+                        static_cast<std::uint8_t>((disp32 >> 16) & 0xFF),
+                        static_cast<std::uint8_t>((disp32 >> 24) & 0xFF),
+                        0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90
+                    };
+                    std::copy(patchBytes.begin(), patchBytes.end(), segment.begin() + static_cast<std::ptrdiff_t>(routed.StubOffset));
+                    std::copy(patchBytes.begin(), patchBytes.end(), scanSegment.begin() + static_cast<std::ptrdiff_t>(routed.StubOffset));
+                    if (index == 0 && !textSection.empty() && routed.StubOffset + patchBytes.size() <= textSection.size())
+                        std::copy(patchBytes.begin(), patchBytes.end(), textSection.begin() + static_cast<std::ptrdiff_t>(routed.StubOffset));
+                    syscallPatches.push_back({segmentFileOffset + routed.StubOffset, std::move(patchBytes)});
+                } else if (syscallScanner->TrapsSdkStubs()) {
+                    const std::size_t opcodeOffset = routed.StubOffset + 10u;
+                    if (opcodeOffset > segment.size() || segment.size() - opcodeOffset < 2u)
+                        throw RelinkerException("Syscall trap patch exceeds executable segment", segmentVAddr + opcodeOffset);
+                    segment[opcodeOffset] = scanSegment[opcodeOffset] = 0x0F;
+                    segment[opcodeOffset + 1] = scanSegment[opcodeOffset + 1] = 0x0B;
+                    if (index == 0 && !textSection.empty() && opcodeOffset + 2u <= textSection.size()) {
+                        textSection[opcodeOffset] = 0x0F;
+                        textSection[opcodeOffset + 1] = 0x0B;
+                    }
+                    syscallPatches.push_back({segmentFileOffset + opcodeOffset, {0x0F, 0x0B}});
+                } else {
+                    throw RelinkerException("Homebrew ps5-payload-dev syscall stub 191 cannot be routed: missing libkernel pathconf import", segmentVAddr + routed.StubOffset);
+                }
+            }
         }
     }
 

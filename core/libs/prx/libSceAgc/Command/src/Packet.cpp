@@ -112,10 +112,21 @@ private:
 
 void Reserve(CommandBuffer* buffer, std::uint32_t count, const char* function) {
     Require(buffer != nullptr && count != 0, function, "null command buffer or empty allocation");
+    auto& stripe = allocationStripe(buffer);
+    std::unique_lock serialized(stripe.mutex);
+    stripe.grown.wait(serialized, [&] {
+        const auto entry = stripe.find(buffer);
+        return entry == stripe.growing.end() || entry->thread == std::this_thread::get_id();
+    });
     if (available(*buffer, function) < count) {
         Require(buffer->callback != nullptr, function, "command buffer exhausted");
         Require(count <= std::numeric_limits<std::uint32_t>::max() - buffer->reserved_dw, function, "command buffer allocation overflow");
-        Require(buffer->callback(buffer, count + buffer->reserved_dw, buffer->user_data), function, "command buffer allocation callback failed");
+        bool grew = false;
+        {
+            const GrowScope growing(stripe, serialized, buffer);
+            grew = buffer->callback(buffer, count + buffer->reserved_dw, buffer->user_data);
+        }
+        Require(grew, function, "command buffer allocation callback failed");
         Require(available(*buffer, function) >= count, function, "command buffer allocation callback returned insufficient space");
     }
 }

@@ -23,12 +23,11 @@ inline std::int32_t TruncateFloatToInt(float value) {
 }
 
 inline std::int32_t RoundMulFixed(std::int64_t value, std::int64_t fixed16) {
-    const std::int64_t product = value * fixed16;
-    const std::int64_t signAdjust = ((~value) >> 63) * -0x10000LL;
-    const std::int64_t base = signAdjust + product;
-    std::int64_t rounded = base - 0x8000LL;
-    if (rounded < 0) rounded = base + 0x7FFFLL;
-    return static_cast<std::int32_t>(static_cast<std::uint64_t>(rounded) >> 16);
+    const std::uint64_t product = static_cast<std::uint64_t>(value) * static_cast<std::uint64_t>(fixed16);
+    const std::uint64_t base = value >= 0 ? product + 0x10000ULL : product;
+    std::uint64_t rounded = base - 0x8000ULL;
+    if ((rounded & (1ULL << 63)) != 0) rounded = base + 0x7FFFULL;
+    return static_cast<std::int32_t>(rounded >> 16);
 }
 
 inline std::int32_t TruncFixed(std::int64_t fixed16) {

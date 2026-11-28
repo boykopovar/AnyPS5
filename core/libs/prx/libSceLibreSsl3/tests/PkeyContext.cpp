@@ -622,6 +622,53 @@ void RestrictedPssKey() {
     ReleaseKey(key);
 }
 
+void CmsControls() {
+    using Initializer = int (APS5_VABI*)(LibreSsl3PkeyContext*);
+    auto* key = NewNativeKey(LibreSsl3PkeyRsa);
+    for (const Initializer initialize : {&EVP_PKEY_sign_init_nid_postfix, &EVP_PKEY_verify_init_nid_postfix,
+             &EVP_PKEY_encrypt_init_nid_postfix, &EVP_PKEY_decrypt_init_nid_postfix}) {
+        auto* context = EVP_PKEY_CTX_new_nid_postfix(key, nullptr);
+        Require(context != nullptr);
+        Require(initialize(context) == 1);
+        for (const int command : {LibreSsl3PkeyControlCmsEncrypt, LibreSsl3PkeyControlCmsDecrypt,
+                 LibreSsl3PkeyControlCmsSign}) {
+            Require(EVP_PKEY_CTX_ctrl_nid_postfix(context, -1, -1, command, 0, nullptr) == 1);
+            ExpectErrors({});
+        }
+        int padding = 0;
+        Require(EVP_PKEY_CTX_ctrl_nid_postfix(context, -1, -1, LibreSsl3PkeyControlGetRsaPadding, 0, &padding) == 1);
+        Require(padding == LibreSsl3RsaPaddingPkcs1);
+        EVP_PKEY_CTX_free_nid_postfix(context);
+    }
+    ReleaseKey(key);
+    key = NewNativeKey(LibreSsl3PkeyRsaPss);
+    for (const Initializer initialize : {&EVP_PKEY_sign_init_nid_postfix, &EVP_PKEY_verify_init_nid_postfix}) {
+        auto* context = EVP_PKEY_CTX_new_nid_postfix(key, nullptr);
+        Require(context != nullptr);
+        Require(initialize(context) == 1);
+        Require(EVP_PKEY_CTX_ctrl_nid_postfix(context, -1, -1, LibreSsl3PkeyControlCmsSign, 0, nullptr) == 1);
+        ExpectErrors({});
+        Require(EVP_PKEY_CTX_ctrl_nid_postfix(context, -1, -1, LibreSsl3PkeyControlCmsEncrypt, 0, nullptr) == -2);
+        ExpectErrors({RsaCode(148), EvpCode(147)});
+        Require(EVP_PKEY_CTX_ctrl_nid_postfix(context, -1, -1, LibreSsl3PkeyControlCmsDecrypt, 0, nullptr) == -2);
+        ExpectErrors({RsaCode(148), EvpCode(147)});
+        int padding = 0;
+        Require(EVP_PKEY_CTX_ctrl_nid_postfix(context, -1, -1, LibreSsl3PkeyControlGetRsaPadding, 0, &padding) == 1);
+        Require(padding == LibreSsl3RsaPaddingPss);
+        EVP_PKEY_CTX_free_nid_postfix(context);
+    }
+    ReleaseKey(key);
+    auto* context = EVP_PKEY_CTX_new_id_nid_postfix(LibreSsl3PkeyRsa, nullptr);
+    Require(context != nullptr && context->key == nullptr);
+    Require(EVP_PKEY_encrypt_init_nid_postfix(context) == 1);
+    for (const int command : {LibreSsl3PkeyControlCmsEncrypt, LibreSsl3PkeyControlCmsDecrypt,
+             LibreSsl3PkeyControlCmsSign}) {
+        Require(EVP_PKEY_CTX_ctrl_nid_postfix(context, -1, -1, command, 0, nullptr) == 1);
+        ExpectErrors({});
+    }
+    EVP_PKEY_CTX_free_nid_postfix(context);
+}
+
 constexpr unsigned char DigestSha1[] {
     2, 143, 154, 225, 251, 141, 54, 37, 60, 176, 242, 166, 156, 38, 75, 29, 11, 9, 101, 3
 };
@@ -1809,6 +1856,7 @@ int main() {
     WithoutPadding();
     RsaPaddingControls();
     RestrictedPssKey();
+    CmsControls();
     Pkcs1Signatures();
     Pkcs1ChineseRemainderSignature();
     Pkcs1VerificationFailures();

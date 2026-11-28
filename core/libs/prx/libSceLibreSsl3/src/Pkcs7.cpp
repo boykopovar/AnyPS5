@@ -224,9 +224,7 @@ void FreeString(Asn1String* value) {
 }
 
 void FreeObject(Asn1Object_nid_no_patch* object) {
-    if (!object || !(object->flags & ObjectDynamic)) return;
-    if (object->flags & ObjectDynamicData) free_nid_postfix(const_cast<unsigned char*>(object->data));
-    free_nid_postfix(object);
+    ASN1_OBJECT_free_nid_postfix(object);
 }
 
 void FreeType(void* element) {

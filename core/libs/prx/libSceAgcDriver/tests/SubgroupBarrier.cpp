@@ -19,19 +19,33 @@ namespace {
 
 struct Case {
     VkDriverId driver;
+    std::uint32_t driverVersion;
     bool controlBarrier;
     bool workgroupFence;
 };
 
+constexpr std::uint32_t NvidiaVersion(std::uint32_t major, std::uint32_t minor) {
+    return major << 22u | minor << 14u;
+}
+
 constexpr Case Cases[]{
-    {VK_DRIVER_ID_AMD_PROPRIETARY, false, false},
-    {VK_DRIVER_ID_AMD_OPEN_SOURCE, true, true},
-    {VK_DRIVER_ID_MESA_RADV, true, true},
-    {VK_DRIVER_ID_NVIDIA_PROPRIETARY, true, true},
-    {VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS, true, true},
-    {VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA, true, true},
-    {VK_DRIVER_ID_MESA_LLVMPIPE, true, true},
-    {VK_DRIVER_ID_MOLTENVK, false, true},
+    {VK_DRIVER_ID_AMD_PROPRIETARY, 0u, false, false},
+    {VK_DRIVER_ID_AMD_PROPRIETARY, 0xffffffffu, false, false},
+    {VK_DRIVER_ID_AMD_OPEN_SOURCE, 0u, true, true},
+    {VK_DRIVER_ID_MESA_RADV, 0u, true, true},
+    {VK_DRIVER_ID_NVIDIA_PROPRIETARY, NvidiaVersion(560, 94), false, true},
+    {VK_DRIVER_ID_NVIDIA_PROPRIETARY, NvidiaVersion(572, 16), false, true},
+    {VK_DRIVER_ID_NVIDIA_PROPRIETARY, NvidiaVersion(580, 178), false, true},
+    {VK_DRIVER_ID_NVIDIA_PROPRIETARY, NvidiaVersion(596, 0) - 1u, false, true},
+    {VK_DRIVER_ID_NVIDIA_PROPRIETARY, NvidiaVersion(596, 0), true, true},
+    {VK_DRIVER_ID_NVIDIA_PROPRIETARY, NvidiaVersion(596, 36), true, true},
+    {VK_DRIVER_ID_NVIDIA_PROPRIETARY, NvidiaVersion(610, 88), true, true},
+    {VK_DRIVER_ID_NVIDIA_PROPRIETARY, NvidiaVersion(617, 42), true, true},
+    {VK_DRIVER_ID_MESA_NVK, VK_MAKE_API_VERSION(0, 25, 2, 0), true, true},
+    {VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS, 0u, true, true},
+    {VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA, 0u, true, true},
+    {VK_DRIVER_ID_MESA_LLVMPIPE, 0u, true, true},
+    {VK_DRIVER_ID_MOLTENVK, 0u, false, true},
 };
 
 constexpr std::array<std::uint32_t, 19> BranchedLdsStep{
@@ -40,7 +54,7 @@ constexpr std::array<std::uint32_t, 19> BranchedLdsStep{
     0xbf8cc07fu, 0xbf8a0000u, 0xbf810000u,
 };
 constexpr std::array<std::uint32_t, 5> EarlyReturnBarrier{0x7d880090u, 0xbf860001u, 0xbf810000u, 0xbf8a0000u, 0xbf810000u};
-// s_cmp_eq_u32 s8, s2; s_cbranch_scc1 to the uniform barrier arm; s_endpgm otherwise.
+
 constexpr std::array<std::uint32_t, 5> UniformEarlyReturnBarrier{0xbf0a8408u, 0xbf850001u, 0xbf810000u, 0xbf8a0000u, 0xbf810000u};
 constexpr std::array<std::uint32_t, 1> MeshNoBarrier{0xbf810000u};
 
@@ -132,7 +146,7 @@ Barriers recompile(std::uint32_t threads, bool waveLdsMemoryBarriers) {
 
 void verifyDriverQuirk() {
     for (const auto& item : Cases) {
-        require(AgcDriver::SubgroupControlBarrierUsable(item.driver) == item.controlBarrier, "driver " + std::to_string(static_cast<int>(item.driver)) + ": expected subgroup control barriers to be " + (item.controlBarrier ? "usable" : "unusable"));
+        require(AgcDriver::SubgroupControlBarrierUsable(item.driver, item.driverVersion) == item.controlBarrier, "driver " + std::to_string(static_cast<int>(item.driver)) + " version " + std::to_string(item.driverVersion) + ": expected subgroup control barriers to be " + (item.controlBarrier ? "usable" : "unusable"));
         require(AgcDriver::WorkgroupScopeFenceUsable(item.driver) == item.workgroupFence, "driver " + std::to_string(static_cast<int>(item.driver)) + ": expected workgroup-scope fences to be " + (item.workgroupFence ? "usable" : "unusable"));
     }
 }
