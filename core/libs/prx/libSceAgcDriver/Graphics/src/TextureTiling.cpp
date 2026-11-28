@@ -669,6 +669,7 @@ SurfaceGeometry describeGcnVolume(const GuestTextureResource& descriptor) {
     }
     geometry.layers = depth;
     geometry.imageDepth = depth;
+    geometry.imageLevels = std::min(descriptor.mipCount, FullMipChainLevels(descriptor.width, descriptor.height, depth));
     geometry.thick = true;
     geometry.blockDepth = 4u;
     geometry.levelMajor = descriptor.mipCount > 1u;
@@ -704,11 +705,16 @@ SurfaceGeometry describeGcnSurface(const GuestTextureResource& descriptor) {
     geometry.imageLayers = volume ? 1u : geometry.layers;
     geometry.imageDepth = volume ? geometry.layers : 1u;
     geometry.guestBytes = geometry.mips.back().tiledOffset + geometry.mips.back().tiledSize * GcnLevelSlices(geometry.layers, descriptor.mipCount - 1u, descriptor.gcnPow2Pad, volume);
+    geometry.imageLevels = std::min(descriptor.mipCount, FullMipChainLevels(descriptor.width, descriptor.height, geometry.imageDepth));
     geometry.layerBytes = geometry.guestBytes / geometry.layers;
     for (const auto& mip : geometry.mips) geometry.sliceLinearBytes = std::max(geometry.sliceLinearBytes, mip.linearOffset + mip.linearSize);
     return geometry;
 }
 
+}
+
+std::uint32_t FullMipChainLevels(std::uint32_t width, std::uint32_t height, std::uint32_t depth) {
+    return static_cast<std::uint32_t>(std::bit_width(std::max({width, height, depth, 1u})));
 }
 
 SurfaceGeometry DescribeSurface(const GuestTextureResource& descriptor) {
@@ -726,6 +732,7 @@ SurfaceGeometry DescribeSurface(const GuestTextureResource& descriptor) {
         geometry.mips = ComputeMipLayout(descriptor.tileMode, descriptor.format, descriptor.width, descriptor.height, descriptor.mipCount);
         geometry.layers = depth;
         geometry.imageDepth = depth;
+        geometry.imageLevels = std::min(descriptor.mipCount, FullMipChainLevels(descriptor.width, descriptor.height, depth));
         geometry.guestBytes = ComputeSurfaceSize(geometry.mips, depth);
         geometry.layerBytes = geometry.guestBytes / depth;
         for (const auto& mip : geometry.mips) geometry.sliceLinearBytes = std::max(geometry.sliceLinearBytes, mip.linearOffset + mip.linearSize);
@@ -737,6 +744,7 @@ SurfaceGeometry DescribeSurface(const GuestTextureResource& descriptor) {
         geometry.mips = thick.mips;
         geometry.layers = depth;
         geometry.imageDepth = depth;
+        geometry.imageLevels = std::min(descriptor.mipCount, FullMipChainLevels(descriptor.width, descriptor.height, depth));
         geometry.guestBytes = thick.guestBytes;
         geometry.sliceLinearBytes = thick.sliceLinearBytes;
         geometry.thick = descriptor.tileMode != TextureTileMode::kLinear;
@@ -771,6 +779,7 @@ SurfaceGeometry DescribeSurface(const GuestTextureResource& descriptor) {
     const bool layered = descriptor.dimension == TextureDimension::k2DArray || descriptor.dimension == TextureDimension::k1DArray || descriptor.dimension == TextureDimension::kCube;
     geometry.layers = layered ? descriptor.depthOrLastArray + 1u : 1u;
     geometry.imageLayers = geometry.layers;
+    geometry.imageLevels = std::min(descriptor.mipCount, FullMipChainLevels(descriptor.width, descriptor.height, 1u));
     geometry.guestBytes = ComputeSurfaceSize(geometry.mips, geometry.layers);
     geometry.layerBytes = geometry.guestBytes / geometry.layers;
     for (const auto& mip : geometry.mips) geometry.sliceLinearBytes = std::max(geometry.sliceLinearBytes, mip.linearOffset + mip.linearSize);
@@ -796,7 +805,7 @@ std::optional<MinLodResidency> MinLodResidentLevels(const GuestTextureResource& 
     const auto clamp = static_cast<std::uint32_t>(EffectiveMinLod(descriptor));
     if (clamp == 0u) return std::nullopt;
     const auto geometry = DescribeSurface(descriptor);
-    if (geometry.thick || geometry.levelMajor || geometry.layers != 1u || clamp >= geometry.mips.size()) return std::nullopt;
+    if (geometry.thick || geometry.levelMajor || geometry.layers != 1u || clamp >= geometry.mips.size() || clamp >= geometry.imageLevels) return std::nullopt;
     std::uint64_t resident = 0;
     for (std::size_t level = clamp; level < geometry.mips.size(); ++level) resident = std::max(resident, geometry.mips[level].tiledOffset + geometry.mips[level].tiledSize);
     for (std::uint32_t level = 0; level < clamp; ++level) {

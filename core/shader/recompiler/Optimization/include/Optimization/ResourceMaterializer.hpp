@@ -66,6 +66,11 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+struct ViewLevelsPastChain {
+    std::uint32_t levels = 0;
+    bool base = false;
+};
+
 class LayerRowSamplesRequired : public std::runtime_error {
 public:
     using std::runtime_error::runtime_error;
@@ -73,6 +78,7 @@ public:
 
 class ResourceMaterializer {
 public:
+    static ViewLevelsPastChain LevelsPastChain(const DescriptorValue& descriptor);
     static std::uint32_t EmulatedCompareState(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint32_t index);
     static std::uint32_t VolumeGatherState(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint32_t index);
     void ApplyStaticInterface(IrProgram& program, bool nativeSampleOffsets = true) const;
