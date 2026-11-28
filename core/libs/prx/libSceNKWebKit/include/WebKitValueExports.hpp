@@ -166,6 +166,7 @@ void APS5_VABI WKBundlePageSetBottomOverhangImage(const void* pageRef, const voi
 void APS5_VABI WKBundlePageSetTopOverhangImage(const void* pageRef, const void* imageRef);
 void APS5_VABI WKBundlePageSetPaintedObjectsCounterThreshold(const void* pageRef, std::uint64_t threshold);
 bool APS5_VABI WKBundlePageHasLocalDataForURL(const void* pageRef, const void* urlRef);
+const void* APS5_VABI WKBundlePageCopyRenderTreeExternalRepresentationForPrinting(const void* pageRef);
 std::uint32_t APS5_VABI WKBundlePageOverlayGetTypeID();
 std::uint32_t APS5_VABI WKBundleRangeHandleGetTypeID();
 std::uint32_t APS5_VABI WKBundleScriptWorldGetTypeID();
@@ -503,6 +504,15 @@ bool APS5_VABI WKPageGetAllowsRemoteInspection(const void* pageRef);
 void APS5_VABI WKPageSetAllowsRemoteInspection(const void* pageRef, bool allowsRemoteInspection);
 const void* APS5_VABI WKPageCopyPendingAPIRequestURL(const void* pageRef);
 const void* APS5_VABI WKPageCopyPageConfiguration(const void* pageRef);
+struct WKPrintInfo {
+    float pageSetupScaleFactor;
+    float availablePaperWidth;
+    float availablePaperHeight;
+};
+using WKPageComputePagesForPrintingFunction = void (APS5_VABI *)(NKWebKit::RectValue* pageRects, std::uint32_t pageCount, double resultPageScaleFactor, const void* error, void* functionContext);
+void APS5_VABI WKPageBeginPrinting(const void* pageRef, const void* frameRef, WKPrintInfo printInfo);
+void APS5_VABI WKPageComputePagesForPrinting(const void* pageRef, const void* frameRef, WKPrintInfo printInfo, WKPageComputePagesForPrintingFunction callback, void* context);
+void APS5_VABI WKPageEndPrinting(const void* pageRef);
 const void* APS5_VABI WKPointCreate(NKWebKit::PointValue point);
 std::uint32_t APS5_VABI WKPointGetTypeID();
 NKWebKit::PointValue APS5_VABI WKPointGetValue(const void* pointRef);
