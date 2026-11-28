@@ -69,6 +69,7 @@
 #include <utility>
 #include "prx/libSceLibreSsl/include/Bio.hpp"
 #include "PemReadBio.hpp"
+#include "X509Aux.hpp"
 
 namespace LibreSsl {
 
@@ -77,6 +78,7 @@ namespace {
 constexpr int BufferLibrary = 7;
 constexpr int BioLibrary = 32;
 constexpr int PemLibrary = 9;
+constexpr int Asn1Library = 13;
 constexpr int ErrorFunctionUnknown = 0xfff;
 constexpr int ErrorMallocFailure = 65;
 constexpr int BioUninitialized = 120;
@@ -307,6 +309,8 @@ int ReadLine(Bio* bio, std::array<char, 256>& line) {
     return index;
 }
 
+}
+
 bool ReadPem(Bio* bio, PemBuffers& buffers, long& length) {
     buffers.name = NewPemBuffer();
     buffers.header = NewPemBuffer();
@@ -459,8 +463,6 @@ bool ReadCipherInfo(const char* header, const char* function) {
     NotImplemented_nid_no_patch((std::string(function) + ": DEK-Info cipher lookup and decryption of an encrypted PEM record").c_str());
 }
 
-}
-
 void PutPemError(int reason) {
     LibreSslPutError_nid_no_patch(PemLibrary, ErrorFunctionUnknown, reason, __FILE__, __LINE__);
 }
@@ -507,13 +509,17 @@ bool ReadPemBytes(Bio* bio, const char* name, PemBuffers& record, long& length, 
 
 LibreSslX509* ReadPemRecord(Bio* bio, LibreSslX509** certificate, LibreSslPemPasswordCallback callback,
                             void* userData, const char* name, const char* function) {
-    static_cast<void>(certificate);
     static_cast<void>(callback);
     static_cast<void>(userData);
     PemBuffers record;
     long length = 0;
     if (!ReadPemBytes(bio, name, record, length, function)) return nullptr;
-    NotImplemented_nid_no_patch(function);
+    const unsigned char* input = reinterpret_cast<const unsigned char*>(record.data->data);
+    LibreSslX509* result = std::strcmp(name, "TRUSTED CERTIFICATE") == 0
+                               ? X509AuxRead_nid_no_patch(certificate, &input, length)
+                               : d2i_X509_nid_postfix(certificate, &input, length);
+    if (result == nullptr) PutPemError(Asn1Library);
+    return result;
 }
 
 }

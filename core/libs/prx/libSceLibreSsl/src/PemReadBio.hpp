@@ -41,6 +41,9 @@ void PutPemError(int reason);
 int PemCheckSuffix(const char* name, const char* suffix);
 int OldPrivateKeyType(const char* name, int length);
 bool ReadPemBytes(Bio* bio, const char* name, PemBuffers& record, long& length, const char* function);
+bool ReadPem(Bio* bio, PemBuffers& record, long& length);
+bool CheckPem(const char* found, const char* wanted);
+bool ReadCipherInfo(const char* header, const char* function);
 LibreSslX509* ReadPemRecord(Bio* bio, LibreSslX509** certificate, LibreSslPemPasswordCallback callback,
                             void* userData, const char* name, const char* function);
 LibreSslRsa* DecodeRsaPrivateKey(const unsigned char** input, long length, const char* function);
