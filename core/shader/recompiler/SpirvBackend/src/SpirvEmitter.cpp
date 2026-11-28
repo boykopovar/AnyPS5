@@ -260,6 +260,14 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Co
 }
 
 std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const ShaderStageInputInfo& inputInfo, const CompiledBindingLayout& bindings, const SpirvTargetOptions& target, SpirvEmitInfo* info) const {
+    // The software rendezvous is workgroup-wide; only use it when native SPIR-V proves every barrier is outside divergent control flow.
+    const bool meshSoftwareCandidate = target.meshSoftwareControlBarriers && program.Resources().stage == IrShaderStage::Mesh && ProgramHasBarrier(program);
+    if (meshSoftwareCandidate) {
+        auto nativeTarget = target;
+        nativeTarget.meshSoftwareControlBarriers = false;
+        const auto nativeWords = Emit(program, inputInfo, bindings, nativeTarget, info);
+        if (SpannedBarrierInDivergentFlow(nativeWords)) return nativeWords;
+    }
     if (program.Resources().stage != IrShaderStage::Compute && program.Resources().stage != IrShaderStage::Vertex && program.Resources().stage != IrShaderStage::Pixel && program.Resources().stage != IrShaderStage::Mesh && program.Resources().stage != IrShaderStage::Local && program.Resources().stage != IrShaderStage::TessellationControl && program.Resources().stage != IrShaderStage::TessellationEvaluation) {
         FailProgram(program, "binary SPIR-V emitter received an unsupported shader stage");
     }

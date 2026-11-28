@@ -1469,6 +1469,7 @@ void EmitMeshSoftwareBarrier(SpirvEmitterState& state) {
     const auto waitContinue = state.module.AllocateId();
     const auto waitMerge = state.module.AllocateId();
     const auto done = state.module.AllocateId();
+    const auto finish = state.module.AllocateId();
     state.module.AddFunction(spv::OpSelectionMerge, done, spv::SelectionControlMaskNone);
     state.module.AddFunction(spv::OpBranchConditional, lastSubgroup, lastBlock, waitBlock);
     EmitLabel(state, lastBlock);
@@ -1480,24 +1481,30 @@ void EmitMeshSoftwareBarrier(SpirvEmitterState& state) {
     state.module.AddFunction(spv::OpAtomicStore, arrival, scope, release, ConstantU32(state, 0u));
     state.module.AddFunction(spv::OpAtomicIAdd, TypeU32(state), state.module.AllocateId(), generation, scope, release, ConstantU32(state, 1u));
     state.module.AddFunction(spv::OpBranch, releaseMerge);
+    // Reconverge the release and non-release arms before any invocation enters the wait loop.
     EmitLabel(state, releaseMerge);
-    state.module.AddFunction(spv::OpBranch, waitHeader);
+    state.module.AddFunction(spv::OpBranch, done);
     EmitLabel(state, waitBlock);
+    state.module.AddFunction(spv::OpBranch, done);
+    EmitLabel(state, done);
     state.module.AddFunction(spv::OpBranch, waitHeader);
     EmitLabel(state, waitHeader);
     const auto observedGeneration = state.module.AllocateId();
     state.module.AddFunction(spv::OpAtomicLoad, TypeU32(state), observedGeneration, generation, scope, acquire);
     const auto advanced = Binary(state, spv::OpINotEqual, TypeBool(state), observedGeneration, currentGeneration);
     const auto waiting = Unary(state, spv::OpLogicalNot, TypeBool(state), advanced);
-    const auto anyWaiting = EmitHostSubgroupAny(state, waiting);
+    // The last ticket has already released the generation and must never participate in the wait ballot.
+    const auto notLast = Binary(state, spv::OpINotEqual, TypeBool(state), ticket, ConstantU32(state, participants - 1u));
+    const auto waitingBeforeRelease = Binary(state, spv::OpLogicalAnd, TypeBool(state), notLast, waiting);
+    const auto anyWaiting = EmitHostSubgroupAny(state, waitingBeforeRelease);
     const auto allAdvanced = Unary(state, spv::OpLogicalNot, TypeBool(state), anyWaiting);
     state.module.AddFunction(spv::OpLoopMerge, waitMerge, waitContinue, spv::LoopControlMaskNone);
     state.module.AddFunction(spv::OpBranchConditional, allAdvanced, waitMerge, waitContinue);
     EmitLabel(state, waitContinue);
     state.module.AddFunction(spv::OpBranch, waitHeader);
     EmitLabel(state, waitMerge);
-    state.module.AddFunction(spv::OpBranch, done);
-    EmitLabel(state, done);
+    state.module.AddFunction(spv::OpBranch, finish);
+    EmitLabel(state, finish);
 }
 
 void EmitBarrier(SpirvValueEmitContext& ctx, const IrValue& inst) {

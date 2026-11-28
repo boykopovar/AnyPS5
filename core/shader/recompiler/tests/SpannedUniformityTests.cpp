@@ -32,6 +32,19 @@ enum Id : std::uint32_t {
     PhysicalPointer,
     Snapshot,
     Writable,
+    Vec3Uint,
+    WorkgroupIdPointer,
+    WorkgroupId,
+    StorageArrayType,
+    StorageBufferStruct,
+    StorageBufferStructPointer,
+    StorageBufferUintPointer,
+    StorageBufferVariable,
+    PushConstantStruct,
+    PushConstantPointer,
+    PushConstantUintPointer,
+    PushConstants,
+    Zero,
     First = 100u,
 };
 
@@ -40,16 +53,23 @@ public:
     Module() {
         words = {spv::MagicNumber, 0x00010300u, 0u, 1000u, 0u};
         emit(spv::OpCapability, {spv::CapabilityShader});
+
         emit(spv::OpMemoryModel, {spv::AddressingModelLogical, spv::MemoryModelGLSL450});
-        emit(spv::OpEntryPoint, {spv::ExecutionModelGLCompute, Main, 0x6e69616du, 0u, Index});
+        emit(spv::OpEntryPoint, {spv::ExecutionModelGLCompute, Main, 0x6e69616du, 0u, Index, WorkgroupId});
         emit(spv::OpExecutionMode, {Main, spv::ExecutionModeLocalSize, 64u, 1u, 1u});
         emit(spv::OpDecorate, {Index, spv::DecorationBuiltIn, spv::BuiltInLocalInvocationIndex});
         emit(spv::OpTypeVoid, {Void});
         emit(spv::OpTypeBool, {Bool});
         emit(spv::OpTypeInt, {Uint, 32u, 0u});
+
+        emit(spv::OpTypeVector, {Vec3Uint, Uint, 3u});
         emit(spv::OpTypeFunction, {FunctionType, Void});
         emit(spv::OpTypePointer, {InputPointer, spv::StorageClassInput, Uint});
+        emit(spv::OpTypePointer, {WorkgroupIdPointer, spv::StorageClassInput, Vec3Uint});
         emit(spv::OpVariable, {InputPointer, Index, spv::StorageClassInput});
+        emit(spv::OpVariable, {WorkgroupIdPointer, WorkgroupId, spv::StorageClassInput});
+        emit(spv::OpDecorate, {WorkgroupId, spv::DecorationBuiltIn, spv::BuiltInWorkgroupId});
+        emit(spv::OpConstant, {Uint, Zero, 0u});
         emit(spv::OpConstant, {Uint, Two, 2u});
         emit(spv::OpConstant, {Uint, Three, 3u});
         emit(spv::OpConstant, {Uint, Semantics, 264u});
@@ -62,6 +82,20 @@ public:
         emit(spv::OpTypePointer, {StoragePointer, spv::StorageClassStorageBuffer, Uint});
         emit(spv::OpVariable, {StoragePointer, Storage, spv::StorageClassStorageBuffer});
         emit(spv::OpTypePointer, {PhysicalPointer, spv::StorageClassPhysicalStorageBuffer, Uint});
+        emit(spv::OpTypeRuntimeArray, {StorageArrayType, Uint});
+        emit(spv::OpDecorate, {StorageArrayType, spv::DecorationArrayStride, 4u});
+        emit(spv::OpTypeStruct, {StorageBufferStruct, StorageArrayType});
+        emit(spv::OpMemberDecorate, {StorageBufferStruct, 0u, spv::DecorationOffset, 0u});
+        emit(spv::OpDecorate, {StorageBufferStruct, spv::DecorationBlock});
+        emit(spv::OpTypePointer, {StorageBufferStructPointer, spv::StorageClassStorageBuffer, StorageBufferStruct});
+        emit(spv::OpVariable, {StorageBufferStructPointer, StorageBufferVariable, spv::StorageClassStorageBuffer});
+        emit(spv::OpTypePointer, {StorageBufferUintPointer, spv::StorageClassStorageBuffer, Uint});
+        emit(spv::OpTypeStruct, {PushConstantStruct, Uint});
+        emit(spv::OpMemberDecorate, {PushConstantStruct, 0u, spv::DecorationOffset, 0u});
+        emit(spv::OpDecorate, {PushConstantStruct, spv::DecorationBlock});
+        emit(spv::OpTypePointer, {PushConstantPointer, spv::StorageClassPushConstant, PushConstantStruct});
+        emit(spv::OpVariable, {PushConstantPointer, PushConstants, spv::StorageClassPushConstant});
+        emit(spv::OpTypePointer, {PushConstantUintPointer, spv::StorageClassPushConstant, Uint});
         emit(spv::OpVariable, {StoragePointer, Snapshot, spv::StorageClassStorageBuffer});
         emit(spv::OpDecorate, {Snapshot, spv::DecorationNonWritable});
         emit(spv::OpVariable, {StoragePointer, Writable, spv::StorageClassStorageBuffer});
@@ -213,6 +247,100 @@ Module unmergedContinue(bool perLane) {
     return module;
 }
 
+Module uniformEarlyReturn() {
+    Module module;
+    module.function(Main);
+    module.emit(spv::OpLabel, {First});
+    module.emit(spv::OpLoad, {Vec3Uint, First + 1u, WorkgroupId});
+    module.emit(spv::OpCompositeExtract, {Uint, First + 2u, First + 1u, 0u});
+    module.emit(spv::OpAccessChain, {PushConstantUintPointer, First + 3u, PushConstants, Zero});
+    module.emit(spv::OpLoad, {Uint, First + 4u, First + 3u});
+    module.emit(spv::OpAccessChain, {StorageBufferUintPointer, First + 5u, StorageBufferVariable, Zero, First + 4u});
+    module.emit(spv::OpLoad, {Uint, First + 6u, First + 5u});
+    module.emit(spv::OpIAdd, {Uint, First + 7u, First + 2u, First + 6u});
+    module.emit(spv::OpINotEqual, {Bool, First + 8u, First + 7u, Two});
+    module.emit(spv::OpSelectionMerge, {First + 12u, spv::SelectionControlMaskNone});
+    module.emit(spv::OpBranchConditional, {First + 8u, First + 9u, First + 10u});
+    module.emit(spv::OpLabel, {First + 9u});
+    module.emit(spv::OpReturn, {});
+    module.emit(spv::OpLabel, {First + 10u});
+    module.barrier();
+    module.barrier();
+    module.barrier();
+    module.barrier();
+    module.emit(spv::OpBranch, {First + 12u});
+    module.emit(spv::OpLabel, {First + 12u});
+    module.end();
+    return module;
+}
+
+Module sequentialBarriers() {
+    Module module;
+    module.function(Main);
+    module.emit(spv::OpLabel, {First});
+    module.barrier();
+    module.barrier();
+    module.barrier();
+    module.end();
+    return module;
+}
+
+Module switchBypass(bool perLane) {
+    Module module;
+    module.function(Main);
+    module.emit(spv::OpLabel, {First});
+    std::uint32_t selector = Zero;
+    if (perLane) {
+        module.lane(First + 1u);
+        selector = First + 1u;
+    }
+    module.emit(spv::OpSelectionMerge, {First + 4u, spv::SelectionControlMaskNone});
+    module.emit(spv::OpSwitch, {selector, First + 4u, 0u, First + 3u});
+    module.emit(spv::OpLabel, {First + 3u});
+    module.barrier();
+    module.emit(spv::OpBranch, {First + 4u});
+    module.emit(spv::OpLabel, {First + 4u});
+    module.barrier();
+    module.end();
+    return module;
+}
+
+Module nestedLoops(bool barrierInsideSelection) {
+    Module module;
+    module.function(Main);
+    module.emit(spv::OpLabel, {First});
+    module.lane(First + 1u);
+    module.emit(spv::OpULessThan, {Bool, First + 2u, First + 1u, Three});
+    module.emit(spv::OpBranch, {First + 10u});
+    module.emit(spv::OpLabel, {First + 10u});
+    module.emit(spv::OpLoopMerge, {First + 17u, First + 16u, spv::LoopControlMaskNone});
+    module.emit(spv::OpBranch, {First + 11u});
+    module.emit(spv::OpLabel, {First + 11u});
+    module.emit(spv::OpBranch, {First + 12u});
+    module.emit(spv::OpLabel, {First + 12u});
+    module.emit(spv::OpLoopMerge, {First + 15u, First + 14u, spv::LoopControlMaskNone});
+    module.emit(spv::OpBranch, {First + 13u});
+    module.emit(spv::OpLabel, {First + 13u});
+    module.emit(spv::OpSelectionMerge, {First + 18u, spv::SelectionControlMaskNone});
+    module.emit(spv::OpBranchConditional, {First + 2u, First + 19u, First + 18u});
+    module.emit(spv::OpLabel, {First + 19u});
+    if (barrierInsideSelection) module.barrier();
+    module.emit(spv::OpBranch, {First + 18u});
+    module.emit(spv::OpLabel, {First + 18u});
+    if (!barrierInsideSelection) module.barrier();
+    module.emit(spv::OpBranch, {First + 14u});
+    module.emit(spv::OpLabel, {First + 14u});
+    module.emit(spv::OpBranchConditional, {True, First + 15u, First + 12u});
+    module.emit(spv::OpLabel, {First + 15u});
+    module.emit(spv::OpBranch, {First + 16u});
+    module.emit(spv::OpLabel, {First + 16u});
+    module.emit(spv::OpBranchConditional, {True, First + 17u, First + 10u});
+    module.emit(spv::OpLabel, {First + 17u});
+    module.barrier();
+    module.end();
+    return module;
+}
+
 Module joined(const std::function<void(Module&)>& condition) {
     Module module;
     module.function(Main);
@@ -248,6 +376,12 @@ int main() {
     expect("a barrier after a per-lane return", early(true, spv::OpReturn), true);
     expect("a barrier after a per-lane continue", early(true, spv::OpBranch), true);
     expect("a barrier after a uniform return", early(false, spv::OpReturn), false);
+    expect("a barrier under a workgroup-uniform push-constant-address and WorkgroupId condition", uniformEarlyReturn(), false);
+    expect("multiple sequential barriers", sequentialBarriers(), false);
+    expect("a barrier in a switch arm that bypasses it for other invocations", switchBypass(true), true);
+    expect("a barrier in a switch arm selected uniformly by the workgroup", switchBypass(false), false);
+    expect("a barrier inside a divergent selection nested in two loops", nestedLoops(true), true);
+    expect("a barrier after a divergent selection nested in two loops", nestedLoops(false), false);
     expect("a barrier after a per-lane continue without a selection merge", unmergedContinue(true), true);
     expect("a barrier after a uniform continue without a selection merge", unmergedContinue(false), false);
     expect("a call reaching a barrier under a constant comparison", call(false), false);
