@@ -84,11 +84,12 @@ def validate(summary):
         raise ValueError("worker_busy_pct must be an object")
     for name, value in workers.items():
         number(value, f"worker_busy_pct.{name}")
-    phases = summary.get("top_phases_ms_per_frame")
-    if not isinstance(phases, dict):
-        raise ValueError("top_phases_ms_per_frame must be an object")
-    for name, value in phases.items():
-        number(value, f"top_phases_ms_per_frame.{name}")
+    for field, phases in (("top_phases_ms_per_frame", summary.get("top_phases_ms_per_frame")),
+                          ("phase_totals_ms", summary.get("phase_totals_ms", {}))):
+        if not isinstance(phases, dict):
+            raise ValueError(f"{field} must be an object")
+        for name, value in phases.items():
+            number(value, f"{field}.{name}")
     for field in ("graphics_track", "owned_draw_counts"):
         counters = summary.get(field, {})
         if not isinstance(counters, dict) or any(not isinstance(name, str) for name in counters):
@@ -181,6 +182,14 @@ def graphics_metrics(summary):
         raise ValueError("graphics track rate is outside the finite numeric range") from None
 
 
+def phase_per_present(summary, name):
+    ranked = summary["top_phases_ms_per_frame"]
+    if name in ranked:
+        return ranked[name]
+    total = summary.get("phase_totals_ms", {}).get(name)
+    return total / summary["presents"] if total is not None else None
+
+
 def compare(baseline, candidate):
     metrics = {f"frame_ms.{key}": delta(baseline["frame_ms"][key], candidate["frame_ms"][key])
                for key in PERCENTILES}
@@ -189,7 +198,7 @@ def compare(baseline, candidate):
     metrics["gpu_busy_ms_per_present"] = delta(baseline["gpu_busy_ms_per_present"], candidate["gpu_busy_ms_per_present"])
     before_phases = baseline["top_phases_ms_per_frame"]
     after_phases = candidate["top_phases_ms_per_frame"]
-    phases = {name: delta(before_phases.get(name), after_phases.get(name))
+    phases = {name: delta(phase_per_present(baseline, name), phase_per_present(candidate, name))
               for name in sorted(before_phases.keys() | after_phases.keys())}
     before_workers, after_workers = baseline["worker_busy_pct"], candidate["worker_busy_pct"]
     workers = {name: delta(before_workers.get(name), after_workers.get(name))
@@ -212,7 +221,7 @@ def compare(baseline, candidate):
                    if contexts[0].get(key) != contexts[1].get(key)}
     notes = ["Compare captures from the same machine, title, content version and scene; matching recorded metadata cannot verify the physical machine or scene.",
              "Changes are candidate minus baseline. A negative frame-time change means a shorter frame interval.",
-             "A missing top phase is unreported, not zero; its change is unavailable.",
+             "Phases outside a capture's top list use its recorded total divided by presents when available.",
              "Worker busy changes are percentage points; change (%) is relative to the baseline. "
              "Workers are matched by their recorded names; a missing worker is unreported, not idle."]
     if any(values["baseline"] is not None or values["candidate"] is not None for values in graphics.values()):
@@ -224,7 +233,10 @@ def compare(baseline, candidate):
         totals_full = any(thread.get("totals_full", False) for thread in threads.values())
         if totals_full:
             notes.append(f"{label}: phase totals are incomplete because a thread's totals table overflowed.")
-        if summary["trace_dropped"] and (not threads or any(thread.get("events_lost", 0) for thread in threads.values())):
+        unbound = summary.get("owned_draw_counts", {}).get("OwnedDraw.unbound", 0)
+        if unbound:
+            notes.append(f"{label}: {unbound} unbound draw counts could not be attributed.")
+        if summary["trace_dropped"] and ((not threads and not unbound) or any(thread.get("events_lost", 0) for thread in threads.values())):
             if totals_full:
                 notes.append(f"{label}: trace events were dropped; the event trace is incomplete.")
             else:
