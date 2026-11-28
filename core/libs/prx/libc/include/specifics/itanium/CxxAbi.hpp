@@ -15,7 +15,16 @@ extern "C" int __cxa_thread_atexit(void (*)(void*), void*, void*) noexcept;
 namespace __cxxabiv1 {
 class __class_type_info : public std::type_info {
 public:
-    enum __sub_kind { __unknown = 0 };
+    enum __sub_kind {
+        __unknown = 0,
+        __not_contained = 1,
+        __contained_ambig = 2,
+        __contained_virtual_mask = 1,
+        __contained_public_mask = 2,
+        __contained_mask = 4,
+        __contained_private = 4,
+        __contained_public = 6
+    };
     struct __upcast_result;
     struct __dyncast_result;
 };
