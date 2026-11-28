@@ -1,0 +1,15 @@
+add_library(libSceResourceArbitrator SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceResourceArbitrator PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceResourceArbitrator)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_resource_arbitrator_tests ${LIBS_INCLUDE_DIR}/tests/GuestResourceArbitrator.cpp)
+    target_include_directories(guest_resource_arbitrator_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_resource_arbitrator_tests PRIVATE libSceResourceArbitrator libc)
+    configure_windows_unwind(guest_resource_arbitrator_tests)
+    add_test(NAME guest_resource_arbitrator COMMAND guest_resource_arbitrator_tests)
+    if(WIN32)
+        set_tests_properties(guest_resource_arbitrator PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceResourceArbitrator>")
+    endif()
+endif()
