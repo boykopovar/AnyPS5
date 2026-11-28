@@ -29,6 +29,24 @@
 #include <unistd.h>
 #endif
 
+namespace AgcDriver::DriverDetail {
+
+struct DrawPipelineReportProbe {
+    static std::chrono::steady_clock::time_point LastReport(const DrawPipeline& pipeline) {
+        return pipeline.lastReport;
+    }
+    static void AgeLastReport(DrawPipeline& pipeline, std::chrono::steady_clock::duration age) {
+        std::lock_guard lock(pipeline.mutex);
+        pipeline.lastReport = std::chrono::steady_clock::now() - age;
+    }
+    static void ReportIfDue(DrawPipeline& pipeline, std::chrono::steady_clock::time_point now) {
+        std::lock_guard lock(pipeline.mutex);
+        pipeline.reportIfDue(now);
+    }
+};
+
+}
+
 namespace {
 
 void Check(bool condition, const char* message) {
@@ -66,12 +84,13 @@ public:
     StderrCapture(const StderrCapture&) = delete;
     StderrCapture& operator=(const StderrCapture&) = delete;
 
-    std::string ReadReport() const {
+    std::string ReadReport(std::size_t occurrence = 0) const {
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
         do {
             std::ifstream file(path, std::ios::binary);
             const std::string text{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
-            const auto begin = text.find("[draw] pipelined ");
+            auto begin = text.find("[draw] pipelined ");
+            for (std::size_t skipped = 0; skipped < occurrence && begin != std::string::npos; ++skipped) begin = text.find("[draw] pipelined ", begin + 1);
             if (begin != std::string::npos) {
                 const auto end = text.find('\n', begin);
                 if (end != std::string::npos) return text.substr(begin, end - begin);
@@ -95,28 +114,41 @@ std::size_t Count(std::string_view text, std::string_view value) {
 void TestReport() {
     using AgcDriver::DriverDetail::DrawPipeline;
     auto& pipeline = DrawPipeline::Queue0();
-    Check(DrawPipeline::Depth() >= 2, "test requires at least two pipeline slots");
-    const auto reportAfter = std::chrono::steady_clock::now() + std::chrono::milliseconds(10100);
+    Check(DrawPipeline::Depth() >= 3, "test requires at least three pipeline slots");
+    using AgcDriver::DriverDetail::DrawPipelineReportProbe;
+    constexpr auto interval = std::chrono::seconds(10);
+    const auto start = DrawPipelineReportProbe::LastReport(pipeline);
     const auto clockReads = DrawPipeline::CommitClockReads();
     StderrCapture capture;
     std::binary_semaphore release{0};
+    bool released = false;
     std::exception_ptr failure;
+    std::string report;
     try {
         pipeline.Enqueue([&] { release.acquire(); }, {}, 0, {}, {{0x1000, 0x1010}, {0x2000, 0x2010}}, true);
         Check(DrawPipeline::HeldReads(0x1000, 4), "queued read range was not held");
         for (unsigned i = 0; i < 3; ++i) pipeline.NoteDecodeDrain();
         for (unsigned i = 0; i < 2; ++i) pipeline.NoteDecodeDrainSkip();
-        std::this_thread::sleep_until(reportAfter);
+        DrawPipelineReportProbe::ReportIfDue(pipeline, start + interval - std::chrono::milliseconds(1));
+        Check(DrawPipelineReportProbe::LastReport(pipeline) == start, "a report was made before the interval had passed");
+        DrawPipelineReportProbe::ReportIfDue(pipeline, start + interval);
+        Check(DrawPipelineReportProbe::LastReport(pipeline) == start + interval, "no report was made when the interval had passed");
+        report = capture.ReadReport();
         pipeline.Enqueue([] {}, {}, 0, {}, {}, true);
+        pipeline.Enqueue([] {}, {}, 0, {}, {}, true);
+        release.release();
+        released = true;
+        DrawPipelineReportProbe::ReportIfDue(pipeline, start + interval * 2 - std::chrono::milliseconds(1));
+        Check(DrawPipelineReportProbe::LastReport(pipeline) == start + interval, "the second report was made before a full interval after the first");
+        DrawPipelineReportProbe::ReportIfDue(pipeline, start + interval * 2);
     } catch (...) {
         failure = std::current_exception();
     }
-    release.release();
+    if (!released) release.release();
     pipeline.Stop();
     if (failure) std::rethrow_exception(failure);
-    const auto report = capture.ReadReport();
     std::cout << report << '\n';
-    Check(DrawPipeline::CommitClockReads() - clockReads == 4, "the two timed commits did not read the clock exactly twice each");
+    Check(DrawPipeline::CommitClockReads() - clockReads == 6, "the three timed commits did not read the clock exactly twice each");
     Check(report.find(" 2 read ranges, 1 stores held, 3 decode drains") != std::string::npos, "pipeline read counters changed");
     Check(report.find(" 3 decode drains (2 skipped)") != std::string::npos, "pipeline decode-drain skip counter changed");
     Check(Count(report, " read ranges") == 1, "pipeline read-range counters were printed more than once");
@@ -124,6 +156,21 @@ void TestReport() {
     Check(Count(report, " decode drains") == 1, "pipeline decode-drain counters were printed more than once");
     Check(report.find("; drains:") != std::string::npos, "pipeline drain counters were lost");
     Check(report.find("packet drains by opcode:") != std::string::npos, "pipeline opcode counters were lost");
+    const auto second = capture.ReadReport(1);
+    std::cout << second << '\n';
+    Check(second.find(" 0 read ranges, 0 stores held, 0 decode drains") != std::string::npos, "a later report repeated the read ranges of an earlier one");
+}
+
+void TestEnqueueReports() {
+    using AgcDriver::DriverDetail::DrawPipeline;
+    using AgcDriver::DriverDetail::DrawPipelineReportProbe;
+    auto& pipeline = DrawPipeline::Queue0();
+    StderrCapture capture;
+    DrawPipelineReportProbe::AgeLastReport(pipeline, std::chrono::seconds(11));
+    pipeline.Enqueue([] {}, {}, 0, {}, {}, true);
+    pipeline.Stop();
+    const auto report = capture.ReadReport();
+    std::cout << report << '\n';
 }
 
 void TestUntimedCommits() {
@@ -310,6 +357,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::strcmp(argv[1], "--untimed") == 0) {
             TestUntimedCommits();
             std::cout << "Draw pipeline untimed commits passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "enqueue-report") {
+            TestEnqueueReports();
+            std::cout << "Draw pipeline enqueue report passed\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "decode-drain-skip") {
