@@ -190,8 +190,9 @@ std::uint32_t LoadSamplerDescriptor(SpirvEmitterState& state, std::uint32_t samp
     const auto pointerType = state.module.Type(spv::OpTypePointer, spv::StorageClassUniformConstant, samplerType);
     if (samplerResource.table != NoTable) {
         if (state.tableSamplerVariable == 0 || !state.tableAccess.active) ExitDescriptorBindingFailure(state, DescriptorBindingKind::SamplerTable, sampler, "sampler table array was not emitted");
-        const auto variant = image != nullptr && image->depthCompare ? 2u : 0u;
-        const auto element = Binary(state, spv::OpIAdd, TypeU32(state), state.tableAccess.samplerElement, ConstantU32(state, variant + (point ? 1u : 0u)));
+        const bool integerBorder = image != nullptr && (image->numericClass == IrTextureNumericClass::Uint || image->numericClass == IrTextureNumericClass::Sint);
+        const std::uint32_t offset = integerBorder ? 4u : ((image != nullptr && image->depthCompare ? 2u : 0u) + (point ? 1u : 0u));
+        const auto element = Binary(state, spv::OpIAdd, TypeU32(state), state.tableAccess.samplerElement, ConstantU32(state, offset));
         const auto pointer = state.module.AllocateId();
         state.module.AddFunction(spv::OpAccessChain, pointerType, pointer, state.tableSamplerVariable, element);
         DecorateTableNonUniform(state, pointer);

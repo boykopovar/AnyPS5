@@ -13367,6 +13367,7 @@ void verifySamplerTableDeduplication() {
     }
     const auto resolved = ResourceMaterializer::ResolveImageTables(info, snapshot);
     require(resolved.samplers.size() == (3u + 1u) * Abi::SamplerEntryElements, "sampler table deduplication: duplicate sampler entries across tables were not deduplicated");
+    require(!resolved.samplers.at(0u).integerBorder && !resolved.samplers.at(1u).integerBorder && !resolved.samplers.at(2u).integerBorder && !resolved.samplers.at(3u).integerBorder && resolved.samplers.at(4u).integerBorder && resolved.samplers.at(4u).point && !resolved.samplers.at(4u).compare, "sampler table deduplication: integer border variant layout is wrong");
     for (std::uint32_t table = 0u; table < 2u; ++table) {
         const auto mapStart = resolved.map.at(Abi::TableHeader(table) + Abi::TableMapStart);
         for (std::uint32_t key = 0; key < 300u; ++key) {
@@ -13401,7 +13402,7 @@ void verifySamplerTableDeduplication() {
     budgetColumn.words = SharedValues<DescriptorValue>(budgetWords);
 
     const auto budgetResolved = ResourceMaterializer::ResolveImageTables(budgetInfo, budgetSnapshot);
-    require(budgetResolved.samplers.size() == Abi::SamplerElementBudget, "sampler table budget: valid unique samplers did not fill budget");
+    require(budgetResolved.samplers.size() == MaxUnique * Abi::SamplerEntryElements, "sampler table budget: valid unique samplers did not fill budget");
     const auto budgetMapStart = budgetResolved.map.at(Abi::TableHeader(0) + Abi::TableMapStart);
 
     const auto dupRecord = budgetResolved.map.at(budgetMapStart + MaxUnique);

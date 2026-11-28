@@ -28,6 +28,7 @@ struct ImageTableSamplerElement {
     std::array<std::uint32_t, 4> words{};
     bool compare = false;
     bool point = false;
+    bool integerBorder = false;
 };
 
 struct ImageTablePoisonRecord {

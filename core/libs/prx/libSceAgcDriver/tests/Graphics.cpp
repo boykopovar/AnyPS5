@@ -8547,7 +8547,8 @@ void samplerTableNonSeamlessCubeTests() {
                 const std::array<std::uint32_t, 4> words{0x92u | (entry == flaggedEntry ? 1u << 28u : 0u), (4u * 256u) << 12u, 0u, 0u};
                 for (std::uint32_t variant = 0; variant < Abi::SamplerEntryElements; ++variant) {
                     samplers.guestDescriptor.insert(samplers.guestDescriptor.end(), words.begin(), words.end());
-                    samplers.samplerDepthCompare.push_back(variant >= 2u);
+                    samplers.samplerDepthCompare.push_back(variant == 2u || variant == 3u);
+                    samplers.samplerIntegerBorder.push_back(variant == 4u);
                 }
             }
             const auto samplerBinding = samplers.binding;
@@ -8615,7 +8616,8 @@ void samplerTableDeviceLimitTests(std::optional<std::uint32_t> selected = std::n
                 const auto& words = entry == badEntry ? invalid[kind] : valid;
                 for (std::uint32_t variant = 0; variant < Abi::SamplerEntryElements; ++variant) {
                     samplers.guestDescriptor.insert(samplers.guestDescriptor.end(), words.begin(), words.end());
-                    samplers.samplerDepthCompare.push_back(variant >= 2u);
+                    samplers.samplerDepthCompare.push_back(variant == 2u || variant == 3u);
+                    samplers.samplerIntegerBorder.push_back(variant == 4u);
                 }
             }
             const auto samplerBinding = samplers.binding;
@@ -8910,6 +8912,7 @@ void tableUpdateAfterBindTests() {
             for (std::uint32_t element = 0; element < count; ++element) {
                 samplers.guestDescriptor.insert(samplers.guestDescriptor.end(), valid.begin(), valid.end());
                 samplers.samplerDepthCompare.push_back(false);
+                samplers.samplerIntegerBorder.push_back(element % Abi::SamplerEntryElements == 4u);
             }
             program.bindings.push_back(std::move(samplers));
             const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};

@@ -829,11 +829,13 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
             if (tables == nullptr) fail("DescriptorBindingBuilder::Populate sampler table elements were not resolved");
             physical.guestDescriptor.reserve(tables->samplers.size() * 4u);
             physical.samplerDepthCompare.reserve(physical.samplerDepthCompare.size() + tables->samplers.size());
+            physical.samplerIntegerBorder.reserve(physical.samplerIntegerBorder.size() + tables->samplers.size());
             for (const auto& element : tables->samplers) {
                 const auto first = physical.guestDescriptor.size();
                 physical.guestDescriptor.insert(physical.guestDescriptor.end(), element.words.begin(), element.words.end());
                 if (element.point) physical.guestDescriptor[first + 2u] = PointFilteredSamplerWord(physical.guestDescriptor[first], physical.guestDescriptor[first + 2u]);
                 physical.samplerDepthCompare.push_back(element.compare);
+                physical.samplerIntegerBorder.push_back(element.integerBorder);
             }
             physical.count = static_cast<std::uint32_t>(tables->samplers.size());
             break;

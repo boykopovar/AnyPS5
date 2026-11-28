@@ -2221,6 +2221,12 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
                             out.samplers.push_back(element);
                         }
                     }
+                    ImageTableSamplerElement integerElement;
+                    std::copy_n(words.dwords.begin(), 4u, integerElement.words.begin());
+                    integerElement.compare = false;
+                    integerElement.point = true;
+                    integerElement.integerBorder = true;
+                    out.samplers.push_back(integerElement);
                     samplerIndex.Insert(hash, *index);
                 }
                 record[Abi::SamplerRecordElement] = *index;
