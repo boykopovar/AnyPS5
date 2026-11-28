@@ -1,3 +1,5 @@
+#include "SslCertificateFixture.hpp"
+#include "prx/libSceSsl/include/Ssl.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceHttp2/include/Http2.hpp"
 #include "prx/libSceHttp2/Transport.hpp"
@@ -65,7 +67,9 @@ static void RequireNotWebSocket(int id) {
 }
 
 static void TestWebSockets() {
-    const int context = sceHttp2Init(1, 1, 0x10000, 4);
+    const int ssl = sceSslInit_nid_postfix(0x80000);
+    Require(ssl > 0);
+    const int context = sceHttp2Init(1, ssl, 0x80000, 4);
     const int tmpl = sceHttp2CreateTemplate(context, "agent", 2, 0);
     Require(context > 0 && tmpl > 0);
     const char* url = "ws://example.com/socket";
@@ -129,6 +133,7 @@ static void TestWebSockets() {
     RequireNotWebSocket(orphan);
     Require(CreateWebSocket(tmpl, url) == InvalidId);
     Require(sceHttp2Term(context) == 0);
+    Require(sceSslTerm_nid_postfix(ssl) == 0);
 }
 
 static int callbackCalls = 0;
@@ -158,7 +163,9 @@ static int TestOfflineRequest(bool asynchronous, bool queued) {
 #endif
     Http2SetLookupHook_nid_no_patch(OfflineLookup);
     const int networkError = static_cast<int>(0x80431063);
-    const int context = sceHttp2Init(1, 1, 0x10000, 4);
+    const int ssl = sceSslInit_nid_postfix(0x80000);
+    Require(ssl > 0);
+    const int context = sceHttp2Init(1, ssl, 0x80000, 4);
     const int tmpl = sceHttp2CreateTemplate(context, "offline-test", 3, 0);
     const int request = sceHttp2CreateRequestWithURL(tmpl, "GET", "https://example.invalid/offline", 0);
     Require(context > 0 && tmpl > 0 && request > 0);
@@ -224,6 +231,7 @@ static int TestOfflineRequest(bool asynchronous, bool queued) {
     Require(sceHttp2DeleteTemplate(tmpl) == 0);
     Require(sceHttp2GetStatusCode(orphan, &status) == InvalidId && status == 123);
     Require(sceHttp2Term(context) == 0);
+    Require(sceSslTerm_nid_postfix(ssl) == 0);
     Require(sceHttp2GetStatusCode(child, &status) == InvalidId && status == 123);
     Require(offlineLookups == 0);
     Http2SetLookupHook_nid_no_patch(nullptr);
@@ -232,7 +240,9 @@ static int TestOfflineRequest(bool asynchronous, bool queued) {
 
 static int TestOfflineDeclaredLength() {
     const int networkError = static_cast<int>(0x80431063);
-    const int context = sceHttp2Init(1, 1, 0x10000, 4);
+    const int ssl = sceSslInit_nid_postfix(0x80000);
+    Require(ssl > 0);
+    const int context = sceHttp2Init(1, ssl, 0x80000, 4);
     const int tmpl = sceHttp2CreateTemplate(context, "offline-test", 3, 0);
     const std::array<char, 4> body{'b', 'o', 'd', 'y'};
     const int online = sceHttp2CreateRequestWithURL(tmpl, "POST", "https://example.invalid/online", 64);
@@ -265,9 +275,31 @@ static int TestOfflineDeclaredLength() {
 #endif
     Require(sceHttp2DeleteTemplate(tmpl) == 0);
     Require(sceHttp2Term(context) == 0);
+    Require(sceSslTerm_nid_postfix(ssl) == 0);
     Require(offlineLookups == 0);
     Http2SetLookupHook_nid_no_patch(nullptr);
     return 0;
+}
+
+static void TestSslPoolCapacity() {
+    constexpr int sslPoolTooSmall = static_cast<int>(0x817B121C);
+    constexpr std::size_t minimumSslPool = 0x40000 - 0x1da0;
+    const int below = sceSslInit_nid_postfix(minimumSslPool - 1);
+    Require(below > 0);
+    Require(sceHttp2Init(1, below, 0x40000, 3) == sslPoolTooSmall);
+    Require(sceSslTerm_nid_postfix(below) == 0);
+
+    const int ssl = sceSslInit_nid_postfix(minimumSslPool);
+    Require(ssl > 0);
+    const int context = sceHttp2Init(1, ssl, 0x40000, 3);
+    Require(context > 0 && sceHttp2Term(context) == 0);
+
+    auto der = RootDer;
+    SceSsl::Data certificate{der.data(), der.size()};
+    SceSsl::Data* authorities[] = {&certificate};
+    Require(sceSslLoadCert(ssl, 1, authorities, nullptr, nullptr) == 0);
+    Require(sceHttp2Init(1, ssl, 0x40000, 3) == sslPoolTooSmall);
+    Require(sceSslTerm_nid_postfix(ssl) == 0);
 }
 
 int main(int argc, char** argv) {
@@ -275,13 +307,38 @@ int main(int argc, char** argv) {
     if (argc == 2 && std::strcmp(argv[1], "--offline-sync") == 0) return TestOfflineRequest(false, false);
     if (argc == 2 && std::strcmp(argv[1], "--offline-async") == 0) return TestOfflineRequest(true, false);
     if (argc == 2 && std::strcmp(argv[1], "--offline-queued") == 0) return TestOfflineRequest(true, true);
+    TestSslPoolCapacity();
     TestWebSockets();
     Require(sceHttp2CreateCookieBox(0xffff) == static_cast<int>(0x817b121du));
     const int box = sceHttp2CreateCookieBox(0x10000);
     Require(sceHttp2Init(1, 1, 0x10000, 0) == static_cast<int>(0x817B11FE));
-    Require(Throws([] { sceHttp2Init(1, 1, 0x10000, -1); }));
     Require(sceHttp2Init(1, 0, 0x40000, 1) == static_cast<int>(0x8095F006));
-    const int context = sceHttp2Init(1, 1, 0x10000, 4);
+    const int ssl = sceSslInit_nid_postfix(0x80000);
+    Require(ssl > 0);
+    const int context = sceHttp2Init(1, ssl, 0x80000, 4);
+    constexpr int poolTooSmall = static_cast<int>(0x817B121D);
+    constexpr int sslPoolTooSmall = static_cast<int>(0x817B121C);
+    Require(sceHttp2Init(1, ssl, 0x10000, 1) == poolTooSmall);
+    Require(sceHttp2Init(1, ssl, 0x3c000, 3) == poolTooSmall);
+    Require(sceHttp2Init(1, ssl, 0x40000, 4) == poolTooSmall);
+    Require(sceHttp2Init(1, ssl, 0x10000, 7) == sslPoolTooSmall);
+    Require(sceHttp2Init(1, -1, 0, -1) == static_cast<int>(0x8095F006));
+    const int rounded = sceHttp2Init(1, ssl, 0x3c001, 3);
+    Http2MemoryPoolStats roundedStats{};
+    Require(rounded > 0 && sceHttp2GetMemoryPoolStats(rounded, &roundedStats) == 0);
+    Require(roundedStats.pool_size == 0x40000 && sceHttp2Term(rounded) == 0);
+    const int negative = sceHttp2Init(1, ssl, 0x10000, -1);
+    Require(negative > 0);
+    const int negativeTemplate = sceHttp2CreateTemplate(negative, "agent", 3, 0);
+    Require(negativeTemplate > 0);
+    const int negativeRequest = sceHttp2CreateRequestWithURL(negativeTemplate, "GET", "https://127.0.0.1/", 0);
+    Require(negativeRequest > 0);
+    Require(Throws([&] { sceHttp2SendRequest(negativeRequest, nullptr, 0); }));
+    Require(sceHttp2Term(negative) == 0);
+    const int smallestMapping = sceHttp2Init(1, ssl, 1, INT32_MIN);
+    Require(smallestMapping > 0 && sceHttp2Term(smallestMapping) == 0);
+    Require(sceHttp2Init(1, ssl, 0, -1) == static_cast<int>(0x80020016));
+    Require(sceHttp2Init(1, ssl, SIZE_MAX, 1) == poolTooSmall);
     const int tmpl = sceHttp2CreateTemplate(context, "agent", 3, 0);
     const int proxyTemplate = sceHttp2CreateTemplate(context, "agent", 3, 1);
     Require(proxyTemplate > 0 && sceHttp2DeleteTemplate(proxyTemplate) == 0);
@@ -374,7 +431,7 @@ int main(int argc, char** argv) {
     Http2MemoryPoolStats stats{1, 2, 3, 4};
     std::memset(reinterpret_cast<unsigned char*>(&stats) + 28, 0x5a, 4);
     Require(sceHttp2GetMemoryPoolStats(context, &stats) == 0);
-    Require(stats.pool_size == 0x10000 && stats.max_inuse_size == 0 && stats.current_inuse_size == 0 && stats.reserved == 0);
+    Require(stats.pool_size == 0x80000 && stats.max_inuse_size == 0 && stats.current_inuse_size == 0 && stats.reserved == 0);
     const auto* statBytes = reinterpret_cast<const unsigned char*>(&stats);
     Require(statBytes[28] == 0 && statBytes[29] == 0 && statBytes[30] == 0 && statBytes[31] == 0);
     Http2MemoryPoolStats missing{1, 2, 3, 4};
@@ -451,6 +508,7 @@ int main(int argc, char** argv) {
     Require(sceHttp2DeleteRequest(request) == InvalidId);
     Require(sceHttp2SendRequest(request, nullptr, 0) == InvalidId);
     Require(sceHttp2Term(context) == 0);
+    Require(sceSslTerm_nid_postfix(ssl) == 0);
     Require(sceHttp2DeleteRequest(child) == InvalidId);
     Require(sceHttp2DeleteTemplate(sibling) == InvalidId);
     Require(sceHttp2SetMinSslVersion(context, 0) == InvalidId);

@@ -1,3 +1,4 @@
+#include "prx/libSceSsl/include/Ssl.hpp"
 #include "prx/libSceHttp2/include/Http2.hpp"
 #include <array>
 #include <atomic>
@@ -53,7 +54,7 @@ struct Tree {
     std::array<int, 2> templates;
     std::array<int, 6> requests;
 
-    Tree() : context(sceHttp2Init(1, 1, 0x10000, 4)) {
+    explicit Tree(int ssl) : context(sceHttp2Init(1, ssl, 0x80000, 4)) {
         Require(context > 0, "context creation failed");
         for (auto& id : templates) {
             id = sceHttp2CreateTemplate(context, "agent", 3, 0);
@@ -99,11 +100,11 @@ static bool CheckTree(const Tree& tree, Operation operation) {
     return correct;
 }
 
-static unsigned AllocationFailureCases(Operation operation) {
+static unsigned AllocationFailureCases(int ssl, Operation operation) {
     unsigned failures = 0;
     for (int budget = 0; budget < 16; ++budget) {
-        Tree tree;
-        Tree independent;
+        Tree tree(ssl);
+        Tree independent(ssl);
         const int cookieBox = sceHttp2CreateCookieBox(0x10000);
         Require(cookieBox > 0, "cookie box creation failed");
         allocationAttempts = 0;
@@ -130,9 +131,9 @@ static unsigned AllocationFailureCases(Operation operation) {
     return failures;
 }
 
-static void ConcurrentCreationCases(Operation operation) {
+static void ConcurrentCreationCases(int ssl, Operation operation) {
     for (int iteration = 0; iteration < 64; ++iteration) {
-        Tree tree;
+        Tree tree(ssl);
         std::array<int, 16> created{};
         std::atomic<bool> start{false};
         std::thread producer([&] {
@@ -160,11 +161,14 @@ static void ConcurrentCreationCases(Operation operation) {
 }
 
 int main() {
+    const int ssl = sceSslInit_nid_postfix(0x80000);
+    Require(ssl > 0, "SSL context creation failed");
     unsigned failures = 0;
     for (const auto operation : {Operation::Request, Operation::Template, Operation::Context}) {
-        failures += AllocationFailureCases(operation);
-        ConcurrentCreationCases(operation);
+        failures += AllocationFailureCases(ssl, operation);
+        ConcurrentCreationCases(ssl, operation);
     }
+    Require(sceSslTerm_nid_postfix(ssl) == 0, "SSL context cleanup failed");
     std::printf("48 allocation-pressure lifecycles, 192 concurrent lifecycles, %u failures\n", failures);
     return failures == 0 ? 0 : 1;
 }
