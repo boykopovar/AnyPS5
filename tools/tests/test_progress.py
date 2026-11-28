@@ -517,6 +517,21 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(group["done_names"], ["Exported", "Inline", "Member", "Visible"])
         self.assertEqual(group["todo_names"], [])
 
+    def test_exports_with_a_trailing_return_type_are_counted(self):
+        source = (
+            "auto APS5_VABI sceTrailingStub(int value) -> int { return NotImplemented_nid_no_patch(__func__); }\n"
+            "auto APS5_VABI sceTrailingDone(int value) noexcept -> int { return value; }\n"
+            "static auto APS5_VABI Forwarded(int) -> int;\n"
+            "auto APS5_VABI Forwarded(int value) -> int { return value + 1; }\n"
+            "auto APS5_VABI sceTrailingTry() -> int try { return Forwarded(1); } catch (...) { return 0; }\n")
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / "libSceExample"
+            library.mkdir()
+            (library / "Export.cpp").write_text(source, encoding="utf-8")
+            group = progress.scan_library(library)
+        self.assertEqual(group["done_names"], ["sceTrailingDone", "sceTrailingTry"])
+        self.assertEqual(group["todo_names"], ["sceTrailingStub"])
+
     def test_stub_marker_inside_raw_literals_does_not_mark_implementation_as_stub(self):
         for prefix in ("", "u8", "u", "U", "L"):
             source = ('int APS5_VABI Ready(int value) {\n'
