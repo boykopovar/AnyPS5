@@ -180,6 +180,10 @@ std::uint32_t EmitAtomicLockPointer(SpirvEmitterState& state, std::uint32_t inde
     return pointer;
 }
 
+std::uint32_t EmitGdsAtomicLockPointer(SpirvEmitterState& state) {
+    return EmitAtomicLockPointer(state, ConstantU32(state, 0u));
+}
+
 std::uint32_t EmitQwordAtomicLockPointer(SpirvEmitterState& state, std::uint32_t guest) {
     const auto u32 = TypeU32(state);
     const auto u64 = TypeScalarU64(state);

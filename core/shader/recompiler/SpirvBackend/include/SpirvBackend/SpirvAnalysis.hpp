@@ -35,6 +35,8 @@ struct SpirvRequirements {
     bool bufferU64View = false;
     bool imageInt64Atomics = false;
     bool gdsInt64Atomics = false;
+    bool gdsAtomics = false;
+    bool gdsAtomicLocks = false;
     bool imageAtomicLocks = false;
     bool sharedInt64Atomics = false;
     bool float64 = false;

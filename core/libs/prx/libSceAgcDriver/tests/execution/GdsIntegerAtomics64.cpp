@@ -206,7 +206,7 @@ auto Compile(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> cod
 }
 
 void Dispatch(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint32_t wave, std::uint32_t threads = Threads, std::uint32_t groups = 1, bool groupId = false) {
-    const auto result = Compile(device, code, wave, threads, groupId);
+    const auto result = Compile(device, code, wave, threads, groupId, TargetHasCapability(device.Target(), spv::CapabilityInt64Atomics));
     device.Dispatch(result, groups, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
 }
@@ -293,6 +293,7 @@ void CheckContention(AgcDriver::VulkanDevice& device, AgcDriver::QueueState& que
     Dispatch(device, code, wave, Threads, groups);
     Dma(queue, false);
     if (opcode == 0x60) Expect(Readback[0], start + step * count, "cross-workgroup add conservation");
+    else if (opcode == 0x00) Expect(Readback[0], (start & ~0xffffffffull) | static_cast<std::uint32_t>(start + count), "cross-workgroup dword add conservation");
     else Expect(Readback[0], count - 1u, "cross-workgroup inc conservation");
     for (std::uint32_t i = 1; i < Gds.size(); ++i) Expect(Readback[i], Untouched, "contention guard");
 }
@@ -569,13 +570,27 @@ void CheckRequirements(AgcDriver::VulkanDevice& device) {
     }
     Require(capability, "GDS qword atomics omitted Int64Atomics");
     Require(std::ranges::all_of(seen, [](bool value) { return value; }), "GDS qword atomics omitted a native opcode or CAS loop");
-    bool refused = false;
-    try {
-        static_cast<void>(Compile(device, code, 32, Threads, false, false));
-    } catch (const std::exception& error) {
-        refused = std::string(error.what()).find("64-bit GDS atomics need shaderBufferInt64Atomics") != std::string::npos;
+    const auto locked = Compile(device, code, 32, Threads, false, false);
+    const std::span<const std::uint32_t> lockedWords(locked.spirv.Words());
+    for (std::size_t index = 5; index < lockedWords.size();) {
+        const auto count = lockedWords[index] >> 16u;
+        Require(count != 0 && count <= lockedWords.size() - index, "invalid SPIR-V instruction size");
+        Require((lockedWords[index] & 0xffffu) != spv::OpCapability || lockedWords[index + 1] != spv::CapabilityInt64Atomics, "GDS qword atomics declared Int64Atomics on a target without shaderBufferInt64Atomics");
+        index += count;
     }
-    Require(refused, "GDS qword atomics did not reject a target without shaderBufferInt64Atomics");
+    const auto lockWords = std::ranges::count_if(locked.specialization, [](const ShaderRecompiler::PipelineSpecializationConstant& constant) { return ShaderRecompiler::PipelineSpecialization::IsAtomicLockTable(constant.id); });
+    Require(lockWords == ShaderRecompiler::PipelineSpecialization::AtomicLockTableWords, "GDS qword atomics did not ask for the atomic lock table on a target without shaderBufferInt64Atomics");
+    const auto lockTableWords = [](const ShaderRecompiler::RecompileResult& compiled) {
+        return std::ranges::count_if(compiled.specialization, [](const ShaderRecompiler::PipelineSpecializationConstant& constant) { return ShaderRecompiler::PipelineSpecialization::IsAtomicLockTable(constant.id); });
+    };
+    for (const auto opcode : {0x00u, 0x3eu}) {
+        std::vector<std::uint32_t> dword{0x7e040280, 0x7e0c0281};
+        Ds(dword, opcode, 0);
+        dword.push_back(0xbf810000u);
+        Require(lockTableWords(Compile(device, dword, 32, Threads, false, false)) == ShaderRecompiler::PipelineSpecialization::AtomicLockTableWords, "a program with only dword GDS atomics did not ask for the atomic lock table on a target without shaderBufferInt64Atomics, so it would not take the lock a qword GDS atomic of another stage takes");
+        Require(lockTableWords(Compile(device, dword, 32, Threads, false, true)) == 0, "a program with only dword GDS atomics asked for the atomic lock table on a target with shaderBufferInt64Atomics");
+    }
+    bool refused = false;
     for (const auto opcode : {0x51u, 0x52u, 0x53u, 0x71u, 0x72u, 0x73u}) {
         std::vector<std::uint32_t> floating{0x7e040280, 0x7e0c0280, 0x7e0e0280, 0x7e100280, 0x7e120280};
         Ds(floating, opcode, 0);
@@ -703,10 +718,6 @@ int main(int argc, char** argv) {
         if (!device) return VulkanTestSkipped;
         AgcDriver::QueueState queue;
         const std::string mode = argc > 1 ? argv[1] : "operations";
-        if (mode != "requirements" && !TargetHasCapability(device->Target(), spv::CapabilityInt64Atomics)) {
-            std::puts("skipped, the device has no shaderBufferInt64Atomics");
-            return VulkanTestSkipped;
-        }
         for (const auto wave : {32u, 64u}) {
             if (mode == "operations") {
                 CheckOperations(*device, queue, wave, Threads, false);
@@ -720,6 +731,7 @@ int main(int argc, char** argv) {
             if (mode == "contention") {
                 CheckContention(*device, queue, wave, 0x60);
                 CheckContention(*device, queue, wave, 0x63);
+                CheckContention(*device, queue, wave, 0x00);
                 CheckPermutation(*device, queue, wave, false);
                 CheckPermutation(*device, queue, wave, true);
             }

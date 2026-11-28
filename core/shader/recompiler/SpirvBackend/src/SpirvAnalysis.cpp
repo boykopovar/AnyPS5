@@ -503,6 +503,9 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
                 if (sharedAccess == SharedAccess::Atomic && inst->Type() == IrType::U64 && kind == ResourceKind::Gds) {
                     requirements.gdsInt64Atomics = true;
                 }
+                if (kind == ResourceKind::Gds && (sharedAccess == SharedAccess::Atomic || sharedAccess == SharedAccess::Append || sharedAccess == SharedAccess::Consume)) {
+                    requirements.gdsAtomics = true;
+                }
                 if (program.Resources().stage != IrShaderStage::Compute && program.Resources().stage != IrShaderStage::Mesh && kind == ResourceKind::Lds) {
                     requirements.functionLds = true;
                 } else if (sharedAccess == SharedAccess::Atomic && inst->Type() == IrType::U64 && kind == ResourceKind::Lds) {
