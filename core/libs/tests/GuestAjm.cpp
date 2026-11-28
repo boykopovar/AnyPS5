@@ -2806,6 +2806,166 @@ void TestConsoleEmptyBatch(std::uint32_t context) {
     Require(sceAjmBatchWait(context, id, 0, &error) == invalidBatch);
 }
 
+void TestBatchGuestPointers(std::uint32_t context) {
+    constexpr int invalidBatch = static_cast<int>(0x80930004);
+    constexpr int invalidParameter = static_cast<int>(0x80930005);
+#ifdef _WIN32
+    SYSTEM_INFO system{};
+    GetSystemInfo(&system);
+    const std::size_t pageSize = system.dwPageSize;
+    auto* pages = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, 2 * pageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(pages != nullptr);
+    DWORD oldProtection = 0;
+    Require(VirtualProtect(pages + pageSize, pageSize, PAGE_NOACCESS, &oldProtection) != 0);
+#else
+    const long hostPageSize = sysconf(_SC_PAGESIZE);
+    Require(hostPageSize > 0);
+    const std::size_t pageSize = static_cast<std::size_t>(hostPageSize);
+    auto* pages = static_cast<std::uint8_t*>(mmap(nullptr, 2 * pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(pages != MAP_FAILED);
+    Require(mprotect(pages + pageSize, pageSize, PROT_NONE) == 0);
+#endif
+
+    std::vector<std::uint8_t> storage(64);
+    AjmBatchInfo info{};
+    std::uint8_t statistics[24];
+    std::memset(statistics, 0xA5, sizeof(statistics));
+    const auto statisticsUntouched = [&] {
+        return std::all_of(statistics, statistics + sizeof(statistics), [](std::uint8_t byte) { return byte == 0xA5; });
+    };
+    Require(sceAjmBatchInitialize(storage.data(), storage.size(), &info) == 0);
+    Require(sceAjmBatchJobGetStatistics(&info, 1.0f, statistics) == 0);
+
+    std::uint32_t batchId = 0xdeadbeefu;
+    AjmBatchError error{};
+    error.error_code = -1;
+    errno = 71;
+    Require(sceAjmBatchStart(context, reinterpret_cast<const AjmBatchInfo*>(0x10), SCE_AJM_PRIORITY_MIN, &error, &batchId) == invalidParameter);
+    Require(errno == 71 && batchId == 0xdeadbeefu && error.error_code == -1 && statisticsUntouched());
+
+    auto* straddlingInfo = reinterpret_cast<AjmBatchInfo*>(pages + pageSize - sizeof(AjmBatchInfo) / 2);
+    std::memcpy(straddlingInfo, &info, sizeof(AjmBatchInfo) / 2);
+    errno = 71;
+    Require(sceAjmBatchStart(context, straddlingInfo, SCE_AJM_PRIORITY_MIN, &error, &batchId) == invalidParameter);
+    Require(errno == 71 && batchId == 0xdeadbeefu && statisticsUntouched());
+
+    AjmBatchInfo badBuffer{reinterpret_cast<void*>(0x10), 64, 64};
+    errno = 71;
+    Require(sceAjmBatchStart(context, &badBuffer, SCE_AJM_PRIORITY_MIN, &error, &batchId) == invalidParameter);
+    Require(errno == 71 && batchId == 0xdeadbeefu && statisticsUntouched());
+
+    AjmBatchInfo wrappingBuffer{reinterpret_cast<void*>(UINTPTR_MAX - 3), 64, 64};
+    errno = 71;
+    Require(sceAjmBatchStart(context, &wrappingBuffer, SCE_AJM_PRIORITY_MIN, &error, &batchId) == invalidParameter);
+    Require(errno == 71 && batchId == 0xdeadbeefu && statisticsUntouched());
+
+    errno = 71;
+    Require(sceAjmBatchStart(context, &info, SCE_AJM_PRIORITY_MIN, reinterpret_cast<AjmBatchError*>(0x10), &batchId) == invalidParameter);
+    Require(errno == 71 && batchId == 0xdeadbeefu && statisticsUntouched());
+
+    errno = 71;
+    Require(sceAjmBatchStart(context, &info, SCE_AJM_PRIORITY_MIN, &error, reinterpret_cast<std::uint32_t*>(0x10)) == invalidParameter);
+    Require(errno == 71 && statisticsUntouched());
+
+    auto* straddlingBatchId = reinterpret_cast<std::uint32_t*>(pages + pageSize - 2);
+    errno = 71;
+    Require(sceAjmBatchStart(context, &info, SCE_AJM_PRIORITY_MIN, &error, straddlingBatchId) == invalidParameter);
+    Require(errno == 71 && statisticsUntouched());
+
+    error.error_code = -1;
+    Require(sceAjmBatchStart(context, &info, SCE_AJM_PRIORITY_MIN, &error, &batchId) == 0);
+    Require(error.error_code == 0 && batchId != 0xdeadbeefu && !statisticsUntouched());
+
+    errno = 71;
+    Require(sceAjmBatchWait(context, batchId, 0, reinterpret_cast<AjmBatchError*>(0x10)) == invalidParameter);
+    Require(errno == 71);
+    error.error_code = -1;
+    Require(sceAjmBatchWait(context, batchId, 0, &error) == 0);
+    Require(error.error_code == 0);
+    Require(sceAjmBatchWait(context, batchId, 0, reinterpret_cast<AjmBatchError*>(0x10)) == invalidBatch);
+
+    std::uint32_t consoleId = 0xdeadbeefu;
+    errno = 71;
+    Require(sceAjmBatchStartBuffer(context, reinterpret_cast<const std::uint8_t*>(0x10), 8, 0, &error, &consoleId) == invalidParameter);
+    Require(errno == 71 && consoleId == 0xdeadbeefu);
+
+    const auto* wrappingBatch = reinterpret_cast<const std::uint8_t*>(UINTPTR_MAX - 3);
+    errno = 71;
+    Require(sceAjmBatchStartBuffer(context, wrappingBatch, 8, 0, &error, &consoleId) == invalidParameter);
+    Require(errno == 71 && consoleId == 0xdeadbeefu);
+
+    errno = 71;
+    Require(sceAjmBatchStartBuffer(context, wrappingBatch, 4, 0, &error, &consoleId) == invalidParameter);
+    Require(errno == 71 && consoleId == 0xdeadbeefu);
+
+    error.error_code = -1;
+    Require(sceAjmBatchStartBuffer(context, reinterpret_cast<const std::uint8_t*>(UINTPTR_MAX), 0, 0, &error, &consoleId) == 0);
+    Require(error.error_code == 0 && consoleId != 0xdeadbeefu);
+    Require(sceAjmBatchWait(context, consoleId, 0, &error) == 0);
+    consoleId = 0xdeadbeefu;
+
+    std::uint32_t* straddlingBatch = reinterpret_cast<std::uint32_t*>(pages + pageSize - 8);
+    straddlingBatch[0] = 0;
+    straddlingBatch[1] = 16;
+    errno = 71;
+    Require(sceAjmBatchStartBuffer(context, reinterpret_cast<const std::uint8_t*>(straddlingBatch), 24, 0, &error, &consoleId) == invalidParameter);
+    Require(errno == 71 && consoleId == 0xdeadbeefu);
+
+    std::uint32_t* oversizedJob = reinterpret_cast<std::uint32_t*>(pages + pageSize - 64);
+    oversizedJob[0] = 0;
+    oversizedJob[1] = 0x7ffffff0u;
+    errno = 71;
+    Require(sceAjmBatchStartBuffer(context, reinterpret_cast<const std::uint8_t*>(oversizedJob), 0x7ffffff8u, 0, &error, &consoleId) == invalidParameter);
+    Require(errno == 71 && consoleId == 0xdeadbeefu);
+
+    const std::uint64_t validEmpty[2] = {0, 0};
+    errno = 71;
+    Require(sceAjmBatchStartBuffer(context, reinterpret_cast<const std::uint8_t*>(validEmpty), 4, 0, reinterpret_cast<AjmBatchError*>(0x10), &consoleId) == invalidParameter);
+    Require(errno == 71 && consoleId == 0xdeadbeefu);
+
+    errno = 71;
+    Require(sceAjmBatchStartBuffer(context, reinterpret_cast<const std::uint8_t*>(validEmpty), 0, 0, reinterpret_cast<AjmBatchError*>(0x10), &consoleId) == invalidParameter);
+    Require(errno == 71 && consoleId == 0xdeadbeefu);
+
+    errno = 71;
+    Require(sceAjmBatchStartBuffer(context, reinterpret_cast<const std::uint8_t*>(validEmpty), 0, 0, &error, reinterpret_cast<std::uint32_t*>(0x10)) == invalidParameter);
+    Require(errno == 71);
+
+    std::uint32_t instance = 0;
+    Require(sceAjmInstanceCreate(context, 1, 0, &instance) == 0);
+    const std::uint8_t initialize[8] = {0xFE, 0x70, 0x1F, 0xF0, 0, 0, 0, 0};
+    std::int32_t controlResult[2] = {-1, -1};
+    ConsoleBatch consoleJob;
+    consoleJob.Chunk(0, instance, 40);
+    consoleJob.Buffer(2, initialize, sizeof(initialize));
+    consoleJob.Chunk(3, 0, 0x6001);
+    consoleJob.Buffer(18, controlResult, sizeof(controlResult));
+
+    errno = 71;
+    Require(sceAjmBatchStartBuffer(context, reinterpret_cast<const std::uint8_t*>(consoleJob.Data()), static_cast<std::uint32_t>(consoleJob.Bytes()), 0, reinterpret_cast<AjmBatchError*>(0x10), &consoleId) == invalidParameter);
+    Require(errno == 71 && consoleId == 0xdeadbeefu && controlResult[0] == -1 && controlResult[1] == -1);
+
+    errno = 71;
+    Require(sceAjmBatchStartBuffer(context, reinterpret_cast<const std::uint8_t*>(consoleJob.Data()), static_cast<std::uint32_t>(consoleJob.Bytes()), 0, &error, reinterpret_cast<std::uint32_t*>(0x10)) == invalidParameter);
+    Require(errno == 71 && controlResult[0] == -1 && controlResult[1] == -1);
+
+    errno = 71;
+    Require(sceAjmBatchStartBuffer(context, reinterpret_cast<const std::uint8_t*>(consoleJob.Data()), static_cast<std::uint32_t>(consoleJob.Bytes()), 0, &error, straddlingBatchId) == invalidParameter);
+    Require(errno == 71 && controlResult[0] == -1 && controlResult[1] == -1);
+
+    error.error_code = -1;
+    Require(sceAjmBatchStartBuffer(context, reinterpret_cast<const std::uint8_t*>(consoleJob.Data()), static_cast<std::uint32_t>(consoleJob.Bytes()), 0, &error, &consoleId) == 0);
+    Require(error.error_code == 0 && consoleId != 0xdeadbeefu && controlResult[0] == 0 && controlResult[1] == 0);
+    Require(sceAjmBatchWait(context, consoleId, 0, &error) == 0);
+    Require(sceAjmInstanceDestroy(context, instance) == 0);
+
+#ifdef _WIN32
+    Require(VirtualFree(pages, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(pages, 2 * pageSize) == 0);
+#endif
+}
+
 void TestConsoleSingleFrameRun(std::uint32_t context) {
     constexpr std::uint64_t version = 1;
     constexpr std::uint64_t sidebandStream = 1ull << 47;
@@ -3251,6 +3411,7 @@ int main(int argc, char** argv) {
     TestConsoleBuildersRejectUnmapped(argv[1]);
     TestConsoleBufferEdges(context);
     TestConsoleEmptyBatch(context);
+    TestBatchGuestPointers(context);
     TestConsoleSingleFrameRun(context);
     TestConsoleStaleHeaderBits(context);
     TestRunSidebandStopsAtOversizedField(context);
