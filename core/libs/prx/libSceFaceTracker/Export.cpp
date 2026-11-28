@@ -49,10 +49,6 @@ int32_t ctxI32(void *context, std::size_t off) {
     return v;
 }
 
-void ctxStore(void *context, std::size_t off, void *value) {
-    std::memcpy(ctxByte(context, off), &value, sizeof(value));
-}
-
 uint8_t *userDb(void *context) {
     return ctxByte(context, kUserDb);
 }
@@ -137,8 +133,10 @@ int registerCallback(void *callback, void *userArg, void *context,
     if (int error = 0; !CheckContext(context, error)) {
         return error;
     }
-    ctxStore(context, cbOff, callback);
-    ctxStore(context, argOff, userArg);
+    if (!CopyOut(ctxByte(context, cbOff), &callback, sizeof(callback)) ||
+        !CopyOut(ctxByte(context, argOff), &userArg, sizeof(userArg))) {
+        return kErrInvalid;
+    }
     return 0;
 }
 
