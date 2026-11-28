@@ -49,7 +49,7 @@ const PersistenceAllocator allocator{&TestAllocate, &TestDeallocate};
 
 struct Text {
     StringImpl impl;
-    String string;
+    StringHandle string;
 };
 
 Text Make8(const char* text) {

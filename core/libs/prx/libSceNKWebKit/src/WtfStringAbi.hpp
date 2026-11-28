@@ -76,6 +76,7 @@ struct CStringBuffer {
     std::size_t length;
 };
 
+void FreeStringImpl(StringImpl* impl);
 void Release(StringImpl* impl);
 void Release(CStringBuffer* buffer);
 
