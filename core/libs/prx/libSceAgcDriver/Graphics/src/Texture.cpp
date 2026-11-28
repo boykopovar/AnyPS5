@@ -1659,18 +1659,6 @@ VkBufferMemoryBarrier WholeBufferBarrier(VkBuffer buffer, VkAccessFlags from, Vk
     return barrier;
 }
 
-VkFormat PackedStorageViewFormat(VkFormat format) {
-    switch (format) {
-        case VK_FORMAT_R5G6B5_UNORM_PACK16:
-        case VK_FORMAT_A1R5G5B5_UNORM_PACK16:
-        case VK_FORMAT_R5G5B5A1_UNORM_PACK16:
-        case VK_FORMAT_B4G4R4A4_UNORM_PACK16:
-            return VK_FORMAT_R16_UINT;
-        default:
-            return VK_FORMAT_UNDEFINED;
-    }
-}
-
 // Storage images cannot use sRGB formats; the shader works on the raw encoded values either way.
 // The answer is a property of the physical device, so it is computed once per format (every storage
 // image lookup asks: a live vkGetPhysicalDeviceFormatProperties call each time was measurable) and
@@ -1784,16 +1772,20 @@ bool IntegerFormat(VkFormat format) {
     }
 }
 
-bool ClearColorFor(VkFormat format, DccKeys keys, VkClearColorValue& clear) {
+bool ClearColorFor(VkFormat format, std::uint32_t guestFormat, bool alphaOnMsb, DccKeys keys, VkClearColorValue& clear) {
+    RequireConvertedDccClearEncodable(guestFormat, keys);
+    RequireDccClearEncodable(DccClearTextureFormat(guestFormat), keys);
     if (IntegerFormat(format)) {
         if (keys != DccKeys::Clear0000) return false;
         clear.uint32[0] = clear.uint32[1] = clear.uint32[2] = clear.uint32[3] = 0u;
         return true;
     }
+    if (keys == DccKeys::Clear0001 || keys == DccKeys::Clear1110) {
+        std::array<std::uint32_t, 4> pattern{};
+        return FillDccClear(DccClearTextureFormat(guestFormat), keys, alphaOnMsb, std::as_writable_bytes(std::span(pattern))) && ClearColorForTexel(format, BytesPerElement(guestFormat), pattern, clear);
+    }
     switch (keys) {
         case DccKeys::Clear0000: clear.float32[0] = clear.float32[1] = clear.float32[2] = clear.float32[3] = 0.0f; return true;
-        case DccKeys::Clear0001: clear.float32[0] = clear.float32[1] = clear.float32[2] = 0.0f; clear.float32[3] = 1.0f; return true;
-        case DccKeys::Clear1110: clear.float32[0] = clear.float32[1] = clear.float32[2] = 1.0f; clear.float32[3] = 0.0f; return true;
         case DccKeys::Clear1111: clear.float32[0] = clear.float32[1] = clear.float32[2] = clear.float32[3] = 1.0f; return true;
         default: return false;
     }
@@ -1803,9 +1795,9 @@ VkFormat StorageFormatForGuest(const Context& context, std::uint32_t guestFormat
     return StorageFormatFor(context, ResolveTextureFormat(guestFormat));
 }
 
-bool StorageClearAvailable(const Context& context, std::uint32_t guestFormat, DccKeys keys) {
+bool StorageClearAvailable(const Context& context, std::uint32_t guestFormat, bool alphaOnMsb, DccKeys keys) {
     VkClearColorValue clear{};
-    return IsDccClear(keys) && StorageFormatAvailable(context, guestFormat) && ClearColorFor(StorageFormatForGuest(context, guestFormat), keys, clear);
+    return IsDccClear(keys) && StorageFormatAvailable(context, guestFormat) && ClearColorFor(StorageFormatForGuest(context, guestFormat), guestFormat, alphaOnMsb, keys, clear);
 }
 
 VkFormat SrgbTwinFormat(const Context& context, VkFormat format) {
@@ -2156,6 +2148,7 @@ bool ClearLayoutFor(VkFormat format, ClearLayout& layout) {
         case VK_FORMAT_A2R10G10B10_UNORM_PACK32: layout = {ClearKind::Unorm, 4, {{0, 10, 2}, {10, 10, 1}, {20, 10, 0}, {30, 2, 3}}}; return true;
         case VK_FORMAT_A2R10G10B10_UINT_PACK32: layout = {ClearKind::Uint, 4, {{0, 10, 2}, {10, 10, 1}, {20, 10, 0}, {30, 2, 3}}}; return true;
         case VK_FORMAT_B10G11R11_UFLOAT_PACK32: layout = {ClearKind::UFloat, 3, {{0, 11, 0}, {11, 11, 1}, {22, 10, 2}}}; return true;
+        case VK_FORMAT_A1R5G5B5_UNORM_PACK16: layout = {ClearKind::Unorm, 4, {{0, 5, 2}, {5, 5, 1}, {10, 5, 0}, {15, 1, 3}}}; return true;
         default: return false;
     }
 }
@@ -3609,7 +3602,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
     filledKeys = DccKeys::Uncompressed;
     VkClearColorValue clearValue{};
     const bool fastClear = IsDccClear(uploadedKeys) || uploadedKeys == DccKeys::ClearSingle;
-    if (fastClear && (ClearColorFor(storageFormat, uploadedKeys, clearValue) || SingleKeyColorFor(descriptor, guestBytes, now, singleProof, storageFormat, uploadedKeys, clearValue))) {
+    if (fastClear && (ClearColorFor(storageFormat, descriptor.format, descriptor.dccAlphaOnMsb, uploadedKeys, clearValue) || SingleKeyColorFor(descriptor, guestBytes, now, singleProof, storageFormat, uploadedKeys, clearValue))) {
         // A fast-cleared surface is cleared on the GPU; its texel memory is neither read nor filled.
         // The clear is recorded into the open batch like a direct upload (the image kept by it): a
         // batch of its own submitted the recorder's work first and waited for all of it, 25-40 ms
@@ -7067,6 +7060,10 @@ void StorageTexture::NoteRefreshWork() {
     HostThreadSlot<std::uint64_t, OwnRefreshWorkSlot>::Set(OwnRefreshWork() + 1);
 }
 
+std::uint64_t StorageTexture::GpuClears() {
+    return Profile().storageRecordedClears + Profile().storageWaitedClears;
+}
+
 StorageTexture::OrderedSkipCounts StorageTexture::TakeOrderedSkipCounts() {
     return {orderedFlushSkips.exchange(0, std::memory_order_relaxed), orderedRefreshSkips.exchange(0, std::memory_order_relaxed)};
 }
@@ -7387,7 +7384,7 @@ bool StorageTexture::clearByKeysFill(DccKeys keys, std::uint8_t key) {
     static const bool traceKeys = std::getenv("APS5_TRACE_DCC_KEYS") != nullptr;
     VkClearColorValue clearValue{};
     auto* recorder = Recorder::Active();
-    const char* refusal = !ClearColorFor(storageFormat, keys, clearValue) ? (keys == DccKeys::ClearRegister ? "clear-register code" : "no clear value in the storage format") : recorder == nullptr ? "no recorder" : nullptr;
+    const char* refusal = !ClearColorFor(storageFormat, descriptor.format, descriptor.dccAlphaOnMsb, keys, clearValue) ? (keys == DccKeys::ClearRegister ? "clear-register code" : "no clear value in the storage format") : recorder == nullptr ? "no recorder" : nullptr;
     if (refusal != nullptr) {
         static std::atomic<bool> reported{false};
         if (!reported.exchange(true)) std::fprintf(stderr, "[dcc-keys] key fill 0x%02x (%s) over surface 0x%llx+0x%llx (guest format %u, vk format %d, keys 0x%llx) not applied at once: %s\n", key, DccKeysName(keys), static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), descriptor.format, static_cast<int>(storageFormat), static_cast<unsigned long long>(descriptor.dccAddress), refusal);
@@ -7988,7 +7985,7 @@ std::optional<DccKeys> StorageTexture::clearHandOver() {
     }
     const auto keys = ProvedKeys();
     VkClearColorValue clear{};
-    if (!IsDccClear(keys) || !ClearColorFor(storageFormat, keys, clear)) return std::nullopt;
+    if (!IsDccClear(keys) || !ClearColorFor(storageFormat, descriptor.format, descriptor.dccAlphaOnMsb, keys, clear)) return std::nullopt;
     if (handedUnits.size() != trackedLayers) handedUnits.assign(trackedLayers, false);
     for (const auto& other : others) {
         for (std::uint32_t unit = 0; unit < other->trackedLayers; ++unit) {
@@ -8105,7 +8102,7 @@ StorageTexture::CreationHandOver StorageTexture::PrepareCreation(const Context& 
     DccKeyProof proof;
     const auto keys = ProvedClearKeys(descriptor, guestBytes, proof);
     VkClearColorValue clear{};
-    if (!IsDccClear(keys) || !ClearColorFor(StorageFormatFor(context, ResolveTextureFormat(descriptor.format)), keys, clear)) return storeFirst();
+    if (!IsDccClear(keys) || !ClearColorFor(StorageFormatFor(context, ResolveTextureFormat(descriptor.format)), descriptor.format, descriptor.dccAlphaOnMsb, keys, clear)) return storeFirst();
     handOver.keys = keys;
     handOver.sources = std::move(others);
     handOver.detached = std::move(detached);

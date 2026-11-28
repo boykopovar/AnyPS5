@@ -391,7 +391,9 @@ struct Layout {
 bool LayoutFor(VkFormat format, Layout& layout) {
     switch (format) {
         case VK_FORMAT_R8_UNORM: case VK_FORMAT_R8_SRGB: layout = {1, {8}, Kind::Unorm}; return true;
+        case VK_FORMAT_R8_SNORM: layout = {1, {8}, Kind::Snorm}; return true;
         case VK_FORMAT_R8_UINT: layout = {1, {8}, Kind::Uint}; return true;
+        case VK_FORMAT_R8_SINT: layout = {1, {8}, Kind::Sint}; return true;
         case VK_FORMAT_R16_UNORM: layout = {1, {16}, Kind::Unorm}; return true;
         case VK_FORMAT_R16_SNORM: layout = {1, {16}, Kind::Snorm}; return true;
         case VK_FORMAT_R16_UINT: layout = {1, {16}, Kind::Uint}; return true;
@@ -410,6 +412,7 @@ bool LayoutFor(VkFormat format, Layout& layout) {
         case VK_FORMAT_R16G16_SINT: layout = {2, {16, 16}, Kind::Sint}; return true;
         case VK_FORMAT_R16G16_SFLOAT: layout = {2, {16, 16}, Kind::Float}; return true;
         case VK_FORMAT_B10G11R11_UFLOAT_PACK32: layout = {3, {11, 11, 10}, Kind::Float}; return true;
+        case VK_FORMAT_A1R5G5B5_UNORM_PACK16: layout = {4, {5, 5, 5, 1}, Kind::Unorm}; return true;
         case VK_FORMAT_A2B10G10R10_UNORM_PACK32: case VK_FORMAT_A2R10G10B10_UNORM_PACK32: layout = {4, {10, 10, 10, 2}, Kind::Unorm}; return true;
         case VK_FORMAT_A2B10G10R10_UINT_PACK32: layout = {4, {10, 10, 10, 2}, Kind::Uint}; return true;
         case VK_FORMAT_R8G8B8A8_UNORM: case VK_FORMAT_R8G8B8A8_SRGB: case VK_FORMAT_B8G8R8A8_UNORM: case VK_FORMAT_B8G8R8A8_SRGB: layout = {4, {8, 8, 8, 8}, Kind::Unorm}; return true;
@@ -545,7 +548,7 @@ DccKeys textureClearKeys(const GuestTextureResource& resource, std::uint64_t gue
     if (const auto known = WaitForKeyWriters(resource, guestBytes)) keys = *known;
     else keys = currentDccKeys(resource.dccAddress, DccKeyBytes(guestBytes), memoized);
     if (keys == DccKeys::Uncompressed || (keys == DccKeys::ClearSingle && SingleKeysReadable(resource))) return keys;
-    if (DccClearTextureFormat(resource.format) == ResolveTextureFormat(resource.format) && IsConvertedTextureFormat(resource.format) && (keys == DccKeys::Clear0001 || keys == DccKeys::Clear1110 || (keys == DccKeys::Clear1111 && resource.format == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format6E4Float)))) throw std::runtime_error(std::string("AGC graphics: DCC clear code ") + DccKeysName(keys) + " of converted texture format " + std::to_string(resource.format) + " is not implemented");
+    RequireConvertedDccClearEncodable(resource.format, keys);
     std::byte probe[16]{};
     if (!IsDccClear(keys) || !FillDccClear(DccClearTextureFormat(resource.format), keys, resource.dccAlphaOnMsb, std::span(probe, std::min<std::size_t>(sizeof(probe), BytesPerElement(resource.format))))) {
         static AgcDriver::Mutex reportedMutex;
@@ -698,7 +701,17 @@ void MarkDccUncompressed(const Context& context, std::uint64_t metaAddress, std:
     StoreUncompressedOnCpu(metaAddress, count);
 }
 
+void RequireConvertedDccClearEncodable(std::uint32_t guestFormat, DccKeys keys) {
+    if (DccClearTextureFormat(guestFormat) == ResolveTextureFormat(guestFormat) && IsConvertedTextureFormat(guestFormat) && (keys == DccKeys::Clear0001 || keys == DccKeys::Clear1110 || (keys == DccKeys::Clear1111 && guestFormat == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format6E4Float)))) throw std::runtime_error(std::string("AGC graphics: DCC clear code ") + DccKeysName(keys) + " of converted texture format " + std::to_string(guestFormat) + " is not implemented");
+}
+
+void RequireDccClearEncodable(VkFormat format, DccKeys keys) {
+    const bool oneChannel = (format >= VK_FORMAT_R8_UNORM && format <= VK_FORMAT_R8_SRGB) || (format >= VK_FORMAT_R16_UNORM && format <= VK_FORMAT_R16_SFLOAT) || (format >= VK_FORMAT_R32_UINT && format <= VK_FORMAT_R32_SFLOAT) || (format >= VK_FORMAT_R64_UINT && format <= VK_FORMAT_R64_SFLOAT);
+    if (oneChannel && (keys == DccKeys::Clear0001 || keys == DccKeys::Clear1110)) throw std::runtime_error(std::string("AGC graphics: DCC clear code ") + DccKeysName(keys) + " of a one-channel format (VkFormat " + std::to_string(static_cast<int>(format)) + ") is not implemented");
+}
+
 bool FillDccClear(VkFormat format, DccKeys keys, bool alphaOnMsb, std::span<std::byte> bytes) {
+    RequireDccClearEncodable(format, keys);
     if (keys == DccKeys::Clear0000) {
         std::fill(bytes.begin(), bytes.end(), std::byte{0});
         return true;

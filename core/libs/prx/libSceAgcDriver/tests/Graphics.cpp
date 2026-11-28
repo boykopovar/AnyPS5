@@ -2640,9 +2640,58 @@ void Color1555TargetTests() {
     queue.context[0x1e0] = (1u << 30u) | 13u;
     Require(AgcDriver::Graphics::DecodeState(queue).blendConstants == std::array<float, 4>{0.375f, 0.25f, 0.125f, 0.5f}, "a 1_5_5_5 target did not exchange its red and blue blend constants with the export");
     queue.context[0x1e0] = 0;
-    for (const auto& [number, swap] : {std::pair{1u, 0u}, std::pair{4u, 0u}, std::pair{0u, 1u}}) {
-        queue.context[0x31c] = (queue.context[0x31c] & ~((7u << 8u) | (3u << 11u))) | (number << 8u) | (swap << 11u);
-        expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "unsupported color format 17 number type " + std::to_string(number) + " component swap " + std::to_string(swap));
+    queue.context[0x1e0] = 0x40000504u;
+    queue.context[0x31c] &= ~0x8000u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "blending unclamped normalized color into a packed 16-bit color target, whose merge reads and writes float texels through the target's 16-bit unsigned integer storage view, is not implemented (CB_COLOR_INFO 0x");
+    auto rgb565 = queue;
+    rgb565.context[0x31c] = (rgb565.context[0x31c] & ~((0x1fu << 2u) | (3u << 11u))) | (16u << 2u);
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(rgb565); }, "blending unclamped normalized color into a packed 16-bit color target, whose merge reads and writes float texels through the target's 16-bit unsigned integer storage view, is not implemented (CB_COLOR_INFO 0x");
+    queue.context[0x31c] |= 0x8000u;
+    queue.context[0x1e0] = 0;
+    queue.context[0x2dc] = 0xaa01u;
+    Require(AgcDriver::Graphics::DecodeState(queue).alphaToCoverage, "alpha-to-coverage into a 1_5_5_5 target with the standard component order, which keeps the export alpha in the alpha channel, was refused");
+    queue.context[0x2dc] = 0xaa00u;
+    for (const auto& [swap, mapping, onlyRed] : {std::tuple{1u, 0xe4u, VK_COLOR_COMPONENT_R_BIT}, std::tuple{2u, 0x39u, VK_COLOR_COMPONENT_A_BIT}, std::tuple{3u, 0xb1u, VK_COLOR_COMPONENT_G_BIT}}) {
+        queue.context[0x31c] = (queue.context[0x31c] & ~(3u << 11u)) | (swap << 11u);
+        queue.context[0x8e] = 0xfu;
+        const auto swapped = AgcDriver::Graphics::DecodeState(queue);
+        Require(swapped.colors.size() == 1 && swapped.colors[0].format == VK_FORMAT_A1R5G5B5_UNORM_PACK16 && swapped.colors[0].elementBytes == 2 && swapped.colors[0].componentMapping == mapping, "a 1_5_5_5 target with component swap " + std::to_string(swap) + " did not render through A1R5G5B5 with its export mapping");
+        Require(AgcDriver::Graphics::ExportMappings(swapped)[0] == mapping && swapped.blends[0].colorWriteMask == 0xfu, "a component-swapped 1_5_5_5 target did not write all four channels");
+        queue.context[0x8e] = 0x1u;
+        Require(AgcDriver::Graphics::DecodeState(queue).blends[0].colorWriteMask == static_cast<VkColorComponentFlags>(onlyRed), "a component-swapped 1_5_5_5 target writing only red did not write the A1R5G5B5 channel that stores red");
+        queue.context[0x8e] = 0xfu;
+        queue.context[0x1e0] = 0x40000504u;
+        if (swap == 1u) {
+            const auto alternate = AgcDriver::Graphics::DecodeState(queue);
+            Require(alternate.blends[0].blendEnable && alternate.blends[0].srcColorBlendFactor == VK_BLEND_FACTOR_SRC_ALPHA && alternate.blends[0].dstColorBlendFactor == VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, "alpha blending into a 1_5_5_5 target with the alternate component order was not decoded");
+        } else {
+            for (const auto control : {0x40000504u, 0x40000102u, 0x60040001u, 0x40000021u}) {
+                queue.context[0x1e0] = control;
+                char text[288];
+                std::snprintf(text, sizeof(text), "AGC graphics: blending into color target slot 0 (CB_BLEND0_CONTROL 0x%08x), whose component swap stores the export alpha outside the alpha channel (component mapping 0x%02x, VkFormat %d), is not implemented", control, mapping, static_cast<int>(VK_FORMAT_A1R5G5B5_UNORM_PACK16));
+                expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, text);
+            }
+            for (const auto control : {0x40000001u, 0x60010001u}) {
+                for (const auto clamp : {true, false}) {
+                    auto copy = queue;
+                    copy.context[0x1e0] = control;
+                    if (!clamp) copy.context[0x31c] &= ~0x8000u;
+                    const auto copied = AgcDriver::Graphics::DecodeState(copy);
+                    Require(!copied.blends[0].blendEnable && copied.blends[0].colorWriteMask == 0xfu && copied.colors[0].partialWriteMask == 0, "a copy blend into a 1_5_5_5 target whose component swap moves the export alpha out of the alpha channel was not written without blending");
+                }
+            }
+            queue.context[0x1e0] = 0;
+            queue.context[0x2dc] = 0xaa01u;
+            expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "alpha-to-coverage into a component-swapped or packed MRT0 target is unsupported");
+            queue.context[0x2dc] = 0xaa00u;
+        }
+        queue.context[0x1e0] = 0;
+    }
+    for (std::uint32_t swap = 0; swap < 4; ++swap) {
+        for (const auto number : {1u, 4u}) {
+            queue.context[0x31c] = (queue.context[0x31c] & ~((7u << 8u) | (3u << 11u))) | (number << 8u) | (swap << 11u);
+            expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "unsupported color format 17 number type " + std::to_string(number) + " component swap " + std::to_string(swap));
+        }
     }
 }
 
@@ -4775,6 +4824,16 @@ void multisampleTests() {
     }
     queue.context[0x32b] = queue.context[0x31c] ^ (1u << 8u);
     expectFailure([&] { DecodeColorMetadataPass(queue); }, "different formats or extents");
+    auto alternate = rasterizedResolve;
+    for (const auto offset : {0x31cu, 0x32bu}) alternate.context[offset] = (alternate.context[offset] & ~((0x1fu << 2u) | (7u << 8u) | (3u << 11u))) | (17u << 2u) | (1u << 11u);
+    const auto alternatePass = DecodeColorMetadataPass(alternate);
+    Require(alternatePass.has_value() && alternatePass->source.has_value() && alternatePass->source->componentMapping == 0xe4u && alternatePass->targets.size() == 1 && alternatePass->targets[0].componentMapping == 0xe4u, "a CB resolve between 1_5_5_5 targets with the same component swap was refused");
+    alternate.context[0x32b] &= ~(3u << 11u);
+    expectFailure([&] { DecodeColorMetadataPass(alternate); }, "CB resolve between 1_5_5_5 color targets with different component swaps is unsupported");
+    auto reversed = rasterizedResolve;
+    for (const auto offset : {0x31cu, 0x32bu}) reversed.context[offset] = (reversed.context[offset] & ~((0x1fu << 2u) | (3u << 11u))) | (10u << 2u) | (offset == 0x31cu ? 2u << 11u : 0u);
+    const auto reversedPass = DecodeColorMetadataPass(reversed);
+    Require(reversedPass.has_value() && reversedPass->source.has_value() && reversedPass->source->componentMapping != reversedPass->targets.at(0).componentMapping, "a CB resolve from an 8_8_8_8 STD_REV target into an 8_8_8_8 STD target was refused");
     auto packed = rasterizedResolve;
     for (const auto offset : {0x31cu, 0x32bu}) packed.context[offset] = (packed.context[offset] & ~0x41f7cu) | (6u << 2u);
     expectFailure([&] { DecodeColorMetadataPass(packed); }, "CB resolves of 10_11_11 unorm color targets");

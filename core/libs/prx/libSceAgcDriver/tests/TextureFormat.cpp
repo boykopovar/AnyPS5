@@ -9,6 +9,8 @@
 #include <limits>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -235,7 +237,9 @@ void convertedDccClearTests() {
         reject([&] { read(format, 0x80); }, "DCC clear code 1110 of converted texture format " + std::to_string(format));
         Require(read(format, 0x00) == DccKeys::Clear0000 && read(format, 0xc0) == DccKeys::Clear1111, "converted texture format " + std::to_string(format) + " must keep its 0000 and 1111 DCC clear codes");
     }
-    Require(read(20, 0x40) == DccKeys::Clear0001 && read(20, 0x80) == DccKeys::Clear1110, "format 20 must keep its 0001 and 1110 DCC clear codes");
+    Require(read(20, 0x00) == DccKeys::Clear0000 && read(20, 0xc0) == DccKeys::Clear1111, "format 20 must keep its 0000 and 1111 DCC clear codes");
+    reject([&] { static_cast<void>(read(20, 0x40)); }, "DCC clear code 0001 of a one-channel format (VkFormat 98)");
+    reject([&] { static_cast<void>(read(20, 0x80)); }, "DCC clear code 1110 of a one-channel format (VkFormat 98)");
 }
 
 void singleDccKeysTests() {
@@ -290,6 +294,59 @@ void packedFloatDccClearTests() {
             ReadTextureSurface(resource, keysVal, std::as_writable_bytes(std::span(surface)));
             for (const auto texel : surface) Require(texel == expected, "packed float format " + std::to_string(format) + " DCC clear surface read produced unexpected texel value");
         }
+    }
+}
+
+void color1555DccClearTests() {
+    for (std::uint32_t swap = 0; swap < 4; ++swap) Require(DccAlphaOnMsb(VK_FORMAT_A1R5G5B5_UNORM_PACK16, swap) == (swap < 2u), "a 1_5_5_5 target with component swap " + std::to_string(swap) + " did not keep its DCC alpha in the field that holds the export alpha");
+    struct Case {
+        DccKeys keys;
+        bool alphaOnMsb;
+        std::uint16_t texel;
+        std::array<float, 4> clear;
+    };
+    for (const auto& test : {Case{DccKeys::Clear0000, true, 0x0000u, {0, 0, 0, 0}}, Case{DccKeys::Clear0001, true, 0x8000u, {0, 0, 0, 1}}, Case{DccKeys::Clear1110, true, 0x7fffu, {1, 1, 1, 0}}, Case{DccKeys::Clear1111, true, 0xffffu, {1, 1, 1, 1}},
+                             Case{DccKeys::Clear0000, false, 0x0000u, {0, 0, 0, 0}}, Case{DccKeys::Clear0001, false, 0x001fu, {0, 0, 1, 0}}, Case{DccKeys::Clear1110, false, 0xffe0u, {1, 1, 0, 1}}, Case{DccKeys::Clear1111, false, 0xffffu, {1, 1, 1, 1}}}) {
+        const std::string what = std::string("the ") + DccKeysName(test.keys) + " DCC clear of an A1R5G5B5 target with its DCC alpha " + (test.alphaOnMsb ? "in bit 15" : "in bits 0-4");
+        std::array<std::uint16_t, 8> texels{};
+        texels.fill(0x5a5au);
+        Require(FillDccClear(VK_FORMAT_A1R5G5B5_UNORM_PACK16, test.keys, test.alphaOnMsb, std::as_writable_bytes(std::span(texels))), what + " was not encoded");
+        for (const auto texel : texels) Require(texel == test.texel, what + " stored the wrong halfword");
+        std::array<std::uint32_t, 4> pattern{};
+        std::memcpy(pattern.data(), texels.data(), sizeof(pattern));
+        VkClearColorValue clear{};
+        Require(ClearColorForTexel(VK_FORMAT_A1R5G5B5_UNORM_PACK16, 2, pattern, clear), what + " has no host clear value");
+        for (std::uint32_t component = 0; component < 4; ++component) Require(clear.float32[component] == test.clear[component], what + " cleared the wrong A1R5G5B5 components");
+    }
+}
+
+void dccClearChannelTests() {
+    std::array<std::byte, 16> texels{};
+    alignas(64) std::array<std::uint8_t, 16> keys{};
+    GuestTextureResource resource{};
+    resource.dccAddress = reinterpret_cast<std::uint64_t>(keys.data());
+    const auto read = [&](std::uint32_t format, std::uint8_t key) {
+        keys.fill(key);
+        resource.format = format;
+        return TextureClearKeys(resource, keys.size() * 256u);
+    };
+    for (const std::uint32_t format : {1u, 2u, 5u, 6u, 7u, 8u, 11u, 12u, 13u}) {
+        const auto name = "guest format " + std::to_string(format);
+        Require(read(format, 0x00) == DccKeys::Clear0000 && read(format, 0xc0) == DccKeys::Clear1111, name + " must keep its 0000 and 1111 DCC clear codes");
+        reject([&] { static_cast<void>(read(format, 0x40)); }, "DCC clear code 0001 of a one-channel format");
+        reject([&] { static_cast<void>(read(format, 0x80)); }, "DCC clear code 1110 of a one-channel format");
+    }
+    for (const auto keys : {DccKeys::Clear0001, DccKeys::Clear1110}) reject([&] { static_cast<void>(FillDccClear(VK_FORMAT_R64_UINT, keys, false, texels)); }, std::string("DCC clear code ") + DccKeysName(keys) + " of a one-channel format");
+    for (const auto format : {VK_FORMAT_R8_UNORM, VK_FORMAT_R8_SNORM, VK_FORMAT_R8_SINT, VK_FORMAT_R16_SFLOAT, VK_FORMAT_R32_SFLOAT}) {
+        for (const bool alphaOnMsb : {false, true}) {
+            Require(FillDccClear(format, DccKeys::Clear1111, alphaOnMsb, texels), "a one-channel 1111 DCC clear was not encoded");
+            for (const auto keys : {DccKeys::Clear0001, DccKeys::Clear1110}) reject([&] { static_cast<void>(FillDccClear(format, keys, alphaOnMsb, texels)); }, std::string("DCC clear code ") + DccKeysName(keys) + " of a one-channel format");
+        }
+    }
+    for (const bool alphaOnMsb : {false, true}) {
+        std::array<std::uint8_t, 16> pairs{};
+        Require(FillDccClear(VK_FORMAT_R8G8_UNORM, DccKeys::Clear0001, alphaOnMsb, std::as_writable_bytes(std::span(pairs))), "a two-channel 0001 DCC clear was not encoded");
+        for (std::size_t index = 0; index < pairs.size(); ++index) Require(pairs[index] == ((index % 2u == 1u) == alphaOnMsb ? 0xffu : 0u), "a two-channel 0001 DCC clear did not set the channel gfx8_get_dcc_clear_parameters takes as alpha");
     }
 }
 
@@ -421,6 +478,8 @@ void RunTextureFormatTests() {
     convertedDccClearTests();
     singleDccKeysTests();
     packedFloatDccClearTests();
+    color1555DccClearTests();
+    dccClearChannelTests();
     fillContractTests();
     gcnBufferFormatTests();
     guestFormatLookupTests();

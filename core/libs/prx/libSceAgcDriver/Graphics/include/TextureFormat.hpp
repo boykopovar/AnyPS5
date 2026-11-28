@@ -14,6 +14,7 @@ struct Context;
 
 VkFormat ResolveTextureFormat(std::uint32_t guestFormat);
 VkFormat DccClearTextureFormat(std::uint32_t guestFormat);
+VkFormat PackedStorageViewFormat(VkFormat format);
 VkComponentSwizzle TextureComponentChannel(std::uint32_t guestFormat, VkComponentSwizzle component);
 std::uint32_t SrgbDecodeFormats(PFN_vkGetPhysicalDeviceFormatProperties formatProperties, VkPhysicalDevice physical);
 std::uint32_t ScaledSampledFormats(PFN_vkGetPhysicalDeviceFormatProperties formatProperties, VkPhysicalDevice physical);

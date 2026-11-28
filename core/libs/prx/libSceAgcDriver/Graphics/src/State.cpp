@@ -1098,7 +1098,7 @@ DecodedColorFormat DecodeColorFormatRaw(std::uint32_t format, std::uint32_t numb
     };
     const bool alternate = swap == 1;
     const auto single = [&](VkFormat vkFormat, std::uint32_t bytes) { return DecodedColorFormat{vkFormat, bytes, static_cast<std::uint8_t>((0xe4u & ~3u) | swap)}; };
-    if (swap > 1 && format != 1 && format != 2 && format != 4 && format != 7 && format != 10 && format != 12 && format != 16 && format != 19) return fail();
+    if (swap > 1 && format != 1 && format != 2 && format != 4 && format != 7 && format != 10 && format != 12 && format != 16 && format != 17 && format != 19) return fail();
     switch (format) {
         case 1:
             if (number == unorm) return single(VK_FORMAT_R8_UNORM, 1);
@@ -1176,9 +1176,11 @@ DecodedColorFormat DecodeColorFormatRaw(std::uint32_t format, std::uint32_t numb
         case 16:
             if ((swap != 0 && swap != 2) || number != unorm) return fail();
             return {VK_FORMAT_R5G6B5_UNORM_PACK16, 2, static_cast<std::uint8_t>(swap == 2 ? 0xe4u : 0xc6u)};
-        case 17:
-            if (swap != 0 || number != unorm) return fail();
-            return {VK_FORMAT_A1R5G5B5_UNORM_PACK16, 2, 0xc6u};
+        case 17: {
+            if (number != unorm) return fail();
+            constexpr std::array<std::uint8_t, 4> mappings{0xc6u, 0xe4u, 0x39u, 0xb1u};
+            return {VK_FORMAT_A1R5G5B5_UNORM_PACK16, 2, mappings[swap]};
+        }
         case 19:
             if (swap != 2 || number != unorm) return fail();
             return {VK_FORMAT_R16_UINT, 2, 0x1bu, ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4};
@@ -2089,6 +2091,15 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         state.blendEnable = ((blend >> 30u) & 1u) != 0 && (read(cx, 0x31c + slot * 0xfu) & 0x10000u) == 0;
         Require(!state.blendEnable || !color.uintExport, "blending into an unsigned integer target is unsupported");
         const bool reversed = mapping == 0x1bu || mapping == 0x93u;
+        if (state.blendEnable && !reversed && ((mapping >> 6u) & 3u) != 3u) {
+            const auto copies = [](std::uint32_t control) { return blendFactor(control & 0x1fu) == VK_BLEND_FACTOR_ONE && blendFactor((control >> 8u) & 0x1fu) == VK_BLEND_FACTOR_ZERO && blendOp((control >> 5u) & 7u) == VK_BLEND_OP_ADD; };
+            if (!copies(blend) || !copies((blend & 0x20000000u) != 0 ? blend >> 16u : blend)) {
+                char text[288];
+                std::snprintf(text, sizeof(text), "AGC graphics: blending into color target slot %u (CB_BLEND%u_CONTROL 0x%08x), whose component swap stores the export alpha outside the alpha channel (component mapping 0x%02x, VkFormat %d), is not implemented", slot, slot, blend, mapping, static_cast<int>(color.format));
+                throw std::runtime_error(text);
+            }
+            state.blendEnable = VK_FALSE;
+        }
         if (state.blendEnable) {
             const bool opaqueDestination = (read(cx, 0x31d + slot * 0xfu) & 0x20000u) != 0;
             const auto recordBlendConstant = [&](std::uint32_t channel, float value) {
@@ -2207,6 +2218,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
             std::snprintf(detail, sizeof(detail), " (CB_COLOR_INFO 0x%08x, CB_BLEND%u_CONTROL 0x%08x)", info, slot, blend);
             const std::string where = detail;
             Require(color.samples == 1u && color.packing == ShaderRecompiler::ColorExportPacking::None, "blending unclamped normalized color into a multisampled or packed color target is not implemented" + where);
+            Require(PackedStorageViewFormat(color.format) == VK_FORMAT_UNDEFINED, "blending unclamped normalized color into a packed 16-bit color target, whose merge reads and writes float texels through the target's 16-bit unsigned integer storage view, is not implemented" + where);
             Require(!reversed && mapping != 0xecu, "blending unclamped normalized color into a color target with a reversed or alternate component order is not implemented" + where);
             Require(!(secondSource(state.srcColorBlendFactor) || secondSource(state.dstColorBlendFactor) || secondSource(state.srcAlphaBlendFactor) || secondSource(state.dstAlphaBlendFactor)), "dual-source blending of unclamped normalized color is not implemented" + where);
             Require(std::ranges::none_of(result.colors, [&](const ColorTarget& other) { return &other != &color && other.partialWriteMask != 0 && other.partialWriteMask != UnclampedBlendMask; }), "blending unclamped normalized color cannot join a partial write of a packed color target in one draw" + where);
@@ -2238,7 +2250,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         const auto format = read(cx, 0x1c5) & 0xfu;
         Require(format == 3u || format == 4u || format == 5u || format == 6u || format == 9u, "alpha-to-coverage needs an MRT0 export format with a floating-point alpha");
         Require(!result.ditheredAlphaToCoverage || format == 4u || format == 9u, "dithered alpha-to-coverage needs an FP16_ABGR or 32_ABGR export");
-        Require(mrt0 == result.colors.end() || (mrt0->componentMapping == 0xe4u && mrt0->packing == ShaderRecompiler::ColorExportPacking::None), "alpha-to-coverage into a component-swapped or packed MRT0 target is unsupported");
+        Require(mrt0 == result.colors.end() || ((mrt0->componentMapping == 0xe4u || mrt0->componentMapping == 0xc6u) && mrt0->packing == ShaderRecompiler::ColorExportPacking::None), "alpha-to-coverage into a component-swapped or packed MRT0 target is unsupported");
     }
     APS5_LOG_OUT_DEBUG("DecodeState done colorTarget=%u render=%ux%u topology=%u", result.hasColorTarget ? 1u : 0u, result.renderExtent.width, result.renderExtent.height, static_cast<unsigned>(result.topology));
     return result;
@@ -2860,6 +2872,7 @@ std::optional<ColorMetadataPass> DecodeColorMetadataPass(const QueueState& queue
         Require(destination.cmaskAddress == 0, "CB resolve into a fast-clear color target is unsupported (the resolve does not update its CMASK)");
         Require(source.format == destination.format && source.extent.width == destination.extent.width && source.extent.height == destination.extent.height, "CB resolve between different formats or extents is unsupported");
         if (source.packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 || destination.packing == ShaderRecompiler::ColorExportPacking::Float11_11_10) Require(source.packing == destination.packing && source.componentMapping == destination.componentMapping, "CB resolve between 11_11_10 float color targets of different layouts is unsupported");
+        if (source.format == VK_FORMAT_A1R5G5B5_UNORM_PACK16) Require(source.componentMapping == destination.componentMapping, "CB resolve between 1_5_5_5 color targets with different component swaps is unsupported");
         if (WordPacked(source.packing) && source.packing != ShaderRecompiler::ColorExportPacking::Float11_11_10) throw std::runtime_error("AGC graphics: CB resolves of " + std::string(PackedColorTargetName(source.packing)) + " color targets are unsupported");
         requireCovered(destination);
         pass.source = source;

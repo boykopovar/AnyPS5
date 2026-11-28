@@ -103,7 +103,20 @@ std::shared_ptr<StorageTexture> CachedStorageLayers(const Context& context, cons
 // Whether `image` is still the storage cache's image of its surface (what CachedStorageSurface
 // would return); a true answer counts as a use for the cache's eviction order, as a lookup would.
 bool StorageImageCached(const Context& context, const StorageTexture* image);
-bool StorageImageServesKeys(const StorageTexture& image, std::uint64_t dccAddress);
+struct StorageImageKeys {
+    std::uint64_t dccAddress = 0;
+    bool dccAlphaOnMsb = false;
+};
+bool StorageImageServesKeys(const StorageTexture& image, StorageImageKeys keys);
+struct VariantKeySpan {
+    std::uint64_t dccAddress = 0;
+    std::uint64_t bytes = 0;
+    DccKeys keys = DccKeys::Uncompressed;
+};
+struct VariantWrite {
+    std::uint64_t base = 0;
+    std::optional<StorageTexture::WriteRecord> write;
+};
 std::shared_ptr<StorageTexture> RepeatStorageSurface(const Context& context, const GuestTextureResource& resource, const std::shared_ptr<StorageTexture>& stored);
 
 // Defined in Texture.cpp beside the pending-results registry, for the fast Revalidate below: whether
@@ -533,6 +546,10 @@ private:
         std::vector<std::pair<std::uint32_t, std::uint32_t>> samplerRejections;
     };
     std::vector<TableStage> tableStages;
+    std::vector<VariantKeySpan> variantKeySpans;
+    bool variantKeySpansHold() const;
+    std::vector<VariantWrite> variantWrites;
+    bool variantWritesHold() const;
     std::array<std::size_t, 2> tableBindings{std::numeric_limits<std::size_t>::max(), std::numeric_limits<std::size_t>::max()};
     std::array<std::uint32_t, 2> tableElements{};
     std::array<std::size_t, 2> storageTableBindings{std::numeric_limits<std::size_t>::max(), std::numeric_limits<std::size_t>::max()};
@@ -687,6 +704,7 @@ private:
         std::optional<ShaderRecompiler::DescriptorImageShape> shape;
         bool depthCompare = false;
         bool known = false;
+        bool variant = false;
     };
     std::shared_ptr<GuestMemory::WriteSubscription> writeSubscription;
     std::uint64_t subscribedGeneration = 0;
@@ -789,7 +807,7 @@ private:
     std::vector<std::shared_ptr<StorageTexture>> storageTextures;
     std::vector<VkImageView> multisampleStorageViews;
     std::vector<std::uint32_t> storageMips;
-    std::vector<std::uint64_t> storageKeys;
+    std::vector<StorageImageKeys> storageKeys;
     std::vector<bool> storageFirstLayer;
     std::vector<bool> storageWritten;
     std::vector<bool> storageAtomic;
