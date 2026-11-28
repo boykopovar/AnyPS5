@@ -260,11 +260,14 @@ std::size_t PageOf(const Surface& surface, std::uint32_t x, std::uint32_t y) {
     return (surface.offset + static_cast<std::size_t>(y) * surface.RowBytes() + static_cast<std::size_t>(x) * 16u) / PageBytes;
 }
 
-bool Run(AgcDriver::VulkanDevice& device, const Surface& surface, Write write, Result& result) {
+enum class Outcome { Ran, NoImport, Compared };
+
+Outcome Run(AgcDriver::VulkanDevice& device, const Surface& surface, Write write, Result& result) {
     Block block(RegionBytes);
     std::fill(block.data, block.data + block.bytes, Initial);
     const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
-    if (AgcDriver::Graphics::HostImportFor(context, block.Address(), block.bytes) == nullptr) return false;
+    if (AgcDriver::Graphics::HostImportFor(context, block.Address(), block.bytes) == nullptr) return Outcome::NoImport;
+    if (write == Write::AfterDraw && !AgcDriver::GuestMemory::Watched(block.Address(), block.bytes)) return Outcome::Compared;
     const auto target = DecodeTarget(block, surface);
     Require(target.tileMode == AgcDriver::Graphics::ColorTileMode::Linear && target.bytes == surface.Bytes(), "write-back guest newer: the target is not a linear R32G32B32A32 target");
     const VkRect2D seed{{static_cast<std::int32_t>(surface.width - 1u), static_cast<std::int32_t>(surface.height - 1u)}, {1, 1}};
@@ -295,7 +298,7 @@ bool Run(AgcDriver::VulkanDevice& device, const Surface& surface, Write write, R
             }
         }
     }
-    return true;
+    return Outcome::Ran;
 }
 
 }
@@ -322,10 +325,15 @@ int main() {
             {"the guest wrote inside the drawn rectangle after the draw, small target (byte by byte against the snapshot)", &Tall, Write::AfterDraw, false},
             {"the guest wrote inside the drawn rectangle after the draw, large target (by whole pages)", &Large, Write::AfterDraw, false},
         }};
-        std::vector<std::string> controlFailures, failures;
+        std::vector<std::string> controlFailures, failures, compared;
         for (const auto& test : cases) {
             Result result;
-            if (!Run(*device, *test.surface, test.write, result)) {
+            const auto outcome = Run(*device, *test.surface, test.write, result);
+            if (outcome == Outcome::Compared) {
+                compared.push_back(test.name);
+                continue;
+            }
+            if (outcome == Outcome::NoImport) {
                 std::puts("write-back guest newer test skipped: no host import on this device");
                 return VulkanTestSkipped;
             }
@@ -343,6 +351,10 @@ int main() {
             std::string all;
             for (const auto& name : failures) all += "\n  " + name;
             throw std::runtime_error("write-back guest newer: a drawn target's write-back overwrote bytes the guest wrote after the draw:" + all);
+        }
+        if (!compared.empty()) {
+            for (const auto& name : compared) std::printf("skipped, host imports are compared, not watched: %s\n", name.c_str());
+            return VulkanTestSkipped;
         }
         std::puts("write-back guest newer: bytes the guest wrote after a draw survive the target's write-back, and the draw's other pixels land");
         return 0;
