@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 #include <limits>
 
 
@@ -439,7 +440,11 @@ void TestPlatformTimeRanges() {
     WTF::MediaTime fiveTime = _ZN3WTF9MediaTime16createWithDoubleEd(5.0);
     WTF::MediaTime zeroTime = _ZN3WTF9MediaTime8zeroTimeEv();
     _ZN7WebCore18PlatformTimeRanges3addERKN3WTF9MediaTimeES4_(&invalidAddRanges, fiveTime, zeroTime);
-    Require(_ZNK7WebCore18PlatformTimeRanges6lengthEv(&invalidAddRanges) == 0);
+    Require(_ZNK7WebCore18PlatformTimeRanges6lengthEv(&invalidAddRanges) == 1);
+    WTF::MediaTime invalidAddStart = _ZNK7WebCore18PlatformTimeRanges5startEj(&invalidAddRanges, 0);
+    Require(_ZNK3WTF9MediaTime8toDoubleEv(&invalidAddStart) == 5.0);
+    WTF::MediaTime invalidAddEnd = _ZNK7WebCore18PlatformTimeRanges3endEj(&invalidAddRanges, 0);
+    Require(_ZNK3WTF9MediaTime8toDoubleEv(&invalidAddEnd) == 0.0);
     _ZN7WebCore18PlatformTimeRangesD1Ev(&invalidAddRanges);
 
     WebCore::PlatformTimeRanges tieRanges;
@@ -627,6 +632,132 @@ void TestPlatformTimeRanges() {
     _ZN7WebCore18PlatformTimeRangesD1Ev(&emptyRanges);
 }
 
+struct ExpectedRange {
+    double start;
+    double end;
+};
+
+bool SameTime(const WTF::MediaTime& time, double expected) {
+    if (std::isnan(expected)) return _ZNK3WTF9MediaTime9isInvalidEv(&time);
+    return _ZNK3WTF9MediaTime7isValidEv(&time) && _ZNK3WTF9MediaTime8toDoubleEv(&time) == expected;
+}
+
+bool RangesAre(const WebCore::PlatformTimeRanges* ranges, std::initializer_list<ExpectedRange> expected) {
+    if (_ZNK7WebCore18PlatformTimeRanges6lengthEv(ranges) != expected.size()) return false;
+    unsigned index = 0;
+    for (const ExpectedRange& range : expected) {
+        bool valid = false;
+        WTF::MediaTime start = _ZNK7WebCore18PlatformTimeRanges5startEjRb(ranges, index, valid);
+        if (!valid || !SameTime(start, range.start)) return false;
+        valid = false;
+        WTF::MediaTime end = _ZNK7WebCore18PlatformTimeRanges3endEjRb(ranges, index, valid);
+        if (!valid || !SameTime(end, range.end)) return false;
+        ++index;
+    }
+    return true;
+}
+
+void AddRange(WebCore::PlatformTimeRanges* ranges, double start, double end) {
+    WTF::MediaTime first = _ZN3WTF9MediaTime16createWithDoubleEd(start);
+    WTF::MediaTime last = _ZN3WTF9MediaTime16createWithDoubleEd(end);
+    _ZN7WebCore18PlatformTimeRanges3addERKN3WTF9MediaTimeES4_(ranges, first, last);
+}
+
+bool AddGives(std::initializer_list<ExpectedRange> initial, double start, double end, std::initializer_list<ExpectedRange> expected) {
+    WebCore::PlatformTimeRanges ranges;
+    _ZN7WebCore18PlatformTimeRangesC1Ev(&ranges);
+    for (const ExpectedRange& range : initial) AddRange(&ranges, range.start, range.end);
+    bool same = RangesAre(&ranges, initial);
+    AddRange(&ranges, start, end);
+    same = same && RangesAre(&ranges, expected);
+    _ZN7WebCore18PlatformTimeRangesD1Ev(&ranges);
+    return same;
+}
+
+bool TimeRangesAre(const WebCore::TimeRanges* ranges, std::initializer_list<ExpectedRange> expected) {
+    if (_ZNK7WebCore10TimeRanges6lengthEv(ranges) != expected.size()) return false;
+    unsigned index = 0;
+    for (const ExpectedRange& range : expected) {
+        auto start = _ZNK7WebCore10TimeRanges5startEj(ranges, index);
+        auto end = _ZNK7WebCore10TimeRanges3endEj(ranges, index);
+        if (start.hasException() || end.hasException()) return false;
+        const double first = start.returnValue();
+        const double last = end.returnValue();
+        if (std::isnan(range.start) ? !std::isnan(first) : first != range.start) return false;
+        if (std::isnan(range.end) ? !std::isnan(last) : last != range.end) return false;
+        ++index;
+    }
+    return _ZNK7WebCore10TimeRanges5startEj(ranges, index).hasException();
+}
+
+void TestRangesAddedOutOfOrder() {
+    const double notANumber = std::numeric_limits<double>::quiet_NaN();
+    Require(AddGives({}, 5.0, 3.0, {{5.0, 3.0}}));
+    Require(AddGives({}, notANumber, 1.0, {{notANumber, 1.0}}));
+    Require(AddGives({}, notANumber, notANumber, {{notANumber, notANumber}}));
+    Require(AddGives({}, 1.0, notANumber, {{1.0, notANumber}}));
+    Require(AddGives({}, 3.0, 5.0, {{3.0, 5.0}}));
+
+    Require(AddGives({{0.0, 1.0}}, 5.0, 3.0, {{0.0, 1.0}, {5.0, 3.0}}));
+    Require(AddGives({{0.0, 1.0}}, -2.0, -3.0, {{-2.0, -3.0}, {0.0, 1.0}}));
+    Require(AddGives({{0.0, 1.0}}, 2.0, 0.5, {{0.0, 1.0}, {2.0, 0.5}}));
+    Require(AddGives({{0.0, 1.0}}, 0.5, -1.0, {{0.0, 1.0}}));
+    Require(AddGives({{0.0, 1.0}}, 1.0, 0.0, {{0.0, 1.0}}));
+
+    Require(AddGives({{0.0, 1.0}, {10.0, 11.0}}, -2.0, -3.0, {{-2.0, -3.0}, {0.0, 1.0}, {10.0, 11.0}}));
+    Require(AddGives({{0.0, 1.0}, {10.0, 11.0}}, 5.0, 4.0, {{0.0, 1.0}, {5.0, 4.0}, {10.0, 11.0}}));
+    Require(AddGives({{0.0, 1.0}, {10.0, 11.0}}, 5.0, 0.5, {{0.0, 1.0}, {5.0, 0.5}, {10.0, 11.0}}));
+    Require(AddGives({{0.0, 1.0}, {10.0, 11.0}}, 20.0, 15.0, {{0.0, 1.0}, {10.0, 11.0}, {20.0, 15.0}}));
+    Require(AddGives({{0.0, 1.0}, {10.0, 11.0}}, 12.0, 10.5, {{0.0, 1.0}, {10.0, 11.0}, {12.0, 10.5}}));
+    Require(AddGives({{0.0, 1.0}, {10.0, 11.0}}, 10.5, 0.5, {{0.0, 1.0}, {10.0, 11.0}}));
+    Require(AddGives({{0.0, 1.0}, {10.0, 11.0}}, 0.5, -1.0, {{0.0, 1.0}, {10.0, 11.0}}));
+    Require(AddGives({{0.0, 1.0}, {10.0, 11.0}}, 11.0, 10.0, {{0.0, 1.0}, {10.0, 11.0}}));
+    Require(AddGives({{0.0, 1.0}, {10.0, 11.0}}, 10.0, 1.0, {{0.0, 1.0}, {10.0, 11.0}}));
+    Require(AddGives({{0.0, 1.0}, {10.0, 11.0}}, 10.5, 5.0, {{0.0, 1.0}, {10.0, 11.0}}));
+    Require(AddGives({{0.0, 1.0}, {10.0, 11.0}}, notANumber, 0.5, {{0.0, 1.0}, {notANumber, 0.5}, {10.0, 11.0}}));
+    Require(AddGives({{0.0, 1.0}, {10.0, 11.0}}, notANumber, 20.0, {{0.0, 1.0}, {10.0, 11.0}, {notANumber, 20.0}}));
+    Require(AddGives({{0.0, 1.0}, {10.0, 11.0}}, 5.0, notANumber, {{0.0, 1.0}, {5.0, notANumber}}));
+    Require(AddGives({{0.0, 1.0}, {10.0, 11.0}}, 5.0, 6.0, {{0.0, 1.0}, {5.0, 6.0}, {10.0, 11.0}}));
+    Require(AddGives({{0.0, 1.0}, {10.0, 11.0}}, 0.5, 10.5, {{0.0, 11.0}}));
+
+    WTF::MediaTime five = _ZN3WTF9MediaTime16createWithDoubleEd(5.0);
+    WTF::MediaTime three = _ZN3WTF9MediaTime16createWithDoubleEd(3.0);
+    WebCore::PlatformTimeRanges constructed;
+    _ZN7WebCore18PlatformTimeRangesC1ERKN3WTF9MediaTimeES4_(&constructed, five, three);
+    Require(RangesAre(&constructed, {{5.0, 3.0}}));
+    _ZN7WebCore18PlatformTimeRangesD1Ev(&constructed);
+    WebCore::PlatformTimeRanges constructedBase;
+    _ZN7WebCore18PlatformTimeRangesC2ERKN3WTF9MediaTimeES4_(&constructedBase, five, three);
+    Require(RangesAre(&constructedBase, {{5.0, 3.0}}));
+    _ZN7WebCore18PlatformTimeRangesD2Ev(&constructedBase);
+
+    auto created = _ZN7WebCore10TimeRanges6createEdd(5.0, 3.0);
+    Require(TimeRangesAre(created.get(), {{5.0, 3.0}}));
+    auto createdFromNan = _ZN7WebCore10TimeRanges6createEdd(notANumber, 1.0);
+    Require(TimeRangesAre(createdFromNan.get(), {{notANumber, 1.0}}));
+    auto createdInOrder = _ZN7WebCore10TimeRanges6createEdd(3.0, 5.0);
+    Require(TimeRangesAre(createdInOrder.get(), {{3.0, 5.0}}));
+
+    WebCore::TimeRanges object;
+    _ZN7WebCore10TimeRangesC1Edd(&object, 5.0, 3.0);
+    Require(TimeRangesAre(&object, {{5.0, 3.0}}));
+    _ZN7WebCore18PlatformTimeRangesD1Ev(&object.m_ranges);
+    WebCore::TimeRanges baseObject;
+    _ZN7WebCore10TimeRangesC2Edd(&baseObject, 5.0, 3.0);
+    Require(TimeRangesAre(&baseObject, {{5.0, 3.0}}));
+    _ZN7WebCore18PlatformTimeRangesD1Ev(&baseObject.m_ranges);
+
+    auto added = _ZN7WebCore10TimeRanges6createEv();
+    _ZN7WebCore10TimeRanges3addEdd(added.get(), 10.0, 5.0);
+    Require(TimeRangesAre(added.get(), {{10.0, 5.0}}));
+    _ZN7WebCore10TimeRanges3addEdd(added.get(), 1.0, 4.0);
+    Require(TimeRangesAre(added.get(), {{1.0, 4.0}, {10.0, 5.0}}));
+    _ZN7WebCore10TimeRanges3addEdd(added.get(), 20.0, notANumber);
+    Require(TimeRangesAre(added.get(), {{1.0, 4.0}, {10.0, 5.0}, {20.0, notANumber}}));
+    _ZN7WebCore10TimeRanges3addEdd(added.get(), 3.0, 2.0);
+    Require(TimeRangesAre(added.get(), {{1.0, 4.0}, {10.0, 5.0}, {20.0, notANumber}}));
+}
+
 void TestTimeRanges() {
     WebCore::TimeRanges trObj1;
     _ZN7WebCore10TimeRangesC1Ev(&trObj1);
@@ -645,9 +776,6 @@ void TestTimeRanges() {
     Require(_ZNK7WebCore10TimeRanges6lengthEv(&trObj4) == 1);
 
     auto tr = _ZN7WebCore10TimeRanges6createEv();
-    Require(_ZNK7WebCore10TimeRanges6lengthEv(tr.get()) == 0);
-
-    _ZN7WebCore10TimeRanges3addEdd(tr.get(), 10.0, 5.0);
     Require(_ZNK7WebCore10TimeRanges6lengthEv(tr.get()) == 0);
 
     _ZN7WebCore10TimeRanges3addEdd(tr.get(), 1.0, 4.0);
@@ -680,6 +808,42 @@ void TestTimeRanges() {
     Require(_ZNK7WebCore10TimeRanges6lengthEv(tr.get()) == 1);
     Require(_ZNK7WebCore10TimeRanges5startEj(tr.get(), 0).returnValue() == 3.0);
     Require(_ZNK7WebCore10TimeRanges3endEj(tr.get(), 0).returnValue() == 4.0);
+}
+
+void RequireMediaTimeString(const WTF::MediaTime& time, const char* expected) {
+    const NKWebKit::WtfAbi::String value = _ZNK3WTF9MediaTime8toStringEv(&time);
+    Require(value.impl != nullptr);
+    Require((value.impl->hashAndFlags & 4) != 0);
+    const std::size_t length = std::strlen(expected);
+    Require(value.impl->length == length);
+    Require(std::memcmp(value.impl->data, expected, length) == 0);
+}
+
+WTF::MediaTime DoubleMediaTime(double value) {
+    WTF::MediaTime time(0, WTF::MediaTime::DefaultTimeScale, WTF::MediaTime::Valid | WTF::MediaTime::DoubleValue);
+    time.m_timeValueAsDouble = value;
+    return time;
+}
+
+void TestMediaTimeToString() {
+    RequireMediaTimeString(WTF::MediaTime(1, 2, WTF::MediaTime::Valid), "{1/2 = 0.5}");
+    RequireMediaTimeString(WTF::MediaTime(-1, 3, WTF::MediaTime::Valid), "{-1/3 = -0.3333333333333333}");
+    RequireMediaTimeString(WTF::MediaTime(123456789, 1000, WTF::MediaTime::Valid), "{123456789/1000 = 123456.789}");
+    RequireMediaTimeString(WTF::MediaTime(5, 4294967295u, WTF::MediaTime::Valid), "{5/4294967295 = 1.1641532185403987e-9}");
+    RequireMediaTimeString(WTF::MediaTime(0, 1, WTF::MediaTime::Valid), "{0/1 = 0}");
+    RequireMediaTimeString(WTF::MediaTime(), "{0/0 = NaN, invalid}");
+    RequireMediaTimeString(_ZN3WTF9MediaTime11invalidTimeEv(), "{-1/1 = NaN, invalid}");
+    RequireMediaTimeString(_ZN3WTF9MediaTime20positiveInfiniteTimeEv(), "{0/1 = Infinity}");
+    RequireMediaTimeString(_ZN3WTF9MediaTime20negativeInfiniteTimeEv(), "{-1/1 = -Infinity}");
+    RequireMediaTimeString(_ZN3WTF9MediaTime14indefiniteTimeEv(), "{0/1 = NaN}");
+    RequireMediaTimeString(DoubleMediaTime(1.5), "{1.5}");
+    RequireMediaTimeString(DoubleMediaTime(-0.0), "{0}");
+    RequireMediaTimeString(DoubleMediaTime(1e20), "{100000000000000000000}");
+    RequireMediaTimeString(DoubleMediaTime(1e21), "{1e+21}");
+    RequireMediaTimeString(DoubleMediaTime(-2.5e22), "{-2.5e+22}");
+    RequireMediaTimeString(DoubleMediaTime(0.000001), "{0.000001}");
+    RequireMediaTimeString(DoubleMediaTime(1.5e-7), "{1.5e-7}");
+    RequireMediaTimeString(DoubleMediaTime(5e-324), "{5e-324}");
 }
 
 } // namespace
@@ -723,8 +887,10 @@ int main(int argc, char** argv) {
     TestMediaTimeArithmeticAndComparison();
     TestMediaTimeOverflow();
     TestMediaTimeMemory();
+    TestRangesAddedOutOfOrder();
     TestPlatformTimeRanges();
     TestTimeRanges();
+    TestMediaTimeToString();
     std::printf("MediaTime and TimeRanges tests passed successfully!\n");
     return 0;
 }

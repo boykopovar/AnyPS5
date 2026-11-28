@@ -1,0 +1,10 @@
+add_test_executable(guest_multibyte_locale_helpers_tests ${LIBS_INCLUDE_DIR}/tests/GuestMultibyteLocaleHelpers.cpp)
+target_include_directories(guest_multibyte_locale_helpers_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(guest_multibyte_locale_helpers_tests PRIVATE libc)
+configure_windows_unwind(guest_multibyte_locale_helpers_tests)
+add_test(NAME guest_multibyte_locale_helpers COMMAND guest_multibyte_locale_helpers_tests)
+set_tests_properties(guest_multibyte_locale_helpers PROPERTIES TIMEOUT 10)
+if(WIN32)
+    set_tests_properties(guest_multibyte_locale_helpers PROPERTIES ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+endif()

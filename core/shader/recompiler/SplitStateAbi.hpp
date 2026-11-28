@@ -14,6 +14,9 @@ inline constexpr std::uint32_t DescriptorSet = 3u;
 inline constexpr std::uint32_t CapacityDword = 0u;
 inline constexpr std::uint32_t GroupBaseDword = 1u;
 inline constexpr std::uint32_t GroupCountDword = 2u;
+inline constexpr std::uint32_t GroupListDword = 5u;
+inline constexpr std::uint32_t GroupListOffsetDword = 6u;
+inline constexpr std::uint32_t RoundDword = 7u;
 inline constexpr std::uint32_t HeaderDwords = 8u;
 
 enum class Action : std::uint32_t { ClearTarget, SaveTarget, Save, Load, SaveSelected, SaveState, LoadTarget, LoadState, StoreTarget };

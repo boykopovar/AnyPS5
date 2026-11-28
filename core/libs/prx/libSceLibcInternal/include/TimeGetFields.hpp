@@ -24,6 +24,7 @@ void APS5_VABI _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEEC2Em
 void APS5_VABI _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE5_InitERKSt8_Locinfo_nid_postfix(GuestLocale::Facet* self, const GuestLocale::LocinfoStorage* info);
 void APS5_VABI _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEED0Ev_nid_postfix(GuestLocale::Facet* self);
 void APS5_VABI _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC1Em_nid_postfix(GuestLocale::Facet* self, std::size_t refs);
+void APS5_VABI _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC2Em_nid_postfix(GuestLocale::Facet* self, std::size_t refs);
 void APS5_VABI _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE5_InitERKSt8_Locinfo_nid_postfix(GuestLocale::Facet* self, const GuestLocale::LocinfoStorage* info);
 std::int32_t APS5_VABI _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE7_GetintERS3_S5_iiRiRKSt5ctypeIcE_nid_postfix(const GuestLocale::Facet* self, GuestLocale::InputIterator* first, GuestLocale::InputIterator* last, int lo, int hi, int* val, const GuestLocale::Facet* ctype);
 std::int32_t APS5_VABI _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE7_GetintERS3_S5_iiRiRKSt5ctypeIwE_nid_postfix(const GuestLocale::Facet* self, GuestLocale::InputIterator* first, GuestLocale::InputIterator* last, int lo, int hi, int* val, const GuestLocale::Facet* ctype);
@@ -43,5 +44,7 @@ GuestLocale::InputIterator APS5_VABI _ZNKSt8time_getIwSt19istreambuf_iteratorIwS
 GuestLocale::InputIterator APS5_VABI _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmcc_nid_postfix(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, GuestTm* time, char specifier, char modifier);
 GuestLocale::InputIterator APS5_VABI _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE7_GetfmtES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmPKc_nid_postfix(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, GuestTm* time, const char* fmtfirst);
 int APS5_VABI _ZSt10_GetloctxtIcSt19istreambuf_iteratorIcSt11char_traitsIcEEEiRT0_S5_mPKT__nid_postfix(GuestLocale::InputIterator* first, GuestLocale::InputIterator* last, std::size_t numFields, const char* ptr);
+int APS5_VABI _ZSt10_GetloctxtIcSt19istreambuf_iteratorIwSt11char_traitsIwEEEiRT0_S5_mPKT__nid_postfix(GuestLocale::InputIterator* first, GuestLocale::InputIterator* last, std::size_t numFields, const char* ptr);
+int APS5_VABI _ZSt10_GetloctxtIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEiRT0_S5_mPKT__nid_postfix(GuestLocale::InputIterator* first, GuestLocale::InputIterator* last, std::size_t numFields, const std::uint16_t* ptr);
 
 }

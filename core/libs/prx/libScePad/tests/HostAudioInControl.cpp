@@ -8,7 +8,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <optional>
 #include <stdexcept>
+#include <string>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -21,6 +23,34 @@ extern "C" int APS5_VABI libScePadUnknown_oARLr0ca9N8_nid_no_patch(int handle, s
 static void Require(bool value) {
     if (!value) std::abort();
 }
+
+static void SetEnvVar(const char* name, const char* value) {
+#ifdef _WIN32
+    Require(_putenv_s(name, value != nullptr ? value : "") == 0);
+#else
+    if (value != nullptr) {
+        Require(setenv(name, value, 1) == 0);
+    } else {
+        Require(unsetenv(name) == 0);
+    }
+#endif
+}
+
+struct EnvVarGuard {
+    const char* name;
+    std::optional<std::string> previous;
+
+    explicit EnvVarGuard(const char* envName) : name(envName) {
+        const char* current = std::getenv(name);
+        if (current != nullptr) {
+            previous = current;
+        }
+    }
+
+    ~EnvVarGuard() {
+        SetEnvVar(name, previous.has_value() ? previous->c_str() : nullptr);
+    }
+};
 
 static void TestFocusMuteState() {
     HostVolumeConfigure_nid_no_patch(nullptr, nullptr);
@@ -95,6 +125,58 @@ static void TestAudioMuteTracksFocusIndependentlyFromHostVolume() {
 
     HostAudioInConfigure_nid_no_patch(nullptr);
     HostVolumeConfigure_nid_no_patch(nullptr, nullptr);
+}
+
+static void TestConfigureFromEnvironmentAtomicity() {
+    EnvVarGuard volumeGuard("ANYPS5_VOLUME");
+    EnvVarGuard muteGuard("ANYPS5_MUTE_ON_FOCUS_LOSS");
+    EnvVarGuard audioInGuard("ANYPS5_AUDIO_IN_MUTE_ON_FOCUS_LOSS");
+
+    HostVolumeConfigure_nid_no_patch("40", "1");
+    HostAudioInConfigure_nid_no_patch("1");
+    HostVolumeFocus_nid_no_patch(false, nullptr);
+
+    const std::uint32_t initialGain = HostVolumeGain_nid_no_patch();
+    const bool initialFocus = HostVolumeFocused_nid_no_patch();
+    const std::uint64_t initialAudioInMuteState = HostAudioInMuteState_nid_no_patch();
+    Require(!initialFocus);
+    Require((initialAudioInMuteState & 1u) != 0);
+
+    SetEnvVar("ANYPS5_VOLUME", "80");
+    SetEnvVar("ANYPS5_MUTE_ON_FOCUS_LOSS", "0");
+    SetEnvVar("ANYPS5_AUDIO_IN_MUTE_ON_FOCUS_LOSS", "invalid");
+
+    bool threw = false;
+    try {
+        HostVolumeConfigureFromEnvironment_nid_no_patch();
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw);
+    Require(HostVolumeGain_nid_no_patch() == initialGain);
+    Require(HostVolumeFocused_nid_no_patch() == initialFocus);
+    Require(HostAudioInMuteState_nid_no_patch() == initialAudioInMuteState);
+
+    SetEnvVar("ANYPS5_AUDIO_IN_MUTE_ON_FOCUS_LOSS", "1");
+    HostVolumeConfigureFromEnvironment_nid_no_patch();
+
+    const std::uint32_t gain80 = HostVolumeGain_nid_no_patch();
+    const std::uint64_t configuredAudioInMuteState = HostAudioInMuteState_nid_no_patch();
+    Require(gain80 > 0 && gain80 < HostVolume::UnityGain);
+    Require(HostVolumeFocused_nid_no_patch());
+    Require((configuredAudioInMuteState & 1u) == 0);
+    Require((configuredAudioInMuteState >> 1) == (initialAudioInMuteState >> 1) + 1);
+
+    HostVolumeFocus_nid_no_patch(false, nullptr);
+    Require(HostVolumeGain_nid_no_patch() == gain80);
+    Require(!HostVolumeFocused_nid_no_patch());
+    const std::uint64_t unfocusedAudioInMuteState = HostAudioInMuteState_nid_no_patch();
+    Require((unfocusedAudioInMuteState & 1u) != 0);
+    Require((unfocusedAudioInMuteState >> 1) == (configuredAudioInMuteState >> 1) + 1);
+
+    HostVolumeFocus_nid_no_patch(true, nullptr);
+    HostVolumeConfigure_nid_no_patch(nullptr, nullptr);
+    HostAudioInConfigure_nid_no_patch(nullptr);
 }
 
 static void TestCapturedSampleFilter() {
@@ -239,6 +321,7 @@ int main() {
     TestFocusMuteState();
     TestCapturedSampleFilter();
     TestAudioMuteTracksFocusIndependentlyFromHostVolume();
+    TestConfigureFromEnvironmentAtomicity();
     TestCaptureMuteGenerations();
     TestDiscardQueuedAudioBelowThreshold();
     TestDiscardQueuedAudioInChunks();

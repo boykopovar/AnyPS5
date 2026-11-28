@@ -1,10 +1,70 @@
 #include "prx/libSceLibcInternal/include/MultiPrecision.hpp"
 #include <array>
+#include <cerrno>
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <stdexcept>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
+
+class GuardPages {
+public:
+    GuardPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        page = info.dwPageSize;
+        memory = static_cast<char*>(VirtualAlloc(nullptr, 3 * page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        if (!memory) std::abort();
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        if (size <= 0) std::abort();
+        page = static_cast<std::size_t>(size);
+        memory = static_cast<char*>(mmap(nullptr, 3 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        if (memory == MAP_FAILED) std::abort();
+#endif
+    }
+
+    ~GuardPages() {
+#ifdef _WIN32
+        VirtualFree(memory, 0, MEM_RELEASE);
+#else
+        munmap(memory, 3 * page);
+#endif
+    }
+
+    GuardPages(const GuardPages&) = delete;
+    GuardPages& operator=(const GuardPages&) = delete;
+
+    void Protect() {
+#ifdef _WIN32
+        DWORD previous = 0;
+        if (VirtualProtect(memory + page, page, PAGE_READONLY, &previous) == 0) std::abort();
+        if (VirtualProtect(memory + 2 * page, page, PAGE_NOACCESS, &previous) == 0) std::abort();
+#else
+        if (mprotect(memory + page, page, PROT_READ) != 0) std::abort();
+        if (mprotect(memory + 2 * page, page, PROT_NONE) != 0) std::abort();
+#endif
+    }
+
+    char* ReadWrite() const { return memory; }
+    char* ReadOnly() const { return memory + page; }
+    char* NoAccess() const { return memory + 2 * page; }
+    std::size_t PageSize() const { return page; }
+
+private:
+    char* memory = nullptr;
+    std::size_t page = 0;
+};
 
 using Words = std::array<unsigned long long, 5>;
 
@@ -133,6 +193,42 @@ void CheckRejections() {
     Require(Rejects([] { sceLibcInternalMultiPrecisionRemainder_nid_no_patch(nullptr, 1ull << 32); }), "_MP_Rem rejects a null value");
 }
 
+void CheckGuestPointers() {
+    auto* unmapped = reinterpret_cast<unsigned long long*>(std::uintptr_t{0x10});
+    errno = 71;
+    Require(Rejects([&] { sceLibcInternalMultiPrecisionGet_nid_no_patch(unmapped); }) && errno == 71, "_MP_Get rejects an unmapped value");
+    Require(Rejects([&] { sceLibcInternalMultiPrecisionAdd_nid_no_patch(unmapped, 1); }) && errno == 71, "_MP_Add rejects an unmapped value");
+    Require(Rejects([&] { sceLibcInternalMultiPrecisionMultiply_nid_no_patch(unmapped, 1, 1); }) && errno == 71, "_MP_Mul rejects an unmapped product");
+    Require(Rejects([&] { sceLibcInternalMultiPrecisionRemainder_nid_no_patch(unmapped, 1ull << 32); }) && errno == 71, "_MP_Rem rejects an unmapped value");
+
+    GuardPages pages;
+    const Words initial{5, 7, 9, 11, 0};
+    auto* readOnly = reinterpret_cast<unsigned long long*>(pages.ReadOnly()) + 5;
+    std::memcpy(readOnly, initial.data(), sizeof(initial));
+    auto* straddleReadOnly = reinterpret_cast<unsigned long long*>(pages.ReadOnly() - sizeof(unsigned long long));
+    std::memcpy(straddleReadOnly, initial.data(), sizeof(initial));
+    auto* straddleNoAccess = reinterpret_cast<unsigned long long*>(pages.NoAccess() - sizeof(unsigned long long));
+    straddleNoAccess[0] = 5;
+    pages.Protect();
+
+    auto* noAccess = reinterpret_cast<unsigned long long*>(pages.NoAccess());
+    errno = 71;
+    Require(sceLibcInternalMultiPrecisionGet_nid_no_patch(readOnly) == (7ull << 32) + 5 && errno == 71, "_MP_Get reads a read-only value");
+    Require(sceLibcInternalMultiPrecisionGet_nid_no_patch(straddleReadOnly) == (7ull << 32) + 5 && errno == 71, "_MP_Get reads words before a read-only boundary");
+    Require(Rejects([&] { sceLibcInternalMultiPrecisionGet_nid_no_patch(noAccess); }) && errno == 71, "_MP_Get rejects a no-access page");
+    Require(Rejects([&] { sceLibcInternalMultiPrecisionGet_nid_no_patch(straddleNoAccess); }) && errno == 71, "_MP_Get rejects words straddling into a no-access page");
+
+    Require(Rejects([&] { sceLibcInternalMultiPrecisionAdd_nid_no_patch(readOnly, 1); }) && errno == 71, "_MP_Add rejects a read-only value");
+    Require(Rejects([&] { sceLibcInternalMultiPrecisionMultiply_nid_no_patch(readOnly, 2, 3); }) && errno == 71, "_MP_Mul rejects a read-only product");
+    Require(Rejects([&] { sceLibcInternalMultiPrecisionRemainder_nid_no_patch(readOnly, 1ull << 32); }) && errno == 71, "_MP_Rem rejects a read-only value");
+    Require(std::memcmp(readOnly, initial.data(), sizeof(initial)) == 0, "read-only words remain untouched");
+
+    Require(Rejects([&] { sceLibcInternalMultiPrecisionAdd_nid_no_patch(straddleReadOnly, 1); }) && errno == 71, "_MP_Add rejects words straddling into a read-only page");
+    Require(Rejects([&] { sceLibcInternalMultiPrecisionMultiply_nid_no_patch(straddleReadOnly, 2, 3); }) && errno == 71, "_MP_Mul rejects a product straddling into a read-only page");
+    Require(Rejects([&] { sceLibcInternalMultiPrecisionRemainder_nid_no_patch(straddleReadOnly, 1ull << 32); }) && errno == 71, "_MP_Rem rejects words straddling into a read-only page");
+    Require(std::memcmp(straddleReadOnly, initial.data(), sizeof(initial)) == 0, "prefix words before a read-only boundary remain untouched");
+}
+
 }
 
 int main() {
@@ -141,6 +237,7 @@ int main() {
     CheckAdd();
     CheckRemainder();
     CheckRejections();
+    CheckGuestPointers();
     std::puts("libc internal multiprecision checks passed");
     return 0;
 }

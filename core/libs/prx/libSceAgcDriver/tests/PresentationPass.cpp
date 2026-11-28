@@ -585,7 +585,7 @@ std::vector<std::byte> overlayPresent(const Context& context, PresentationPass& 
         }
         if (overlayImage != nullptr) planes.Bind(1, overlayImage->Handle(), overlay.width, overlay.height, overlay.pixelFormat, AgcDriver::SdrToneMapLuminanceNits);
         else planes.BindTexels(1, commands, overlay.words, overlay.width, overlay.height, overlay.pixelFormat, AgcDriver::SdrToneMapLuminanceNits);
-        planes.RecordOverlay(commands, 1, destination.Handle(), VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, extent, loaded, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        planes.RecordOverlay(commands, 1, destination.Handle(), VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, extent, loaded, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, false);
         readImage(context, commands, destination, readback);
         batch.SubmitAndWait();
     }
@@ -607,7 +607,7 @@ std::vector<std::byte> clearedFrame(VkExtent2D extent) {
 
 void overlayBlendsPremultiplied(const Context& context, PresentationPass& pass, PresentationPass& planes, const Source& main, const Image& mainImage, const Source& overlay, const Image& overlayImage) {
     for (const auto extent : {VkExtent2D{overlay.width, overlay.height}, VkExtent2D{overlay.width + 60, overlay.height}, VkExtent2D{overlay.width, overlay.height + 51}, VkExtent2D{117, 76}, VkExtent2D{331, 215}}) {
-        const auto rect = AgcDriver::ComputeContainRect_nid_postfix(overlay.width, overlay.height, extent.width, extent.height);
+        const auto rect = AgcDriver::ComputePresentationRect_nid_postfix(overlay.width, overlay.height, extent.width, extent.height);
         const bool exact = rect.width == overlay.width && rect.height == overlay.height;
         const auto alone = passPresent(context, pass, overlay, overlayImage, extent, VK_FORMAT_B8G8R8A8_UNORM);
         for (const bool cleared : {false, true}) {
@@ -666,7 +666,7 @@ void overlayBlendsIntoDumps(const Context& context, PresentationPass& pass, Pres
             const auto commands = batch.Handle();
             pass.RecordDumpImage(commands, 1, stride);
             Require(pass.DumpImageExtent(1).width == extent.width && pass.DumpImageExtent(1).height == extent.height, "the dump image extent differs from the dump extent");
-            planes.RecordOverlay(commands, 1, pass.DumpImage(1), VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, extent, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+            planes.RecordOverlay(commands, 1, pass.DumpImage(1), VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, extent, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, true);
             pass.RecordDumpReadback(commands, 1, readback.Handle());
             batch.SubmitAndWait();
         }
@@ -689,7 +689,7 @@ void overlayBlendsIntoDumps(const Context& context, PresentationPass& pass, Pres
         CommandBatch batch(context);
         const auto commands = batch.Handle();
         scaler.RecordUpload(commands, upload.Handle());
-        planes.RecordOverlay(commands, 1, scaler.SourceImage(), scaler.SourceFormat(), VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, extent, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        planes.RecordOverlay(commands, 1, scaler.SourceImage(), scaler.SourceFormat(), VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, extent, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, true);
         scaler.RecordReadback(commands, readback.Handle());
         batch.SubmitAndWait();
     }
@@ -706,7 +706,7 @@ void overlayRefusals(const Context& context, PresentationPass& planes, const Ima
         try {
             CommandBatch batch(context);
             planes.Bind(1, overlayImage.Handle(), overlay.width, overlay.height, pixelFormat, AgcDriver::SdrToneMapLuminanceNits);
-            planes.RecordOverlay(batch.Handle(), 1, destination.Handle(), VK_FORMAT_B8G8R8A8_UNORM, colorSpace, {overlay.width, overlay.height}, initialLayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+            planes.RecordOverlay(batch.Handle(), 1, destination.Handle(), VK_FORMAT_B8G8R8A8_UNORM, colorSpace, {overlay.width, overlay.height}, initialLayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, false);
         } catch (const std::exception&) {
             threw = true;
         }
@@ -739,6 +739,67 @@ void overlayPlaneTests(const Context& context) {
         overlayBlendsIntoDumps(context, pass, planes, main, *mainImage, overlay, *overlayImage);
         overlayRefusals(context, planes, *overlayImage, overlay);
     }
+}
+
+void passStretchesToTheEdges(const Context& context) {
+    PresentationPass pass(context, 1);
+    const auto source = makeSource(Bgra8, VK_FORMAT_B8G8R8A8_UNORM, 200, 130);
+    const auto resident = residentImage(context, source);
+    const auto channel = [](const std::vector<std::byte>& image, std::uint32_t width, std::uint32_t x, std::uint32_t y, std::size_t index) { return std::to_integer<int>(image[(static_cast<std::size_t>(y) * width + x) * 4 + index]); };
+    for (const auto extent : {VkExtent2D{source.width * 2, source.height}, VkExtent2D{source.width, source.height * 2}}) {
+        const auto drawn = passPresent(context, pass, source, *resident, extent, VK_FORMAT_B8G8R8A8_UNORM);
+        const bool wide = extent.width != source.width;
+        int worst = 0;
+        for (std::uint32_t i = 0; i < (wide ? source.height : source.width); ++i) {
+            for (std::size_t index = 0; index < 3; ++index) {
+                const int first = wide ? channel(drawn, extent.width, 0, i, index) - channel(source.decoded, source.width, 0, i, index) : channel(drawn, extent.width, i, 0, index) - channel(source.decoded, source.width, i, 0, index);
+                const int last = wide ? channel(drawn, extent.width, extent.width - 1, i, index) - channel(source.decoded, source.width, source.width - 1, i, index) : channel(drawn, extent.width, i, extent.height - 1, index) - channel(source.decoded, source.width, i, source.height - 1, index);
+                worst = std::max({worst, std::abs(first), std::abs(last)});
+            }
+        }
+        std::printf("  %s stretched: edges differ from the display buffer's by at most %d\n", describe(source, extent).c_str(), worst);
+        Require(worst <= 2, "the stretched presentation does not reach the destination's edges: " + describe(source, extent));
+    }
+}
+
+void overlayCaptureKeepsAspect(const Context& context) {
+    PresentationPass pass(context, 2);
+    PresentationPass planes(context, 2);
+    const auto main = makeSource(Bgra8, VK_FORMAT_B8G8R8A8_UNORM, 200, 130);
+    const auto mainImage = residentImage(context, main);
+    const auto overlay = makeSource(Bgra8, VK_FORMAT_B8G8R8A8_UNORM, 100, 100, 0x0f0f0f0fu, true);
+    const auto overlayImage = residentImage(context, overlay);
+    const auto extent = PresentationPass::DumpExtent(main.width, main.height, 1);
+    const auto rect = AgcDriver::ComputeContainRect_nid_postfix(overlay.width, overlay.height, extent.width, extent.height);
+    Require(rect.width < extent.width, "the capture test's overlay plane has the main plane's aspect ratio");
+    const auto base = passDump(context, pass, main, *mainImage, 1);
+    const auto bytes = static_cast<std::size_t>(extent.width) * extent.height * 4;
+    Buffer readback(context, bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    pass.Bind(1, mainImage->Handle(), main.width, main.height, main.pixelFormat, AgcDriver::SdrToneMapLuminanceNits);
+    planes.Bind(1, overlayImage->Handle(), overlay.width, overlay.height, overlay.pixelFormat, AgcDriver::SdrToneMapLuminanceNits);
+    {
+        CommandBatch batch(context);
+        const auto commands = batch.Handle();
+        pass.RecordDumpImage(commands, 1, 1);
+        planes.RecordOverlay(commands, 1, pass.DumpImage(1), VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, extent, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, true);
+        pass.RecordDumpReadback(commands, 1, readback.Handle());
+        batch.SubmitAndWait();
+    }
+    pass.Release(1);
+    planes.Release(1);
+    const auto captured = bytesOf(readback, bytes);
+    std::size_t blended = 0;
+    for (std::uint32_t y = 0; y < extent.height; ++y) {
+        for (std::uint32_t x = 0; x < extent.width; ++x) {
+            const auto offset = (static_cast<std::size_t>(y) * extent.width + x) * 4;
+            const bool inside = static_cast<std::int32_t>(x) >= rect.x && static_cast<std::int32_t>(x) < rect.x + static_cast<std::int32_t>(rect.width) && static_cast<std::int32_t>(y) >= rect.y && static_cast<std::int32_t>(y) < rect.y + static_cast<std::int32_t>(rect.height);
+            const bool same = std::equal(base.begin() + static_cast<std::ptrdiff_t>(offset), base.begin() + static_cast<std::ptrdiff_t>(offset + 4), captured.begin() + static_cast<std::ptrdiff_t>(offset));
+            Require(inside || same, "a stretched overlay plane covered the capture outside its aspect-correct rectangle");
+            blended += inside && !same;
+        }
+    }
+    std::printf("  a %ux%u overlay plane captured in its %ux%u rectangle of a %ux%u dump: %zu pixels blended\n", overlay.width, overlay.height, rect.width, rect.height, extent.width, extent.height, blended);
+    Require(blended != 0, "the overlay plane was not blended into the capture");
 }
 
 void residentPresentTests(const Context& context) {
@@ -853,6 +914,39 @@ void upscaleModeTests() {
     for (const char* value : {"-0.1", "2.01", "abc", "0.5x", "nan", "inf", " 1", "1 "}) {
         Require(refused([value] { static_cast<void>(SelectUpscaleMode("fsr", value)); }), std::string("ANYPS5_FSR_SHARPNESS accepted ") + value);
     }
+}
+
+void aspectTests() {
+    using AgcDriver::PresentationAspect;
+    using AgcDriver::SelectPresentationAspect;
+    Require(SelectPresentationAspect(nullptr) == PresentationAspect::Keep && SelectPresentationAspect("") == PresentationAspect::Keep && SelectPresentationAspect("keep") == PresentationAspect::Keep, "an unset, empty or keep ANYPS5_ASPECT does not keep the aspect ratio");
+    Require(SelectPresentationAspect("stretch") == PresentationAspect::Stretch, "ANYPS5_ASPECT=stretch was not selected");
+    for (const char* value : {"Stretch", "fill", " stretch", "stretch ", "1", "keep "}) {
+        Require(refused([value] { static_cast<void>(SelectPresentationAspect(value)); }), std::string("ANYPS5_ASPECT accepted ") + value);
+    }
+    const std::array<std::array<std::uint32_t, 4>, 5> cases{{{1920, 1080, 3440, 1440}, {1920, 1080, 1920, 1080}, {3840, 2160, 1000, 1000}, {200, 130, 260, 130}, {1920, 1080, 2560, 1000}}};
+    for (const auto& [width, height, destinationWidth, destinationHeight] : cases) {
+        const auto keep = AgcDriver::ComputePresentationRect(PresentationAspect::Keep, width, height, destinationWidth, destinationHeight);
+        const auto contain = AgcDriver::ComputeContainRect_nid_postfix(width, height, destinationWidth, destinationHeight);
+        Require(keep.x == contain.x && keep.y == contain.y && keep.width == contain.width && keep.height == contain.height, "keep is not the contained rectangle for " + std::to_string(width) + "x" + std::to_string(height) + " in " + std::to_string(destinationWidth) + "x" + std::to_string(destinationHeight));
+        const auto stretch = AgcDriver::ComputePresentationRect(PresentationAspect::Stretch, width, height, destinationWidth, destinationHeight);
+        Require(stretch.x == 0 && stretch.y == 0 && stretch.width == destinationWidth && stretch.height == destinationHeight, "stretch does not fill " + std::to_string(destinationWidth) + "x" + std::to_string(destinationHeight));
+    }
+    Require(refused([] { static_cast<void>(AgcDriver::ComputePresentationRect(PresentationAspect::Stretch, 0, 1080, 1920, 1080)); }), "stretch accepted an empty source");
+    Require(refused([] { static_cast<void>(AgcDriver::ComputePresentationRect(PresentationAspect::Stretch, 1920, 1080, 1920, 0)); }), "stretch accepted an empty destination");
+    Require(!AgcDriver::PresentationStretches_nid_postfix(), "ANYPS5_ASPECT=keep stretches the presentation");
+}
+
+void stretchWiringTests() {
+    Require(AgcDriver::PresentationStretches_nid_postfix(), "ANYPS5_ASPECT=stretch does not stretch the presentation");
+    const auto rect = AgcDriver::ComputePresentationRect_nid_postfix(1920, 1080, 2560, 1000);
+    Require(rect.x == 0 && rect.y == 0 && rect.width == 2560 && rect.height == 1000, "the stretched presentation does not fill the window");
+    const auto size = AgcDriver::ComputePresentationSize_nid_postfix(1920, 1080, 2560, 1000);
+    Require(size.width == 2560 && size.height == 1000, "the stretched mouse mapping does not span the window");
+    Require(PresentationScaler::LetterboxBands(3840, 2160, 1000, 1000).empty(), "a stretched presentation has letterbox bands");
+    const auto staged = PresentationUpscaler::StageExtent(1920, 1080, {2560, 1000});
+    Require(PresentationUpscaler::Upscales(1920, 1080, {2560, 1000}) && staged.width == 1920 && staged.height == 1080, "a stretch that is wider and shorter than the display buffer does not stage it at its own size for EASU");
+    Require(!PresentationUpscaler::Upscales(1920, 1080, {1280, 720}), "a stretched downscale upscales");
 }
 
 void stageExtentTests() {
@@ -1330,12 +1424,16 @@ int main(int argc, char** argv) {
     try {
         const bool fsr = argc == 2 && std::string_view(argv[1]) == "--fsr";
         const bool fsrCostMode = argc == 2 && std::string_view(argv[1]) == "--fsr-cost";
+        const bool stretch = argc == 2 && std::string_view(argv[1]) == "--stretch";
         if (fsr) {
             upscaleModeTests();
             stageExtentTests();
             exitDependencyTests();
+        } else if (stretch) {
+            stretchWiringTests();
         } else if (!fsrCostMode) {
             letterboxBandTests();
+            aspectTests();
         }
         std::unique_ptr<Device> device;
         try {
@@ -1346,6 +1444,13 @@ int main(int argc, char** argv) {
             return VulkanTestSkipped;
         }
         if (fsrCostMode) return fsrCost(*device);
+        if (stretch) {
+            passStretchesToTheEdges(device->GetContext());
+            overlayPlaneTests(device->GetContext());
+            overlayCaptureKeepsAspect(device->GetContext());
+            std::cout << "stretched presentation, overlay plane and capture tests passed\n";
+            return 0;
+        }
         if (fsr) {
             fsrTests(device->GetContext());
             std::cout << "FSR 1 upscale mode, EASU, RCAS, default path and HDR10 tests passed\n";

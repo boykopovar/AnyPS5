@@ -3,6 +3,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "ExecutionHelpers.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -95,17 +96,6 @@ public:
 private:
     std::uint8_t* block = nullptr;
 };
-
-std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
-    const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
-}
-
-std::string Hex(std::uint32_t value) {
-    char text[16];
-    std::snprintf(text, sizeof(text), "0x%08x", value);
-    return text;
-}
 
 std::string Hex64(std::uint64_t value) {
     char text[24];
@@ -495,7 +485,6 @@ int main(int argc, char** argv) {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         const bool wave64 = device->Target().subgroupSize >= 32u;
-        const bool int64Atomics = TargetHasCapability(device->Target(), spv::CapabilityInt64Atomics);
         GuestBlock guest;
         std::size_t checked = 0;
         std::map<std::pair<Words, std::uint32_t>, std::size_t> shaders;
@@ -503,12 +492,10 @@ int main(int argc, char** argv) {
             const auto shader = shaders.emplace(std::pair{Kernel(row), row.waveSize}, shaders.size()).first->second;
             if (shader % parts != part) continue;
             if (row.waveSize == 64u && !wave64) continue;
-            if (row.atomic && row.width == 64u && !int64Atomics) continue;
             Run(*device, row, guest);
             ++checked;
         }
         if (!wave64) std::printf("skipped the wave64 rows, subgroup size %u cannot hold a wave64 in two lanes\n", device->Target().subgroupSize);
-        if (!int64Atomics) std::puts("skipped the 64-bit atomic rows, the device has no shaderBufferInt64Atomics");
         std::printf("flat aperture rows checked: %zu\n", checked);
         std::puts("flat aperture tests passed");
         return 0;

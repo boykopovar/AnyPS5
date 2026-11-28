@@ -23,7 +23,7 @@ public:
         requireRange(header.ProgramHeaderOffset, static_cast<std::uint64_t>(header.ProgramHeaderCount) * 56);
         headers = reader.ReadProgramHeaders();
         for (const auto& segment : headers) {
-            if (segment.Type == Elfpatcher::PT_GNU_STACK) continue;
+            if (segment.Type == Elfpatcher::PT_NULL || segment.Type == Elfpatcher::PT_GNU_STACK) continue;
             requireRange(segment.Offset, segment.FileSize);
             if (segment.MemorySize > std::numeric_limits<VirtualAddress>::max() - segment.MappedAddress)
                 throw RelinkerException("Strict filter: segment address overflow", segment.MappedAddress);
@@ -174,7 +174,6 @@ public:
                         throw RelinkerException("Strict filter: invalid GNU hash bucket", gnuAddress);
                     lastBucket = std::max(lastBucket, static_cast<std::uint64_t>(bucket));
                 }
-                count = firstSymbol;
                 if (lastBucket != 0) {
                     count = lastBucket;
                     for (;;) {
@@ -189,6 +188,8 @@ public:
                             throw RelinkerException("Strict filter: invalid GNU hash chain", gnuAddress);
                         if (chain & 1) break;
                     }
+                } else {
+                    count = reader.ReadDynamicSymbolCount(*symbols, firstSymbol);
                 }
             } else {
                 throw RelinkerException("Strict filter: cannot establish dynamic symbol table bounds");

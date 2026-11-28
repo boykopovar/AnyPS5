@@ -75,8 +75,11 @@ if(BUILD_TESTING)
 
     add_test_executable(guest_jpeg_dec_input_control_tests ${LIBS_INCLUDE_DIR}/tests/GuestJpegDecInputControl.cpp)
     target_include_directories(guest_jpeg_dec_input_control_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_include_directories(guest_jpeg_dec_input_control_tests PRIVATE ${PROJECT_SOURCE_DIR}/3rdparty/libjpeg-turbo/src)
     target_link_libraries(guest_jpeg_dec_input_control_tests PRIVATE libSceJpegDec decoder_jpeg libc)
     configure_windows_unwind(guest_jpeg_dec_input_control_tests)
+    target_compile_definitions(guest_jpeg_dec_input_control_tests PRIVATE
+        JPEG_TEST_IMAGE="${PROJECT_SOURCE_DIR}/3rdparty/libjpeg-turbo/testimages/testorig.jpg")
     add_test(NAME guest_jpeg_dec_input_control COMMAND guest_jpeg_dec_input_control_tests)
     if(WIN32)
         set_tests_properties(guest_jpeg_dec_input_control PROPERTIES ENVIRONMENT_MODIFICATION
@@ -93,5 +96,17 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_jpeg_dec_y8 PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceJpegDec>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_jpeg_dec_y8u8y8v8_tests ${LIBS_INCLUDE_DIR}/tests/GuestJpegDecY8U8Y8V8.cpp)
+    target_include_directories(guest_jpeg_dec_y8u8y8v8_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_jpeg_dec_y8u8y8v8_tests PRIVATE libSceJpegDec libSceJpegEnc decoder_jpeg jpeg_turbo libc)
+    configure_windows_unwind(guest_jpeg_dec_y8u8y8v8_tests)
+    add_test(NAME guest_jpeg_dec_y8u8y8v8 COMMAND guest_jpeg_dec_y8u8y8v8_tests)
+    if(WIN32)
+        set_tests_properties(guest_jpeg_dec_y8u8y8v8 PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceJpegDec>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceJpegEnc>")
     endif()
 endif()

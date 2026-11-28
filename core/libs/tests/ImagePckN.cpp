@@ -38,25 +38,20 @@ void Check(std::uint32_t index, bool nsa, std::uint32_t mask) {
     auto& block = program.CreateBlock();
     program.SetEntryBlock(block);
     TranslationContext context(program, block, 256);
-    if (store) {
-        bool refused = false;
-        try { context.TranslateInstruction(inst); }
-        catch (const std::runtime_error& error) { refused = std::string(error.what()).find("stores are not implemented") != std::string::npos; }
-        Require(refused);
-        return;
-    }
     context.TranslateInstruction(inst);
-    std::vector<IrValue*> reads;
+    std::vector<IrValue*> accesses;
     std::uint32_t writes = 0;
+    std::uint32_t others = 0;
     for (auto* value : block.Instructions()) {
         if (value->Opcode() == IrOpcode::SetVectorRegister) ++writes;
-        if (value->Opcode() == IrOpcode::ImageRead) {
+        if (value->Opcode() == IrOpcode::ImageRead || value->Opcode() == IrOpcode::ImageWrite) {
             Require(writes == 0u);
-            reads.push_back(value);
+            if (value->Opcode() == (store ? IrOpcode::ImageWrite : IrOpcode::ImageRead)) accesses.push_back(value);
+            else ++others;
         }
     }
-    Require(reads.size() == 1u && writes == dwords);
-    const auto& memory = program.Resources().memoryInfo[reads[0]->Flags<MemoryFlags>().index];
+    Require(accesses.size() == 1u && others == 0u && writes == (store ? 0u : dwords));
+    const auto& memory = program.Resources().memoryInfo[accesses[0]->Flags<MemoryFlags>().index];
     Require(memory.imageByElements == elements && memory.imagePacked && memory.dmask == mask && memory.dataDwords == dwords);
     Require(memory.imageHasMip == mip);
 }

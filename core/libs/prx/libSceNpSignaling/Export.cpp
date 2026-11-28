@@ -59,9 +59,7 @@ bool ValidNpId(const SignalingNpId& id) {
 }
 
 bool ReadNpId(const void* npId, SignalingNpId& copy) {
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&copy, npId, sizeof(copy));
-    errno = savedErrno;
     return copied && ValidNpId(copy);
 }
 
@@ -233,9 +231,7 @@ int APS5_VABI sceNpSignalingActivateConnectionA(int ctxId, const NpSignalingAcco
     if (!initialized) return SCE_NP_SIGNALING_ERROR_NOT_INITIALIZED;
     if (!peerAddr || !outConnId) return SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
     NpSignalingAccountPlatformPair localPeer{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&localPeer, peerAddr, sizeof(localPeer));
-    errno = savedErrno;
     if (!copied || localPeer.accountId == 0 || localPeer.platformType == 0) return SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
     if (!FindContext(ctxId)) return SCE_NP_SIGNALING_ERROR_CTX_NOT_FOUND;
     return SCE_NP_ERROR_SIGNED_OUT;
@@ -250,9 +246,7 @@ int APS5_VABI sceNpSignalingGetConnectionStatus(int ctxId, int connId, std::uint
     if (!outStatus) return SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
     if (!FindContext(ctxId)) NotImplemented_nid_no_patch(__func__);
     const std::uint32_t inactive = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(outStatus, &inactive, sizeof(inactive));
-    errno = savedErrno;
     return copied ? 0 : SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
 }
 
@@ -334,9 +328,7 @@ int APS5_VABI sceNpSignalingGetPeerNetInfoResult(int ctxId, int connId, NpSignal
     if (!peerNetInfo) return SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
     if (!FindContext(ctxId)) return SCE_NP_SIGNALING_ERROR_CTX_NOT_FOUND;
     std::uint64_t size = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&size, &peerNetInfo->size, sizeof(size));
-    errno = savedErrno;
     if (!copied || size != sizeof(NpSignalingNetInfo)) return SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
     return SCE_NP_SIGNALING_ERROR_RESULT_NOT_FOUND;
 }

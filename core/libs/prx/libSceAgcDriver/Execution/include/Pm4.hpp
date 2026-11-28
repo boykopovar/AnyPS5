@@ -6,7 +6,10 @@
 #include <cstddef>
 #include <vector>
 #include <optional>
+#include <memory>
 #include <array>
+#include <atomic>
+#include <cstdint>
 #include <span>
 #include <string>
 
@@ -19,6 +22,8 @@ bool ImportableGdsRequested();
 bool GdsShared();
 bool GdsImportable();
 void RejectGdsImport();
+
+struct DrawArguments;
 
 struct DrawParameters {
     std::uint64_t indexAddress;
@@ -60,6 +65,7 @@ struct DrawParameters {
         std::int32_t baseVertexSgpr = -1;
         std::int32_t startInstanceSgpr = -1;
         std::int32_t drawIndexSgpr = -1;
+        std::shared_ptr<const std::vector<DrawArguments>> capturedRecords {};
         // Bytes of the record range: (count - 1) * stride + recordBytes, or 0 for no records.
         std::uint64_t RangeBytes() const { return count == 0 ? 0 : static_cast<std::uint64_t>(count - 1) * stride + recordBytes; }
         std::uint32_t VertexDwordOffset() const { return recordBytes == 20 ? 12u : 8u; }
@@ -110,6 +116,12 @@ bool WaitSatisfied(std::span<const std::uint32_t> packet);
 // WaitSatisfied for a polling loop: the caller has validated the address once, so the value is read
 // directly instead of through the checked guest memory path.
 bool WaitSatisfiedUnchecked(std::span<const std::uint32_t> packet);
+
+inline std::uint64_t LoadLabel(std::uint64_t address, std::size_t bytes) {
+    if (bytes == 8) return std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(address)).load(std::memory_order_acquire);
+    return std::atomic_ref<std::uint32_t>(*reinterpret_cast<std::uint32_t*>(address)).load(std::memory_order_acquire);
+}
+
 // Whether a WAIT_REG_MEM's compare holds for `value` (the 4 or 8 bytes a label the recorder still
 // holds will store), without reading memory.
 bool WaitComparesValue(std::span<const std::uint32_t> packet, std::uint64_t value);

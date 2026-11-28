@@ -1,0 +1,7 @@
+# libSceNKWebKit
+
+## add Unknown function info
+
+- [SQLiteFileSystem database files](../../../core/libs/prx/libSceNKWebKit/src/SQLiteFileSystemDatabase.cpp) - not compared with a console module. `deleteDatabaseFile` follows [SQLiteFileSystem.cpp:83–92](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/sql/SQLiteFileSystem.cpp#L83-L92): it deletes the database file and its `-wal` and `-shm` companions through the existing `FileSystemImpl::deleteFile` and returns true only when none of the three paths exists afterwards, so a directory holding the database name stays and returns false. The path suffixes are appended to the existing WTF string code units, keeping an 8-bit or 16-bit string 8-bit or 16-bit. An empty or null path is not special-cased: it attempts the empty name and the two bare suffix names, as upstream does. `databaseCreationTime` follows the POSIX branch of [FileSystemPOSIX.cpp:183–209](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/posix/FileSystemPOSIX.cpp#L183-L209) and returns the guest `stat` birth time in whole seconds, disengaged for a missing, empty or null path. Its 16-byte non-trivial return reuses `WebCoreAbi::OptionalWallTime`, the existing model of `std::optional<WTF::WallTime>`; console ABI and layout are unmeasured.
+
+## remove `_ZN7WebCore16SQLiteFileSystem18deleteDatabaseFileERKN3WTF6StringE`

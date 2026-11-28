@@ -714,6 +714,18 @@ class ProgressHistoryTests(unittest.TestCase):
         self.assertIn('aria-label="implemented in 7 days: +280 functions"', badge)
         ET.fromstring(badge)
 
+    def test_short_history_labels_the_measured_span(self):
+        points = [
+            {"date": "2026-01-01", "libraries": {"done": 10, "total": 100, "percent": 10}},
+            {"date": "2026-01-02", "libraries": {"done": 15, "total": 100, "percent": 15}},
+            {"date": "2026-01-04", "libraries": {"done": 30, "total": 100, "percent": 30}},
+        ]
+        badge = ET.fromstring(progress_history.weekly_badge(points))
+        self.assertEqual(badge.attrib["aria-label"], "implemented in 3 days: +20 functions")
+        chart = progress_history.daily(points)
+        self.assertIn("Last 3 days +20", chart)
+        self.assertIn("Last 2-day interval +15", chart)
+
     def test_daily_bars_show_gains_and_drops(self):
         def point(day, done):
             return {"date": day, "libraries": {"done": done, "total": 900, "percent": round(100 * done / 900, 2)},
@@ -723,7 +735,7 @@ class ProgressHistoryTests(unittest.TestCase):
         ET.fromstring(svg)
         self.assertIn("2026-01-02: +1,405 implemented", svg)
         self.assertIn("2026-01-03: -15 implemented", svg)
-        self.assertIn("Last 7 days +1,390", svg)
+        self.assertIn("Last 2 days +1,390", svg)
         self.assertIn("Last day -15", svg)
         self.assertEqual(svg.count("<rect x="), 2)
         self.assertEqual(progress_history.daily(points[:1]), "")
@@ -769,15 +781,16 @@ class ProgressHistoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "site"
             with patch.object(progress_history, "collect", return_value=[point]):
-                progress_history.main([str(output)])
+                progress_history.main([str(output), "--ref", "feature/a&b"])
             svg = (output / "history.svg").read_text(encoding="utf-8")
             self.assertIn("\u25cf", svg)
             html = (output / "history.html").read_text(encoding="utf-8")
             self.assertIn("<!DOCTYPE html>", html)
+            self.assertIn("<code>feature/a&amp;b</code>", html)
             data = json.loads((output / "history.json").read_text(encoding="utf-8"))
             self.assertEqual(data, [point])
             badge = (output / "badge-week.svg").read_text(encoding="utf-8")
-            self.assertIn("+0 functions", badge)
+            self.assertIn('aria-label="implemented in 7 days: unavailable"', badge)
 
     def test_main_rejects_aliased_output_reports(self):
         point = {"date": "2026-01-01", "commit": "abc1234",
@@ -858,6 +871,34 @@ class ProgressHistoryTests(unittest.TestCase):
                     progress_history.load_cache(path, "signature")
             self.assertIn(str(path), str(raised.exception))
             self.assertEqual(path.read_bytes(), b"preserve cache")
+
+    def test_duplicate_cache_commit_is_rejected_before_writing_reports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "reports"
+            output.mkdir()
+            csv_report = output / "history.csv"
+            csv_report.write_bytes(b"previous CSV")
+            cache = root / "counts.json"
+            checkout = root / "checkout"
+            subprocess.run(["git", "init", "-q", str(checkout)], check=True)
+            day = "2026-01-01"
+            commit(checkout, day, "example", "int APS5_VABI Ready() { return 1; }\n")
+            sha = subprocess.check_output(["git", "-C", str(checkout), "rev-parse", "HEAD"], text=True).strip()
+            counts = {"libraries": {"done": 1, "total": 2, "percent": 50},
+                      "shaders": {"done": 0, "total": 1, "percent": 0}, "shader_metric": "legacy"}
+            changed = {**counts, "libraries": {"done": 2, "total": 2, "percent": 100}}
+            original = (f'{{"schema_version":2,"rules":"{progress_history.cache_signature()}",'
+                        f'"commits":{{"{sha}":{json.dumps(counts)},"{sha}":{json.dumps(changed)}}}}}').encode()
+            cache.write_bytes(original)
+            completed = subprocess.run([sys.executable, str(Path(progress_history.__file__)), str(output), "--csv",
+                                        "--cache", str(cache), "--since", day, "--until", day],
+                                       capture_output=True, timeout=10, env={**os.environ, "GIT_DIR": str(checkout / ".git")})
+            self.assertEqual(completed.returncode, 2, (completed.stdout, completed.stderr, csv_report.read_bytes()))
+            self.assertIn(f"{cache}: duplicate JSON key '{sha}'".encode(), completed.stderr)
+            self.assertEqual(cache.read_bytes(), original)
+            self.assertEqual(csv_report.read_bytes(), b"previous CSV")
+            self.assertFalse((output / "history.json").exists())
 
     def test_real_deep_cache_cli_is_bounded_and_preserves_files(self):
         with tempfile.TemporaryDirectory() as directory:

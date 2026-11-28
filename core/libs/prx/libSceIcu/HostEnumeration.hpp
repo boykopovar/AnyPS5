@@ -14,26 +14,20 @@ namespace Icu {
 static inline std::int32_t ReadEnumerationStatus(const std::int32_t* status, const char* caller) {
     if (!status) throw std::invalid_argument(std::string(caller) + ": null status");
     std::int32_t value = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&value, status, sizeof(value));
-    errno = savedErrno;
     if (!copied) throw std::invalid_argument(std::string(caller) + ": unreadable status");
     return value;
 }
 
 static inline void WriteEnumerationStatus(std::int32_t* status, std::int32_t incoming, std::int32_t outgoing, const char* caller) {
     if (incoming == outgoing) return;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(status, &outgoing, sizeof(outgoing));
-    errno = savedErrno;
     if (!copied) throw std::invalid_argument(std::string(caller) + ": unwritable status");
 }
 
 static inline void WriteEnumerationLength(std::int32_t* length, std::int32_t value, const char* caller) {
     if (!length) return;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(length, &value, sizeof(value));
-    errno = savedErrno;
     if (!copied) throw std::invalid_argument(std::string(caller) + ": unwritable result length");
 }
 

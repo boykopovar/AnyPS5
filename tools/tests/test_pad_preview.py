@@ -19,6 +19,18 @@ class FeatureTests(unittest.TestCase):
         return subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / script), *map(str, args)],
                               capture_output=True, encoding="utf-8", timeout=15)
 
+    def test_pulse_preview_rejects_a_directory_as_the_command_path(self):
+        result = self.cli("preview_pad_input.py", self.root, "cross")
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("controller command must be a regular file", result.stderr)
+
+    @unittest.skipUnless(os.name == "posix", "requires the POSIX null device")
+    def test_pulse_preview_rejects_a_device_as_the_command_path(self):
+        result = self.cli("preview_pad_input.py", Path(os.devnull), "cross")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("controller command must be a regular file", result.stderr)
+
     def test_preview_matches_the_existing_command_reader_without_writes(self):
         from pad_input import previous_sequence
         path = self.root / "command"
@@ -42,6 +54,18 @@ class FeatureTests(unittest.TestCase):
         path.write_text("18446744073709551615 16384 300\n")
         result = self.cli("preview_pad_input.py", path, "cross")
         self.assertEqual((result.returncode, result.stdout), (2, ""))
+
+    def test_preview_rejects_an_unavailable_command_parent_without_writes(self):
+        non_directory = self.root / "file"
+        non_directory.write_bytes(b"keep")
+        for parent in (self.root / "missing", non_directory):
+            with self.subTest(parent=parent):
+                result = self.cli("preview_pad_input.py", parent / "command", "cross")
+                self.assertEqual((result.returncode, result.stdout), (2, ""))
+                self.assertIn(f"directory does not exist: {parent}", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(list(self.root.iterdir()), [non_directory])
+                self.assertEqual(non_directory.read_bytes(), b"keep")
 
     def test_preview_accepts_the_full_touch_height_that_pad_input_queues(self):
         from pad_input import previous_sequence

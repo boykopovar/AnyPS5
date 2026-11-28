@@ -11,6 +11,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "prx/libc/include/RemoveTree.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
@@ -989,6 +990,27 @@ void CheckAmmMapperCalls() {
     }
     Require(MapperCallThrows([&] { sceKernelCallIndirectBuffer(3, commands.data(), bytes); }));
     Require(MapperCallThrows([&] { sceKernelCallIndirectBuffer3(0, nullptr, bytes, &thirdId); }));
+    Require(sceKernelCallIndirectBuffer2(0, commands.data(), bytes, nullptr, nullptr) == 0);
+    Require(sceKernelCallIndirectBuffer3(0, commands.data(), bytes, nullptr) == 0);
+    Require(sceKernelCallIndirectBuffer2(0, commands.data(), bytes, reinterpret_cast<KernelMapperSubmitResult*>(0x10), &id) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelCallIndirectBuffer2(0, commands.data(), bytes, &result, reinterpret_cast<std::uint32_t*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelCallIndirectBuffer3(0, commands.data(), bytes, reinterpret_cast<std::uint32_t*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+    if (GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) {
+        auto* watchedPage = reinterpret_cast<void*>(first);
+        GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(watchedPage, page);
+        const auto noop = [](void*, std::uintptr_t, std::uintptr_t) {};
+        auto* watchedResult = reinterpret_cast<KernelMapperSubmitResult*>(first);
+        auto* watchedId = reinterpret_cast<std::uint32_t*>(first + sizeof(KernelMapperSubmitResult));
+        *watchedResult = {7, 7};
+        *watchedId = 0;
+        Require(GuestWriteWatch::GuestWriteWatchCollectArmed_nid_postfix(first, page, noop, nullptr));
+        Require(sceKernelCallIndirectBuffer2(1, commands.data(), bytes, watchedResult, watchedId) == 0 && watchedResult->result == 0 && watchedResult->errorOffset == 0 && *watchedId != 0);
+        Require(sceKernelWaitCommandBufferCompletion(*watchedId) == 0);
+        Require(GuestWriteWatch::GuestWriteWatchCollectArmed_nid_postfix(first, page, noop, nullptr));
+        Require(sceKernelCallIndirectBuffer3(2, commands.data(), bytes, watchedId) == 0 && *watchedId > id);
+        Require(sceKernelWaitCommandBufferCompletion(*watchedId) == 0);
+        Require(GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(watchedPage, page));
+    }
 }
 
 void CheckAmmWaitConcurrentSubmits() {
@@ -1430,7 +1452,6 @@ void CheckRawGetcwdErrors() {
     Require(unlinkat_nid_postfix(-100, directory.c_str(), 0x800) == 0);
 }
 
-#ifndef _WIN32
 void CheckRawGetcwdPathLimit() {
     std::array<char, 4096> previous{};
     Require(getcwd_nid_postfix(previous.data(), previous.size()) == previous.data());
@@ -1476,7 +1497,6 @@ void CheckRawGetcwdPathLimit() {
     Require(chdir_nid_postfix(previous.data()) == 0);
     Require(unlinkat_nid_postfix(-100, root.c_str(), 0x800) == 0);
 }
-#endif
 
 void CheckRawGetcwd() {
     std::array<char, 4096> expected{};
@@ -1586,6 +1606,27 @@ static void LongDirectoryFchdir(const std::filesystem::path& root) {
     for (auto level = levels.rbegin(); level != levels.rend(); ++level) Require(::RemoveDirectoryW(verbatim(*level).c_str()) != FALSE);
     longTree.clear();
 }
+#else
+static void CheckUnreadableEmptyRmdir(const std::filesystem::path& root) {
+    if (::geteuid() == 0) return;
+    const auto native = root / "native-unreadable-empty";
+    Require(std::filesystem::create_directory(native));
+    std::filesystem::permissions(native, std::filesystem::perms::none);
+    Require(::rmdir(native.c_str()) == 0);
+    const auto direct = root / "direct-unreadable-empty";
+    Require(std::filesystem::create_directory(direct));
+    std::filesystem::permissions(direct, std::filesystem::perms::none);
+    Require(rmdir_nid_postfix(direct.string().c_str()) == 0);
+    Require(!std::filesystem::exists(direct));
+    const auto guest = root / "guest-unreadable-empty";
+    Require(std::filesystem::create_directory(guest));
+    std::filesystem::permissions(guest, std::filesystem::perms::none);
+    const int base = sceKernelOpen(root.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
+    Require(base >= 0);
+    Require(unlinkat_nid_postfix(base, "guest-unreadable-empty", 0x800) == 0);
+    Require(!std::filesystem::exists(guest));
+    Require(sceKernelClose(base) == 0);
+}
 #endif
 
 int main() {
@@ -1597,9 +1638,7 @@ int main() {
     Require(sceKernelGetPhysPageSize() == 16384);
     CheckProcessQueries();
     CheckRawGetcwdErrors();
-#ifndef _WIN32
     CheckRawGetcwdPathLimit();
-#endif
     CheckRawGetcwd();
     CheckKqueueFromEqueue();
     Require(setsid_nid_postfix() == -1 && Error() == 1);
@@ -1630,6 +1669,8 @@ int main() {
 #ifdef _WIN32
     LongDirectoryAtCalls(root);
     LongDirectoryFchdir(root);
+#else
+    CheckUnreadableEmptyRmdir(root);
 #endif
     DirectoryRenameTests(root);
     OwnershipAndLinkTests(root);
@@ -2086,6 +2127,8 @@ int main() {
     Require(openat_nid_postfix(base, "missing.bin", SCE_KERNEL_O_RDONLY) == -1 && Error() == 2);
     Require(openat_nid_postfix(base, "file.txt", SCE_KERNEL_O_ACCMODE) == -1 && Error() == 22);
     Require(openat_nid_postfix(base, "absent.bin", SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL | SCE_KERNEL_O_DIRECTORY, 0644) == -1 && Error() == 22);
+    Require(openat_nid_postfix(base, "absent.bin", SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_DIRECTORY, 0644) == -1 && Error() == 2);
+    Require(!std::filesystem::exists(root / "absent.bin"));
     Require(openat_nid_postfix(base, nullptr, SCE_KERNEL_O_ACCMODE) == -1 && Error() == 22);
     Require(openat_nid_postfix(base, "", SCE_KERNEL_O_ACCMODE) == -1 && Error() == 22);
     Require(openat_nid_postfix(9999, "", SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL | SCE_KERNEL_O_DIRECTORY, 0644) == -1 && Error() == 22);
@@ -2449,6 +2492,7 @@ int main() {
     Require(fstatat_nid_postfix(base, "", &stat, 0) == -1 && Error() == 2);
     Require(fstatat_nid_postfix(base, "file.txt", nullptr, 0) == -1 && Error() == 14);
     Require(fstatat_nid_postfix(base, "file.txt", nullptr, 0x0200) == -1 && Error() == 14);
+    Require(fstatat_nid_postfix(base, "missing.bin", nullptr, 0x0200) == -1 && Error() == 2);
     Require(fstatat_nid_postfix(base, "file.txt", reinterpret_cast<FileStat*>(0x800000000000), 0) == -1 && Error() == 14);
     Require(fstatat_nid_postfix(base, "file.txt", reinterpret_cast<FileStat*>(0x800000000000), 0x0200) == -1 && Error() == 14);
     Require(fstatat_nid_postfix(base, "file.txt", &stat, 0x4000) == -1 && Error() == 22);

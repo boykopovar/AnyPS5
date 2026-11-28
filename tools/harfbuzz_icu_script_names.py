@@ -20,7 +20,10 @@ def main():
     args = parser.parse_args()
     if same_input_output(args.header, args.output):
         parser.error("output must be separate from the ICU header")
-    source = args.header.read_bytes()
+    try:
+        source = args.header.read_bytes().replace(b"\r\n", b"\n")
+    except OSError as error:
+        parser.error(str(error))
     if hashlib.sha256(source).hexdigest() != ICU_68_2_SHA256:
         parser.error("expected icu4c/source/common/unicode/uscript.h from ICU release-68-2")
     entries = sorted(

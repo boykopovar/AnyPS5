@@ -110,9 +110,7 @@ template <typename T>
 T CopyIn(const T* source, const char* what) {
     if (!source) throw std::invalid_argument(std::string("OCSP_cert_to_id: null ") + what);
     T value{};
-    const int savedErrno = errno;
     const bool ok = GuestCopyIn_nid_no_patch(&value, source, sizeof(value));
-    errno = savedErrno;
     if (!ok) throw std::invalid_argument(std::string("OCSP_cert_to_id: unreadable ") + what);
     return value;
 }
@@ -121,9 +119,7 @@ std::vector<unsigned char> CopyBytesIn(const unsigned char* source, std::size_t 
     std::vector<unsigned char> bytes(length);
     if (length == 0) return bytes;
     if (!source) throw std::invalid_argument(std::string("OCSP_cert_to_id: null ") + what + " data");
-    const int savedErrno = errno;
     const bool ok = GuestCopyIn_nid_no_patch(bytes.data(), source, length);
-    errno = savedErrno;
     if (!ok) throw std::invalid_argument(std::string("OCSP_cert_to_id: unreadable ") + what + " data");
     return bytes;
 }

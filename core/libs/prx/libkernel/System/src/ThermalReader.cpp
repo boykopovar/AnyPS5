@@ -25,6 +25,7 @@ std::string ReadName(const std::filesystem::path& file) {
     std::ifstream stream(file);
     std::string name;
     std::getline(stream, name);
+    while (!name.empty() && name.back() == '\r') name.pop_back();
     return name;
 }
 
@@ -60,7 +61,11 @@ std::filesystem::directory_iterator OpenDirectory(const std::filesystem::path& p
 
 std::vector<std::filesystem::path> SortedEntries(const std::filesystem::path& directory) {
     std::vector<std::filesystem::path> entries;
-    for (const auto& entry : OpenDirectory(directory)) entries.push_back(entry.path());
+    std::error_code error;
+    for (auto it = OpenDirectory(directory); it != std::filesystem::directory_iterator(); it.increment(error)) {
+        if (error) break;
+        entries.push_back(it->path());
+    }
     std::sort(entries.begin(), entries.end());
     return entries;
 }
@@ -68,6 +73,7 @@ std::vector<std::filesystem::path> SortedEntries(const std::filesystem::path& di
 }  // namespace
 
 extern "C" void ReadThermalSensors_nid_no_patch(const char* root, int celsius[3]) {
+    if (celsius == nullptr) return;
     celsius[0] = celsius[1] = celsius[2] = -1;
     if (root == nullptr) return;
     const std::filesystem::path base(root);
@@ -79,31 +85,35 @@ extern "C" void ReadThermalSensors_nid_no_patch(const char* root, int celsius[3]
         if (IsPowerOrNetwork(name)) continue;
         const auto value = ReadCelsius(path / "temp1_input");
         if (!value) continue;
+        int reading = *value;
+        Plausible(reading);
+        if (reading < 0) continue;
         if (ContainsAny(name, {"coretemp", "k10temp", "zenpower", "cpu"})) {
-            if (celsius[0] < 0) celsius[0] = *value;
+            if (celsius[0] < 0) celsius[0] = reading;
         } else if (ContainsAny(name, {"amdgpu", "i915", "radeon", "nvidia", "gpu"}) || name == "xe") {
-            if (gpu < 0) gpu = *value;
+            if (gpu < 0) gpu = reading;
         } else if (Contains(name, "nvme")) {
-            if (celsius[2] < 0) celsius[2] = *value;
+            if (celsius[2] < 0) celsius[2] = reading;
         } else if (board < 0) {
-            board = *value;
+            board = reading;
         }
     }
     for (const auto& path : SortedEntries(base / "thermal")) {
+        const std::string type = Lowercase(ReadName(path / "type"));
+        if (IsPowerOrNetwork(type)) continue;
         const auto value = ReadCelsius(path / "temp");
         if (!value) continue;
-        const std::string type = Lowercase(ReadName(path / "type"));
+        int reading = *value;
+        Plausible(reading);
+        if (reading < 0) continue;
         if (ContainsAny(type, {"x86_pkg_temp", "cpu-thermal"})) {
-            if (celsius[0] < 0) celsius[0] = *value;
+            if (celsius[0] < 0) celsius[0] = reading;
         } else if (Contains(type, "gpu")) {
-            if (gpu < 0) gpu = *value;
+            if (gpu < 0) gpu = reading;
         } else if (board < 0) {
-            board = *value;
+            board = reading;
         }
     }
     if (celsius[0] < 0) celsius[0] = gpu;
     if (celsius[1] < 0) celsius[1] = board;
-    Plausible(celsius[0]);
-    Plausible(celsius[1]);
-    Plausible(celsius[2]);
 }

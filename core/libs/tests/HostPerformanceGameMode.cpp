@@ -129,7 +129,32 @@ void MissingSymbolIsUnavailable(const std::string& fixturePath, const char* symb
     GameModeClient client({fixturePath});
     const auto begun = client.Begin();
     Require(begun.Result == Outcome::Unavailable, std::string("a library without ") + symbol + " must be unavailable");
-    Require(Contains(begun.Detail, symbol), std::string("the reason must name ") + symbol);
+    Require(begun.Detail == std::string("the library has no ") + symbol, std::string("the reason must name ") + symbol);
+}
+
+void IncompleteLibraryFallsBackToNextCandidate(const std::string& incompletePath, const std::string& fixturePath) {
+    Fixture fixture(fixturePath);
+    fixture.Configure(0, 0);
+    const int startsBefore = fixture.Starts();
+    const int endsBefore = fixture.Ends();
+    GameModeClient client({incompletePath, fixturePath});
+    const auto begun = client.Begin();
+    Require(begun.Result == Outcome::Started, "an incomplete library must not prevent trying the next candidate");
+    Require(fixture.Starts() == startsBefore + 1, "the request must reach the fallback library");
+    client.End();
+    Require(fixture.Ends() == endsBefore + 1, "ending after fallback must release the fallback library");
+}
+
+void IncompleteLibraryReportsAllFailuresAndRetries(const std::string& incompletePath, const std::string& missing) {
+    GameModeClient client({incompletePath, missing});
+    const auto first = client.Begin();
+    Require(first.Result == Outcome::Unavailable, "incomplete then missing candidates must be unavailable");
+    Require(Contains(first.Detail, incompletePath), "the failure must name the incomplete library");
+    Require(Contains(first.Detail, "real_gamemode_request_end"), "the failure must report the missing symbol");
+    Require(Contains(first.Detail, missing), "the failure must report subsequent candidate errors");
+    const auto second = client.Begin();
+    Require(second.Result == Outcome::Unavailable, "a repeated begin after incomplete candidates must stay unavailable");
+    Require(Contains(second.Detail, missing), "a repeated begin must retry candidates instead of keeping an incomplete handle");
 }
 
 void SessionOverTheClient(const std::string& fixturePath) {
@@ -164,6 +189,8 @@ int main(int argc, char** argv) {
         RefusalWithoutErrorStringStillReports(argv[3]);
         FailingEndIsReported(fixture);
         MissingSymbolIsUnavailable(argv[2], "real_gamemode_request_end");
+        IncompleteLibraryFallsBackToNextCandidate(argv[2], fixture);
+        IncompleteLibraryReportsAllFailuresAndRetries(argv[2], argv[4]);
         SessionOverTheClient(fixture);
     } catch (const std::exception& error) {
         std::cerr << "host performance game mode: " << error.what() << "\n";

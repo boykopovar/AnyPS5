@@ -1,7 +1,6 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceIdu/include/InventoryExports.hpp"
 #include "prx/libSceIdu/include/Api.hpp"
-#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <stdexcept>
@@ -13,22 +12,15 @@ namespace {
 constexpr int SCE_IDU_ERROR_INVALID_ARGUMENT = static_cast<int>(0xFFFFFF99u);
 constexpr int SCE_IDU_ERROR_NOT_INITIALIZED = static_cast<int>(0xFFFFFF9Au);
 
-bool CopyInPreservingErrno(void* destination, const void* source, std::size_t size) {
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(destination, source, size);
-    errno = savedErrno;
-    return copied;
-}
-
 std::uint32_t ReadWord(const void* source, const char* function) {
     std::uint32_t value = 0;
-    if (!CopyInPreservingErrno(&value, source, sizeof(value))) throw std::invalid_argument(function);
+    if (!GuestCopyIn_nid_no_patch(&value, source, sizeof(value))) throw std::invalid_argument(function);
     return value;
 }
 
 bool IsEmptyString(const char* text, const char* function) {
     char first = 0;
-    if (!CopyInPreservingErrno(&first, text, sizeof(first))) throw std::invalid_argument(function);
+    if (!GuestCopyIn_nid_no_patch(&first, text, sizeof(first))) throw std::invalid_argument(function);
     return first == 0;
 }
 

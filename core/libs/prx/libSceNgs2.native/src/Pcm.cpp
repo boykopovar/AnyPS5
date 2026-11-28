@@ -22,12 +22,6 @@ static std::uint64_t ReadLittleEndian(const std::uint8_t* data, std::size_t byte
     return value;
 }
 
-static void CheckFloatRange(std::uint64_t magnitude, std::uint64_t minimum, std::uint64_t maximum) {
-    if (magnitude > maximum || (magnitude != 0 && magnitude < minimum)) {
-        throw std::runtime_error("NGS2: nonfinite, subnormal or out-of-range floating-point PCM is not implemented");
-    }
-}
-
 static float ReadSample(std::uint32_t waveformType, const std::uint8_t* sample, std::size_t bytes) {
     const auto value = ReadLittleEndian(sample, bytes);
     switch (waveformType) {
@@ -40,10 +34,8 @@ static float ReadSample(std::uint32_t waveformType, const std::uint8_t* sample, 
         case SCE_NGS2_WAVEFORM_TYPE_PCM_I32L:
             return static_cast<float>(std::bit_cast<std::int32_t>(static_cast<std::uint32_t>(value)) / 2147483648.0);
         case SCE_NGS2_WAVEFORM_TYPE_PCM_F32L:
-            CheckFloatRange(value & 0x7fffffff, 0x00800000, 0x3f800000);
             return std::bit_cast<float>(static_cast<std::uint32_t>(value));
         case SCE_NGS2_WAVEFORM_TYPE_PCM_F64L:
-            CheckFloatRange(value & 0x7fffffffffffffff, 0x3810000000000000, 0x3ff0000000000000);
             return static_cast<float>(std::bit_cast<double>(value));
         default: throw std::runtime_error("NGS2: PCM sample conversion is not implemented");
     }
