@@ -1,4 +1,4 @@
-add_library(libkernel_web SHARED EXCLUDE_FROM_ALL Export.cpp)
+add_library(libkernel_web SHARED EXCLUDE_FROM_ALL Export.cpp Forwards.cpp)
 target_include_directories(libkernel_web PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libkernel_web PRIVATE libkernel_sys)
 configure_windows_unwind(libkernel_web)
