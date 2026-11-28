@@ -2777,19 +2777,19 @@ void TestBatchGuestPointers(std::uint32_t context) {
     consoleJob.Buffer(18, controlResult, sizeof(controlResult));
 
     errno = 71;
-    Require(sceAjmBatchStartBuffer(context, static_cast<const std::uint8_t*>(consoleJob.Data()), static_cast<std::uint32_t>(consoleJob.Bytes()), 0, reinterpret_cast<AjmBatchError*>(0x10), &consoleId) == invalidParameter);
+    Require(sceAjmBatchStartBuffer(context, reinterpret_cast<const std::uint8_t*>(consoleJob.Data()), static_cast<std::uint32_t>(consoleJob.Bytes()), 0, reinterpret_cast<AjmBatchError*>(0x10), &consoleId) == invalidParameter);
     Require(errno == 71 && consoleId == 0xdeadbeefu && controlResult[0] == -1 && controlResult[1] == -1);
 
     errno = 71;
-    Require(sceAjmBatchStartBuffer(context, static_cast<const std::uint8_t*>(consoleJob.Data()), static_cast<std::uint32_t>(consoleJob.Bytes()), 0, &error, reinterpret_cast<std::uint32_t*>(0x10)) == invalidParameter);
+    Require(sceAjmBatchStartBuffer(context, reinterpret_cast<const std::uint8_t*>(consoleJob.Data()), static_cast<std::uint32_t>(consoleJob.Bytes()), 0, &error, reinterpret_cast<std::uint32_t*>(0x10)) == invalidParameter);
     Require(errno == 71 && controlResult[0] == -1 && controlResult[1] == -1);
 
     errno = 71;
-    Require(sceAjmBatchStartBuffer(context, static_cast<const std::uint8_t*>(consoleJob.Data()), static_cast<std::uint32_t>(consoleJob.Bytes()), 0, &error, straddlingBatchId) == invalidParameter);
+    Require(sceAjmBatchStartBuffer(context, reinterpret_cast<const std::uint8_t*>(consoleJob.Data()), static_cast<std::uint32_t>(consoleJob.Bytes()), 0, &error, straddlingBatchId) == invalidParameter);
     Require(errno == 71 && controlResult[0] == -1 && controlResult[1] == -1);
 
     error.error_code = -1;
-    Require(sceAjmBatchStartBuffer(context, static_cast<const std::uint8_t*>(consoleJob.Data()), static_cast<std::uint32_t>(consoleJob.Bytes()), 0, &error, &consoleId) == 0);
+    Require(sceAjmBatchStartBuffer(context, reinterpret_cast<const std::uint8_t*>(consoleJob.Data()), static_cast<std::uint32_t>(consoleJob.Bytes()), 0, &error, &consoleId) == 0);
     Require(error.error_code == 0 && consoleId != 0xdeadbeefu && controlResult[0] == 0 && controlResult[1] == 0);
     Require(sceAjmBatchWait(context, consoleId, 0, &error) == 0);
     Require(sceAjmInstanceDestroy(context, instance) == 0);
