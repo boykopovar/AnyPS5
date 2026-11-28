@@ -92,6 +92,17 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
+    add_test_executable(guest_uncaught_exceptions_tests ${LIBS_INCLUDE_DIR}/tests/GuestUncaughtExceptions.cpp)
+    target_include_directories(guest_uncaught_exceptions_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_uncaught_exceptions_tests PRIVATE libc)
+    configure_windows_unwind(guest_uncaught_exceptions_tests)
+    add_test(NAME guest_uncaught_exceptions COMMAND guest_uncaught_exceptions_tests)
+    set_tests_properties(guest_uncaught_exceptions PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_uncaught_exceptions PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
     add_test_executable(guest_safe_error_tests ${LIBS_INCLUDE_DIR}/tests/GuestSafeErrors.cpp)
     target_include_directories(guest_safe_error_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_safe_error_tests PRIVATE libc)
