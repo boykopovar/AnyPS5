@@ -131,18 +131,23 @@ def git(*args, text=True):
 
 
 
+def commit_id(name, end=()):
+    found = git("rev-parse", "--verify", *end, name).strip()
+    return git("rev-parse", "--verify", f"{found}^{{commit}}").strip()
+
+
 class Check:
     def __init__(self, base, head):
-        self.head = head
-        self.target = base
-        self.base = git("merge-base", base, head).strip()
+        end = ("--end-of-options",) if base.startswith("-") or head.startswith("-") else ()
+        self.base = git("merge-base", *end, base, head).strip()
+        self.head, self.target = commit_id(head, end), commit_id(base, end)
         self.findings = []
         self.added = defaultdict(list)
         self.status = {}
         self.renamed_from = set()
         self.numstat = {}
         entries = [(metadata.split(), path) for metadata, path in
-                   (entry.split("\t", 1) for entry in git("ls-tree", "-rz", "--full-tree", head).split("\0") if entry)]
+                   (entry.split("\t", 1) for entry in git("ls-tree", "-rz", "--full-tree", self.head).split("\0") if entry)]
         self.modes = {path: fields[0] for fields, path in entries}
         self.objects = {path: fields[2] for fields, path in entries if fields[1] == "blob"}
         self.blobs = {}
@@ -160,7 +165,7 @@ class Check:
                     break
                 slash = parent.rfind("/")
         self.dirs = dirs
-        diff = ("--find-renames", "-l0", "--no-relative", "--ignore-submodules=none", self.base, head)
+        diff = ("--find-renames", "-l0", "--no-relative", "--ignore-submodules=none", self.base, self.head)
         statuses = iter(git("diff", "--name-status", "-z", *diff).split("\0")[:-1])
         for status in statuses:
             path = next(statuses)

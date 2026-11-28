@@ -17,9 +17,9 @@ INVALID_REVISION = "this-branch-does-not-exist"
 
 
 class GitErrorHandlingTests(unittest.TestCase):
-    def check_invalid_revision(self, option):
+    def check_invalid_revision(self, option, revision=INVALID_REVISION):
         valid = "--head" if option == "--base" else "--base"
-        arguments = [valid, "HEAD", option, INVALID_REVISION]
+        arguments = [valid, "HEAD", f"{option}={revision}"]
         result = subprocess.run(
             [
                 sys.executable,
@@ -31,9 +31,15 @@ class GitErrorHandlingTests(unittest.TestCase):
             text=True,
         )
 
+        base, head = (revision, "HEAD") if option == "--base" else ("HEAD", revision)
+        end = ["--end-of-options"] if revision.startswith("-") else []
+        expected = subprocess.run(["git", "merge-base", *end, base, head], cwd=REPO_ROOT,
+                                  capture_output=True, text=True).stderr.strip()
+
         self.assertEqual(result.returncode, 2)
-        self.assertIn("Git command failed:", result.stderr)
-        self.assertIn(INVALID_REVISION, result.stderr)
+        self.assertIn(f"Git command failed: {expected}", result.stderr)
+        self.assertIn(revision, result.stderr)
+        self.assertNotIn("usage: git", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
 
     def test_invalid_base_branch(self):
@@ -41,6 +47,12 @@ class GitErrorHandlingTests(unittest.TestCase):
 
     def test_invalid_head_branch(self):
         self.check_invalid_revision("--head")
+
+    def test_option_like_revisions_are_read_as_revisions(self):
+        for option in ("--base", "--head"):
+            for revision in ("--octopus", "-a", "--"):
+                with self.subTest(option=option, revision=revision):
+                    self.check_invalid_revision(option, revision)
 
 
 class StaleOriginBaseTests(unittest.TestCase):
@@ -66,6 +78,27 @@ class StaleOriginBaseTests(unittest.TestCase):
             stale = self.check(repo, "--base", "origin/main")
             self.assertEqual(stale.returncode, 1)
             self.assertIn("Commit subject is not Conventional Commits", stale.stdout + stale.stderr)
+
+    def test_refs_whose_names_start_with_a_dash_are_checked_as_revisions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            self.git(repo, "init", "-q")
+            self.git(repo, "commit", "-q", "--allow-empty", "-m", "fix(tools): first")
+            self.git(repo, "update-ref", "refs/heads/-b", "HEAD")
+            (repo / "core").mkdir()
+            (repo / "core" / "A.cpp").write_text("int value = 0; // note\n", encoding="utf-8")
+            self.git(repo, "add", "core/A.cpp")
+            self.git(repo, "commit", "-q", "-m", "a subject the rules reject")
+            self.git(repo, "update-ref", "refs/tags/-a", "HEAD")
+            self.git(repo, "checkout", "-q", "--detach", "HEAD~1")
+            for arguments in (["--base=-b", "--head=-a"], ["--base", "refs/heads/-b", "--head=-a"],
+                              ["--base=-b", "--head=:/a subject the rules reject"]):
+                with self.subTest(arguments=arguments):
+                    result = self.check(repo, *arguments)
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn("Commit subject is not Conventional Commits", result.stdout + result.stderr)
+                    self.assertIn("core/A.cpp:1", result.stdout + result.stderr)
+                    self.assertNotIn("Git command failed", result.stderr)
 
 
 class UserDiffConfigurationTests(unittest.TestCase):
