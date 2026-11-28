@@ -14,6 +14,15 @@
 #include <string>
 #include <thread>
 #include <vector>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -206,6 +215,75 @@ void TimeZoneDirectory() {
     RequireThrows([&] { u_setTimeZoneFilesDirectory_nid_postfix("/x", nullptr); });
 }
 
+char* GuardPages(std::size_t& pageSize) {
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    pageSize = info.dwPageSize;
+    auto* pages = static_cast<char*>(VirtualAlloc(nullptr, 3 * pageSize, MEM_RESERVE, PAGE_NOACCESS));
+    Require(pages != nullptr && VirtualAlloc(pages, 2 * pageSize, MEM_COMMIT, PAGE_READWRITE) != nullptr);
+#else
+    pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* mapping = mmap(nullptr, 3 * pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(mapping != MAP_FAILED);
+    auto* pages = static_cast<char*>(mapping);
+    Require(mprotect(pages + 2 * pageSize, pageSize, PROT_NONE) == 0);
+#endif
+    return pages;
+}
+
+void MakeReadOnly(char* page, std::size_t pageSize) {
+#ifdef _WIN32
+    DWORD old = 0;
+    Require(VirtualProtect(page, pageSize, PAGE_READONLY, &old) != 0);
+#else
+    Require(mprotect(page, pageSize, PROT_READ) == 0);
+#endif
+}
+
+void GuestPointers() {
+    std::size_t pageSize = 0;
+    char* pages = GuardPages(pageSize);
+    char* readOnly = pages + pageSize;
+    char* unmapped = pages + 2 * pageSize;
+    std::memcpy(readOnly - 6, "/edge", 6);
+    const char* edge = readOnly - 6;
+    std::memcpy(unmapped - 4, "/str", 4);
+    const char* straddling = unmapped - 4;
+    auto* readOnlyStatus = reinterpret_cast<std::int32_t*>(readOnly);
+    *readOnlyStatus = 0;
+    MakeReadOnly(readOnly, pageSize);
+    auto* unmappedStatus = reinterpret_cast<std::int32_t*>(unmapped);
+    int marker = 0;
+
+    RequireThrows([&] { u_setMutexFunctions_nid_postfix(&marker, nullptr, nullptr, nullptr, nullptr, unmappedStatus); });
+    RequireThrows([&] { u_setAtomicIncDecFunctions_nid_postfix(&marker, nullptr, nullptr, unmappedStatus); });
+    RequireThrows([&] { u_setMutexFunctions_nid_postfix(&marker, nullptr, nullptr, nullptr, nullptr, readOnlyStatus); });
+    RequireThrows([&] { u_setAtomicIncDecFunctions_nid_postfix(&marker, nullptr, nullptr, readOnlyStatus); });
+    Require(*readOnlyStatus == 0);
+
+    std::int32_t status = 0;
+    u_setTimeZoneFilesDirectory_nid_postfix("/keep", &status);
+    Require(status == 0);
+    RequireThrows([&] { u_getTimeZoneFilesDirectory_nid_postfix(unmappedStatus); });
+    RequireThrows([&] { u_setTimeZoneFilesDirectory_nid_postfix("/other", unmappedStatus); });
+    RequireThrows([&] { u_setTimeZoneFilesDirectory_nid_postfix(unmapped, &status); });
+    RequireThrows([&] { u_setTimeZoneFilesDirectory_nid_postfix(straddling, &status); });
+    Require(status == 0 && std::string(u_getTimeZoneFilesDirectory_nid_postfix(readOnlyStatus)) == "/keep");
+    u_setTimeZoneFilesDirectory_nid_postfix(edge, readOnlyStatus);
+    Require(*readOnlyStatus == 0 && std::string(u_getTimeZoneFilesDirectory_nid_postfix(&status)) == "/edge");
+    u_setTimeZoneFilesDirectory_nid_postfix(nullptr, readOnlyStatus);
+    Require(*readOnlyStatus == 0 && std::string(u_getTimeZoneFilesDirectory_nid_postfix(&status)) == "");
+
+    u_setDataDirectory_nid_postfix("/data");
+    RequireThrows([&] { u_setDataDirectory_nid_postfix(unmapped); });
+    RequireThrows([&] { u_setDataDirectory_nid_postfix(straddling); });
+    Require(std::string(u_getDataDirectory_nid_postfix()) == "/data");
+    u_setDataDirectory_nid_postfix(edge);
+    Require(std::string(u_getDataDirectory_nid_postfix()) == "/edge");
+    u_setDataDirectory_nid_postfix(nullptr);
+}
+
 void Cleanup() {
     std::int32_t status = 0;
     u_cleanup_nid_postfix();
@@ -387,6 +465,7 @@ int main() {
     UprvMemoryWithDefaultHeap();
     DataDirectory();
     TimeZoneDirectory();
+    GuestPointers();
     Cleanup();
     std::puts("ICU configuration tests passed");
 }
