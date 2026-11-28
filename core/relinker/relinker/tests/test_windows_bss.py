@@ -120,7 +120,7 @@ def check_scattered_relocations_macos(relinker, work):
     offset, segments = 32, 0
     for _ in range(commands):
         command, size = struct.unpack_from("<II", macho, offset)
-        segments += command == 0x19
+        segments += command == 0x19 and macho[offset + 8:offset + 24].rstrip(b"\0") != b"__LINKEDIT"
         offset += size
     assert segments <= 16, f"{segments} Mach-O segments"
 
