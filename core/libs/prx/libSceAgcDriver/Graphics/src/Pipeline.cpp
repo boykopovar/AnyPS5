@@ -440,7 +440,8 @@ std::pair<float, float> HostDepthBounds(const Context& context, const State& sta
 }
 
 std::vector<std::uint32_t> QuantizeFragmentDepth16(const CompiledShader& shader) {
-    const auto words = shader.program->spirv.Words();
+    const auto lease = shader.program->spirv.Words();
+    const std::span<const std::uint32_t> words = lease;
     Require(words.size() >= 5 && words[0] == spv::MagicNumber && words[3] != 0, "invalid fragment SPIR-V header");
     std::uint32_t glslStd450Id = 0;
     std::uint32_t entryPointId = 0;
