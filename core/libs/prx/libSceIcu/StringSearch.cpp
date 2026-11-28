@@ -1,31 +1,149 @@
 #include "prx/libSceIcu/RecoveredSignatures.hpp"
+#include "prx/libSceIcu/BreakIterator.hpp"
 #include "prx/libSceIcu/Status.hpp"
+#include "prx/libSceIcu/StringSearchHost.hpp"
 #include "prx/libc/include/General.hpp"
+#include <algorithm>
+#include <array>
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
+#include <limits>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 namespace {
 
 template <typename T>
 T CopyIn(const void* guest, const char* caller) {
     T value{};
-    if (!GuestCopyIn_nid_no_patch(&value, guest, sizeof(value)))
-        NotImplemented_nid_no_patch(caller);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&value, guest, sizeof(value));
+    errno = savedErrno;
+    if (!copied) NotImplemented_nid_no_patch(caller);
     return value;
 }
 
 template <typename T>
 void CopyOut(void* guest, const T& value, const char* caller) {
-    if (!GuestCopyOut_nid_no_patch(guest, &value, sizeof(value)))
-        NotImplemented_nid_no_patch(caller);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(guest, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) NotImplemented_nid_no_patch(caller);
 }
 
 constexpr std::int32_t Done = -1;
 constexpr std::int32_t AttributeCount = 3;
 constexpr std::int32_t AttributeValueCount = 5;
+constexpr std::size_t PageBytes = 4096;
+constexpr std::size_t LocaleBytes = 4096;
+
+struct SearchState {
+    std::mutex mutex;
+    UStringSearch* search{};
+    void* breakIterator{};
+    std::vector<char16_t> pattern;
+    std::vector<char16_t> text;
+    std::vector<std::vector<char16_t>> retainedTexts;
+
+    ~SearchState() {
+        Icu::StringSearchHost::Close(search);
+        Icu::BreakIterator::CloseClone(breakIterator);
+    }
+};
+
+struct Registry {
+    std::mutex mutex;
+    std::unordered_map<const UStringSearch*, std::shared_ptr<SearchState>> searches;
+};
+
+Registry& Searches() {
+    static Registry registry;
+    return registry;
+}
+
+bool CopyBytes(void* destination, const void* source, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return copied;
+}
+
+std::vector<char16_t> CopyUnits(const char16_t* source, std::int32_t length, const char* caller) {
+    std::vector<char16_t> result;
+    std::array<char16_t, PageBytes / sizeof(char16_t)> scratch{};
+    auto address = reinterpret_cast<std::uintptr_t>(source);
+    if (length >= 0) {
+        auto remaining = static_cast<std::size_t>(length);
+        while (remaining > 0) {
+            const std::size_t page = std::max<std::size_t>((PageBytes - address % PageBytes) / sizeof(char16_t), 1);
+            const std::size_t count = std::min({remaining, page, scratch.size()});
+            if (!CopyBytes(scratch.data(), reinterpret_cast<const void*>(address), count * sizeof(char16_t))) {
+                NotImplemented_nid_no_patch(caller);
+            }
+            result.insert(result.end(), scratch.begin(), scratch.begin() + static_cast<std::ptrdiff_t>(count));
+            remaining -= count;
+            address += count * sizeof(char16_t);
+        }
+        return result;
+    }
+    while (true) {
+        const std::size_t page = std::max<std::size_t>((PageBytes - address % PageBytes) / sizeof(char16_t), 1);
+        const std::size_t count = std::min(page, scratch.size());
+        if (result.size() > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max()) - count) NotImplemented_nid_no_patch(caller);
+        if (!CopyBytes(scratch.data(), reinterpret_cast<const void*>(address), count * sizeof(char16_t))) NotImplemented_nid_no_patch(caller);
+        const auto end = std::find(scratch.begin(), scratch.begin() + static_cast<std::ptrdiff_t>(count), char16_t{});
+        result.insert(result.end(), scratch.begin(), end);
+        if (end != scratch.begin() + static_cast<std::ptrdiff_t>(count)) return result;
+        address += count * sizeof(char16_t);
+    }
+}
+
+void WriteChangedStatus(std::int32_t* status, std::int32_t incoming, std::int32_t outgoing, const char* caller) {
+    if (incoming != outgoing) CopyOut(status, outgoing, caller);
+}
+
+void Register(const std::shared_ptr<SearchState>& state) {
+    auto& registry = Searches();
+    const std::lock_guard lock(registry.mutex);
+    registry.searches.emplace(state->search, state);
+}
+
+std::shared_ptr<SearchState> Find(const UStringSearch* search, const char* caller) {
+    auto& registry = Searches();
+    const std::lock_guard lock(registry.mutex);
+    const auto found = registry.searches.find(search);
+    if (found == registry.searches.end()) NotImplemented_nid_no_patch(caller);
+    return found->second;
+}
+
+std::shared_ptr<SearchState> FindRegistered(const UStringSearch* search) {
+    auto& registry = Searches();
+    const std::lock_guard lock(registry.mutex);
+    const auto found = registry.searches.find(search);
+    return found == registry.searches.end() ? nullptr : found->second;
+}
 
 bool Succeeded(const std::int32_t* status, const char* caller) {
     Icu::RequireStatus(status);
     return CopyIn<std::int32_t>(status, caller) <= 0;
+}
+
+}
+
+namespace Icu::StringSearchRegistry {
+
+void Cleanup() {
+    std::unordered_map<const UStringSearch*, std::shared_ptr<SearchState>> searches;
+    auto& registry = Searches();
+    {
+        const std::lock_guard lock(registry.mutex);
+        searches.swap(registry.searches);
+    }
+    searches.clear();
 }
 
 }
@@ -39,53 +157,124 @@ UCollator* APS5_VABI usearch_getCollator_nid_postfix(const UStringSearch* search
 
 std::int32_t APS5_VABI usearch_getMatchedLength_nid_postfix(const UStringSearch* search) {
     if (search == nullptr) return Done;
-    NotImplemented_nid_no_patch(__func__);
+    const auto state = Find(search, __func__);
+    const std::lock_guard lock(state->mutex);
+    return Icu::StringSearchHost::GetMatchedLength(state->search);
 }
 
 std::int32_t APS5_VABI usearch_next_nid_postfix(UStringSearch* search, std::int32_t* status) {
     if (!Succeeded(status, __func__) || search == nullptr) return Done;
-    NotImplemented_nid_no_patch(__func__);
+    const auto incoming = CopyIn<std::int32_t>(status, __func__);
+    const auto state = Find(search, __func__);
+    const std::lock_guard lock(state->mutex);
+    auto outgoing = incoming;
+    const auto result = Icu::StringSearchHost::Next(state->search, outgoing);
+    WriteChangedStatus(status, incoming, outgoing, __func__);
+    return result;
 }
 
-UStringSearch* APS5_VABI usearch_open_nid_postfix(const char16_t*, std::int32_t, const char16_t*, std::int32_t, const char* locale, UBreakIterator*, std::int32_t* status) {
+UStringSearch* APS5_VABI usearch_open_nid_postfix(const char16_t* pattern, std::int32_t patternLength, const char16_t* text,
+                                                 std::int32_t textLength, const char* locale, UBreakIterator* breakIterator,
+                                                 std::int32_t* status) {
     Icu::RequireStatus(status);
-    if (CopyIn<std::int32_t>(status, __func__) > 0) return nullptr;
-    if (locale == nullptr) {
-        CopyOut(status, Icu::IllegalArgument, __func__);
+    const auto incoming = CopyIn<std::int32_t>(status, __func__);
+    if (incoming > 0) return nullptr;
+    if (!pattern || !text || !locale || patternLength < -1 || textLength < -1 || patternLength == 0 || textLength == 0) {
+        WriteChangedStatus(status, incoming, Icu::IllegalArgument, __func__);
         return nullptr;
     }
-    NotImplemented_nid_no_patch(__func__);
+    auto state = std::make_shared<SearchState>();
+    state->pattern = CopyUnits(pattern, patternLength, __func__);
+    state->text = CopyUnits(text, textLength, __func__);
+    if (state->pattern.empty() || state->text.empty()) {
+        WriteChangedStatus(status, incoming, Icu::IllegalArgument, __func__);
+        return nullptr;
+    }
+    std::string localeName;
+    const int savedErrno = errno;
+    const int copied = CopyGuestString_nid_no_patch(locale, LocaleBytes, localeName);
+    errno = savedErrno;
+    if (copied != 0) NotImplemented_nid_no_patch(__func__);
+    auto outgoing = incoming;
+    state->breakIterator = Icu::BreakIterator::CloneRegistered(breakIterator, outgoing, __func__);
+    if (breakIterator && !state->breakIterator) {
+        WriteChangedStatus(status, incoming, outgoing, __func__);
+        return nullptr;
+    }
+    state->search = static_cast<UStringSearch*>(Icu::StringSearchHost::Open(
+        state->pattern.data(), static_cast<std::int32_t>(state->pattern.size()), state->text.data(),
+        static_cast<std::int32_t>(state->text.size()), localeName.c_str(), state->breakIterator, outgoing));
+    WriteChangedStatus(status, incoming, outgoing, __func__);
+    if (!state->search) return nullptr;
+    Register(state);
+    return state->search;
 }
 
 void APS5_VABI usearch_reset_nid_postfix(UStringSearch* search) {
     if (search == nullptr) return;
-    NotImplemented_nid_no_patch(__func__);
+    const auto state = Find(search, __func__);
+    const std::lock_guard lock(state->mutex);
+    Icu::StringSearchHost::Reset(state->search);
 }
 
 void APS5_VABI usearch_setAttribute_nid_postfix(UStringSearch* search, std::int32_t attribute, std::int32_t value, std::int32_t* status) {
-    if (Succeeded(status, __func__) && search != nullptr) {
-        if (attribute >= 0 && attribute < AttributeCount) NotImplemented_nid_no_patch(__func__);
+    Icu::RequireStatus(status);
+    const auto incoming = CopyIn<std::int32_t>(status, __func__);
+    if (incoming > 0) return;
+    if (value == AttributeValueCount) {
+        if (search && attribute >= 0 && attribute < AttributeCount) {
+            if (const auto state = FindRegistered(search)) {
+                const std::lock_guard lock(state->mutex);
+                auto outgoing = incoming;
+                Icu::StringSearchHost::SetAttribute(state->search, attribute, value, outgoing);
+                CopyOut(status, outgoing, __func__);
+                return;
+            }
+        }
         CopyOut(status, Icu::IllegalArgument, __func__);
+        return;
     }
-    if (value == AttributeValueCount) CopyOut(status, Icu::IllegalArgument, __func__);
+    if (!search) return;
+    if (attribute < 0 || attribute >= AttributeCount) {
+        WriteChangedStatus(status, incoming, Icu::IllegalArgument, __func__);
+        return;
+    }
+    const auto state = Find(search, __func__);
+    const std::lock_guard lock(state->mutex);
+    auto outgoing = incoming;
+    const auto normalized = value < -1 || value >= AttributeValueCount ? 0 : value;
+    Icu::StringSearchHost::SetAttribute(state->search, attribute, normalized, outgoing);
+    WriteChangedStatus(status, incoming, outgoing, __func__);
 }
 
-void APS5_VABI usearch_setOffset_nid_postfix(UStringSearch* search, std::int32_t, std::int32_t* status) {
+void APS5_VABI usearch_setOffset_nid_postfix(UStringSearch* search, std::int32_t position, std::int32_t* status) {
     if (!Succeeded(status, __func__) || search == nullptr) return;
-    NotImplemented_nid_no_patch(__func__);
+    const auto incoming = CopyIn<std::int32_t>(status, __func__);
+    const auto state = Find(search, __func__);
+    const std::lock_guard lock(state->mutex);
+    auto outgoing = incoming;
+    Icu::StringSearchHost::SetOffset(state->search, position, outgoing);
+    WriteChangedStatus(status, incoming, outgoing, __func__);
 }
 
 void APS5_VABI usearch_setPattern_nid_postfix(UStringSearch* search, const char16_t* pattern, std::int32_t patternLength, std::int32_t* status) {
     if (!Succeeded(status, __func__)) return;
-    if (search == nullptr || pattern == nullptr) {
+    if (search == nullptr || pattern == nullptr || patternLength < -1) {
         CopyOut(status, Icu::IllegalArgument, __func__);
         return;
     }
-    if (patternLength == -1 ? CopyIn<char16_t>(pattern, __func__) == 0 : patternLength == 0) {
+    auto replacement = CopyUnits(pattern, patternLength, __func__);
+    if (replacement.empty()) {
         CopyOut(status, Icu::IllegalArgument, __func__);
         return;
     }
-    NotImplemented_nid_no_patch(__func__);
+    const auto incoming = CopyIn<std::int32_t>(status, __func__);
+    const auto state = Find(search, __func__);
+    const std::lock_guard lock(state->mutex);
+    auto outgoing = incoming;
+    Icu::StringSearchHost::SetPattern(state->search, replacement.data(), static_cast<std::int32_t>(replacement.size()), outgoing);
+    if (outgoing <= 0) state->pattern.swap(replacement);
+    WriteChangedStatus(status, incoming, outgoing, __func__);
 }
 
 void APS5_VABI usearch_setText_nid_postfix(UStringSearch* search, const char16_t* text, std::int32_t textLength, std::int32_t* status) {
@@ -94,7 +283,21 @@ void APS5_VABI usearch_setText_nid_postfix(UStringSearch* search, const char16_t
         CopyOut(status, Icu::IllegalArgument, __func__);
         return;
     }
-    NotImplemented_nid_no_patch(__func__);
+    auto replacement = CopyUnits(text, textLength, __func__);
+    if (replacement.empty()) {
+        CopyOut(status, Icu::IllegalArgument, __func__);
+        return;
+    }
+    const auto incoming = CopyIn<std::int32_t>(status, __func__);
+    const auto state = Find(search, __func__);
+    const std::lock_guard lock(state->mutex);
+    state->retainedTexts.emplace_back();
+    state->retainedTexts.back().swap(state->text);
+    state->text.swap(replacement);
+    auto outgoing = incoming;
+    Icu::StringSearchHost::SetText(state->search, state->text.data(), static_cast<std::int32_t>(state->text.size()), outgoing);
+    if (outgoing <= 0) state->retainedTexts.clear();
+    WriteChangedStatus(status, incoming, outgoing, __func__);
 }
 
 }
