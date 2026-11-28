@@ -77,6 +77,19 @@ void RequireNoAdministratorsAccess(HANDLE handle) {
         "named shared-memory object grants access to the Administrators group");
 }
 
+void VerifyNamespaceIsolation() {
+    const std::wstring userSid = L"S-1-5-21-1000-2000-3000-1001";
+    const auto unelevated = File::WindowsSharedMemoryNamespaceDirectoryName_nid_no_patch(userSid, false);
+    const auto elevated = File::WindowsSharedMemoryNamespaceDirectoryName_nid_no_patch(userSid, true);
+    const auto otherUser = File::WindowsSharedMemoryNamespaceDirectoryName_nid_no_patch(L"S-1-5-21-2000-3000-4000-1001", false);
+    Require(unelevated != elevated, "elevated and UAC-filtered tokens share a namespace");
+    Require(unelevated != otherUser, "different user SIDs share a namespace");
+    const auto current = File::WindowsSharedMemoryNamespaceDirectoryNameForCurrentProcess_nid_no_patch();
+    Require(current.starts_with(L"AnyPS5-shm-S-1-5-") &&
+            (current.ends_with(L"-elevated") || current.ends_with(L"-unelevated")),
+            "the current process shared-memory namespace does not contain its user SID and elevation state");
+}
+
 void RequireNoUnlinkedFiles(const std::string& name) {
     const auto digest = Nid::Sha1(std::vector<std::uint8_t>(name.begin(), name.end()));
     std::string prefix;
@@ -84,7 +97,8 @@ void RequireNoUnlinkedFiles(const std::string& name) {
         prefix += "0123456789abcdef"[byte >> 4];
         prefix += "0123456789abcdef"[byte & 15];
     }
-    const auto directory = std::filesystem::temp_directory_path() / L"AnyPS5" / L"shm";
+    const auto directory = std::filesystem::temp_directory_path() /
+        File::WindowsSharedMemoryNamespaceDirectoryNameForCurrentProcess_nid_no_patch();
     if (!std::filesystem::exists(directory)) return;
     for (const auto& entry : std::filesystem::directory_iterator(directory)) {
         const auto filename = entry.path().filename().string();
@@ -696,6 +710,7 @@ int main(int argumentCount, char** arguments) {
         } else {
             Require(argumentCount == 1, "invalid named shared-memory test arguments");
         }
+        VerifyNamespaceIsolation();
         Run(selection);
         return 0;
     } catch (const std::exception& error) {
