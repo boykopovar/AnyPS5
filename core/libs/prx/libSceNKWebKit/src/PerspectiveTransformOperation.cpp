@@ -88,7 +88,7 @@ float PerspectiveValue(const WebCore::PerspectiveTransformOperation* self) {
     }
 }
 
-constexpr std::uint32_t PerspectiveOperationType = 19;
+constexpr WebCore::LegacyTransformOperation::OperationType PerspectiveOperationType = WebCore::LegacyTransformOperation::OperationType::Perspective;
 
 struct OperationVtable {
     void (APS5_VABI* completeDestructor)(WebCore::PerspectiveTransformOperation*);
