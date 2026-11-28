@@ -11,7 +11,9 @@
 #include <cstdint>
 #include <exception>
 #include <iostream>
+#include <limits>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -48,7 +50,8 @@ public:
         decorate(identity, spv::DecorationLocation, 0u);
         builder.EmitEntryPoint(spv::ExecutionModelVertex, main, "main", {vertexIndex, position, identity});
         result(spv::OpLabel);
-        const auto index = result(spv::OpLoad, intType, vertexIndex);
+        const auto vertex = result(spv::OpLoad, intType, vertexIndex);
+        const auto index = result(spv::OpSMod, intType, vertex, constant(intType, 3u));
         const auto boolVectorType = type(spv::OpTypeVector, boolType, 4u);
         const auto firstScalar = result(spv::OpIEqual, boolType, index, constant(intType, 0u));
         const auto secondScalar = result(spv::OpIEqual, boolType, index, constant(intType, 1u));
@@ -56,8 +59,22 @@ public:
         const auto second = result(spv::OpCompositeConstruct, boolVectorType, secondScalar, secondScalar, secondScalar, secondScalar);
         const auto positionValue = result(spv::OpSelect, vec4Type, first, vector(-1.0f, -1.0f, 0.0f, 1.0f), result(spv::OpSelect, vec4Type, second, vector(1.0f, -1.0f, 0.0f, 1.0f), vector(-1.0f, 1.0f, 0.0f, 1.0f)));
         const auto identityValue = result(spv::OpSelect, vec4Type, first, vector(0.0f, 0.0f, 0.0f, 1.0f), result(spv::OpSelect, vec4Type, second, vector(1.0f, 0.0f, 0.0f, 1.0f), vector(0.0f, 1.0f, 0.0f, 1.0f)));
-        emit(spv::OpStore, position, positionValue);
-        emit(spv::OpStore, identity, identityValue);
+        const std::array<std::uint32_t, 4> nanVertices{3u, 7u, 11u, 12u};
+        const auto nan = constant(floatType, std::bit_cast<std::uint32_t>(std::numeric_limits<float>::quiet_NaN()));
+        auto markedPosition = positionValue;
+        for (std::uint32_t axis = 0; axis < nanVertices.size(); ++axis) {
+            const auto mark = result(spv::OpIEqual, boolType, vertex, constant(intType, nanVertices[axis]));
+            const auto original = result(spv::OpCompositeExtract, floatType, positionValue, axis);
+            const auto coordinate = result(spv::OpSelect, floatType, mark, nan, original);
+            markedPosition = result(spv::OpCompositeInsert, vec4Type, coordinate, markedPosition, axis);
+        }
+        const auto infiniteVertex = result(spv::OpIEqual, boolType, vertex, constant(intType, 15u));
+        const auto infinity = constant(floatType, std::bit_cast<std::uint32_t>(std::numeric_limits<float>::infinity()));
+        const auto x = result(spv::OpSelect, floatType, infiniteVertex, infinity, result(spv::OpCompositeExtract, floatType, markedPosition, 0u));
+        emit(spv::OpStore, position, result(spv::OpCompositeInsert, vec4Type, x, markedPosition, 0u));
+        const auto markedPatch = result(spv::OpSGreaterThanEqual, boolType, vertex, constant(intType, 3u));
+        const auto blue = result(spv::OpSelect, floatType, markedPatch, constant(floatType, std::bit_cast<std::uint32_t>(1.0f)), constant(floatType, 0u));
+        emit(spv::OpStore, identity, result(spv::OpCompositeInsert, vec4Type, blue, identityValue, 2u));
         emit(spv::OpReturn);
         emit(spv::OpFunctionEnd);
         return builder.Finalize();
@@ -154,7 +171,7 @@ int Run(AgcDriver::VulkanDevice& device, std::uint32_t maximumVersion) {
 #endif
     vertex.parameterExports = {0u};
     fragment.fragmentParameters = {{0u, 0u, false, false}};
-    const auto rectangle = ShaderRecompiler::BuildRectListShaders(vertex, fragment, target);
+    auto rectangle = ShaderRecompiler::BuildRectListShaders(vertex, fragment, target);
     const std::array<AgcDriver::Graphics::CompiledShader, 4> shaders{{
         {ShaderStage::Vertex, &vertex, 0u},
         {ShaderStage::TessellationControl, &rectangle.control, 0u},
@@ -176,7 +193,7 @@ int Run(AgcDriver::VulkanDevice& device, std::uint32_t maximumVersion) {
     state.blend.colorWriteMask = 15u;
     state.blends = {state.blend};
     pixels.fill(std::byte{0});
-    device.Draw(state, {0u, 3u, 0u, 1u, 0u, false}, shaders);
+    device.Draw(state, {0u, 15u, 0u, 1u, 0u, false}, shaders);
     device.WaitIdle();
 
     const std::array<std::array<std::uint32_t, 3>, 4> corners{{
@@ -192,10 +209,27 @@ int Run(AgcDriver::VulkanDevice& device, std::uint32_t maximumVersion) {
     }
     std::uint32_t covered = 0;
     for (std::size_t offset = 3; offset < pixels.size(); offset += 4) {
+        Require(pixels[offset - 1] == std::byte{0}, "a rect-list patch with a NaN position produced a fragment");
         if (pixels[offset] != std::byte{0}) ++covered;
     }
     std::cout << "covered " << covered << " of " << Extent * Extent << "\n";
     Require(covered * 5u > Extent * Extent * 4u, "rect-list rectangle covered " + std::to_string(covered) + " pixels");
+    const auto expectPositionFault = [&](std::uint32_t firstVertex) {
+        try {
+            device.Draw(state, {0u, 3u, 0u, 1u, 0u, false, firstVertex}, shaders);
+            device.WaitIdle();
+        } catch (const std::exception& error) {
+            if (std::string_view(error.what()).find("rect-list requires finite") == std::string_view::npos) throw;
+            return;
+        }
+        throw std::runtime_error("a rect-list patch with an unsupported position did not report its fault");
+    };
+    expectPositionFault(15u);
+    Require(rectangle.control.specialization.size() == 1u, "expected the generated rect-list position specialization");
+    rectangle.control.specialization.front().value = 0u;
+    device.Draw(state, {0u, 3u, 0u, 1u, 0u, false}, shaders);
+    device.WaitIdle();
+    expectPositionFault(3u);
     return 0;
 }
 
