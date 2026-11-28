@@ -20,12 +20,13 @@ static std::vector<EventRegistration>* getEventList(VideoOutConfig& cfg, int16_t
     throw std::runtime_error("getEventList: unknown event kind");
 }
 
-static int registerVideoOutEvent(int handle, KernelEqueue eq, int16_t eventKind, void* udata, bool firmwareCodes = false) {
+static int registerVideoOutEvent(int handle, KernelEqueue eq, int16_t eventKind, void* udata, bool firmwareCodes = false, bool mainBusOnly = false) {
     if (!VideoOutDriver::Get().HasConfig(handle)) return VIDEO_OUT_ERROR_INVALID_HANDLE;
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
     if (cfg == nullptr) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
     }
+    if (mainBusOnly && cfg->busType != VIDEO_OUT_BUS_TYPE_MAIN) return VIDEO_OUT_ERROR_NOT_MAIN_BUS;
     if (eq == 0 || !EqueuePin_nid_postfix(eq)) {
         if (firmwareCodes) return VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE;
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE");
@@ -88,13 +89,14 @@ static int registerVideoOutEvent(int handle, KernelEqueue eq, int16_t eventKind,
     return result;
 }
 
-static int deleteVideoOutEvent(int handle, KernelEqueue eq, int16_t eventKind, bool firmwareCodes = false) {
+static int deleteVideoOutEvent(int handle, KernelEqueue eq, int16_t eventKind, bool firmwareCodes = false, bool mainBusOnly = false) {
     if (!VideoOutDriver::Get().HasConfig(handle)) return VIDEO_OUT_ERROR_INVALID_HANDLE;
+    auto cfg = VideoOutDriver::Get().GetConfig(handle);
+    if (mainBusOnly && cfg != nullptr && cfg->busType != VIDEO_OUT_BUS_TYPE_MAIN) return VIDEO_OUT_ERROR_NOT_MAIN_BUS;
     if (eq == 0 || !EqueuePin_nid_postfix(eq)) {
         if (firmwareCodes) return VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE;
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE");
     }
-    auto cfg = VideoOutDriver::Get().GetConfig(handle);
     if (cfg != nullptr) {
         std::unique_lock lock(cfg->mutex);
         cfg->Check();
@@ -131,7 +133,7 @@ int APS5_VABI sceVideoOutAddPreVblankStartEvent(KernelEqueue eq, int handle, voi
 }
 
 int APS5_VABI sceVideoOutAddOutputModeEvent(KernelEqueue eq, int handle, void* udata) try {
-    return registerVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_SET_MODE, udata, true);
+    return registerVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_SET_MODE, udata, true, true);
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
 }
@@ -155,7 +157,7 @@ int APS5_VABI sceVideoOutDeleteFlipEvent(KernelEqueue eq, int handle) try {
 }
 
 int APS5_VABI sceVideoOutDeleteOutputModeEvent(KernelEqueue eq, int handle) try {
-    return deleteVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_SET_MODE, true);
+    return deleteVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_SET_MODE, true, true);
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
 }
