@@ -2346,6 +2346,41 @@ class HostIsIntelTests(unittest.TestCase):
             path.return_value.read_text.side_effect = OSError("missing")
             self.assertIs(self.check(SimpleNamespace(name="posix")), False)
 
+class LinkedPathTests(unittest.TestCase):
+    @unittest.skipIf(os.name == 'nt', 'symbolic links need extra privileges on Windows')
+    def test_linked_path_is_true_only_for_a_symbolic_link(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / 'real.bin'
+            target.write_bytes(b'x')
+            link = root / 'link.bin'
+            os.symlink(target, link)
+            self.assertFalse(title_run.linked_path(target))
+            self.assertTrue(title_run.linked_path(link))
+
+
+class PositiveArgumentTests(unittest.TestCase):
+    def test_positive_accepts_integers_from_one_up(self):
+        self.assertEqual(title_run.positive('1'), 1)
+        self.assertEqual(title_run.positive('12'), 12)
+
+    def test_positive_refuses_zero_negatives_and_non_integers(self):
+        import argparse
+        for value in ('0', '-1', '0.5', 'nan', 'x'):
+            with self.subTest(value=value), self.assertRaises(argparse.ArgumentTypeError):
+                title_run.positive(value)
+
+
+class LinkFileTests(unittest.TestCase):
+    def test_link_file_gives_the_target_the_source_content(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, target = root / 'a.bin', root / 'b.bin'
+            source.write_bytes(b'data')
+            title_run.link_file(source, target)
+            self.assertEqual(target.read_bytes(), b'data')
+            self.assertTrue(source.exists())
+
 
 if __name__ == "__main__":
     unittest.main()
