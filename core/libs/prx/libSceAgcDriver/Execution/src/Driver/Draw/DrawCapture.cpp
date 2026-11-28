@@ -364,8 +364,25 @@ void Driver::cacheDrawStages(bool useDrawEntries, bool drawHit, const Pm4::DrawP
             std::vector<ShaderRecompiler::MemoryRegion> regions(stageCapture.regions.begin(), stageCapture.regions.end());
             for (const auto& read : decodeReads[i]) regions.push_back({read.address, read.Bytes()});
             std::stable_sort(regions.begin(), regions.end(), [](const ShaderRecompiler::MemoryRegion& a, const ShaderRecompiler::MemoryRegion& b) { return a.guestAddress < b.guestAddress; });
-            const bool relocatable = decodeReads[i].empty() && (!vertexInfos[i] || vertexInfos[i]->resourcesNum == 0);
-            tagVariantRuns(*variant, regions, stageCapture.userDataUse, relocatable, programs[i].hiddenUserWords, stageCapture.supplied);
+            std::uint64_t decodePointerWords = 0;
+            bool readsContained = !decodeReads[i].empty();
+            for (const auto& read : decodeReads[i]) {
+                if (read.word < 0 || read.word >= 64) {
+                    readsContained = false;
+                    break;
+                }
+                decodePointerWords |= std::uint64_t {1} << read.word;
+            }
+            const bool relocatable = decodeReads[i].empty() || readsContained;
+            auto use = stageCapture.userDataUse;
+            if (readsContained) {
+                use.asBase |= decodePointerWords & ~use.asValue;
+                for (const auto& read : decodeReads[i]) {
+                    for (std::uint32_t offset = 0; offset < read.size; offset += sizeof(std::uint32_t)) use.reads.emplace_back(read.address + offset, read.word);
+                }
+            }
+            tagVariantRuns(*variant, regions, use, relocatable, programs[i].hiddenUserWords, stageCapture.supplied);
+            variant->decodePointerWords = decodePointerWords & variant->relocatableWords;
             if (relocatable) tagUserValueWords(*variant, programs[i]);
             if (drawStageDataHits() && stageCapture.capture != nullptr && !stageCapture.capture->readTrace.leaves.empty()) recordStageDataPositions(*variant, *stageCapture.capture, decodeReads[i]);
             if (traceDrawCache() && entry != nullptr && matched[i] == nullptr && i < entry->stages.size()) {
