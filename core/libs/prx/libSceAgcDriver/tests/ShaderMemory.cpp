@@ -7233,14 +7233,13 @@ void verifyDescriptorPhis() {
     const std::array<std::uint32_t, 4> pointWrap{0u, 0u, 0u, 0u};
     const std::array<std::uint32_t, 4> linearMirror{0x49u, 0u, 0x00500000u, 0u};
     std::array<std::uint32_t, 4> output{};
-    const auto outputAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
     std::array<std::uint32_t, 32> srt{};
     const auto first = imageDescriptor(textures[0]);
     const auto second = imageDescriptor(textures[1]);
     std::copy(first.begin(), first.end(), srt.begin());
     std::copy(pointWrap.begin(), pointWrap.end(), srt.begin() + 8);
     std::copy(linearMirror.begin(), linearMirror.end(), srt.begin() + 12);
-    const std::array<std::uint32_t, 4> outputV{static_cast<std::uint32_t>(outputAddress), static_cast<std::uint32_t>((outputAddress >> 32u) & 0xffffu), 16u, 0xfacu};
+    const auto outputV = TableV(output.data(), 0u, sizeof(output));
     std::copy(outputV.begin(), outputV.end(), srt.begin() + 16);
     srt[20] = 1u;
     std::copy(second.begin(), second.end(), srt.begin() + 24);
@@ -10367,11 +10366,11 @@ void verifyComputedTexelOffsets() {
     static Texture texture;
     static std::array<std::uint32_t, 64> output{};
     const auto textureBase = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(texture.bytes.data()));
-    const auto outputBase = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
+    const auto outputV = TableV(output.data(), 0u, 64u);
     const std::array<std::uint32_t, 16> userData{
         static_cast<std::uint32_t>(textureBase >> 8u), static_cast<std::uint32_t>((textureBase >> 40u) & 0xffu) | (Format8888UNorm << 20u) | (3u << 30u), 3u << 14u, 0xfacu | (Type2D << 28u), 0u, 0u, 0u, 0u,
         0u, 0u, 0u, 0u,
-        static_cast<std::uint32_t>(outputBase), static_cast<std::uint32_t>((outputBase >> 32u) & 0xffffu), 64u, 0xfacu};
+        outputV[0], outputV[1], outputV[2], outputV[3]};
     const auto program = [](std::uint32_t offsetSource, std::uint32_t literal) {
         std::vector<std::uint32_t> code{0x7e020200u | offsetSource};
         if (offsetSource == 0xffu) code.push_back(literal);
@@ -10664,16 +10663,18 @@ void verifySpecializedBufferAtomicBindings(bool finalAbiOnly = false) {
         atomicElements += static_cast<std::size_t>(std::count(binding.bufferAtomic.begin(), binding.bufferAtomic.end(), true));
     }
     require(tables == 0, "specialized buffer atomic: a buffer_atomic_inc through a V# the program specializes binds the address tables");
-    require(faults == 1 && result.bdaAbiVersion == BdaAbi::Version, "specialized buffer atomic: the program has no fault buffer for its unaligned atomic");
+    require(faults <= 1u && result.bdaAbiVersion == (faults == 0u ? 0u : BdaAbi::Version), "specialized buffer atomic: final fault binding and BDA ABI disagree");
     require(atomicElements == 1, "specialized buffer atomic: the V# element is not reported as atomic");
     const auto words = result.spirv.Words();
     std::uint32_t faultFunction = 0;
     std::size_t faultCalls = 0;
+    std::size_t atomicWrites = 0;
     bool physical = false;
     bool int64 = false;
     for (std::size_t cursor = 5; cursor < words.size();) {
         const auto count = words[cursor] >> 16u;
         const auto opcode = words[cursor] & 0xffffu;
+        if (opcode >= spv::OpAtomicStore && opcode <= spv::OpAtomicXor) ++atomicWrites;
         require(count != 0 && count <= words.size() - cursor, "specialized buffer atomic: truncated SPIR-V instruction");
         if (opcode == spv::OpCapability && words[cursor + 1] == spv::CapabilityPhysicalStorageBufferAddresses) physical = true;
         if (opcode == spv::OpCapability && words[cursor + 1] == spv::CapabilityInt64) int64 = true;
@@ -10684,6 +10685,7 @@ void verifySpecializedBufferAtomicBindings(bool finalAbiOnly = false) {
     }
     require(!physical, "specialized buffer atomic: the module addresses physical storage without an address access");
     require(int64, "specialized buffer atomic: the fault address is 64-bit and the module does not declare Int64");
+    require(atomicWrites != 0u, "specialized buffer atomic: the program has no atomic memory update");
     require(faultCalls == 0, "specialized buffer atomic: a 32-bit atomic records an unaligned fault instead of acting on its dword");
     const std::array<std::uint32_t, 1> shaderOnly{spv::CapabilityShader};
     expectFailure([&] { static_cast<void>(compile(shaderOnly)); }, "buffer atomic fault addresses require shaderInt64", "specialized buffer atomic: the program compiled without shaderInt64");
@@ -10833,14 +10835,14 @@ void verifyUnnormalizedSamplers() {
     static Texture texture;
     static std::array<std::uint32_t, 64> output{};
     const auto textureBase = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(texture.bytes.data()));
-    const auto outputBase = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
+    const auto outputV = TableV(output.data(), 0u, 64u);
     const std::array<std::uint32_t, 4> unnormalized{0x00008092u, 0x00fff000u, 0x05500000u, 0u};
     const std::array<std::uint32_t, 4> normalized{0x00000092u, 0x00fff000u, 0x05500000u, 0u};
     const auto imageData = [&](const std::array<std::uint32_t, 4>& sampler, std::uint32_t type, std::uint32_t format, std::uint32_t depth) {
         return std::array<std::uint32_t, 16>{
             static_cast<std::uint32_t>(textureBase >> 8u), static_cast<std::uint32_t>((textureBase >> 40u) & 0xffu) | (format << 20u) | (3u << 30u), 3u << 14u, 0xfacu | (type << 28u), depth, 0u, 0u, 0u,
             sampler[0], sampler[1], sampler[2], sampler[3],
-            static_cast<std::uint32_t>(outputBase), static_cast<std::uint32_t>((outputBase >> 32u) & 0xffffu), 64u, 0xfacu};
+            outputV[0], outputV[1], outputV[2], outputV[3]};
     };
     const auto userData = [&](const std::array<std::uint32_t, 4>& sampler) {
         return imageData(sampler, Type2D, Format8888UNorm, 0u);
@@ -11316,9 +11318,9 @@ void verifyTwoLaneUniformValues() {
     };
     static GuestTables guest;
     auto& output = guest.output;
-    const auto outputBase = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
+    const auto outputV = TableV(output.data(), 0u, 64u);
     auto& srt = guest.srt;
-    srt = {6u, 7u, 0u, 0u, static_cast<std::uint32_t>(outputBase), static_cast<std::uint32_t>((outputBase >> 32u) & 0xffffu), 64u, 0xfacu};
+    srt = {6u, 7u, 0u, 0u, outputV[0], outputV[1], outputV[2], outputV[3]};
     const auto srtAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(srt.data()));
     const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(srtAddress), static_cast<std::uint32_t>(srtAddress >> 32u)};
     const std::array<std::uint32_t, 10> code{0xf4040080u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xbf8cc07fu, 0x93040302u, 0x4a020004u, 0xe0700000u, 0x80020100u, 0xbf810000u};
@@ -12744,7 +12746,12 @@ public:
             if (op == spv::OpImageFetch) fetches.push_back({words[cursor + 3], words[cursor + 4], length > 6u && (words[cursor + 5] & spv::ImageOperandsSampleMask) != 0u ? words[cursor + 6] : 0u});
             if (op == spv::OpImageQuerySizeLod) querySize = words[cursor + 2];
             if (op == spv::OpIEqual) comparisons.push_back({words[cursor + 3], words[cursor + 4]});
-            if (op == spv::OpCompositeExtract) extracted[words[cursor + 2]] = words[cursor + 3];
+            if (op == spv::OpCompositeExtract) {
+                extracted[words[cursor + 2]] = words[cursor + 3];
+                extractedComponents[words[cursor + 2]] = words[cursor + 4];
+            }
+            if (op == spv::OpStore) storedValues.push_back(words[cursor + 2]);
+            if (op == spv::OpBitcast || op == spv::OpCopyObject || op == spv::OpConvertUToF || op == spv::OpConvertFToU) depthSources[words[cursor + 2]] = words[cursor + 3];
             if (op == spv::OpConstant && length == 4u) constants[words[cursor + 2]] = words[cursor + 3];
             if (op == spv::OpBitcast || op == spv::OpFSub || op == spv::OpISub || op == spv::OpConvertUToF || op == spv::OpConvertFToU) sources[words[cursor + 2]] = words[cursor + 3];
             for (std::size_t operand = 3; (op == spv::OpCompositeConstruct || op == spv::OpConstantComposite) && operand < length; ++operand) composites[words[cursor + 2]].push_back(words[cursor + operand]);
@@ -12794,6 +12801,11 @@ public:
     }
 
     bool QueryReportsDepth() const {
+        if (std::ranges::any_of(storedValues, [&](std::uint32_t value) {
+            for (auto source = depthSources.find(value); source != depthSources.end(); source = depthSources.find(value)) value = source->second;
+            const auto extract = extracted.find(value);
+            return extract != extracted.end() && extract->second == querySize && extractedComponents.at(value) == 2u;
+        })) return true;
         return std::ranges::any_of(composites, [&](const auto& composite) {
             if (composite.second.size() != 4u) return false;
             const auto extract = extracted.find(composite.second[2]);
@@ -12813,6 +12825,9 @@ private:
     std::map<std::uint32_t, std::uint32_t> constants;
     std::map<std::uint32_t, std::uint32_t> sources;
     std::map<std::uint32_t, std::uint32_t> extracted;
+    std::map<std::uint32_t, std::uint32_t> extractedComponents;
+    std::map<std::uint32_t, std::uint32_t> depthSources;
+    std::vector<std::uint32_t> storedValues;
     std::map<std::uint32_t, std::vector<std::uint32_t>> composites;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> comparisons;
     std::uint32_t querySize = 0u;
