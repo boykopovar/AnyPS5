@@ -1,5 +1,6 @@
 #include <codegen/x86/RedZoneFramer.hpp>
 #include <codegen/x86/StubBodyBuilder.hpp>
+#include <algorithm>
 #include <cstdint>
 #include <span>
 #include <iostream>
@@ -785,6 +786,55 @@ void treatsATailCallPastTheFdeEndAsLeaving() {
     require(report.Framed == 1 && sites.size() == 2 && sites[0].Address == Base + 0x60, "the tail-called function was not framed from its own FDE start");
 }
 
+void stopsAtAShortFdeWithoutLosingTheNextFunction() {
+    std::vector<std::uint8_t> called = FramelessPrologue;
+    append(called, StoreBelowRsp);
+    append(called, {0x85, 0xff, 0x75, 0x06});
+    append(called, FramelessExit);
+    append(called, {0x41, 0x5f, 0x41, 0x5e, 0x5b, 0xe9});
+    const auto disp = static_cast<std::uint32_t>(0x60 - static_cast<std::int32_t>(0x40 + called.size() + 4));
+    for (int index = 0; index < 4; ++index) called.push_back(static_cast<std::uint8_t>(disp >> (index * 8)));
+    auto input = calledThenUncalled(called, framelessLeaf(FramelessPrologue, StoreBelowRsp, FramelessExit));
+    input.functions[0].End -= 3;
+    Codegen::RedZoneFrameReport report;
+    std::vector<Codegen::RedZoneDisplacement> displacements;
+    const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
+    require(report.Functions == 2 && report.Framed == 1 && sites.size() == 2, "an FDE that ends inside its tail jmp was decoded past its bytes or lost the next function");
+    require(report.Skipped.size() == 1 && report.Skipped.begin()->first == "branch leaves the function", "the FDE whose tail jmp leaves its range was not skipped as a branch out");
+}
+
+void skipsAnInstructionThatOverrunsTheNextFunction() {
+    auto input = image({std::vector<std::uint8_t>(0x20, 0x90), {0xc3}});
+    std::copy(FramelessPrologue.begin(), FramelessPrologue.end(), input.bytes.begin() + 0x40);
+    std::copy(StoreBelowRsp.begin(), StoreBelowRsp.end(), input.bytes.begin() + 0x45);
+    std::copy(FramelessExit.begin(), FramelessExit.end(), input.bytes.begin() + 0x4a);
+    std::fill(input.bytes.begin() + 0x60, input.bytes.begin() + 0x6e, std::uint8_t{0x90});
+    const std::vector<std::uint8_t> jump{0xe9, 0, 0, 0, 0};
+    std::copy(jump.begin(), jump.end(), input.bytes.begin() + 0x6e);
+    input.bytes[0x73] = 0xc3;
+    input.functions[0].End = Base + 0x70;
+    input.functions[1] = {Base + 0x70, Base + 0x74};
+    Codegen::RedZoneFrameReport report;
+    std::vector<Codegen::RedZoneDisplacement> displacements;
+    const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
+    require(report.Framed == 0 && report.Skipped.at("instruction crosses the range end") == 1, "an instruction overrunning the next function was framed");
+    require(sites.empty(), "the overrunning function produced frame sites");
+}
+
+void skipsAFunctionWithANonTerminatorCrossing() {
+    auto input = image({std::vector<std::uint8_t>(0x10, 0x90), {0xc3}});
+    std::copy(FramelessPrologue.begin(), FramelessPrologue.end(), input.bytes.begin() + 0x40);
+    std::copy(StoreBelowRsp.begin(), StoreBelowRsp.end(), input.bytes.begin() + 0x45);
+    const std::vector<std::uint8_t> nopBody{0x31, 0xc0, 0x90};
+    std::copy(nopBody.begin(), nopBody.end(), input.bytes.begin() + 0x4a);
+    std::copy(LoadBelowRsp.begin(), LoadBelowRsp.end(), input.bytes.begin() + 0x4d);
+    Codegen::RedZoneFrameReport report;
+    std::vector<Codegen::RedZoneDisplacement> displacements;
+    const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
+    require(report.Framed == 0 && report.Skipped.at("instruction crosses the range end") == 1, "a function with a crossing non-terminator was framed");
+    require(sites.empty(), "the function with a crossing non-terminator produced frame sites");
+}
+
 void framesALeafAfterAJumpWithoutInt3FromItsOwnFde() {
     std::vector<std::uint8_t> first = FramelessPrologue;
     append(first, StoreBelowRsp);
@@ -1033,6 +1083,9 @@ int main() {
         framesOpcodeEncodedNonStackRegisters();
         framesEachFunctionFromItsOwnFde();
         treatsATailCallPastTheFdeEndAsLeaving();
+        stopsAtAShortFdeWithoutLosingTheNextFunction();
+        skipsAnInstructionThatOverrunsTheNextFunction();
+        skipsAFunctionWithANonTerminatorCrossing();
         framesALeafAfterAJumpWithoutInt3FromItsOwnFde();
         keepsColdBlocksAfterARetInsideTheFde();
         keepsLoopsAlignedAfterAJump();
