@@ -482,6 +482,8 @@ def computed_reads(text, prefixes=PREFIXES):
 
 SHADOW = re.compile(r'(?<![\w.:>])[A-Za-z_][\w:]*(?:\s*[*&]+\s*|\s+)(?:const\s+)?(?P<name>[A-Za-z_]\w*)\s*(?P<after>[=;,)\[{(])')
 INCLUDE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*"([^"]+)"', re.M)
+ARRAY_EXTENT = re.compile(r'\[\s*\w*\s*\]\s*')
+ARRAY_TAIL = re.compile(r'\s*\[\s*\w*\s*\]$')
 
 
 def literal_start(prefixes=PREFIXES):
@@ -508,6 +510,9 @@ def declared_constants(commentless, prefixes=PREFIXES):
         end = match.start()
         while end > 0 and commentless[end - 1].isspace():
             end -= 1
+        extent = ARRAY_TAIL.search(commentless, max(0, end - 64), end)
+        if extent:
+            end = extent.start()
         start = end
         while start > 0 and (commentless[start - 1].isalnum() or commentless[start - 1] == "_"):
             start -= 1
@@ -523,7 +528,11 @@ def shadowed_names(commentless, prefixes=PREFIXES):
         if "constexpr" in line:
             continue
         for match in SHADOW.finditer(line):
-            if match.group("after") == "=" and literal.match(line, match.start("after")):
+            after = match.start("after")
+            if match.group("after") == "[":
+                extent = ARRAY_EXTENT.match(line, after)
+                after = extent.end() if extent else after
+            if literal.match(line, after):
                 continue
             names.add(match.group("name"))
     return names

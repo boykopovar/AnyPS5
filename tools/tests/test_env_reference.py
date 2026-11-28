@@ -598,6 +598,21 @@ class EnvReferenceTests(unittest.TestCase):
         self.assertEqual(found["APS5_FALLBACK_DB"], [(
             (root / "core" / "Fallback.cpp").as_posix(), 3, "string", "")])
 
+    def test_reads_resolve_a_character_array_constant_passed_to_a_reader(self):
+        declarations = {
+            "APS5_CONSTEXPR_ARRAY": 'constexpr char NAME[] = "APS5_CONSTEXPR_ARRAY";\n',
+            "APS5_CONST_ARRAY": 'static const char NAME [16] = "APS5_CONST_ARRAY";\n',
+            "APS5_WIDE_ARRAY": 'constexpr const wchar_t NAME[] = L"APS5_WIDE_ARRAY";\n',
+        }
+        for name, declaration in declarations.items():
+            with self.subTest(name=name):
+                root = self.fixture()
+                (root / "core" / "Array.cpp").write_text(
+                    declaration + "bool on() { return std::getenv(NAME) != nullptr; }\n", encoding="utf-8")
+                found = env_reference.reads([root / "core"])
+                self.assertIn(name, found)
+                self.assertEqual([read[:2] for read in found[name]], [((root / "core" / "Array.cpp").as_posix(), 2)])
+
     def test_a_parameter_with_a_constant_name_is_not_a_read_of_that_constant(self):
         root = self.fixture()
         (root / "core" / "Names.hpp").write_text('static constexpr const char* MODE = "APS5_REAL_MODE";\n', encoding="utf-8")
