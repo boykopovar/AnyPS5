@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -12,6 +13,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <map>
 #include <memory>
 #include <new>
@@ -70,6 +72,15 @@ VkImage lastImage = VK_NULL_HANDLE;
 std::vector<VkImage> clearedImages;
 VkImageUsageFlags lastImageUsage = 0;
 std::uint32_t imagesDestroyed = 0;
+std::uint32_t dispatches = 0;
+std::uint32_t shaderModulesCreated = 0;
+std::uint32_t shaderModulesDestroyed = 0;
+std::uint32_t pipelinesBound = 0;
+std::uint32_t descriptorSetsBound = 0;
+std::uint32_t pushConstantsRecorded = 0;
+bool failNextComputePipeline = false;
+bool failDepthConvertValidation = false;
+std::array<std::uint8_t, 1u << 20u> mappedMemory{};
 std::vector<std::pair<VkImage, VkImageAspectFlags>> imageReads;
 std::vector<std::pair<VkImage, VkImageAspectFlags>> imageWrites;
 std::vector<VkImage> destroyedImages;
@@ -173,9 +184,12 @@ VKAPI_ATTR VkResult VKAPI_CALL bindBufferMemory(VkDevice, VkBuffer, VkDeviceMemo
 }
 
 VKAPI_ATTR void VKAPI_CALL destroyBuffer(VkDevice, VkBuffer, const VkAllocationCallbacks*) {}
-VKAPI_ATTR VkResult VKAPI_CALL mapMemory(VkDevice, VkDeviceMemory, VkDeviceSize, VkDeviceSize, VkMemoryMapFlags, void**) {
-    return VK_ERROR_MEMORY_MAP_FAILED;
+VKAPI_ATTR VkResult VKAPI_CALL mapMemory(VkDevice, VkDeviceMemory, VkDeviceSize, VkDeviceSize, VkMemoryMapFlags, void** data) {
+    *data = mappedMemory.data();
+    return VK_SUCCESS;
 }
+VKAPI_ATTR VkResult VKAPI_CALL invalidateMappedMemoryRanges(VkDevice, std::uint32_t, const VkMappedMemoryRange*) { return VK_SUCCESS; }
+VKAPI_ATTR VkResult VKAPI_CALL flushMappedMemoryRanges(VkDevice, std::uint32_t, const VkMappedMemoryRange*) { return VK_SUCCESS; }
 VKAPI_ATTR void VKAPI_CALL unmapMemory(VkDevice, VkDeviceMemory) {}
 VKAPI_ATTR VkResult VKAPI_CALL createDescriptorSetLayout(VkDevice, const VkDescriptorSetLayoutCreateInfo*, const VkAllocationCallbacks*, VkDescriptorSetLayout* layout) {
     *layout = newHandle<VkDescriptorSetLayout>();
@@ -186,12 +200,46 @@ VKAPI_ATTR VkResult VKAPI_CALL createPipelineLayout(VkDevice, const VkPipelineLa
     return VK_SUCCESS;
 }
 VKAPI_ATTR VkResult VKAPI_CALL createShaderModule(VkDevice, const VkShaderModuleCreateInfo*, const VkAllocationCallbacks*, VkShaderModule* module) {
+    ++shaderModulesCreated;
     *module = newHandle<VkShaderModule>();
     return VK_SUCCESS;
 }
+VKAPI_ATTR VkResult VKAPI_CALL createComputePipelines(VkDevice, VkPipelineCache, std::uint32_t, const VkComputePipelineCreateInfo*, const VkAllocationCallbacks*, VkPipeline* pipeline) {
+    if (failNextComputePipeline) {
+        failNextComputePipeline = false;
+        *pipeline = VK_NULL_HANDLE;
+        return VK_ERROR_OUT_OF_HOST_MEMORY;
+    }
+    *pipeline = newHandle<VkPipeline>();
+    return VK_SUCCESS;
+}
+VKAPI_ATTR void VKAPI_CALL destroyPipeline(VkDevice, VkPipeline, const VkAllocationCallbacks*) {}
+VKAPI_ATTR VkResult VKAPI_CALL createDescriptorPool(VkDevice, const VkDescriptorPoolCreateInfo*, const VkAllocationCallbacks*, VkDescriptorPool* pool) {
+    *pool = newHandle<VkDescriptorPool>();
+    return VK_SUCCESS;
+}
+VKAPI_ATTR VkResult VKAPI_CALL resetDescriptorPool(VkDevice, VkDescriptorPool, VkDescriptorPoolResetFlags) {
+    return VK_SUCCESS;
+}
+VKAPI_ATTR void VKAPI_CALL destroyDescriptorPool(VkDevice, VkDescriptorPool, const VkAllocationCallbacks*) {}
+VKAPI_ATTR VkResult VKAPI_CALL allocateDescriptorSets(VkDevice, const VkDescriptorSetAllocateInfo*, VkDescriptorSet* set) {
+    *set = newHandle<VkDescriptorSet>();
+    return VK_SUCCESS;
+}
+VKAPI_ATTR void VKAPI_CALL updateDescriptorSets(VkDevice, std::uint32_t, const VkWriteDescriptorSet*, std::uint32_t, const VkCopyDescriptorSet*) {}
+VKAPI_ATTR void VKAPI_CALL cmdBindPipeline(VkCommandBuffer, VkPipelineBindPoint, VkPipeline) { ++pipelinesBound; }
+VKAPI_ATTR void VKAPI_CALL cmdBindDescriptorSets(VkCommandBuffer, VkPipelineBindPoint, VkPipelineLayout, std::uint32_t, std::uint32_t, const VkDescriptorSet*, std::uint32_t, const std::uint32_t*) { ++descriptorSetsBound; }
+VKAPI_ATTR void VKAPI_CALL cmdPushConstants(VkCommandBuffer, VkPipelineLayout, VkShaderStageFlags, std::uint32_t, std::uint32_t, const void*) { ++pushConstantsRecorded; }
+VKAPI_ATTR void VKAPI_CALL cmdDispatch(VkCommandBuffer, std::uint32_t, std::uint32_t, std::uint32_t) {
+    ++dispatches;
+    if (failDepthConvertValidation) {
+        const std::uint32_t fault = 1u;
+        std::memcpy(mappedMemory.data(), &fault, sizeof(fault));
+    }
+}
 VKAPI_ATTR void VKAPI_CALL destroyDescriptorSetLayout(VkDevice, VkDescriptorSetLayout, const VkAllocationCallbacks*) {}
 VKAPI_ATTR void VKAPI_CALL destroyPipelineLayout(VkDevice, VkPipelineLayout, const VkAllocationCallbacks*) {}
-VKAPI_ATTR void VKAPI_CALL destroyShaderModule(VkDevice, VkShaderModule, const VkAllocationCallbacks*) {}
+VKAPI_ATTR void VKAPI_CALL destroyShaderModule(VkDevice, VkShaderModule, const VkAllocationCallbacks*) { ++shaderModulesDestroyed; }
 
 VKAPI_ATTR void VKAPI_CALL formatProperties(VkPhysicalDevice, VkFormat, VkFormatProperties* properties) {
     *properties = {};
@@ -232,6 +280,11 @@ VKAPI_ATTR void VKAPI_CALL formatPropertiesWithoutD16S8(VkPhysicalDevice, VkForm
     if (format != VK_FORMAT_D16_UNORM_S8_UINT) properties->optimalTilingFeatures = VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
 }
 
+VKAPI_ATTR void VKAPI_CALL formatPropertiesWithoutD16S8Storage(VkPhysicalDevice, VkFormat format, VkFormatProperties* properties) {
+    *properties = {};
+    if (format != VK_FORMAT_D16_UNORM_S8_UINT) properties->optimalTilingFeatures = VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT;
+}
+
 VKAPI_ATTR void VKAPI_CALL formatPropertiesOnlyD32S8(VkPhysicalDevice, VkFormat format, VkFormatProperties* properties) {
     *properties = {};
     if (format == VK_FORMAT_D32_SFLOAT_S8_UINT) properties->optimalTilingFeatures = VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
@@ -267,10 +320,23 @@ PFN_vkVoidFunction VKAPI_CALL deviceProc(VkDevice, const char* name) {
         {"vkBindBufferMemory", reinterpret_cast<PFN_vkVoidFunction>(bindBufferMemory)},
         {"vkDestroyBuffer", reinterpret_cast<PFN_vkVoidFunction>(destroyBuffer)},
         {"vkMapMemory", reinterpret_cast<PFN_vkVoidFunction>(mapMemory)},
+        {"vkInvalidateMappedMemoryRanges", reinterpret_cast<PFN_vkVoidFunction>(invalidateMappedMemoryRanges)},
+        {"vkFlushMappedMemoryRanges", reinterpret_cast<PFN_vkVoidFunction>(flushMappedMemoryRanges)},
         {"vkUnmapMemory", reinterpret_cast<PFN_vkVoidFunction>(unmapMemory)},
         {"vkCreateDescriptorSetLayout", reinterpret_cast<PFN_vkVoidFunction>(createDescriptorSetLayout)},
         {"vkCreatePipelineLayout", reinterpret_cast<PFN_vkVoidFunction>(createPipelineLayout)},
         {"vkCreateShaderModule", reinterpret_cast<PFN_vkVoidFunction>(createShaderModule)},
+        {"vkCreateComputePipelines", reinterpret_cast<PFN_vkVoidFunction>(createComputePipelines)},
+        {"vkDestroyPipeline", reinterpret_cast<PFN_vkVoidFunction>(destroyPipeline)},
+        {"vkCreateDescriptorPool", reinterpret_cast<PFN_vkVoidFunction>(createDescriptorPool)},
+        {"vkResetDescriptorPool", reinterpret_cast<PFN_vkVoidFunction>(resetDescriptorPool)},
+        {"vkDestroyDescriptorPool", reinterpret_cast<PFN_vkVoidFunction>(destroyDescriptorPool)},
+        {"vkAllocateDescriptorSets", reinterpret_cast<PFN_vkVoidFunction>(allocateDescriptorSets)},
+        {"vkUpdateDescriptorSets", reinterpret_cast<PFN_vkVoidFunction>(updateDescriptorSets)},
+        {"vkCmdBindPipeline", reinterpret_cast<PFN_vkVoidFunction>(cmdBindPipeline)},
+        {"vkCmdBindDescriptorSets", reinterpret_cast<PFN_vkVoidFunction>(cmdBindDescriptorSets)},
+        {"vkCmdPushConstants", reinterpret_cast<PFN_vkVoidFunction>(cmdPushConstants)},
+        {"vkCmdDispatch", reinterpret_cast<PFN_vkVoidFunction>(cmdDispatch)},
         {"vkDestroyDescriptorSetLayout", reinterpret_cast<PFN_vkVoidFunction>(destroyDescriptorSetLayout)},
         {"vkDestroyPipelineLayout", reinterpret_cast<PFN_vkVoidFunction>(destroyPipelineLayout)},
         {"vkDestroyShaderModule", reinterpret_cast<PFN_vkVoidFunction>(destroyShaderModule)}
@@ -389,7 +455,7 @@ void TestD16StencilFallback(const Context& context) {
     static int withoutTag = 0;
     Context without = context;
     without.physical = reinterpret_cast<VkPhysicalDevice>(&withoutTag);
-    without.formatProperties = formatPropertiesWithoutD16S8;
+    without.formatProperties = formatPropertiesWithoutD16S8Storage;
     constexpr std::uint64_t d16s8 = 0x70000000;
     constexpr std::uint64_t d16s8Stencil = 0x70800000;
     Require(HostDepthFormat(without, VK_FORMAT_D16_UNORM_S8_UINT) == VK_FORMAT_D24_UNORM_S8_UINT, "a device without D16_UNORM_S8_UINT must store it as D24_UNORM_S8_UINT");
@@ -415,24 +481,37 @@ void TestD16StencilFallback(const Context& context) {
     Require(displacedFallback && imageReads.empty(), "a stencil slice displaced by a newer owner of another extent must not reuse the older surface");
     Require(HostDepthBiasConstant(without, VK_FORMAT_D16_UNORM_S8_UINT, 2.0f) == 512.0f, "a 16-bit depth bias must be scaled by 256 for D24 storage");
     Require(HostDepthBiasConstant(without, VK_FORMAT_D32_SFLOAT_S8_UINT, 2.0f) == 2.0f, "a D32 depth bias must not be scaled");
-    const auto refused = [&](const View& view) {
-        try {
-            lookup(without, view);
-        } catch (const std::runtime_error& error) {
-            return std::string_view(error.what()).find("a depth plane that the device stores in another depth format is not implemented") != std::string_view::npos;
-        }
-        return false;
-    };
-    Require(refused({d16s8, FormatR16Unorm, 256, 256, TileDepth64KB, Type2DArray, 1}), "two slices of a D16 surface stored as D24 must be refused, as the plane copy would read the wider image as 16-bit texels");
-    Require(refused({d16s8, FormatR16Uint, 256, 256, TileStandard64KB}), "an R16_UINT view of a D16 surface stored as D24 must be refused");
-    std::string storageError;
-    try {
-        const auto words = tsharp({d16s8, FormatR16Unorm, 256, 256});
-        DepthSurfaceStorage(without, words, DecodeTextureResource(words), 0);
-    } catch (const std::runtime_error& error) {
-        storageError = error.what();
-    }
-    Require(storageError.find("depth plane") != std::string::npos && storageError.find("stored as") != std::string::npos, "storage access to the depth plane of a D16 surface stored as D24 must throw");
+    TextureDetiler detiler(without);
+    without.detiler = &detiler;
+    dispatches = 0;
+    Require(lookup(without, {d16s8, FormatR16Unorm, 256, 256, TileDepth64KB, Type2DArray, 1}) != nullptr, "two slices of a D16 surface stored as D24 must be converted");
+    Require(dispatches == 2u, "two slices of a D16 surface stored as D24 must each dispatch a depth conversion");
+    dispatches = 0;
+    Require(lookup(without, {d16s8, FormatR16Uint, 256, 256, TileStandard64KB}) != nullptr, "an R16_UINT view of a D16 surface stored as D24 must be converted");
+    Require(dispatches == 1u, "an R16_UINT view of a D16 surface stored as D24 must dispatch a depth conversion");
+    ClearDepthSurfaces(without.device);
+
+    without.imageFormatProperties = sampledDepthProperties;
+    DepthSurfaceView(without, {d16s8, 0, {256, 256}, VK_FORMAT_D16_UNORM_S8_UINT, 1.0f, 0});
+    const auto singleSliceImage = lastImage;
+    DepthSurfaceView(without, {d16s8 + 0x20000, d16s8Stencil + 0x20000, {256, 256}, VK_FORMAT_D16_UNORM_S8_UINT, 1.0f, 0});
+    const auto displacedSingleImage = lastImage;
+    DepthSurfaceView(without, {d16s8 + 0x20000, 0, {256, 256}, VK_FORMAT_D16_UNORM_S8_UINT, 1.0f, 0, 0, false, 2});
+    const auto multisampledSliceImage = lastImage;
+    imageReads.clear();
+    Require(lookup(without, {d16s8, FormatR16Unorm, 256, 256, TileDepth64KB, Type2DArray, 1}) != nullptr, "a layered depth lookup over a multisampled second slice must fall back instead of copying the multisampled image");
+    Require(imageReads.size() == 1u && imageReads[0].first == singleSliceImage && imageReads[0].first != multisampledSliceImage && imageReads[0].first != displacedSingleImage, "depthSlice must reject multisampled and displaced owners for image-to-buffer copies");
+    ClearDepthSurfaces(without.device);
+
+    DepthSurfaceView(without, {d16s8, 0, {256, 256}, VK_FORMAT_D16_UNORM_S8_UINT, 1.0f, 0});
+    const auto stencilDisplacedBase = lastImage;
+    DepthSurfaceView(without, {d16s8 + 0x20000, d16s8Stencil + 0x20000, {256, 256}, VK_FORMAT_D16_UNORM_S8_UINT, 1.0f, 0});
+    const auto stencilDisplacedDepth = lastImage;
+    DepthSurfaceView(without, {d16s8 + 0x60000, d16s8 + 0x20000, {256, 256}, VK_FORMAT_D16_UNORM_S8_UINT, 1.0f, 0});
+    const auto newerStencilOwner = lastImage;
+    imageReads.clear();
+    Require(lookup(without, {d16s8, FormatR16Unorm, 256, 256, TileDepth64KB, Type2DArray, 1}) != nullptr, "a layered depth lookup over a slice displaced by a newer stencil owner must fall back to guest memory");
+    Require(imageReads.size() == 1u && imageReads[0].first == stencilDisplacedBase && imageReads[0].first != stencilDisplacedDepth && imageReads[0].first != newerStencilOwner, "depthSlice must not copy a depth surface displaced by a newer stencil owner");
     ClearDepthSurfaces(without.device);
 
     static int onlyTag = 0;
@@ -448,6 +527,27 @@ void TestD16StencilFallback(const Context& context) {
         threw = true;
     }
     Require(threw, "a constant 16-bit depth bias on D32_SFLOAT_S8_UINT storage must throw");
+    TextureDetiler onlyDetiler(only);
+    only.detiler = &onlyDetiler;
+    DepthSurfaceView(only, {d16s8, 0, {256, 256}, VK_FORMAT_D16_UNORM_S8_UINT, 1.0f, 0});
+    DepthSurfaceView(only, {d16s8 + 0x80000, 0, {256, 256}, VK_FORMAT_D16_UNORM_S8_UINT, 1.0f, 0});
+    failDepthConvertValidation = true;
+    for (std::uint32_t attempt = 0; attempt < 2u; ++attempt) {
+        dispatches = 0;
+        bool validationFailed = false;
+        try {
+            static_cast<void>(lookup(only, {d16s8, FormatR16Uint, 256, 256, TileStandard64KB}));
+        } catch (const std::runtime_error& error) {
+            validationFailed = std::string_view(error.what()).find("nonfinite D32 depth value") != std::string_view::npos;
+        }
+        Require(validationFailed && dispatches == 1u, "a failed DepthPlaneCopy conversion must roll back its cached layer so the next lookup retries validation");
+    }
+    failDepthConvertValidation = false;
+    dispatches = 0;
+    Require(lookup(only, {d16s8, FormatR16Uint, 256, 256, TileStandard64KB}) != nullptr && dispatches == 1u, "a retry after a rolled-back DepthPlaneCopy conversion must succeed once validation passes");
+    dispatches = 0;
+    Require(lookup(only, {d16s8, FormatR16Uint, 256, 256, TileStandard64KB}) != nullptr && dispatches == 0u, "a subsequent lookup after a valid DepthPlaneCopy conversion must reuse the cached layer");
+    ClearDepthSurfaces(only.device);
 }
 
 void TestMultisampleDepthOwnership(Context context) {
@@ -1035,6 +1135,96 @@ void TestRetireStaleSurfaceWithoutWrittenUnits(const Context& context) {
     ClearDepthSurfaces(context.device);
 }
 
+void TestD16DepthConvertEdgeCases(const Context& context) {
+    shaderModulesCreated = 0;
+    shaderModulesDestroyed = 0;
+    failNextComputePipeline = false;
+    {
+        TextureDetiler detiler(context);
+        const auto initialModules = shaderModulesCreated;
+        Buffer source(context, 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        Buffer destination(context, 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        CommandBatch batch(context);
+        const auto registerValidation = [&](std::function<void()> validation) { batch.OnValidated(std::move(validation)); };
+        failNextComputePipeline = true;
+        bool pipelineFailed = false;
+        try {
+            detiler.DispatchDepthConvert(batch.Handle(), source.Handle(), 0, destination.Handle(), 0, 2, 1, 4, 8, VK_FORMAT_D24_UNORM_S8_UINT, true, registerValidation);
+        } catch (const std::runtime_error&) {
+            pipelineFailed = true;
+        }
+        Require(pipelineFailed && !failNextComputePipeline, "the injected depth-convert pipeline creation failure did not trigger");
+        Require(shaderModulesCreated == initialModules + 1u, "a failed depth-convert pipeline creation did not retain one shader module");
+        dispatches = 0;
+        detiler.DispatchDepthConvert(batch.Handle(), source.Handle(), 0, destination.Handle(), 0, 2, 1, 4, 8, VK_FORMAT_D24_UNORM_S8_UINT, true, registerValidation);
+        Require(shaderModulesCreated == initialModules + 1u && dispatches == 1u, "retrying depth-convert pipeline creation created a duplicate shader module instead of reusing the existing handle");
+
+        pipelinesBound = 0;
+        descriptorSetsBound = 0;
+        pushConstantsRecorded = 0;
+        dispatches = 0;
+        bool registrationFailed = false;
+        try {
+            detiler.DispatchDepthConvert(batch.Handle(), source.Handle(), 0, destination.Handle(), 0, 2, 1, 4, 8, VK_FORMAT_D24_UNORM_S8_UINT, true, [](std::function<void()>) {
+                throw std::runtime_error("simulated registration failure");
+            });
+        } catch (const std::runtime_error& error) {
+            registrationFailed = std::string_view(error.what()).find("simulated registration failure") != std::string_view::npos;
+        }
+        Require(registrationFailed, "a throwing registerValidation callback did not propagate out of DispatchDepthConvert");
+        Require(pipelinesBound == 0u && descriptorSetsBound == 0u && pushConstantsRecorded == 0u && dispatches == 0u, "a failing registerValidation callback still recorded compute commands");
+    }
+    Require(shaderModulesDestroyed == shaderModulesCreated, "TextureDetiler teardown leaked a shader module after pipeline creation retry");
+
+    static int mixedTag = 0;
+    Context only = context;
+    only.physical = reinterpret_cast<VkPhysicalDevice>(&mixedTag);
+    only.formatProperties = formatPropertiesOnlyD32S8;
+    TextureDetiler onlyDetiler(only);
+    only.detiler = &onlyDetiler;
+    const auto stride = DepthSliceBytes({256, 256}, 2u);
+    GuestBlock block(4u * static_cast<std::size_t>(stride));
+    const auto base = block.Address();
+    AgcDriver::GuestMemory::MarkWritten(base + stride, static_cast<std::size_t>(stride));
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    DepthSurfaceView(only, {base, 0, {256, 256}, VK_FORMAT_D16_UNORM_S8_UINT, 1.0f, 0});
+    const auto layer0Image = lastImage;
+    DepthSurfaceView(only, {base + 2u * stride, 0, {256, 256}, VK_FORMAT_D16_UNORM_S8_UINT, 1.0f, 0});
+    const auto layer2Image = lastImage;
+    DepthSurfaceView(only, {base + 3u * stride, 0, {256, 256}, VK_FORMAT_D16_UNORM_S8_UINT, 1.0f, 0});
+    failDepthConvertValidation = false;
+    dispatches = 0;
+    imageReads.clear();
+    Require(lookup(only, {base, FormatR16Unorm, 256, 256, TileDepth64KB, Type2DArray, 2}) != nullptr, "the initial 3-layer mixed DepthPlaneCopy lookup did not succeed");
+    Require(dispatches == 3u && imageReads.size() == 2u && imageReads[0].first == layer0Image && imageReads[1].first == layer2Image, "the initial 3-layer mixed DepthPlaneCopy lookup did not populate all three layers");
+    AgcDriver::GuestMemory::MarkWritten(base + stride, static_cast<std::size_t>(stride));
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    DepthSurfaceView(only, {base + 2u * stride, 0, {256, 256}, VK_FORMAT_D16_UNORM_S8_UINT, 1.0f, 0});
+    DepthSurfaceView(only, {base + 3u * stride, 0, {256, 256}, VK_FORMAT_D16_UNORM_S8_UINT, 1.0f, 0});
+    failDepthConvertValidation = true;
+    for (std::uint32_t attempt = 0; attempt < 2u; ++attempt) {
+        dispatches = 0;
+        imageReads.clear();
+        bool validationFailed = false;
+        try {
+            static_cast<void>(lookup(only, {base, FormatR16Unorm, 256, 256, TileDepth64KB, Type2DArray, 2}));
+        } catch (const std::runtime_error& error) {
+            validationFailed = std::string_view(error.what()).find("nonfinite D32 depth value") != std::string_view::npos;
+        }
+        Require(validationFailed && dispatches == 2u && imageReads.size() == 1u && imageReads[0].first == layer2Image, "a mixed-layer DepthPlaneCopy failure must keep unchanged layer 0 cached while rolling back and retrying both guest layer 1 and surface layer 2");
+    }
+    failDepthConvertValidation = false;
+    dispatches = 0;
+    imageReads.clear();
+    Require(lookup(only, {base, FormatR16Unorm, 256, 256, TileDepth64KB, Type2DArray, 2}) != nullptr, "the mixed-layer retry after validation passes did not succeed");
+    Require(dispatches == 2u && imageReads.size() == 1u && imageReads[0].first == layer2Image, "the mixed-layer retry did not replay layers 1 and 2 while keeping layer 0 cached");
+    dispatches = 0;
+    imageReads.clear();
+    Require(lookup(only, {base, FormatR16Unorm, 256, 256, TileDepth64KB, Type2DArray, 2}) != nullptr, "the cached mixed-layer lookup did not succeed");
+    Require(dispatches == 0u && imageReads.empty(), "a subsequent mixed-layer lookup did not reuse all three cached layers");
+    ClearDepthSurfaces(only.device);
+}
+
 void RunDepthSurfaceReuseTests() {
     std::vector<int> order(1024);
     for (std::size_t i = 0; i < order.size(); ++i) order[i] = static_cast<int>(order.size() - i) / 2;
@@ -1046,11 +1236,22 @@ void RunDepthSurfaceReuseTests() {
     context.deviceProc = deviceProc;
     context.formatProperties = formatProperties;
     context.memory.memoryTypeCount = 1;
-    context.memory.memoryTypes[0].propertyFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    context.memory.memoryTypes[0].propertyFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
     context.limits.maxFramebufferWidth = 16384;
     context.limits.maxFramebufferHeight = 16384;
     context.limits.maxFramebufferLayers = 1;
+    context.limits.maxImageArrayLayers = 2048;
+    context.limits.maxStorageBufferRange = 1u << 30u;
+    context.limits.minStorageBufferOffsetAlignment = 4;
+    context.limits.maxComputeWorkGroupCount[0] = 65535;
+    context.limits.maxComputeWorkGroupCount[1] = 65535;
+    context.limits.maxComputeWorkGroupCount[2] = 65535;
+    context.limits.maxComputeWorkGroupInvocations = 128;
+    context.limits.maxComputeWorkGroupSize[0] = 128;
+    context.limits.maxComputeWorkGroupSize[1] = 128;
+    context.limits.maxComputeWorkGroupSize[2] = 64;
     TestD16StencilFallback(context);
+    TestD16DepthConvertEdgeCases(context);
     TestCopiedHtileProvesNoClear(context);
     TestFilledHtileAfterCopyClears(context);
     TestMultisampleDepthOwnership(context);
