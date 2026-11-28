@@ -273,11 +273,31 @@ void TestPartialUnit(const std::array<std::uint32_t, Threads>& offsets, std::uin
     for (std::size_t word = 0; word < SurfaceBytes / 4u; ++word) Require(loaded[word] || surface.texels[word] == Untouched, "non-resident storage store: word " + std::to_string(word) + " outside the stored texels changed");
 }
 
+void TestStoreAfterCommit(const std::array<std::uint32_t, Threads>& offsets, std::uint32_t view, bool wholeUnit) {
+    const auto through = ViewName(view) + (wholeUnit ? " (whole block)" : " (one page)");
+    const auto begin = wholeUnit ? std::size_t{0} : static_cast<std::size_t>(offsets[0]) & ~(Page - 1u);
+    const auto bytes = wholeUnit ? Block : Page;
+    Surface surface(Untouched);
+    Protect(surface.texels, begin, bytes, false);
+    Dispatch(surface.texels, StoreCode);
+    Protect(surface.texels, begin, bytes, true);
+    Dispatch(surface.texels, StoreCode);
+    Load(surface.texels, view);
+    RequireTexels(Uniform(Stored), "a load after a store made once the decommitted pages were committed again" + through);
+    Flush();
+    for (std::uint32_t x = 0; x < Threads; ++x) {
+        const auto value = surface.texels[offsets[x] / 4u];
+        Require(value == Stored, "non-resident storage store: guest memory of texel " + std::to_string(x) + " holds " + Hex(value) + " after the store made once the pages were committed again was flushed" + through);
+    }
+}
+
 void Run() {
     const auto offsets = TexelOffsets();
     for (const auto view : {Type2D, Type2DArray}) {
         TestWholeUnit(view);
         TestPartialUnit(offsets, view);
+        TestStoreAfterCommit(offsets, view, true);
+        TestStoreAfterCommit(offsets, view, false);
     }
 }
 
