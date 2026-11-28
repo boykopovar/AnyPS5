@@ -41,7 +41,7 @@ constexpr int GuestErrorFromHost(int hostError) {
         case WSAENOBUFS: return 55;
         case WSAEISCONN: return 56;
         case WSAENOTCONN: return 57;
-        case WSAESHUTDOWN: return 32;
+        case WSAESHUTDOWN: return 58;
         case WSAETOOMANYREFS: return 59;
         case WSAETIMEDOUT: return 60;
         case WSAECONNREFUSED: return 61;

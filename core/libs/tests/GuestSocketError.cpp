@@ -117,8 +117,8 @@ int main() {
         }
     }
 #ifdef _WIN32
-    if (GuestSockets::GuestErrorFromHost(ShutdownHost) != 32) {
-        std::fprintf(stderr, "WSAESHUTDOWN is not EPIPE\n");
+    if (GuestSockets::GuestErrorFromHost(ShutdownHost) != 58) {
+        std::fprintf(stderr, "WSAESHUTDOWN is not ESHUTDOWN\n");
         ++failures;
     }
 #endif
