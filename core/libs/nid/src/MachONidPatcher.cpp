@@ -157,6 +157,7 @@ Image ParseImage(const std::vector<std::uint8_t>& binary) {
     RequireRange(binary, sizeof(MachHeader64), image.Header.CommandBytes);
     std::size_t cursor = sizeof(MachHeader64);
     const auto end = cursor + image.Header.CommandBytes;
+    bool hasChainedFixups = false;
     for (std::uint32_t index = 0; index < image.Header.CommandCount; ++index) {
         if (cursor + sizeof(LoadCommand) > end) throw std::runtime_error("load command out of bounds");
         const auto command = Read<LoadCommand>(binary, cursor);
@@ -166,7 +167,11 @@ Image ParseImage(const std::vector<std::uint8_t>& binary) {
             minimumSize = sizeof(SegmentCommand64);
             break;
         case kLcDyldExportsTrie:
+            minimumSize = sizeof(LinkeditDataCommand);
+            break;
         case kLcDyldChainedFixups:
+            if (hasChainedFixups) throw std::runtime_error("Mach-O image has more than one chained fixups command");
+            hasChainedFixups = true;
             minimumSize = sizeof(LinkeditDataCommand);
             break;
         case kLcDyldInfo:
@@ -187,6 +192,7 @@ Image ParseImage(const std::vector<std::uint8_t>& binary) {
         image.Commands.push_back(cursor);
         cursor += command.Size;
     }
+    if (cursor != end) throw std::runtime_error("load command count does not match command bytes");
     return image;
 }
 
@@ -406,7 +412,7 @@ void WriteLinkeditData(std::vector<std::uint8_t>& binary, const Image& image, co
     }
     if (!linkedit) throw std::runtime_error("Mach-O image has no __LINKEDIT segment");
     auto segment = Read<SegmentCommand64>(binary, *linkedit);
-    if (segment.FileOffset + segment.FileSize != binary.size()) throw std::runtime_error("__LINKEDIT does not end the file");
+    if (segment.FileOffset > binary.size() || segment.FileSize != binary.size() - segment.FileOffset) throw std::runtime_error("__LINKEDIT does not end the file");
     const auto newOffset = (binary.size() + 7) & ~std::size_t{7};
     if (newOffset + trie.size() > 0xffffffffu) throw std::runtime_error("linkedit data offset overflow");
     binary.resize(newOffset, 0);
@@ -436,6 +442,8 @@ void PatchChainedImports(std::vector<std::uint8_t>& binary, const Image& image, 
     }
     if (!fixups || fixups->DataSize == 0) return;
     RequireRange(binary, fixups->DataOffset, fixups->DataSize);
+    if (fixups->DataSize < sizeof(ChainedFixupsHeader))
+        throw std::runtime_error("chained fixups header out of bounds");
     const auto base = std::size_t{fixups->DataOffset};
     const auto header = Read<ChainedFixupsHeader>(binary, base);
     if (header.Version != 0) throw std::runtime_error("unsupported chained fixups version");

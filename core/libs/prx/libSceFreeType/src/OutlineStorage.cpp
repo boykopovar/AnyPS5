@@ -5,7 +5,6 @@
 
 #include FT_OUTLINE_H
 
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -14,32 +13,19 @@ using namespace FreeType;
 
 namespace {
 
-bool CopyInPreservingErrno(void* destination, const void* source, std::size_t bytes) {
-    const int saved = errno;
-    const bool ok = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = saved;
-    return ok;
-}
-
 FT_Library ReadGuestLibrary(GuestLibrary* library, const char* func) {
     if (!library) return nullptr;
     FT_Library host = nullptr;
-    if (reinterpret_cast<std::uintptr_t>(library) % alignof(GuestLibrary) != 0 || !CopyInPreservingErrno(&host, &library->host, sizeof(host))) NotImplemented_nid_no_patch(func);
+    if (reinterpret_cast<std::uintptr_t>(library) % alignof(GuestLibrary) != 0 || !GuestCopyIn_nid_no_patch(&host, &library->host, sizeof(host))) NotImplemented_nid_no_patch(func);
     return host;
 }
 
 bool ReadOutline(GuestOutline& copy, const GuestOutline* outline) {
-    const int savedErrno = errno;
-    const bool read = GuestCopyIn_nid_no_patch(&copy, outline, sizeof(copy)) && GuestWritable_nid_no_patch(const_cast<GuestOutline*>(outline), sizeof(copy));
-    errno = savedErrno;
-    return read;
+    return GuestCopyIn_nid_no_patch(&copy, outline, sizeof(copy)) && GuestWritable_nid_no_patch(const_cast<GuestOutline*>(outline), sizeof(copy));
 }
 
 bool WriteOutline(GuestOutline* outline, const GuestOutline& value) {
-    const int savedErrno = errno;
-    const bool written = GuestCopyOut_nid_no_patch(outline, &value, sizeof(value));
-    errno = savedErrno;
-    return written;
+    return GuestCopyOut_nid_no_patch(outline, &value, sizeof(value));
 }
 
 void ReleaseOwned(const GuestOutline& outline) {

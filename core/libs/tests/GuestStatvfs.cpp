@@ -11,7 +11,9 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <vector>
 #ifdef _WIN32
+#include "prx/libc/include/WindowsVerbatimPath.hpp"
 #include <windows.h>
 #else
 #include <sys/socket.h>
@@ -152,6 +154,75 @@ int main() {
     std::filesystem::create_symlink("missing", root / "dangling");
     RequireError("/anyps5-statvfs-test/dangling", 2);
     Require(std::filesystem::remove(root / "dangling"));
+#endif
+#ifdef _WIN32
+    RequireError("/anyps5-statvfs-test/nul", 2);
+    RequireError("/anyps5-statvfs-test/file.txt ", 2);
+    RequireError("/anyps5-statvfs-test/file.txt.", 2);
+    std::error_code nulError;
+    const auto nulFile = root / "nul";
+    const auto verbatimNul = NativeVerbatimPath_nid_no_patch(nulFile, nulError, WindowsMaxPathLength);
+    Require(!nulError);
+    const HANDLE nulHandle = CreateFileW(verbatimNul.c_str(), GENERIC_WRITE, 0,
+        nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+    Require(nulHandle != INVALID_HANDLE_VALUE);
+    Require(CloseHandle(nulHandle) != 0);
+    RequireVolume("/anyps5-statvfs-test/nul", root);
+    RequireError("/anyps5-statvfs-test/nul/child", 20);
+    RequireError("/anyps5-statvfs-test/nul/", 20);
+    Require(DeleteFileW(verbatimNul.c_str()) != 0);
+#endif
+    std::string deepGuest = "/anyps5-statvfs-test";
+    std::filesystem::path deepHost = root;
+    std::vector<std::filesystem::path> createdDirs;
+    for (int i = 0; i < 6; ++i) {
+        const std::string segment(40, static_cast<char>('a' + i));
+        deepGuest += '/' + segment;
+        deepHost /= segment;
+#ifdef _WIN32
+        std::error_code dirError;
+        const auto verbatimDir = NativeVerbatimPath_nid_no_patch(deepHost, dirError);
+        Require(!dirError && CreateDirectoryW(verbatimDir.c_str(), nullptr) != 0);
+#else
+        Require(std::filesystem::create_directory(deepHost));
+#endif
+        createdDirs.push_back(deepHost);
+    }
+    const auto deepFile = deepHost / "deep.txt";
+    const std::string deepFileGuest = deepGuest + "/deep.txt";
+#ifdef _WIN32
+    std::error_code fileError;
+    const auto verbatimDeepFile = NativeVerbatimPath_nid_no_patch(deepFile, fileError, WindowsMaxPathLength);
+    Require(!fileError);
+    const HANDLE deepHandle = CreateFileW(verbatimDeepFile.c_str(), GENERIC_WRITE, 0,
+        nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+    Require(deepHandle != INVALID_HANDLE_VALUE);
+    Require(CloseHandle(deepHandle) != 0);
+#else
+    {
+        std::ofstream stream(deepFile, std::ios::binary);
+        stream << "deep";
+        Require(static_cast<bool>(stream));
+    }
+#endif
+    RequireVolume(deepGuest.c_str(), root);
+    RequireVolume((deepGuest + "/").c_str(), root);
+    RequireVolume(deepFileGuest.c_str(), root);
+    RequireError((deepGuest + "/missing").c_str(), 2);
+    RequireError((deepFileGuest + "/child").c_str(), 20);
+    RequireError((deepFileGuest + "/").c_str(), 20);
+    RequireError((deepFileGuest + "/.").c_str(), 20);
+#ifdef _WIN32
+    Require(DeleteFileW(verbatimDeepFile.c_str()) != 0);
+    for (auto it = createdDirs.rbegin(); it != createdDirs.rend(); ++it) {
+        std::error_code removeError;
+        const auto verbatimDir = NativeVerbatimPath_nid_no_patch(*it, removeError);
+        Require(!removeError && RemoveDirectoryW(verbatimDir.c_str()) != 0);
+    }
+#else
+    Require(std::filesystem::remove(deepFile));
+    for (auto it = createdDirs.rbegin(); it != createdDirs.rend(); ++it)
+        Require(std::filesystem::remove(*it));
 #endif
     const auto before = OpenHandles();
     for (int i = 0; i != 32; ++i) {

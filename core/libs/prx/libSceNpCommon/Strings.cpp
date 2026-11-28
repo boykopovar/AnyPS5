@@ -170,27 +170,13 @@ char HexDigit(std::uint32_t value, bool uppercase) {
     return static_cast<char>((uppercase ? 'A' : 'a') + value - 10);
 }
 
-bool CopyHexIn(void* destination, const void* source, std::size_t bytes) {
-    const int saved = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
-    errno = saved;
-    return copied;
-}
-
-bool CopyHexOut(void* destination, const void* source, std::size_t bytes) {
-    const int saved = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
-    errno = saved;
-    return copied;
-}
-
 bool CopyHexText(const char* hex, std::string& text) {
     constexpr std::size_t Chunk = 4096;
     std::array<char, Chunk> bytes {};
     auto address = reinterpret_cast<std::uintptr_t>(hex);
     while (true) {
         const std::size_t count = Chunk - address % Chunk;
-        if (!CopyHexIn(bytes.data(), reinterpret_cast<const void*>(address), count)) return false;
+        if (!GuestCopyIn_nid_no_patch(bytes.data(), reinterpret_cast<const void*>(address), count)) return false;
         if (const auto* end = static_cast<const char*>(std::memchr(bytes.data(), 0, count))) {
             text.append(bytes.data(), static_cast<std::size_t>(end - bytes.data()));
             return true;
@@ -206,7 +192,7 @@ bool CopyHexRange(const char* hex, std::size_t length, std::string& text) {
     auto address = reinterpret_cast<std::uintptr_t>(hex);
     while (text.size() < length) {
         const std::size_t count = std::min(Chunk - address % Chunk, length - text.size());
-        if (!CopyHexIn(bytes.data(), reinterpret_cast<const void*>(address), count)) return false;
+        if (!GuestCopyIn_nid_no_patch(bytes.data(), reinterpret_cast<const void*>(address), count)) return false;
         text.append(bytes.data(), count);
         address += count;
     }
@@ -238,7 +224,7 @@ int ParseHex(std::string_view hex, void* out, std::size_t capacity) {
         }
         bytes[stored - 1] = static_cast<char>((high << 4) | low);
     }
-    if (stored != 0 && !CopyHexOut(out, bytes.data(), stored)) return NP_ERROR_INVALID_ARGUMENT;
+    if (stored != 0 && !GuestCopyOut_nid_no_patch(out, bytes.data(), stored)) return NP_ERROR_INVALID_ARGUMENT;
     return result;
 }
 
@@ -285,7 +271,6 @@ char PlusSign(bool positive, std::uint32_t flags) {
 template <typename Parse>
 int ParseInteger(const char* str, std::size_t* parsedLength, Parse parse, bool* saturated) {
     char* end = nullptr;
-    errno = 0;
     parse(str, &end);
     if (end == str) return NP_ERROR_OUT_OF_RANGE;
     if (*saturated && errno == ERANGE) return NP_ERROR_OUT_OF_RANGE;
@@ -479,6 +464,53 @@ bool ReadNpIdText(const char* text, std::size_t limit, std::string& host) {
 bool IsUrlSafe(unsigned char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.'
         || c == '*';
+}
+
+struct GuestTextReader {
+    static constexpr std::uintptr_t Page = 4096;
+    std::array<char, Page> chunk {};
+    std::uintptr_t chunkStart = 0;
+    std::size_t chunkSize = 0;
+
+    bool ReadByte(const char* guestAddress, unsigned char& value) {
+        const auto address = reinterpret_cast<std::uintptr_t>(guestAddress);
+        if (chunkSize == 0 || address < chunkStart || address - chunkStart >= chunkSize) {
+            const std::size_t size = Page - address % Page;
+            const int saved = errno;
+            const bool copied = GuestCopyIn_nid_no_patch(chunk.data(), reinterpret_cast<const void*>(address), size);
+            errno = saved;
+            if (!copied) {
+                chunkSize = 0;
+                return false;
+            }
+            chunkStart = address;
+            chunkSize = size;
+        }
+        value = static_cast<unsigned char>(chunk[address - chunkStart]);
+        return true;
+    }
+};
+
+int MeasureGuestTextChar(GuestTextReader& reader, const char* position, std::size_t& length) {
+    unsigned char lead = 0;
+    if (!reader.ReadByte(position, lead)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    if (lead == '\0') {
+        length = 0;
+        return 0;
+    }
+    if (lead < 0x80) {
+        if (!IsAllowedTextByte(lead)) return NP_UTIL_ERROR_INVALID_CHARACTER;
+        length = 1;
+        return 0;
+    }
+    length = Utf8SequenceLength(lead);
+    if (length == 0) return NP_UTIL_ERROR_INVALID_CHARACTER;
+    for (std::size_t offset = 1; offset < length; ++offset) {
+        unsigned char next = 0;
+        if (!reader.ReadByte(position + offset, next)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+        if (!IsContinuation(static_cast<char>(next))) return NP_UTIL_ERROR_INVALID_CHARACTER;
+    }
+    return 0;
 }
 
 } // namespace
@@ -912,19 +944,20 @@ int APS5_VABI sceNpUtilXmlUnescape(char* dst, std::size_t dstSize, const char* s
 
 int APS5_VABI sceNpUtilGetNthChar(std::size_t index, const char* text, const char** character) {
     if (text == nullptr || character == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    GuestTextReader reader;
     const char* position = text;
-    for (std::size_t i = 0; i < index && *position != '\0'; ++i) {
-        const auto lead = static_cast<unsigned char>(*position);
-        std::size_t length = 1;
-        if (lead < 0x80) {
-            if (!IsAllowedTextByte(lead)) return NP_UTIL_ERROR_INVALID_CHARACTER;
-        } else {
-            length = Utf8SequenceLength(lead);
-            if (length == 0 || !IsValidSequence(position, length)) return NP_UTIL_ERROR_INVALID_CHARACTER;
-        }
+    for (std::size_t i = 0; i < index; ++i) {
+        std::size_t length = 0;
+        const int error = MeasureGuestTextChar(reader, position, length);
+        if (error != 0) return error;
+        if (length == 0) break;
         position += length;
     }
-    if (!GuestCopyOut_nid_no_patch(character, &position, sizeof(position))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    const int saved = errno;
+    const bool written = GuestWritable_nid_no_patch(character, sizeof(position))
+        && GuestCopyOut_nid_no_patch(character, &position, sizeof(position));
+    errno = saved;
+    if (!written) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -1043,6 +1076,64 @@ int APS5_VABI sceNpUtilHttpUrlEncode(char* dst, std::size_t dstSize, const char*
     }
     const std::size_t needed = count + 1;
     if (dstLength != nullptr && !GuestCopyOut_nid_no_patch(dstLength, &needed, sizeof(needed))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    return 0;
+}
+
+bool APS5_VABI _sceNpMsgPackStrUtilIsValidUtf8StringWithSize(const char* text, std::size_t size) {
+    const char* const end = text + size;
+    for (const char* p = text; p < end;) {
+        const auto lead = static_cast<unsigned char>(*p);
+        std::size_t length = 1;
+        if (lead >= 0x80) {
+            length = Utf8SequenceLength(lead);
+            if (length == 0 || p + length > end) return false;
+            for (std::size_t i = 1; i < length; ++i) {
+                if (!IsContinuation(p[i])) return false;
+            }
+        }
+        p += length;
+    }
+    return true;
+}
+
+bool APS5_VABI _sceNpMsgPackStrUtilIsValidUtf8String(const char* text) {
+    return _sceNpMsgPackStrUtilIsValidUtf8StringWithSize(text, std::strlen(text));
+}
+
+int APS5_VABI sceNpUtilNumChars(const char* text) {
+    if (text == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    std::size_t count = 0;
+    for (const char* p = text; *p != '\0';) {
+        const auto lead = static_cast<unsigned char>(*p);
+        std::size_t length = 1;
+        if (lead < 0x80) {
+            if (!IsAllowedTextByte(lead)) return NP_UTIL_ERROR_INVALID_CHARACTER;
+        } else {
+            length = Utf8SequenceLength(lead);
+            if (length == 0) return NP_UTIL_ERROR_INVALID_CHARACTER;
+            for (std::size_t i = 1; i < length; ++i) {
+                if (p[i] == '\0' || !IsContinuation(p[i])) return NP_UTIL_ERROR_INVALID_CHARACTER;
+            }
+        }
+        p += length;
+        ++count;
+    }
+    return static_cast<int>(count);
+}
+
+int APS5_VABI sceNpJwsHs256GetEncodeSize(std::uint32_t payloadSize, std::uint32_t* encodeSize) {
+    if (encodeSize == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    *encodeSize = ((payloadSize + 2) / 3) * 4 + 0x5E;
+    return 0;
+}
+
+int APS5_VABI sceNpXmlParseInit(void* context, void* arg2, void* arg3, void* arg4) {
+    if (context == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    auto* parser = static_cast<char*>(context);
+    std::memset(parser + 8, 0, 0x248);
+    *reinterpret_cast<void**>(parser) = arg2;
+    *reinterpret_cast<void**>(parser + 0x250) = arg3;
+    *reinterpret_cast<void**>(parser + 0x258) = arg4;
     return 0;
 }
 

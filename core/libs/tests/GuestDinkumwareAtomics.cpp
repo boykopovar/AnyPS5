@@ -173,10 +173,65 @@ static void CheckSized() {
     Require(counter == 400000);
 }
 
+static void CheckRemainingSized() {
+    std::uint8_t byte = 0;
+    __atomic_store_1_nid_postfix(&byte, 0xf0, SeqCst);
+    Require(byte == 0xf0 && __atomic_exchange_1_nid_postfix(&byte, 0x0f, SeqCst) == 0xf0 && byte == 0x0f);
+    Require(__atomic_fetch_add_1_nid_postfix(&byte, 0xf2, SeqCst) == 0x0f && byte == 0x01);
+    Require(__atomic_fetch_sub_1_nid_postfix(&byte, 2, SeqCst) == 0x01 && byte == 0xff);
+    Require(__atomic_fetch_or_1_nid_postfix(&byte, 0x00, SeqCst) == 0xff && byte == 0xff);
+    Require(__atomic_fetch_xor_1_nid_postfix(&byte, 0x5a, SeqCst) == 0xff && byte == 0xa5);
+
+    std::uint16_t half = 0x8001;
+    Require(__atomic_load_2_nid_postfix(&half, Acquire) == 0x8001);
+    Require(__atomic_exchange_2_nid_postfix(&half, 0x00ff, SeqCst) == 0x8001 && half == 0x00ff);
+    Require(__atomic_fetch_sub_2_nid_postfix(&half, 0x0100, SeqCst) == 0x00ff && half == 0xffff);
+    Require(__atomic_fetch_and_2_nid_postfix(&half, 0x0ff0, SeqCst) == 0xffff && half == 0x0ff0);
+    Require(__atomic_fetch_xor_2_nid_postfix(&half, 0xffff, SeqCst) == 0x0ff0 && half == 0xf00f);
+
+    std::uint32_t word = 0;
+    __atomic_store_4_nid_postfix(&word, 0xfffffffeu, Release);
+    Require(__atomic_load_4_nid_postfix(&word, Acquire) == 0xfffffffeu);
+    Require(__atomic_fetch_add_4_nid_postfix(&word, 3, SeqCst) == 0xfffffffeu && word == 1);
+    Require(__atomic_fetch_or_4_nid_postfix(&word, 0x80000000u, SeqCst) == 1 && word == 0x80000001u);
+    Require(__atomic_fetch_and_4_nid_postfix(&word, 0x0000ffffu, SeqCst) == 0x80000001u && word == 1);
+    Require(__atomic_fetch_xor_4_nid_postfix(&word, 0xffffffffu, SeqCst) == 1 && word == 0xfffffffeu);
+
+    std::uint64_t wide = 0;
+    Require(__atomic_fetch_sub_8_nid_postfix(&wide, 1, SeqCst) == 0 && wide == 0xffffffffffffffffull);
+    Require(__atomic_fetch_and_8_nid_postfix(&wide, 0x00000000ffffffffull, SeqCst) == 0xffffffffffffffffull && wide == 0x00000000ffffffffull);
+    Require(__atomic_fetch_or_8_nid_postfix(&wide, 0xffff000000000000ull, SeqCst) == 0x00000000ffffffffull && wide == 0xffff0000ffffffffull);
+}
+
+static void CheckLegacyFetch() {
+    std::uint8_t byte = 0xf0;
+    Require(_Fetch_and_seq_cst_1_nid_postfix(&byte, 0x3c) == 0xf0 && byte == 0x30);
+    Require(_Fetch_or_seq_cst_1_nid_postfix(&byte, 0x0f) == 0x30 && byte == 0x3f);
+    Require(_Fetch_xor_seq_cst_1_nid_postfix(&byte, 0xff) == 0x3f && byte == 0xc0);
+
+    std::uint16_t half = 0xf00f;
+    Require(_Fetch_and_seq_cst_2_nid_postfix(&half, 0x0ff0) == 0xf00f && half == 0x0000);
+    Require(_Fetch_or_seq_cst_2_nid_postfix(&half, 0x1234) == 0x0000 && half == 0x1234);
+    Require(_Fetch_xor_seq_cst_2_nid_postfix(&half, 0x1230) == 0x1234 && half == 0x0004);
+
+    std::uint32_t word = 0xffff0000u;
+    Require(_Fetch_and_seq_cst_4_nid_postfix(&word, 0x00ffff00u) == 0xffff0000u && word == 0x00ff0000u);
+    Require(_Fetch_or_seq_cst_4_nid_postfix(&word, 0x000000ffu) == 0x00ff0000u && word == 0x00ff00ffu);
+    Require(_Fetch_xor_seq_cst_4_nid_postfix(&word, 0x00ff00ffu) == 0x00ff00ffu && word == 0);
+
+    std::uint64_t wide = 0xfffffffffffffffeull;
+    Require(_Fetch_add_8_nid_postfix(&wide, 3) == 0xfffffffffffffffeull && wide == 1);
+    Require(_Fetch_or_8_nid_postfix(&wide, 0x8000000000000000ull) == 1 && wide == 0x8000000000000001ull);
+    Require(_Fetch_and_8_nid_postfix(&wide, 0x8000000000000000ull) == 0x8000000000000001ull && wide == 0x8000000000000000ull);
+    Require(_Fetch_xor_8_nid_postfix(&wide, 0xffffffffffffffffull) == 0x8000000000000000ull && wide == 0x7fffffffffffffffull);
+}
+
 int main() {
     CheckRemainingTyped();
     CheckTyped();
     CheckSized();
+    CheckRemainingSized();
+    CheckLegacyFetch();
     CheckFlagsAndFences();
     CheckGeneric();
     CheckConcurrentGeneric();

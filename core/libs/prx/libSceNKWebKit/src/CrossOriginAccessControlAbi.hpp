@@ -3,8 +3,11 @@
 #include "SceTypes.hpp"
 
 #include <cstddef>
+#include <cstdint>
 
 namespace NKWebKit::WebCoreAbi {
+
+enum class StoredCredentialsPolicy : std::uint8_t { DoNotUse, Use, EphemeralStateless };
 
 struct CrossOriginAccessControlCheckDisabler;
 
@@ -25,6 +28,7 @@ struct CrossOriginAccessControlCheckDisabler {
     bool accessControlCheckEnabled;
 };
 
+static_assert(sizeof(StoredCredentialsPolicy) == 1);
 static_assert(sizeof(CrossOriginAccessControlCheckDisablerVtable) == 24);
 static_assert(offsetof(CrossOriginAccessControlCheckDisablerVtable, completeDestructor) == 0);
 static_assert(offsetof(CrossOriginAccessControlCheckDisablerVtable, deletingDestructor) == 8);

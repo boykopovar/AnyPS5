@@ -17,6 +17,7 @@ constexpr std::uint32_t KernelErrnoBase = 0x80020000u;
 constexpr std::uint32_t KernelExists = 0x80020011u;
 constexpr std::uint32_t KernelNoSuchFile = 0x80020002u;
 constexpr std::uint64_t NotFoundCodes = 0x2000000000140001ull;
+constexpr int IoError = 5;
 constexpr int OutOfMemory = 12;
 constexpr int BadAddress = 14;
 constexpr int NotSupported = 45;
@@ -89,6 +90,7 @@ int CopyContents(const FilesystemForwards_nid_no_patch& kernel, int source, int 
         for (std::int64_t done = 0; done < count;) {
             const auto written = kernel.write(target, buffer + done, static_cast<std::size_t>(count - done));
             if (written < 0) return StatusOf(static_cast<int>(written));
+            if (written == 0) return IoError;
             done += written;
         }
     }

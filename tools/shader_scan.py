@@ -12,6 +12,8 @@ FORMS = ("base", "vop3", "dpp16", "dpp8")
 TEST_PATH = re.compile(r"/tests?/")
 COMMENT_OR_LITERAL = re.compile(r'//|/\*|["\']')
 _BRACE_OR_QUOTE = re.compile(r'[{}"\']')
+_RAW_PREFIX = re.compile(r"(?<![\w.])(?:u8|[uUL])?R$")
+_RAW_OPENING = re.compile(r'"([^ ()\\\s]{0,16})\(')
 _DECODE_PREFIX = re.compile(r"^(?:decode|lookup)")
 _HEX_WORD = re.compile(r"\b0x([0-9a-fA-F]+)u?\b")
 _OPCODE_REF = re.compile(r"RdnaOpcode::(\w+)")
@@ -34,6 +36,14 @@ class ScanError(Exception):
 
 def skip_literal(source, start):
     quote = source[start]
+    if quote == '"' and start and source[start - 1] == "R":
+        if _RAW_PREFIX.search(source, max(start - 4, 0), start):
+            opening = _RAW_OPENING.match(source, start)
+            if opening:
+                closing = ")" + opening.group(1) + '"'
+                end = source.find(closing, opening.end())
+                if end >= 0:
+                    return end + len(closing) - 1
     if quote == "'" and start + 1 < len(source) and source[start + 1] in "0123456789abcdefABCDEF":
         begin = start
         while begin and (source[begin - 1].isalnum() or source[begin - 1] in "_.'"):

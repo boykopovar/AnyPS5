@@ -1,5 +1,6 @@
 import hashlib
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -64,6 +65,16 @@ class GeneratorTests(unittest.TestCase):
                 generator.main()
         self.assertEqual(refused.exception.code, 2)
         self.assertEqual(source.read_bytes(), header)
+
+    def test_missing_header_is_reported_without_traceback(self):
+        source = self.root / "missing-uscript.h"
+        output = self.root / "IcuScriptNames.hpp"
+        result = subprocess.run([sys.executable, str(Path(generator.__file__)), str(source), str(output)],
+                                capture_output=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(source.name.encode("ascii"), result.stderr)
+        self.assertNotIn(b"Traceback", result.stderr)
+        self.assertFalse(output.exists())
 
     def test_a_header_with_another_checksum_is_refused_and_nothing_is_written(self):
         with self.assertRaises(SystemExit) as refused:

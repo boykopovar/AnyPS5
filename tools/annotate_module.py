@@ -18,6 +18,7 @@ import nid_names
 PT_LOAD = 1
 PT_DYNAMIC = 2
 PT_INTERP = 3
+PT_GNU_EH_FRAME = 0x6474e550
 PF_X = 1
 PF_W = 2
 DT_NULL = 0
@@ -34,9 +35,12 @@ DT_SYMENT = 11
 DT_RELAENT = 9
 DT_REL = 17
 DT_RELA_KIND = 7
+STT_OBJECT = 1
 STT_FUNC = 2
 STT_TLS = 6
 STT_GNU_IFUNC = 10
+SHN_LORESERVE = 0xFF00
+SHN_ABS = 0xFFF1
 SHN_COMMON = 0xFFF2
 GHIDRA_MAX_NAME_LENGTH = 2000
 DT_GNU_HASH = 0x6ffffef5
@@ -78,6 +82,8 @@ class Module:
     def __init__(self, data):
         self.data = data
         self.loads = []
+        self.load_memory_ranges = []
+        self.unwind_headers = []
         self.dynamic = None
         self.has_interpreter = False
         self.read_headers()
@@ -118,9 +124,12 @@ class Module:
         if (phnum and phoff < 64) or phoff + phnum * phentsize > len(self.data):
             raise ModuleError("ELF program header table is outside its supported file range")
         for index in range(phnum):
-            kind, flags, offset, vaddr, _, filesz, _, _ = self.unpack("<IIQQQQQQ", phoff + index * phentsize)
+            kind, flags, offset, vaddr, _, filesz, memsz, _ = self.unpack("<IIQQQQQQ", phoff + index * phentsize)
             if kind == PT_LOAD:
                 self.loads.append((vaddr, offset, filesz, flags))
+                self.load_memory_ranges.append(range(vaddr, vaddr + memsz))
+            elif kind == PT_GNU_EH_FRAME and filesz:
+                self.unwind_headers.append((vaddr, offset, filesz))
             elif kind == PT_INTERP:
                 self.has_interpreter = True
             elif kind == PT_DYNAMIC and self.dynamic is None:
@@ -258,6 +267,11 @@ class Module:
                 continue
             yield name, shndx, value, kind
 
+    def image_exports(self):
+        for name, section, address, kind in self.exported_symbols():
+            if section not in (SHN_ABS, SHN_COMMON) and kind != STT_TLS:
+                yield name, section, address, kind
+
     def exports(self):
         found = {}
         thread_local = {}
@@ -300,6 +314,8 @@ class Module:
                         _, section, value, kind, _, _ = self.symbol(info >> 32)
                         if section in (0, SHN_COMMON) or kind in (STT_TLS, STT_GNU_IFUNC):
                             continue
+                        if section == SHN_ABS and self.unpack("<H", 16)[0] != 2:
+                            continue
                         address = (value + addend) & 0xffffffffffffffff
                     else:
                         continue
@@ -308,6 +324,33 @@ class Module:
                     if address in (0, 0xffffffffffffffff):
                         continue
                 yield address, "elf_%s_array_%d" % (name, index)
+
+    def unwind_starts(self):
+        for base, offset, size in self.unwind_headers:
+            if size < 4 or offset + size > len(self.data):
+                raise ModuleError("truncated PT_GNU_EH_FRAME")
+            if self.data[offset:offset + 4] != b"\x01\x1b\x03\x3b":
+                continue
+            if size < 12 or self.address(base, size) != offset:
+                raise ModuleError("invalid PT_GNU_EH_FRAME mapping")
+            frame_delta, count = self.unpack("<iI", offset + 4)
+            if count > (size - 12) // 8:
+                raise ModuleError("unwind search table exceeds PT_GNU_EH_FRAME")
+            frame = base + 4 + frame_delta
+            if count:
+                self.address(frame, 4)
+            for index in range(count):
+                pc_delta, fde_delta = self.unpack("<ii", offset + 12 + index * 8)
+                pc, fde = base + pc_delta, base + fde_delta
+                if fde < frame:
+                    raise ModuleError("unwind search table points before .eh_frame")
+                self.address(fde, 4)
+                if any(flags & PF_X and start <= pc < start + length and file_offset + pc - start < len(self.data)
+                       for start, file_offset, length, flags in self.loads):
+                    yield pc
+
+    def unwind_labels(self, named_addresses):
+        return {address: "unwind_%x" % address for address in self.unwind_starts() if address not in named_addresses}
 
     def code_segments(self):
         segments = []
@@ -333,8 +376,8 @@ class Namer:
 
 def ghidra_symbols(module, namer):
     rows = {(address, False, "imp_" + namer.resolve(symbol), symbol) for address, symbol in module.imports().items()}
-    exported_functions = {address for _, section, address, kind in module.exported_symbols()
-                          if kind in (STT_FUNC, STT_GNU_IFUNC) and section != SHN_COMMON}
+    image_exports = list(module.image_exports())
+    exported_functions = {address for _, _, address, kind in image_exports if kind in (STT_FUNC, STT_GNU_IFUNC)}
     for address, name in module.lifecycle_array_functions():
         if address not in exported_functions and any(flags & PF_X and start <= address < start + size and
                                                      offset + address - start < len(module.data)
@@ -350,9 +393,7 @@ def ghidra_symbols(module, namer):
     entry = module.entry_point()
     if entry is not None and entry not in exported_functions and not any(address == entry and function for address, function, _, _ in rows):
         rows.add((entry, True, "elf_entry", "elf_entry"))
-    for symbol, section, address, kind in module.exported_symbols():
-        if kind == STT_TLS or section == SHN_COMMON:
-            continue
+    for symbol, _, address, kind in image_exports:
         function = kind in (STT_FUNC, STT_GNU_IFUNC) and any(flags & PF_X and start <= address < start + size and
                                                           offset + address - start < len(module.data)
                                                           for start, offset, size, flags in module.loads)
@@ -367,6 +408,9 @@ def ghidra_symbols(module, namer):
                                                      for start, offset, size, flags in module.loads):
             name = "irelative_resolver_%x" % address
             rows.add((address, True, name, name))
+    named_addresses = {address for address, _, _, _ in rows}
+    for address, name in module.unwind_labels(named_addresses).items():
+        rows.add((address, False, name, name))
     names, functions, lines = set(), set(), []
     for address, function, resolved, symbol in sorted(rows, key=lambda row: (row[0], not row[1], row[2] == row[3].split("#", 1)[0], row[2], row[3])):
         stem = re.sub(r"[^A-Za-z0-9_]", "_", resolved)
@@ -461,7 +505,7 @@ def find_stubs(listing, slots, namer):
     return stubs
 
 
-def line_note(line, slots, branch_targets, namer):
+def line_note(line, slots, branch_targets, namer, address_exports=None):
     note = ""
     branch = BRANCH.search(line)
     if branch and int(branch.group(1), 16) in branch_targets:
@@ -469,19 +513,25 @@ def line_note(line, slots, branch_targets, namer):
     reference = referenced_address(line)
     if reference in slots:
         note = "   ; GOT " + namer.resolve(slots[reference])
+    elif address_exports and reference in address_exports and LEA.match(line) and ("(%rip)" in line or "(%eip)" in line):
+        note = "   ; address of " + ", ".join(sorted(address_exports[reference]))
     return note
 
 
-def annotate_listing(listing, slots, exports, branch_targets, namer, entry=None):
+def annotate_listing(listing, slots, exports, branch_targets, namer, entry=None, unwind_labels=None, address_exports=None):
     out = []
     for line in listing:
         head = LINE_ADDRESS.match(line)
-        if head and int(head.group(1), 16) == entry:
-            out.append("; ===== ELF entry point")
-        if head and int(head.group(1), 16) in exports:
-            out.append("")
-            out.extend("; ===== export " + namer.resolve(name) for name in exports[int(head.group(1), 16)])
-        out.append(line + line_note(line, slots, branch_targets, namer))
+        if head:
+            address = int(head.group(1), 16)
+            if address == entry:
+                out.append("; ===== ELF entry point")
+            if address in exports:
+                out.append("")
+                out.extend("; ===== export " + namer.resolve(name) for name in exports[address])
+            if unwind_labels and address in unwind_labels:
+                out.append("; ===== unwind range " + unwind_labels[address])
+        out.append(line + line_note(line, slots, branch_targets, namer, address_exports))
     return out
 
 
@@ -550,14 +600,33 @@ def annotate(module_path, prefix, namer):
         listing.extend(disassemble(code, vaddr))
     stubs = find_stubs(listing, slots, namer)
     functions = {}
-    for symbol, section, address, kind in module.exported_symbols():
-        if kind == STT_FUNC and section != SHN_COMMON and any(start <= address < start + len(code) for start, code in segments):
-            functions.setdefault(address, set()).add(namer.resolve(symbol))
+    address_exports = {}
+    export_labels = {}
+    for symbol, section, address, kind in module.image_exports():
+        export_labels.setdefault(address, []).append(symbol)
+        if kind == STT_FUNC and any(start <= address < start + len(code) for start, code in segments):
+            name = namer.resolve(symbol)
+            functions.setdefault(address, set()).add(name)
+        elif kind == STT_OBJECT and any(address in span for span in module.load_memory_ranges):
+            name = namer.resolve(symbol)
+        else:
+            continue
+        if section < SHN_LORESERVE:
+            address_exports.setdefault(address, set()).add(name)
     branch_targets = {address: ", ".join(sorted(names)) for address, names in functions.items()}
     branch_targets.update(stubs)
+    try:
+        unwind_labels = module.unwind_labels(export_labels.keys() | stubs.keys() | slots.keys() | {entry})
+    except ModuleError as error:
+        print(f"{source}: skipping unwind labels: {error}", file=sys.stderr)
+        unwind_labels = {}
+    if unwind_labels:
+        decoded = (int(head.group(1), 16) for line in listing if (head := LINE_ADDRESS.match(line)))
+        unwind_labels = {address: unwind_labels[address] for address in decoded if address in unwind_labels}
+        branch_targets.update(unwind_labels)
     write_lines(prefix + ".imports.txt", ["%#x %s %s" % (slot, slots[slot], namer.resolve(slots[slot])) for slot in sorted(slots)])
     write_lines(prefix + ".exports.txt", export_lines(exports, thread_local, namer))
-    write_lines(prefix + ".asm", annotate_listing(listing, slots, exports, branch_targets, namer, entry))
+    write_lines(prefix + ".asm", annotate_listing(listing, slots, export_labels, branch_targets, namer, entry, unwind_labels, address_exports))
     export_count = sum(len(names) for names in exports.values())
     tls_count = sum(len(names) for names in thread_local.values())
     return "%s: %d imports, %d exports, %d tls, %d stubs, %d lines" % (prefix, len(slots), export_count, tls_count, len(stubs), len(listing))
@@ -575,7 +644,7 @@ def parse_arguments(argv):
     parser.add_argument("--no-names", action="store_true", help="print NIDs without loading the database")
     formats = parser.add_mutually_exclusive_group()
     formats.add_argument("--symbols-json", action="store_true", help="inspect imports and exports as JSON offline without objdump or output files")
-    formats.add_argument("--symbols-ghidra", action="store_true", help="print an offline Ghidra ImportSymbolsScript map; omits TLS and unallocated common symbols; needs no objdump")
+    formats.add_argument("--symbols-ghidra", action="store_true", help="print an offline Ghidra ImportSymbolsScript map with labels for indexed unwind ranges; omits absolute, TLS and unallocated common symbols; needs no objdump")
     args = parser.parse_args(argv)
     if (args.symbols_json or args.symbols_ghidra) and args.out is not None:
         mode = "--symbols-json" if args.symbols_json else "--symbols-ghidra"
@@ -598,7 +667,10 @@ def main(argv=None):
         elif symbols_only:
             db = nid_names.read_db(db_path) if args.db or db_path.exists() else {}
         else:
-            db = nid_names.load_db(db_path)
+            try:
+                db = nid_names.load_db(db_path)
+            except ValueError as error:
+                raise ModuleError(str(error)) from error
         namer = Namer(db)
         if args.symbols_ghidra:
             for line in ghidra_symbols(Module(Path(args.module).read_bytes()), namer):

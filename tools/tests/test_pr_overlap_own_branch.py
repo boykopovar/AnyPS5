@@ -115,10 +115,11 @@ class OwnBranchTests(unittest.TestCase):
                      ["--branch", "topic", "--head-repo", "not-a-repo"],
                      ["--branch", "topic", "--head-repo", "mine/project/extra"]):
             with self.subTest(args=args), patch.object(pr_overlap, "open_prs") as network, \
-                    patch.object(sys, "stderr", new_callable=io.StringIO):
+                    patch.object(sys, "stderr", new_callable=io.StringIO) as stderr:
                 with self.assertRaises(SystemExit) as error:
                     pr_overlap.main(args)
                 self.assertEqual(error.exception.code, 2)
+                self.assertIn("--head-repo needs --branch and a GitHub owner/name", stderr.getvalue())
                 network.assert_not_called()
 
     def test_scans_all_pull_requests_with_a_bounded_worker_pool(self):

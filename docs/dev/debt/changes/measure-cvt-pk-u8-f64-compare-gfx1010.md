@@ -1,0 +1,9 @@
+# shader
+
+## change [f64 compares]
+
+- [f64 compares](../../../core/shader/recompiler/Translation/src/CompareInstructions.cpp) - the PS5's gfx1013 is not measured, and no compare shows a flushed zero's sign. Denormal inputs flush to a zero of the same sign when bit 0 of the `FLOAT_MODE` f16/f64 denormal field is clear (modes 0 and 2) and are kept in modes 1 and 3, per RDNA2 ISA section 6.4; shaders without a known float mode keep the previous lowering. The IEEE bit changes neither, and class compares select from the original bits. Measured through HIP over the 484 `VopcCompareF64` edge-set pairs with all 16 `v_cmp_X_f64` predicates at IEEE 0 and 1 in each f16/f64 denormal mode, f16 round to nearest even, DX10_CLAMP=1, f32 denormals flushed and FP16_OVFL=0: on RDNA2 (gfx1036, driver 31.0.22044.1) in VOPC form, and on RDNA1 (gfx1010, RX 5700 XT, driver 32.0.21045.5002), the PS5's gfx10.1 generation, in VOPC and VOP3 form.
+
+## change [v_cvt_pk_u8_f32]
+
+- [v_cvt_pk_u8_f32](../../../core/shader/recompiler/Translation/src/ConvertInstructions.cpp): the PS5's gfx1013 is not measured. It rounds its source in the f32 round mode of `FLOAT_MODE` or `s_round_mode` (ties to even, toward +infinity, -infinity or zero), clamps it to 0..255 (a NaN gives 0), flushes a denormal source when f32 denormals are flushed and writes it to the src2 byte that src1 bits 1:0 select. A kept positive denormal gives 1 toward +infinity, decided on the bits, as a driver without `DenormPreserve 32` may flush it. Measured through HIP over sources k/8 for k = -16 to 2,099, values next to 0.5 and 255.5, ±1e10, denormals, infinities and NaNs at IEEE 0 and 1, f16 denormals kept and FP16_OVFL=0: on RDNA2 (gfx1030, RX 6800, and gfx1036 for `s_round_mode`) in f32 denormal modes 0 and 3 at DX10_CLAMP=1, and on RDNA1 (gfx1010, RX 5700 XT, driver 32.0.21045.5002), the PS5's gfx10.1 generation, in modes 0 to 3, with and without clamp at DX10_CLAMP 0 and 1, in wave32 and wave64.

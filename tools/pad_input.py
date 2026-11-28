@@ -12,6 +12,7 @@ import time
 
 COMMAND_FILE_BYTES = 64 * 1024
 MAX_COMMAND_LINE_BYTES = 126
+MAX_SEQUENCE = 2**64 - 1
 
 
 BUTTONS = {
@@ -41,7 +42,7 @@ def timeline_sequence(command, header):
     if fields is None:
         return 0
     version, sequence, count = [int(token) for token in fields.groups()]
-    if version != 1 or not 1 <= sequence <= 2**64 - 1 or not 1 <= count <= 4096:
+    if version != 1 or not 1 <= sequence <= MAX_SEQUENCE or not 1 <= count <= 4096:
         return 0
     previous_end = 0
     for _ in range(count):
@@ -111,7 +112,7 @@ def previous_sequence(path):
 
 def next_sequence(path):
     sequence = max(time.monotonic_ns(), previous_sequence(path) + 1)
-    if sequence > 2**64 - 1:
+    if sequence > MAX_SEQUENCE:
         raise ValueError("controller command sequence is exhausted")
     return sequence
 

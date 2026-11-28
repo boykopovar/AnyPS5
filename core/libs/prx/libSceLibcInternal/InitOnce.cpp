@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <atomic>
 #include <climits>
@@ -29,14 +30,19 @@ int APS5_VABI __std_init_once_begin_initialize_clr_nid_postfix(void** once, unsi
         std::uintptr_t current = state.load(std::memory_order_acquire);
         if (current == OnceIdle) {
             if (state.compare_exchange_weak(current, OnceRunning, std::memory_order_acq_rel)) {
-                *pending = 1;
+                const int started = 1;
+                if (!GuestCopyOut_nid_no_patch(pending, &started, sizeof(started))) {
+                    state.store(OnceIdle, std::memory_order_release);
+                    sceKernelSyncOnAddressWake(once, INT_MAX);
+                    return 0;
+                }
                 return 1;
             }
             continue;
         }
         if (current == OnceDone) {
-            *pending = 0;
-            return 1;
+            const int finished = 0;
+            return GuestCopyOut_nid_no_patch(pending, &finished, sizeof(finished)) ? 1 : 0;
         }
         sceKernelSyncOnAddressWait(reinterpret_cast<std::uint32_t*>(once), static_cast<std::uint32_t>(OnceRunning), nullptr, nullptr);
     }

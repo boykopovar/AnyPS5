@@ -124,7 +124,7 @@ class CanonicalXmlFormsTests(unittest.TestCase):
 class ValidateFormsTests(unittest.TestCase):
     def test_well_formed_rows_are_returned_unchanged(self):
         rows = [("S_NOP", "SOPP", "base", 0), ("V_ADD_F32", "VOP2", "base", 3), ("V_ADD_F32", "VOP2", "dpp16", 3),
-                ("V_MOV_B32", "VOP1", "vop3", 0x180)]
+                ("V_MOV_B32", "VOP1", "base", 1), ("V_MOV_B32", "VOP1", "vop3", 0x180)]
         self.assertIs(isa_profiles.validate_forms(rows), rows)
 
     def test_malformed_rows_are_rejected(self):
@@ -151,8 +151,17 @@ class ValidateFormsTests(unittest.TestCase):
 
     def test_same_opcode_in_different_encodings_is_allowed(self):
         rows = [("A", "VOP2", "base", 0x106), ("B", "VOP3", "base", 0x106), ("C", "VOP1", "base", 0x106),
-                ("D", "VOP2", "dpp16", 0x106), ("E", "VOP1", "base", 5), ("F", "VOP1", "vop3", 5)]
+                ("D", "VOP2", "base", 0x107), ("D", "VOP2", "dpp16", 0x106), ("E", "VOP1", "base", 5),
+                ("F", "VOP1", "base", 6), ("F", "VOP1", "vop3", 5)]
         self.assertIs(isa_profiles.validate_forms(rows), rows)
+
+    def test_modified_form_requires_a_base_sibling(self):
+        with self.assertRaisesRegex(ValueError, "modified ISA form without a base form"):
+            isa_profiles.validate_forms([("V_ADD_F32", "VOP2", "vop3", 259)])
+        with self.assertRaisesRegex(ValueError, "modified ISA form without a base form"):
+            isa_profiles.validate_forms([("V_ADD_F32", "VOP2", "dpp16", 3)])
+        with self.assertRaisesRegex(ValueError, "modified ISA form without a base form"):
+            isa_profiles.validate_forms([("V_ADD_F32", "VOP1", "base", 3), ("V_ADD_F32", "VOP2", "dpp8", 3)])
 
 
 RDNA1 = isa_xml("AMD RDNA 1", instruction("S_MOV_B32", ("ENC_SOP1", 3)) + instruction("V_ADD_F32", ("ENC_VOP2", 3), ("ENC_VOP3", 259)))

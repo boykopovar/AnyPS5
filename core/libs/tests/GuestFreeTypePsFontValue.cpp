@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -141,6 +142,15 @@ int main() {
         Require(FT_Get_PS_Font_Value_nid_postfix(&pair.guest.rec, PS_DICT_ITALIC_ANGLE, 0, actual.data(), hugeLength) ==
                 Expected(pair.oracle, PS_DICT_ITALIC_ANGLE, 0, expected.data(), hugeLength));
         Require(actual == expected);
+        static const unsigned char readOnlyValue[32] = {'u', 'n', 't', 'o', 'u', 'c', 'h', 'e', 'd'};
+        for (const int key : {PS_DICT_FONT_NAME, PS_DICT_ITALIC_ANGLE}) {
+            errno = 71;
+            Require(FT_Get_PS_Font_Value_nid_postfix(&pair.guest.rec, key, 0, const_cast<unsigned char*>(readOnlyValue), sizeof(readOnlyValue)) == -1);
+            Require(errno == 71 && readOnlyValue[0] == 'u' && readOnlyValue[8] == 'd');
+            errno = 71;
+            Require(FT_Get_PS_Font_Value_nid_postfix(&pair.guest.rec, key, 0, reinterpret_cast<void*>(std::uintptr_t{0x10}), 32) == -1);
+            Require(errno == 71);
+        }
     }
     {
         FacePair pair(FontFixture::BuildFont(3, {}));

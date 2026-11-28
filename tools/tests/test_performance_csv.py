@@ -54,6 +54,15 @@ class PerformanceCsvTests(unittest.TestCase):
                 expected = report["metrics_ms"][row["name"]][field]
                 self.assertEqual(None if row[field] == "" else float(row[field]), expected)
 
+    def test_gpu_busy_metric_uses_milliseconds_per_present(self):
+        self.before["gpu_busy_ms_per_present"] = 5.0
+        self.after["gpu_busy_ms_per_present"] = 3.0
+        rows = self.rows(self.run_csv())
+        gpu = next(row for row in rows if row["kind"] == "metric" and row["name"] == "gpu_busy_ms_per_present")
+        self.assertEqual(gpu["unit"], "ms/present")
+        self.assertEqual([float(gpu[field]) for field in ("baseline", "candidate", "change", "change_pct")],
+                         [5.0, 3.0, -2.0, -40.0])
+
     def test_graphics_track_rates_are_not_lost_by_csv_export(self):
         self.before["graphics_track"] = {"Graphics.RenderPass": 8, "Graphics.RenderPass.Continued": 40,
                                         "Graphics.Barrier.draw": 80, "Graphics.BarrierMerged.draw": 16,

@@ -82,6 +82,17 @@ class AuditDumpTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
 
+    def test_empty_standard_module_directories_are_preserved(self):
+        for name in audit_dump.STANDARD_DIRECTORIES:
+            with self.subTest(name=name):
+                dump = self.root / ("dump-" + name)
+                (dump / name).mkdir(parents=True)
+                (dump / "eboot.bin").write_bytes(SELF)
+                source = self.root / ("source-" + name)
+                directories, extra = audit_dump.prepare(dump, source, log=lambda text: None)
+                self.assertTrue((source / name).is_dir())
+                self.assertEqual((directories, extra), ([], []))
+
     def test_every_module_location_is_staged_and_the_extra_ones_become_module_dirs(self):
         self.module("sce_module/libc.prx")
         self.module("Media/Modules/Il2CppUserAssemblies.prx")
@@ -196,6 +207,37 @@ class AuditDumpTests(unittest.TestCase):
         self.assertEqual(command[:3], [str(self.relinker), "--registry", "--windows"])
         self.assertEqual(command[3:7], ["--module-dir", "Media/Modules", "--module-dir", "."])
         self.assertEqual(command[7:], [str(self.root / "source" / "eboot.elf"), str(self.root / "out" / "app.exe")])
+
+    def test_the_relinker_gets_the_requested_conversion_flags(self):
+        flags = ["--function-symbol-roots", "--trap-sdk-syscall-stubs"]
+        with mock.patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")) as run:
+            audit_dump.convert(self.relinker, self.root / "source", self.root / "out" / "app.exe", ["."], True, flags)
+        command = run.call_args.args[0]
+        self.assertEqual(command[:5], [str(self.relinker), "--registry", "--windows", "--trap-sdk-syscall-stubs", "--function-symbol-roots"])
+        self.assertEqual(command[5:7], ["--module-dir", "."])
+
+    def test_main_passes_only_the_conversion_flags_it_was_given(self):
+        for arguments, expected in (([], []), (["--trap-sdk-syscall-stubs"], ["--trap-sdk-syscall-stubs"]),
+                                    (["--function-symbol-roots"], ["--function-symbol-roots"]),
+                                    (["--function-symbol-roots", "--trap-sdk-syscall-stubs"], ["--trap-sdk-syscall-stubs", "--function-symbol-roots"])):
+            with self.subTest(arguments=arguments), \
+                    mock.patch.object(audit_dump, "convert", return_value=subprocess.CompletedProcess([], 1, "", "FAIL: refused")) as convert:
+                code, _ = self.run_main(self.dump, "--relinker", self.relinker, "--libs", "libs", *arguments)
+                self.assertEqual(code, 2)
+                self.assertEqual(list(convert.call_args.args[5]), expected)
+
+    def test_to_intel_reaches_the_relinker_only_when_given(self):
+        for extra, expected in (((), []), (("--to-intel",), ["--to-intel"])):
+            with self.subTest(extra=extra):
+                with mock.patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "", "")) as run, \
+                        mock.patch.object(audit_dump.import_audit, "main") as audit:
+                    code, _ = self.run_main(self.dump, "--relinker", self.relinker, "--libs", "libs", "--windows", *extra,
+                                            "--work", self.root / "work")
+                self.assertEqual(code, 2)
+                audit.assert_not_called()
+                command = run.call_args.args[0]
+                self.assertEqual(command[1:3 + len(expected)], ["--registry", "--windows", *expected])
+                self.assertEqual(command.count("--to-intel"), len(expected))
 
     def run_main(self, *arguments):
         errors = io.StringIO()

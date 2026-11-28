@@ -1,0 +1,14 @@
+#ifndef CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_READTRAPSOVERHOSTPOINTERIMPORTS_HPP
+#define CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_READTRAPSOVERHOSTPOINTERIMPORTS_HPP
+
+#include <vulkan/vulkan.h>
+
+namespace AgcDriver {
+
+inline bool ReadTrapsOverHostPointerImportsUsable(VkDriverId driver) {
+    return driver == VK_DRIVER_ID_NVIDIA_PROPRIETARY;
+}
+
+}
+
+#endif

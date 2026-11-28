@@ -37,27 +37,13 @@ constexpr int BioControlSetFilename = 108;
 constexpr int BioControlFileSeek = 128;
 constexpr int BioControlFileTell = 133;
 
-bool CopyGuestInPreservingErrno(void* destination, const void* source, std::size_t size) {
-    const int savedErrno = errno;
-    const bool ok = GuestCopyIn_nid_no_patch(destination, source, size);
-    errno = savedErrno;
-    return ok;
-}
-
-bool CopyGuestOutPreservingErrno(void* destination, const void* source, std::size_t size) {
-    const int savedErrno = errno;
-    const bool ok = GuestCopyOut_nid_no_patch(destination, source, size);
-    errno = savedErrno;
-    return ok;
-}
-
 bool CopyGuestStringPreservingErrno(const char* source, std::string& destination) {
     constexpr std::uintptr_t Chunk = 4096;
     char bytes[Chunk];
     destination.clear();
     for (auto address = reinterpret_cast<std::uintptr_t>(source);;) {
         const std::size_t count = Chunk - address % Chunk;
-        if (!CopyGuestInPreservingErrno(bytes, reinterpret_cast<const void*>(address), count)) return false;
+        if (!GuestCopyIn_nid_no_patch(bytes, reinterpret_cast<const void*>(address), count)) return false;
         const auto* end = static_cast<const char*>(std::memchr(bytes, 0, count));
         destination.append(bytes, end ? static_cast<std::size_t>(end - bytes) : count);
         if (end) return true;
@@ -108,11 +94,11 @@ int APS5_VABI FilePuts(Bio* bio, const char* data) {
 int APS5_VABI FileGets(Bio* bio, char* data, int size) {
     if (!data || !bio->data) throw std::invalid_argument("BIO_gets: null line buffer or file stream");
     std::vector<char> buffer(size > 1 ? static_cast<std::size_t>(size) : 1);
-    if (!CopyGuestInPreservingErrno(buffer.data(), data, buffer.size()) || !CopyGuestOutPreservingErrno(data, buffer.data(), buffer.size()))
+    if (!GuestCopyIn_nid_no_patch(buffer.data(), data, buffer.size()) || !GuestCopyOut_nid_no_patch(data, buffer.data(), buffer.size()))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     buffer[0] = 0;
     const auto line = fgets_nid_postfix(buffer.data(), size, static_cast<FileStream*>(bio->data));
-    if (!CopyGuestOutPreservingErrno(data, buffer.data(), buffer.size())) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (!GuestCopyOut_nid_no_patch(data, buffer.data(), buffer.size())) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     return line ? static_cast<int>(std::strlen(buffer.data())) : 0;
 }
 
@@ -176,7 +162,7 @@ std::int64_t APS5_VABI FileControl(Bio* bio, int command, std::int64_t argument,
         bio->initialized = 1;
         return 1;
     case 107:
-        if (pointer && !CopyGuestOutPreservingErrno(pointer, &stream, sizeof(stream))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        if (pointer && !GuestCopyOut_nid_no_patch(pointer, &stream, sizeof(stream))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
         return 1;
     default:
         return 0;
@@ -237,7 +223,7 @@ std::int64_t APS5_VABI SocketControl(Bio* bio, int command, std::int64_t argumen
     switch (command) {
     case BioControlSetDescriptor: {
         int descriptor = 0;
-        if (!pointer || !CopyGuestInPreservingErrno(&descriptor, pointer, sizeof(descriptor)))
+        if (!pointer || !GuestCopyIn_nid_no_patch(&descriptor, pointer, sizeof(descriptor)))
             NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
         if (bio->shutdown) {
             if (bio->initialized && bio->number >= 0) sceNetSocketClose(bio->number);
@@ -251,7 +237,7 @@ std::int64_t APS5_VABI SocketControl(Bio* bio, int command, std::int64_t argumen
     }
     case BioControlGetDescriptor:
         if (!bio->initialized) return -1;
-        if (pointer && !CopyGuestOutPreservingErrno(pointer, &bio->number, sizeof(bio->number)))
+        if (pointer && !GuestCopyOut_nid_no_patch(pointer, &bio->number, sizeof(bio->number)))
             NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
         return bio->number;
     case 1:

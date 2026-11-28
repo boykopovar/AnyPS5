@@ -13,6 +13,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  PYTHONUTF8: "1"
   CONFIGURE: >-
     -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
     -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++

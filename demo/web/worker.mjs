@@ -11,7 +11,7 @@ let lastReport = 0;
 let lastPhase = "";
 
 function report(event) {
-  const phase = event.phase ?? String(event.stage);
+  const phase = event.phaseKey ?? event.phase ?? String(event.stage);
   const now = performance.now();
   if (!event.message && phase === lastPhase && event.completed !== event.total && now - lastReport < 80) return;
   lastReport = now;
@@ -33,7 +33,7 @@ function reportFor(item, index) {
 
 export async function downloadLibraries(target, locale = "en") {
   if (target !== "linux" && target !== "windows") throw new Error(translate(locale, "invalidLibraryTarget"));
-  report({ phase: translate(locale, "phaseDownloadingLibraries") });
+  report({ phase: translate(locale, "phaseDownloadingLibraries"), phaseKey: "phaseDownloadingLibraries" });
   const response = await fetch("./release.json", { cache: "no-cache" });
   if (!response.ok) throw new Error(translate(locale, "cannotLoadManifest", { status: response.status }));
   const release = await response.json();
@@ -48,13 +48,14 @@ export async function downloadLibraries(target, locale = "en") {
     const rateLimited = latestResponse.status === 429 || (latestResponse.status === 403
       && (latestResponse.headers.get("x-ratelimit-remaining") === "0" || latestResponse.headers.has("retry-after")));
     if (!rateLimited) throw new Error(translate(locale, "cannotVerifyRelease", { status: latestResponse.status }));
-    report({ phase: translate(locale, "phaseDownloadingLibraries"), message: translate(locale, "rateLimited") });
+    report({ phase: translate(locale, "phaseDownloadingLibraries"), phaseKey: "phaseDownloadingLibraries", message: translate(locale, "rateLimited") });
   } else {
     const latest = await latestResponse.json();
     if (latest.tag_name !== release.tag) throw new Error(translate(locale, "releasePublishing"));
   }
   const download = await fetch(asset.path);
   if (!download.ok) throw new Error(translate(locale, "cannotDownloadLibraries", { status: download.status }));
+  if (!download.body) throw new Error(translate(locale, "incompleteDownload"));
   const reader = download.body.getReader();
   const chunks = [];
   let size = 0;
@@ -64,7 +65,7 @@ export async function downloadLibraries(target, locale = "en") {
       if (done) break;
       size += value.byteLength;
       if (size > asset.size) throw new Error(translate(locale, "incompleteDownload"));
-      report({ phase: translate(locale, "phaseDownloadingLibraries"), completed: size, total: asset.size });
+      report({ phase: translate(locale, "phaseDownloadingLibraries"), phaseKey: "phaseDownloadingLibraries", completed: size, total: asset.size });
       chunks.push(value);
     }
     if (size !== asset.size) throw new Error(translate(locale, "incompleteDownload"));
@@ -79,7 +80,9 @@ export async function downloadLibraries(target, locale = "en") {
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
   const digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map(byte => byte.toString(16).padStart(2, "0")).join("");
   if (digest !== asset.sha256) throw new Error(translate(locale, "checksumMismatch"));
-  return { file: new Blob([bytes]), release, expandedBytes: asset.expandedBytes };
+  const revision = typeof release.revision === "string" && release.revision.length === 40
+    && /^[0-9a-f]{40}$/u.test(release.revision) ? release.revision : null;
+  return { file: new Blob([bytes]), release, revision, expandedBytes: asset.expandedBytes };
 }
 
 async function convertInput(item, index, native, libraries, data, destination, directory, writer, locale) {
@@ -89,9 +92,12 @@ async function convertInput(item, index, native, libraries, data, destination, d
     const itemReport = reportFor(item, index);
     if (inputs.length > 1) await current.inspect(itemReport);
     const input = await current.conversionInput(data.target, data.toIntel, itemReport);
+    if (data.patch !== undefined) input.patch = data.patch;
     const converted = native.Convert(input, itemReport);
     if (!converted.ok) throw new Error(converted.error);
-    const options = inputs.length > 1 ? { prefix: `${batchOutputDirectory(item.name, index, locale)}/`, writer } : {};
+    const { revision, release: { tag } } = libraries;
+    const receipt = { version: 1, release: { tag, revision }, target: data.target, toIntel: Boolean(data.toIntel) };
+    const options = inputs.length > 1 ? { prefix: `${batchOutputDirectory(item.name, index, locale)}/`, writer, receipt } : { receipt };
     await packageArchive(current, converted, input.outputName, libraries.file, destination, itemReport, directory, options, locale);
     return input.outputName;
   } catch (error) {
@@ -144,6 +150,15 @@ self.onmessage = async ({ data }) => {
       if (data.target === "windows" && data.mode === "disk") throw new Error(translate(locale, "windowsFolderUnavailable"));
       if (!inputs.length || summaries.length !== inputs.length) throw new Error(translate(locale, "inspectBeforeConvert"));
       if (inputs.length > 1 && data.mode === "disk") throw new Error(translate(locale, "batchRequiresZip"));
+      if (data.patchFile !== undefined) {
+        if (inputs.length !== 1) throw new Error(translate(locale, "patchRequiresSingleApp"));
+        if (data.patchFile.size > 1024 * 1024) throw new Error(translate(locale, "patchTooLarge"));
+        try {
+          data.patch = new TextDecoder("utf-8", { fatal: true }).decode(await data.patchFile.arrayBuffer());
+        } catch {
+          throw new Error(translate(locale, "patchReadError"));
+        }
+      }
       for (const summary of summaries) {
         const selectedBytes = data.target === "windows" ? summary.windowsSelectedBytes : summary.selectedBytes;
         if (data.target === "windows" && summary.windowsIconTooLarge) throw new Error(translate(locale, "iconTooLargeHint"));
@@ -151,7 +166,7 @@ self.onmessage = async ({ data }) => {
       }
       const libraries = await downloadLibraries(data.target, locale);
       if (data.mode === "memory" && batchMemoryEstimate(summaries, data.target, libraries.expandedBytes, locale) > MEMORY_LIMIT) throw new Error(translate(locale, "memoryBudgetExceeded"));
-      report({ phase: translate(locale, "phaseLoadingConverter") });
+      report({ phase: translate(locale, "phaseLoadingConverter"), phaseKey: "phaseLoadingConverter" });
       const { default: createRelinker } = await import("./native/relinker_wasm.mjs");
       const native = await createRelinker();
       const chunks = [];
@@ -198,7 +213,7 @@ self.onmessage = async ({ data }) => {
         if (writer) await writer.close();
         await destination.close();
       }
-      self.postMessage({ type: "complete", mode: data.mode, blob: data.mode === "memory" ? new Blob(chunks, { type: "application/zip" }) : null, outputName, size, release: libraries.release.tag, apps: inputs.length });
+      self.postMessage({ type: "complete", mode: data.mode, blob: data.mode === "memory" ? new Blob(chunks, { type: "application/zip" }) : null, outputName, size, release: libraries.release.tag, revision: libraries.revision, apps: inputs.length });
       inputs = [];
       summaries = [];
     } else throw new Error(translate(locale, "unknownWorkerRequest"));

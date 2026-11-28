@@ -347,8 +347,6 @@ private:
     }
 
     Outcome Float(const Directive& directive) {
-        if (!directive.length.empty() && directive.length != "l" && directive.length != "L")
-            Fail("invalid floating length modifier " + directive.length);
         void* target = nullptr;
         if (!directive.suppress && (target = args.Next<void*>()) == nullptr) return Outcome::Violation;
         SkipSpace();
@@ -514,6 +512,8 @@ extern FileStream* __stdinp_nid_postfix;
 
 int APS5_VABI vfwscanf_nid_postfix(FileStream* stream, const char16_t* format, VaList* args) {
     if (stream == nullptr || format == nullptr) return EOF;
+    const FileStreamOperation_nid_no_patch operation(stream);
+    if (!operation.Open()) { errno = 9; return EOF; }
     stream->Orientation(1);
     const LockedStream lock(stream);
     return WideScanner("vfwscanf", false, WideInput(stream), format, args).Run();
@@ -521,6 +521,8 @@ int APS5_VABI vfwscanf_nid_postfix(FileStream* stream, const char16_t* format, V
 
 int APS5_VABI vfwscanf_s_nid_postfix(FileStream* stream, const char16_t* format, VaList* args) {
     if (stream == nullptr || format == nullptr) return EOF;
+    const FileStreamOperation_nid_no_patch operation(stream);
+    if (!operation.Open()) { errno = 9; return EOF; }
     stream->Orientation(1);
     const LockedStream lock(stream);
     return WideScanner("vfwscanf_s", true, WideInput(stream), format, args).Run();

@@ -5,11 +5,13 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
 
 namespace {
 
 constexpr int SCE_TEXT_TO_SPEECH_ERROR_INVALID_ID = static_cast<int>(0x814900FF);
 constexpr int SCE_TEXT_TO_SPEECH_ERROR_NOT_INITIALIZED = static_cast<int>(0x81490020);
+constexpr int TextToSpeechServerUnreachable = static_cast<int>(0x814900FF);
 
 int checkId(std::uint32_t id) {
     return id > 2 ? SCE_TEXT_TO_SPEECH_ERROR_INVALID_ID : SCE_TEXT_TO_SPEECH_ERROR_NOT_INITIALIZED;
@@ -41,8 +43,8 @@ int APS5_VABI sceTextToSpeechGetStatusImpl(std::uint32_t id, void* status) {
 int APS5_VABI sceTextToSpeechInitImpl(std::uint32_t id, const void* parameter) {
     if (id > 2) return SCE_TEXT_TO_SPEECH_ERROR_INVALID_ID;
     if (parameter == nullptr) return static_cast<int>(0x81490010);
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (sceKernelIsPs4Process() != 1) NotImplemented_nid_no_patch(__func__);
+    return TextToSpeechServerUnreachable;
 }
 
 int APS5_VABI sceTextToSpeechOpenImpl(std::uint32_t id) {

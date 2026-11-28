@@ -83,6 +83,17 @@ void RequireDecoding(const Api& api) {
         Require(std::any_of(reference.begin() + 1, reference.end() - 1, [](auto value) { return value != 0; }));
         Require(floats.front() == 2.0f && floats.back() == 2.0f && floats == prioritizedFloats);
         for (std::size_t index = 1; index <= 1920; ++index) Require(floats[index] == Converted(reference[index]));
+        reference.fill(12345);
+        prioritized.fill(12345);
+        floats.fill(2.0f);
+        prioritizedFloats.fill(2.0f);
+        Require(api.decode(states[0].data(), nullptr, 0, reference.data() + 1, 3840) == 3840);
+        Require(api.decodeWithPriority(states[1].data(), nullptr, 0, prioritized.data() + 1, 3840, 100) == 3840);
+        Require(api.decodeFloat(states[2].data(), nullptr, 0, floats.data() + 1, 7680) == 7680);
+        Require(api.decodeFloatWithPriority(states[3].data(), nullptr, 0, prioritizedFloats.data() + 1, 7680, 20) == 7680);
+        Require(prioritized == reference && floats == prioritizedFloats);
+        Require(reference.front() == 12345 && reference.back() == 12345);
+        for (std::size_t index = 1; index <= 1920; ++index) Require(floats[index] == Converted(reference[index]));
     }
     floats.fill(2.0f);
     RequireThrows([&] { api.decodeFloat(states[2].data(), CELT_PACKET, sizeof(CELT_PACKET), floats.data() + 1, 7679); });
