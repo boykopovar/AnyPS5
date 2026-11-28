@@ -1,5 +1,6 @@
 #include "prx/libSceAvPlayer/include/FileReplacementStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
@@ -34,8 +35,25 @@ std::int32_t APS5_VABI Read(void*, std::uint8_t*, std::uint64_t, std::uint32_t) 
     return 0;
 }
 
+std::int32_t APS5_VABI ReadOverreport(void*, std::uint8_t*, std::uint64_t, std::uint32_t length) {
+    return static_cast<std::int32_t>(length + 1);
+}
+
 std::uint64_t APS5_VABI Size(void* object) {
     return static_cast<File*>(object)->size;
+}
+
+void CheckReadOverreport() {
+    File file{17};
+    {
+        AvPlayer::FileReplacementStream stream({&file, Open, Close, ReadOverreport, Size});
+        Check(stream.Open("overreported read fixture"));
+        auto* context = stream.Context();
+        std::uint8_t buffer[4]{};
+        Check(context->read_packet(context->opaque, buffer, static_cast<int>(sizeof(buffer))) == AVERROR(EIO));
+        Check(context->seek(context->opaque, 0, SEEK_CUR) == 0);
+    }
+    Check(file.opened == 1 && file.closed == 1);
 }
 
 void CheckSeeks(std::uint64_t size) {
@@ -67,6 +85,7 @@ void CheckSeeks(std::uint64_t size) {
 }
 
 int main() {
+    CheckReadOverreport();
     CheckSeeks(17);
     CheckSeeks(static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()));
     for (const auto size : {std::uint64_t{1} << 63, std::numeric_limits<std::uint64_t>::max()}) {

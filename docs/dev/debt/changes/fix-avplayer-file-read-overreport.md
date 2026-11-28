@@ -1,0 +1,4 @@
+# libSceAvPlayer
+
+## change [AvPlayer file replacement seeking](../../../core/libs/prx/libSceAvPlayer/include/FileReplacementStream.hpp)
+- [AvPlayer file replacement seeking](../../../core/libs/prx/libSceAvPlayer/include/FileReplacementStream.hpp) (libSceAvPlayer) - clamping callback seeks to the known file extent is a host choice; the console's out-of-range seek policy is unmeasured. Callback lengths above `INT64_MAX` cannot be represented by the host AVIO interface and are rejected. Read callback results above the requested length are rejected as `AVERROR(EIO)` so FFmpeg's AVIO layer cannot consume an impossible byte count; console behavior for a contract-violating read callback is unmeasured. This check does not prevent a callback from writing beyond the supplied buffer before it returns.

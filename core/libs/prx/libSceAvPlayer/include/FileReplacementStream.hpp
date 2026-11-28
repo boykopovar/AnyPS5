@@ -57,6 +57,7 @@ private:
         const auto read = self->file.read_offset(self->file.object_ptr, buffer, self->position, length);
         if (read < 0) return AVERROR(EIO);
         if (read == 0) return AVERROR_EOF;
+        if (static_cast<std::uint32_t>(read) > length) return AVERROR(EIO);
         self->position += static_cast<std::uint64_t>(read);
         return read;
     }
