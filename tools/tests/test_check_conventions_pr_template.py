@@ -65,6 +65,31 @@ class PullRequestTemplateTests(unittest.TestCase):
     def test_filled_template_passes(self):
         self.assert_passes(filled_template())
 
+    def run_partial(self, *arguments):
+        return subprocess.run(
+            [sys.executable, "-I", str(CHECKER), "--base", "HEAD", "--head", "HEAD", *arguments],
+            cwd=self.root, capture_output=True, text=True, encoding="utf-8",
+            env={key: value for key, value in os.environ.items()
+                 if key not in ("GITHUB_EVENT_PATH", "GITHUB_STEP_SUMMARY", "GITHUB_ACTIONS")},
+        )
+
+    def test_a_title_alone_checks_only_the_title(self):
+        result = self.run_partial("--title", "fix: x")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        result = self.run_partial("--title", "Fix x")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("[pr-title]", result.stdout)
+        self.assertNotIn("[pr-template]", result.stdout)
+
+    def test_a_description_alone_checks_only_the_description(self):
+        for text, code in ((filled_template(), 0), ("", 1)):
+            with self.subTest(code=code):
+                (self.root / "body.md").write_text(text, encoding="utf-8")
+                result = self.run_partial("--body", "body.md")
+                self.assertEqual(result.returncode, code, result.stdout + result.stderr)
+                self.assertNotIn("[pr-title]", result.stdout)
+                self.assertEqual("[pr-template]" in result.stdout, code == 1, result.stdout)
+
     def test_untouched_template_reports_every_gap(self):
         template = TEMPLATE.read_text(encoding="utf-8")
         items = re.findall(r"^- \[ \] (.+)$", re.sub(r"<!--.*?-->", "", template, flags=re.S), re.M)
