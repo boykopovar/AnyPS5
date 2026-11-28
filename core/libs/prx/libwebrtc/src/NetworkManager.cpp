@@ -42,29 +42,115 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 
 constexpr std::int32_t Ipv6AddressFlagTemporary = 1 << 0;
 constexpr std::int32_t Ipv6AddressFlagDeprecated = 1 << 1;
 
-const WebRtcNetworkManagerBase& CheckedManager(const WebRtcNetworkManagerBase* manager, const char* function) {
+struct ErrnoGuard {
+    int savedErrno = errno;
+    ~ErrnoGuard() { errno = savedErrno; }
+};
+
+void RequireReadable(const void* source, std::size_t bytes, const std::string& message) {
+    if (!bytes) return;
+    ErrnoGuard guard;
+    if (!source)
+        throw std::invalid_argument(message);
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(source, bytes);
+    if (!GuestReadable_nid_no_patch(source, bytes))
+        throw std::invalid_argument(message);
+}
+
+void CopyIn(void* destination, const void* source, std::size_t bytes, const std::string& message) {
+    if (!bytes) return;
+    RequireReadable(source, bytes, message);
+    ErrnoGuard guard;
+    if (!GuestCopyIn_nid_no_patch(destination, source, bytes))
+        throw std::invalid_argument(message);
+}
+
+class GuestWriteScope {
+public:
+    GuestWriteScope(void* pointer, std::size_t bytes, const std::string& message)
+        : savedErrno(), guard(pointer ? pointer : nullptr, pointer ? bytes : 0) {
+        if (!bytes) return;
+        if (!pointer || !guard.Open() || !GuestWritable_nid_no_patch(pointer, bytes))
+            throw std::invalid_argument(message);
+    }
+    GuestWriteScope(const GuestWriteScope&) = delete;
+    GuestWriteScope& operator=(const GuestWriteScope&) = delete;
+
+private:
+    ErrnoGuard savedErrno;
+    GuestArena::HostWrite guard;
+};
+
+void RequireWritable(void* pointer, std::size_t bytes, const std::string& message) {
+    GuestWriteScope scope(pointer, bytes, message);
+}
+
+void CopyOut(void* destination, const void* source, std::size_t bytes, const std::string& message) {
+    if (!bytes) return;
+    GuestWriteScope scope(destination, bytes, message);
+    ErrnoGuard guard;
+    if (!GuestCopyOut_nid_no_patch(destination, source, bytes))
+        throw std::invalid_argument(message);
+}
+
+template <typename T>
+std::vector<T> CopyRange(const T* begin, const T* end, const std::string& message) {
+    if (begin == end)
+        return {};
+    const auto beginAddr = reinterpret_cast<std::uintptr_t>(begin);
+    const auto endAddr = reinterpret_cast<std::uintptr_t>(end);
+    if (!begin || !end || endAddr < beginAddr || (endAddr - beginAddr) % sizeof(T) != 0)
+        throw std::invalid_argument(message);
+    const std::size_t bytes = endAddr - beginAddr;
+    RequireReadable(begin, bytes, message);
+    std::vector<T> items(bytes / sizeof(T));
+    CopyIn(items.data(), begin, bytes, message);
+    return items;
+}
+
+WebRtcNetworkManagerBase ReadManager(const WebRtcNetworkManagerBase* manager, const char* function) {
+    const std::string message = std::string(function) + " requires a network manager";
     if (!manager)
-        throw std::invalid_argument(std::string(function) + " requires a network manager");
-    return *manager;
+        throw std::invalid_argument(message);
+    WebRtcNetworkManagerBase copy{};
+    CopyIn(&copy, manager, sizeof(copy), message);
+    return copy;
 }
 
-void AssignAddress(WebRtcIpAddress& destination, std::int32_t family, const WebRtcIn6Addr& address) {
-    destination.family = family;
-    destination.address.ip6 = address;
+WebRtcIpAddress ReadIp(const WebRtcIpAddress* ip, const char* message) {
+    if (!ip)
+        throw std::invalid_argument(message);
+    WebRtcIpAddress copy{};
+    CopyIn(&copy, ip, sizeof(copy), message);
+    return copy;
 }
 
-void AssignAddress(WebRtcIpAddress& destination, const WebRtcIpAddress& source) {
-    AssignAddress(destination, source.family, source.address.ip6);
+void RequireAddressWritable(void* base, std::size_t addressOffset, const char* message) {
+    auto* bytes = static_cast<unsigned char*>(base) + addressOffset;
+    RequireWritable(bytes + offsetof(WebRtcIpAddress, family), sizeof(std::int32_t), message);
+    RequireWritable(bytes + offsetof(WebRtcIpAddress, address), sizeof(WebRtcIn6Addr), message);
+}
+
+void WriteAddress(void* base, std::size_t addressOffset, std::int32_t family, const WebRtcIn6Addr& address, const char* message) {
+    auto* bytes = static_cast<unsigned char*>(base) + addressOffset;
+    CopyOut(bytes + offsetof(WebRtcIpAddress, family), &family, sizeof(family), message);
+    CopyOut(bytes + offsetof(WebRtcIpAddress, address), &address, sizeof(address), message);
 }
 
 bool IsLinkLocal(const WebRtcInterfaceAddress& ip) {
@@ -79,46 +165,61 @@ bool IsUla(const WebRtcInterfaceAddress& ip) {
     return (ip.address.ip6.bytes[0] & 0xfe) == 0xfc;
 }
 
-const WebRtcInterfaceAddress* BestIp(const WebRtcNetwork& network) {
-    if (network.ipsBegin == network.ipsEnd)
-        return nullptr;
+std::optional<WebRtcInterfaceAddress> BestIp(const WebRtcNetwork& network, const std::vector<WebRtcInterfaceAddress>& ips) {
+    if (ips.empty())
+        return std::nullopt;
     if (network.prefix.family == WebRtcAfInet)
-        return network.ipsBegin;
+        return ips.front();
     const WebRtcInterfaceAddress* selected = nullptr;
     const WebRtcInterfaceAddress* linkLocal = nullptr;
     const WebRtcInterfaceAddress* ula = nullptr;
-    for (const auto* ip = network.ipsBegin; ip != network.ipsEnd; ++ip) {
-        if (ip->ipv6Flags & Ipv6AddressFlagDeprecated)
+    for (const auto& ip : ips) {
+        if (ip.ipv6Flags & Ipv6AddressFlagDeprecated)
             continue;
-        if (IsLinkLocal(*ip)) {
-            linkLocal = ip;
-            continue;
-        }
-        if (IsUla(*ip)) {
-            ula = ip;
+        if (IsLinkLocal(ip)) {
+            linkLocal = &ip;
             continue;
         }
-        selected = ip;
-        if (ip->ipv6Flags & Ipv6AddressFlagTemporary)
+        if (IsUla(ip)) {
+            ula = &ip;
+            continue;
+        }
+        selected = &ip;
+        if (ip.ipv6Flags & Ipv6AddressFlagTemporary)
             break;
     }
     if (!selected || selected->family == WebRtcAfUnspec) {
         if (linkLocal && linkLocal->family != WebRtcAfUnspec)
-            return linkLocal;
+            return *linkLocal;
         if (ula && ula->family != WebRtcAfUnspec)
-            return ula;
+            return *ula;
     }
-    return selected;
+    if (!selected)
+        return std::nullopt;
+    return *selected;
 }
 
-WebRtcNetwork* NetworkFromAddress(const WebRtcNetworkManagerBase& manager, const WebRtcIpAddress& ip) {
-    for (auto** network = manager.networksBegin; network != manager.networksEnd; ++network) {
-        for (const auto* existing = (*network)->ipsBegin; existing != (*network)->ipsEnd; ++existing) {
-            if (_ZNK3rtc9IPAddresseqERKS0__nid_postfix(&ip, reinterpret_cast<const WebRtcIpAddress*>(existing)))
-                return *network;
+struct MatchedNetwork {
+    WebRtcNetwork* guest = nullptr;
+    WebRtcNetwork copy{};
+    std::vector<WebRtcInterfaceAddress> ips;
+};
+
+std::optional<MatchedNetwork> NetworkFromAddress(const WebRtcNetworkManagerBase& manager, const WebRtcIpAddress& ip, const char* function) {
+    const std::string message = std::string(function) + " requires readable network entries";
+    const auto networks = CopyRange(manager.networksBegin, manager.networksEnd, message);
+    for (auto* network : networks) {
+        if (!network)
+            throw std::invalid_argument(message);
+        WebRtcNetwork netCopy{};
+        CopyIn(&netCopy, network, sizeof(netCopy), message);
+        auto ips = CopyRange(netCopy.ipsBegin, netCopy.ipsEnd, message);
+        for (const auto& existing : ips) {
+            if (_ZNK3rtc9IPAddresseqERKS0__nid_postfix(&ip, reinterpret_cast<const WebRtcIpAddress*>(&existing)))
+                return MatchedNetwork{network, netCopy, std::move(ips)};
         }
     }
-    return nullptr;
+    return std::nullopt;
 }
 
 }
@@ -126,23 +227,30 @@ WebRtcNetwork* NetworkFromAddress(const WebRtcNetworkManagerBase& manager, const
 extern "C" {
 
 std::int32_t APS5_VABI _ZNK3rtc18NetworkManagerBase22enumeration_permissionEv_nid_postfix(const WebRtcNetworkManagerBase* manager) {
-    return CheckedManager(manager, "NetworkManagerBase::enumeration_permission").enumerationPermission;
+    return ReadManager(manager, "NetworkManagerBase::enumeration_permission").enumerationPermission;
 }
 
 void APS5_VABI _ZN3rtc18NetworkManagerBase27set_default_local_addressesERKNS_9IPAddressES3__nid_postfix(
     WebRtcNetworkManagerBase* manager, const WebRtcIpAddress* ipv4, const WebRtcIpAddress* ipv6) {
-    CheckedManager(manager, "NetworkManagerBase::set_default_local_addresses");
+    ReadManager(manager, "NetworkManagerBase::set_default_local_addresses");
     if (!ipv4 || !ipv6)
         throw std::invalid_argument("NetworkManagerBase::set_default_local_addresses requires addresses");
-    if (ipv4->family == WebRtcAfInet)
-        AssignAddress(manager->defaultLocalIpv4Address, *ipv4);
-    if (ipv6->family == WebRtcAfInet6)
-        AssignAddress(manager->defaultLocalIpv6Address, *ipv6);
+    const auto ipv4Copy = ReadIp(ipv4, "NetworkManagerBase::set_default_local_addresses requires addresses");
+    const auto ipv6Copy = ReadIp(ipv6, "NetworkManagerBase::set_default_local_addresses requires addresses");
+    const char* unwritable = "NetworkManagerBase::set_default_local_addresses requires a writable network manager";
+    if (ipv4Copy.family == WebRtcAfInet)
+        RequireAddressWritable(manager, offsetof(WebRtcNetworkManagerBase, defaultLocalIpv4Address), unwritable);
+    if (ipv6Copy.family == WebRtcAfInet6)
+        RequireAddressWritable(manager, offsetof(WebRtcNetworkManagerBase, defaultLocalIpv6Address), unwritable);
+    if (ipv4Copy.family == WebRtcAfInet)
+        WriteAddress(manager, offsetof(WebRtcNetworkManagerBase, defaultLocalIpv4Address), ipv4Copy.family, ipv4Copy.address.ip6, unwritable);
+    if (ipv6Copy.family == WebRtcAfInet6)
+        WriteAddress(manager, offsetof(WebRtcNetworkManagerBase, defaultLocalIpv6Address), ipv6Copy.family, ipv6Copy.address.ip6, unwritable);
 }
 
 bool APS5_VABI _ZNK3rtc18NetworkManagerBase22GetDefaultLocalAddressEiPNS_9IPAddressE_nid_postfix(
     const WebRtcNetworkManagerBase* manager, std::int32_t family, WebRtcIpAddress* address) {
-    const auto& checked = CheckedManager(manager, "NetworkManagerBase::GetDefaultLocalAddress");
+    const auto checked = ReadManager(manager, "NetworkManagerBase::GetDefaultLocalAddress");
     const WebRtcIpAddress* source = nullptr;
     if (family == WebRtcAfInet && checked.defaultLocalIpv4Address.family != WebRtcAfUnspec)
         source = &checked.defaultLocalIpv4Address;
@@ -150,25 +258,27 @@ bool APS5_VABI _ZNK3rtc18NetworkManagerBase22GetDefaultLocalAddressEiPNS_9IPAddr
         source = &checked.defaultLocalIpv6Address;
     if (!source)
         return false;
+    const char* badAddress = "NetworkManagerBase::GetDefaultLocalAddress requires an address";
     if (!address)
-        throw std::invalid_argument("NetworkManagerBase::GetDefaultLocalAddress requires an address");
+        throw std::invalid_argument(badAddress);
+    RequireAddressWritable(address, 0, badAddress);
     if (family == WebRtcAfInet6) {
-        if (const auto* network = NetworkFromAddress(checked, *source)) {
-            const auto* best = BestIp(*network);
-            AssignAddress(*address, best ? best->family : WebRtcAfUnspec, best ? best->address.ip6 : WebRtcIn6Addr{});
+        if (const auto network = NetworkFromAddress(checked, *source, "NetworkManagerBase::GetDefaultLocalAddress")) {
+            const auto best = BestIp(network->copy, network->ips);
+            WriteAddress(address, 0, best ? best->family : WebRtcAfUnspec, best ? best->address.ip6 : WebRtcIn6Addr{}, badAddress);
             return true;
         }
     }
-    AssignAddress(*address, *source);
+    WriteAddress(address, 0, source->family, source->address.ip6, badAddress);
     return true;
 }
 
 WebRtcNetwork* APS5_VABI _ZNK3rtc18NetworkManagerBase21GetNetworkFromAddressERKNS_9IPAddressE_nid_postfix(
     const WebRtcNetworkManagerBase* manager, const WebRtcIpAddress* ip) {
-    const auto& checked = CheckedManager(manager, "NetworkManagerBase::GetNetworkFromAddress");
-    if (!ip)
-        throw std::invalid_argument("NetworkManagerBase::GetNetworkFromAddress requires an address");
-    return NetworkFromAddress(checked, *ip);
+    const auto checked = ReadManager(manager, "NetworkManagerBase::GetNetworkFromAddress");
+    const auto ipCopy = ReadIp(ip, "NetworkManagerBase::GetNetworkFromAddress requires an address");
+    const auto match = NetworkFromAddress(checked, ipCopy, "NetworkManagerBase::GetNetworkFromAddress");
+    return match ? match->guest : nullptr;
 }
 
 

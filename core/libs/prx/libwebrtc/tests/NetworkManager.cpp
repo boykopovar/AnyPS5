@@ -1,4 +1,14 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 #include <cstdio>
 #include <cstdlib>
@@ -151,9 +161,91 @@ void TestNetworkFromAddress() {
     Require(result.family == WebRtcAfInet6 && result.address.ip6.bytes[15] == 42);
 }
 
+struct GuardedPages {
+    unsigned char* base = nullptr;
+    std::size_t pageSize = 4096;
+
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize ? static_cast<std::size_t>(info.dwPageSize) : 4096;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base != nullptr);
+        DWORD oldProtect = 0;
+        Require(VirtualProtect(base + pageSize, pageSize, PAGE_READONLY, &oldProtect) != 0);
+        Require(VirtualProtect(base + pageSize * 2, pageSize, PAGE_NOACCESS, &oldProtect) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        pageSize = size > 0 ? static_cast<std::size_t>(size) : 4096;
+        void* mapped = mmap(nullptr, pageSize * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        base = static_cast<unsigned char*>(mapped);
+        Require(mprotect(base + pageSize, pageSize, PROT_READ) == 0);
+        Require(mprotect(base + pageSize * 2, pageSize, PROT_NONE) == 0);
+#endif
+    }
+
+    ~GuardedPages() {
+        if (!base) return;
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, pageSize * 3);
+#endif
+    }
+
+    unsigned char* ReadOnly() const { return base + pageSize; }
+    unsigned char* Guard() const { return base + pageSize * 2; }
+};
+
+void TestGuardedPointers() {
+    GuardedPages pages;
+    auto* guardManager = reinterpret_cast<WebRtcNetworkManagerBase*>(pages.Guard());
+    auto* readOnlyManager = reinterpret_cast<WebRtcNetworkManagerBase*>(pages.ReadOnly());
+    auto* guardIp = reinterpret_cast<WebRtcIpAddress*>(pages.Guard());
+    auto* readOnlyIp = reinterpret_cast<WebRtcIpAddress*>(pages.ReadOnly());
+
+    WebRtcNetworkManagerBase manager{};
+    const auto ipv4 = Ipv4(192, 168, 1, 7);
+    const auto ipv6 = Ipv6(0x20, 0x01, 9);
+    WebRtcIpAddress out{&ipVTable, WebRtcAfUnspec, {.ip6 = {}}};
+
+    Require(Throws([&] { _ZNK3rtc18NetworkManagerBase22enumeration_permissionEv_nid_postfix(guardManager); }));
+    Require(Throws([&] { _ZN3rtc18NetworkManagerBase27set_default_local_addressesERKNS_9IPAddressES3__nid_postfix(guardManager, &ipv4, &AsIp(ipv6)); }));
+    Require(Throws([&] { _ZN3rtc18NetworkManagerBase27set_default_local_addressesERKNS_9IPAddressES3__nid_postfix(readOnlyManager, &ipv4, &AsIp(ipv6)); }));
+    Require(Throws([&] { _ZN3rtc18NetworkManagerBase27set_default_local_addressesERKNS_9IPAddressES3__nid_postfix(&manager, guardIp, &AsIp(ipv6)); }));
+    Require(Throws([&] { _ZN3rtc18NetworkManagerBase27set_default_local_addressesERKNS_9IPAddressES3__nid_postfix(&manager, &ipv4, guardIp); }));
+
+    _ZN3rtc18NetworkManagerBase27set_default_local_addressesERKNS_9IPAddressES3__nid_postfix(&manager, &ipv4, &AsIp(ipv6));
+    Require(Throws([&] { _ZNK3rtc18NetworkManagerBase22GetDefaultLocalAddressEiPNS_9IPAddressE_nid_postfix(guardManager, WebRtcAfInet, &out); }));
+    Require(Throws([&] { _ZNK3rtc18NetworkManagerBase22GetDefaultLocalAddressEiPNS_9IPAddressE_nid_postfix(&manager, WebRtcAfInet, guardIp); }));
+    Require(Throws([&] { _ZNK3rtc18NetworkManagerBase22GetDefaultLocalAddressEiPNS_9IPAddressE_nid_postfix(&manager, WebRtcAfInet, readOnlyIp); }));
+    Require(Throws([&] { _ZNK3rtc18NetworkManagerBase21GetNetworkFromAddressERKNS_9IPAddressE_nid_postfix(guardManager, &ipv4); }));
+    Require(Throws([&] { _ZNK3rtc18NetworkManagerBase21GetNetworkFromAddressERKNS_9IPAddressE_nid_postfix(&manager, guardIp); }));
+
+    manager.networksBegin = reinterpret_cast<WebRtcNetwork**>(pages.Guard());
+    manager.networksEnd = manager.networksBegin + 1;
+    Require(Throws([&] { _ZNK3rtc18NetworkManagerBase21GetNetworkFromAddressERKNS_9IPAddressE_nid_postfix(&manager, &ipv4); }));
+
+    WebRtcNetwork* badNetPtrs[] = {reinterpret_cast<WebRtcNetwork*>(pages.Guard())};
+    manager.networksBegin = badNetPtrs;
+    manager.networksEnd = badNetPtrs + 1;
+    Require(Throws([&] { _ZNK3rtc18NetworkManagerBase21GetNetworkFromAddressERKNS_9IPAddressE_nid_postfix(&manager, &ipv4); }));
+
+    WebRtcNetwork badIpsNet{};
+    badIpsNet.ipsBegin = reinterpret_cast<WebRtcInterfaceAddress*>(pages.Guard());
+    badIpsNet.ipsEnd = badIpsNet.ipsBegin + 1;
+    WebRtcNetwork* badIpsNetPtrs[] = {&badIpsNet};
+    manager.networksBegin = badIpsNetPtrs;
+    manager.networksEnd = badIpsNetPtrs + 1;
+    Require(Throws([&] { _ZNK3rtc18NetworkManagerBase21GetNetworkFromAddressERKNS_9IPAddressE_nid_postfix(&manager, &ipv4); }));
+}
+
 }
 
 int main() {
+    TestGuardedPointers();
     unsigned char manager[64] = {};
     Require(_ZNK3rtc14NetworkManager16GetMdnsResponderEv_nid_postfix(manager) == nullptr);
     Require(_ZThn8_NK3rtc14NetworkManager16GetMdnsResponderEv_nid_postfix(manager + 8) == nullptr);
