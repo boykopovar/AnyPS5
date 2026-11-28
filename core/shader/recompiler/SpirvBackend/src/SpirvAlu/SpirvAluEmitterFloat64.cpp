@@ -1016,10 +1016,34 @@ std::uint32_t EmitFPFrexpExp64(SpirvEmitterState& state, std::uint32_t arg0) {
     return Select(state, TypeU32(state), frexp.passthrough, ConstantU32(state, 0u), frexp.exponent);
 }
 
+namespace {
+
+std::uint32_t DenormalOperand(SpirvEmitterState& state, const F64Class& cls) {
+    const auto field = ExponentField(state, cls.bits.high);
+    return Binary(state, spv::OpLogicalAnd, TypeBool(state), Binary(state, spv::OpIEqual, TypeBool(state), field, ConstantU32(state, 0u)),
+                  Unary(state, spv::OpLogicalNot, TypeBool(state), cls.zero));
+}
+
+F64Bits DenormalTimes2Pow128(SpirvEmitterState& state, const F64Class& cls) {
+    const auto frexp = FrexpFields(state, cls);
+    return WithExponent(state, frexp.mantissa, Binary(state, spv::OpIAdd, TypeU32(state), frexp.exponent, ConstantU32(state, 1150u)));
+}
+
+}
+
 std::uint32_t EmitFPRcp64(SpirvEmitterState& state, std::uint32_t arg0) {
     const auto cls = Classify(state, arg0);
     const auto sign = Binary(state, spv::OpBitwiseAnd, TypeU32(state), cls.bits.high, ConstantU32(state, 0x80000000u));
-    const auto quotient = Split(state, FromF64(state, Exact(state, spv::OpFDiv, ConstantF64(state, 0x3ff0000000000000ull), ToF64(state, arg0))));
+    const auto field = ExponentField(state, cls.bits.high);
+    const auto denormal = DenormalOperand(state, cls);
+    const auto huge = Binary(state, spv::OpLogicalAnd, TypeBool(state), Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), field, ConstantU32(state, 0x7fdu)),
+                             Binary(state, spv::OpULessThan, TypeBool(state), field, ConstantU32(state, 0x7ffu)));
+    const auto scaledDown = WithExponent(state, cls.bits, Binary(state, spv::OpISub, TypeU32(state), field, ConstantU32(state, 128u)));
+    const auto operand = SelectBits(state, denormal, DenormalTimes2Pow128(state, cls), SelectBits(state, huge, scaledDown, cls.bits));
+    const auto reciprocal = Exact(state, spv::OpFDiv, ConstantF64(state, 0x3ff0000000000000ull), ToF64(state, Join(state, operand)));
+    const auto factor = Select(state, TypeF64(state), denormal, ConstantF64(state, 0x47f0000000000000ull), ConstantF64(state, 0x37f0000000000000ull));
+    const auto rescaled = Select(state, TypeF64(state), Binary(state, spv::OpLogicalOr, TypeBool(state), denormal, huge), Exact(state, spv::OpFMul, reciprocal, factor), reciprocal);
+    const auto quotient = Split(state, FromF64(state, rescaled));
     auto result = SelectBits(state, cls.zero, {ConstantU32(state, 0u), Binary(state, spv::OpBitwiseOr, TypeU32(state), sign, ConstantU32(state, 0x7ff00000u))}, quotient);
     result = SelectBits(state, cls.infinite, {ConstantU32(state, 0u), sign}, result);
     return Join(state, SelectBits(state, cls.nan, Quiet(state, cls.bits), result));
@@ -1028,8 +1052,12 @@ std::uint32_t EmitFPRcp64(SpirvEmitterState& state, std::uint32_t arg0) {
 std::uint32_t EmitFPRsq64(SpirvEmitterState& state, std::uint32_t arg0) {
     const auto cls = Classify(state, arg0);
     const auto sign = Binary(state, spv::OpBitwiseAnd, TypeU32(state), cls.bits.high, ConstantU32(state, 0x80000000u));
-    const auto root = Glsl(state, TypeF64(state), GLSLstd450Sqrt, ToF64(state, arg0));
-    auto result = Split(state, FromF64(state, Exact(state, spv::OpFDiv, ConstantF64(state, 0x3ff0000000000000ull), root)));
+    const auto denormal = DenormalOperand(state, cls);
+    const auto operand = ToF64(state, Join(state, SelectBits(state, denormal, DenormalTimes2Pow128(state, cls), cls.bits)));
+    const auto root = Glsl(state, TypeF64(state), GLSLstd450Sqrt, operand);
+    const auto reciprocal = Exact(state, spv::OpFDiv, ConstantF64(state, 0x3ff0000000000000ull), root);
+    const auto rescaled = Select(state, TypeF64(state), denormal, Exact(state, spv::OpFMul, reciprocal, ConstantF64(state, 0x43f0000000000000ull)), reciprocal);
+    auto result = Split(state, FromF64(state, rescaled));
     result = SelectBits(state, cls.negative, {ConstantU32(state, 0u), ConstantU32(state, 0xfff80000u)}, result);
     result = SelectBits(state, cls.zero, {ConstantU32(state, 0u), Binary(state, spv::OpBitwiseOr, TypeU32(state), sign, ConstantU32(state, 0x7ff00000u))}, result);
     result = SelectBits(state, cls.infinite, SelectBits(state, cls.negative, result, {ConstantU32(state, 0u), ConstantU32(state, 0u)}), result);
@@ -1038,7 +1066,11 @@ std::uint32_t EmitFPRsq64(SpirvEmitterState& state, std::uint32_t arg0) {
 
 std::uint32_t EmitFPSqrt64(SpirvEmitterState& state, std::uint32_t arg0) {
     const auto cls = Classify(state, arg0);
-    auto result = Split(state, FromF64(state, Glsl(state, TypeF64(state), GLSLstd450Sqrt, ToF64(state, arg0))));
+    const auto denormal = DenormalOperand(state, cls);
+    const auto operand = ToF64(state, Join(state, SelectBits(state, denormal, DenormalTimes2Pow128(state, cls), cls.bits)));
+    const auto root = Glsl(state, TypeF64(state), GLSLstd450Sqrt, operand);
+    const auto rescaled = Select(state, TypeF64(state), denormal, Exact(state, spv::OpFMul, root, ConstantF64(state, 0x3bf0000000000000ull)), root);
+    auto result = Split(state, FromF64(state, rescaled));
     result = SelectBits(state, cls.negative, {ConstantU32(state, 0u), ConstantU32(state, 0xfff80000u)}, result);
     const auto passthrough = Binary(state, spv::OpLogicalOr, TypeBool(state), cls.zero, Binary(state, spv::OpLogicalAnd, TypeBool(state), cls.infinite, Unary(state, spv::OpLogicalNot, TypeBool(state), cls.negative)));
     result = SelectBits(state, passthrough, cls.bits, result);

@@ -120,8 +120,7 @@ std::uint32_t Run(AgcDriver::VulkanDevice& device, std::uint32_t mode, bool keep
         for (std::uint32_t op = 0; op < Ops; ++op) {
             const auto wanted = Measured[tid][1u + mode * Ops + op];
             if (wanted == Approximate) continue;
-            const bool keptInput = (FloatModes[mode] & 0x40u) != 0u && Denormal(Measured[tid][0]);
-            if (!keepsDenormals && (keptInput || Denormal(wanted))) {
+            if (!keepsDenormals && Denormal(wanted)) {
                 ++skipped;
                 continue;
             }
