@@ -1,0 +1,10 @@
+add_test_executable(guest_libc_radixsort_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcRadixSort.cpp)
+target_include_directories(guest_libc_radixsort_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(guest_libc_radixsort_tests PRIVATE libc libkernel)
+configure_windows_unwind(guest_libc_radixsort_tests)
+add_test(NAME guest_libc_radixsort COMMAND guest_libc_radixsort_tests)
+set_tests_properties(guest_libc_radixsort PROPERTIES TIMEOUT 20)
+if(WIN32)
+    set_tests_properties(guest_libc_radixsort PROPERTIES ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+endif()
