@@ -1,0 +1,9 @@
+# libSceNKWebKit
+
+## change [WebCore color space conversions and serialization]
+
+- [WebCore color space conversions and serialization](../../../core/libs/prx/libSceNKWebKit/src/WebCoreColorSpaces.cpp) (libSceNKWebKit) - not checked against a console module. They follow WebKit c55364d53f97 [ColorConversion.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WebCore/platform/graphics/ColorConversion.cpp) and [ColorSerialization.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WebCore/platform/graphics/ColorSerialization.cpp), whose declarations match the exported names. Matrix products are not fused into FMA, so a console build that fuses them may differ in the last bit. The `Color` overloads of `serializationForCSS` and `serializationForRenderTreeAsText` still throw: that revision packs `Color` differently from the 11.x packing `WebCoreColor.cpp` decodes.
+
+## add Functional
+
+- [Color::colorSpaceAndComponents](../../../core/libs/prx/libSceNKWebKit/src/WebCoreColorComponents.cpp) (libSceNKWebKit) - not compared with a console module. The 11.x source renames it, so it follows WebKit 73a35b43 [Color.cpp](https://github.com/WebKit/WebKit/blob/73a35b43be7ae44c084885bd3fa4b403e59723c8/Source/WebCore/platform/graphics/Color.cpp#L156-L161) and that revision's [Color packing](https://github.com/WebKit/WebKit/blob/73a35b43be7ae44c084885bd3fa4b403e59723c8/Source/WebCore/platform/graphics/Color.h#L393-L397), not the 11.x packing `WebCoreColor.cpp` decodes: a `Color` written in the 11.x packing is misread. An [ExtendedColor](https://github.com/WebKit/WebKit/blob/73a35b43be7ae44c084885bd3fa4b403e59723c8/Source/WebCore/platform/graphics/ExtendedColor.h#L38-L55) is read in its release layout; its color space byte is copied unchecked. An unreadable `Color` or `ExtendedColor` or an unwritable result throws `std::invalid_argument`. Closes when: compared with a console module.
