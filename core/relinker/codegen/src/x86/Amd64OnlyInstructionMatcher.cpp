@@ -290,8 +290,6 @@ std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::_matchRosetta(const D
         replacement[instr.OpcodeOffset() + 2] &= static_cast<std::uint8_t>(~(1u << X64OpcodeConstants::ModRmRegShift));
         return Amd64OnlyMatch{kRdseed.Name, instr.Length, Amd64OnlyLowering::InPlace, std::move(replacement), {}, 0};
     }
-    if (instr.IsClwb())
-        return _inPlace(kClwb, instr.Length, {});
     if (_target == Amd64OnlyTarget::Rosetta && instr.IsXsaveopt()) {
         std::vector<std::uint8_t> replacement(instr.Data, instr.Data + instr.Length);
         replacement[instr.OpcodeOffset() + 2] &= static_cast<std::uint8_t>(~(2u << X64OpcodeConstants::ModRmRegShift));
@@ -417,7 +415,7 @@ const char* Amd64OnlyInstructionMatcher::_emitOutOfLine(StubBodyBuilder& body, c
 
 const char* Amd64OnlyInstructionMatcher::_emitInPlace(StubBodyBuilder& body, const DecodedInstruction& instr) const {
     if (const auto inPlace = Match(instr.Data, instr.Length); inPlace && inPlace->Lowering == Amd64OnlyLowering::InPlace) {
-        for (const auto* entry : {&kMovntss, &kMovntsd, &kMonitorx, &kMwaitx, &kRdseed, &kClwb}) {
+        for (const auto* entry : {&kMovntss, &kMovntsd, &kMonitorx, &kMwaitx, &kRdseed, &kClwb, &kClflush, &kClflushopt}) {
             if (inPlace->InstructionName != entry->Name)
                 continue;
             const X64InstructionDecoder decoder;
@@ -484,6 +482,14 @@ std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::Match(
     const std::span<const std::uint8_t> following
 ) const {
     const DecodedInstruction instr{data, length};
+
+    const Entry* flush = instr.IsClflush() ? &kClflush : instr.IsClflushopt() ? &kClflushopt : instr.IsClwb() ? &kClwb : nullptr;
+    if (flush != nullptr) {
+        const auto opcode = instr.Data + instr.OpcodeOffset();
+        if (std::find(instr.Data, opcode, X64OpcodeConstants::PrefixLock) != opcode)
+            throw CodegenException(std::string(flush->Name) + " with a LOCK prefix");
+        return _inPlace(*flush, length, {});
+    }
 
     if (instr.IsMovntss())
         return _matchMovnts(instr, kMovntss);
