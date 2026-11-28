@@ -37,7 +37,10 @@
 #include <vector>
 
 #ifdef _WIN32
+#include "prx/libc/include/WindowsDescriptor.hpp"
+#include <fcntl.h>
 #include <io.h>
+#include <sddl.h>
 #include <windows.h>
 #elif defined(__linux__)
 #include <csignal>
@@ -560,7 +563,10 @@ void MappingBackingWindows() {
             const auto available = offset < BigSize ? std::min(length, BigSize - offset) : 0;
 #ifdef _WIN32
             LARGE_INTEGER size{};
-            Check(GetFileSizeEx(reinterpret_cast<HANDLE>(_get_osfhandle(backing)), &size) && size.QuadPart == static_cast<std::int64_t>(available));
+            const auto handle = reinterpret_cast<HANDLE>(_get_osfhandle(backing));
+            Check(GetFileSizeEx(handle, &size) && size.QuadPart == static_cast<std::int64_t>(available));
+            const ACCESS_MASK access = WindowsHandleAccess_nid_no_patch(handle, backing, "MappingBackingWindows");
+            Check((access & (FILE_READ_DATA | FILE_EXECUTE)) == (FILE_READ_DATA | FILE_EXECUTE) && (access & (FILE_WRITE_DATA | FILE_APPEND_DATA)) == 0);
 #else
             struct stat size{};
             Check(fstat(backing, &size) == 0 && size.st_size == static_cast<std::int64_t>(available));
@@ -1104,6 +1110,39 @@ void MappingEndOfFile(const char* directory) {
     Check(sceKernelClose(fd) == 0);
 }
 
+#ifdef _WIN32
+void MappingExecutableHandleWindows(const std::filesystem::path& root) {
+    const auto path = root / "executable-handle.bin";
+    const auto expected = AppArchiveFixture::Pattern(MapPage);
+    {
+        std::ofstream file(path, std::ios::binary);
+        file.write(expected.data(), static_cast<std::streamsize>(expected.size()));
+        Check(static_cast<bool>(file));
+    }
+    constexpr DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+    const HANDLE handle = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_EXECUTE, share, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    Check(handle != INVALID_HANDLE_VALUE);
+    PSECURITY_DESCRIPTOR readOnly = nullptr;
+    Check(ConvertStringSecurityDescriptorToSecurityDescriptorW(L"D:P(A;;FRSD;;;WD)", SDDL_REVISION_1, &readOnly, nullptr) != 0);
+    Check(SetFileSecurityW(path.c_str(), DACL_SECURITY_INFORMATION, readOnly) != 0);
+    LocalFree(readOnly);
+    const HANDLE reopened = ReOpenFile(handle, GENERIC_READ | GENERIC_EXECUTE, share, 0);
+    Check(reopened == INVALID_HANDLE_VALUE && GetLastError() == ERROR_ACCESS_DENIED);
+    const int fd = _open_osfhandle(reinterpret_cast<intptr_t>(handle), _O_RDONLY | _O_BINARY);
+    Check(fd >= 0);
+    for (const int protection : {4, 5}) {
+        const auto mapping = TryMapping(fd, MapPage, protection, 1, 0);
+        Check(mapping.address != MapFailed && mapping.error == 0);
+        Check(mprotect_nid_postfix(mapping.address, MapPage, 1) == 0);
+        Check(std::memcmp(mapping.address, expected.data(), MapPage) == 0);
+        Check(munmap_nid_postfix(mapping.address, MapPage) == 0);
+    }
+    Check(TryMapping(fd, MapPage, 3, 1, 0).error == 13);
+    Check(_close(fd) == 0);
+    Check(DeleteFileW(path.c_str()) != 0);
+}
+#endif
+
 void MappingConcurrent() {
     const int fd = sceKernelOpen(("/app0/Mapped/" + std::to_string(BigSize) + ".bin").c_str(), SCE_KERNEL_O_RDONLY, 0);
     Check(fd >= 0);
@@ -1136,6 +1175,9 @@ void Mappings(const std::filesystem::path& root) {
     MappingConcurrent();
     MappingRanges();
     MappingProtections();
+#ifdef _WIN32
+    MappingExecutableHandleWindows(root);
+#endif
 #if defined(__linux__) || defined(_WIN32)
     const auto archivePartial = MappingPartialRead(("/app0/Mapped/" + std::to_string(BigSize) + ".bin").c_str());
     const auto plainPartial = MappingPartialRead(("/app0/Reference/" + std::to_string(BigSize) + ".bin").c_str());
