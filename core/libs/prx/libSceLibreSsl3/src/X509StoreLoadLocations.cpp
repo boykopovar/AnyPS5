@@ -317,7 +317,7 @@ void FreeString(Asn1String* value) {
 void FreeObject(const LibreSslAsn1Object* object) {
     if (!object) return;
     if (object->flags & ObjectDynamicData) free_nid_postfix(const_cast<unsigned char*>(object->data));
-    free_nid_postfix(const_cast<LibreSslAsn1Object*>(object));
+    if (object->flags & ObjectDynamic) free_nid_postfix(const_cast<LibreSslAsn1Object*>(object));
 }
 
 void FreeParameter(LibreSsl3Asn1Type* parameter) {
