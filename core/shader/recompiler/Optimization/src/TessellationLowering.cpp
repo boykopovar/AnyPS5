@@ -863,6 +863,7 @@ public:
           evaluator(stage == IrShaderStage::TessellationControl ? tessellation.outputControlPoints : capture ? 1u : 0u, stage == IrShaderStage::Local ? LocalVertexIndexCount : static_cast<std::int64_t>(tessellation.patchesPerGroup), capture), localStride(program.Metadata().tessellationLocalStride) {}
 
     void Run() {
+        if (merged && tessellation.onChip) Fail("a merged hull program cannot keep its outputs on chip (SPI_SHADER_PGM_RSRC2_HS.OC_LDS_EN=0)", 0u);
         if (merged) {
             if (tessellation.inputControlPoints > tessellation.outputControlPoints) Fail("a merged hull program with more input than output control points runs its local part on lanes the hull stage does not have", 0u);
             requireUniformBarriers();
@@ -1075,6 +1076,10 @@ private:
                         access.kind = TessellationAttribute::GeometryOutput;
                     } else if (stage == IrShaderStage::TessellationControl && !access.write) {
                         access.kind = TessellationAttribute::ControlInput;
+                    } else if (tessellation.onChip && stage == IrShaderStage::TessellationControl) {
+                        Fail("a hull shader that keeps its outputs on chip (SPI_SHADER_PGM_RSRC2_HS.OC_LDS_EN=0) writes them to LDS, which is not implemented", flags.pc);
+                    } else if (tessellation.onChip && stage == IrShaderStage::TessellationEvaluation) {
+                        Fail("a domain shader that reads hull outputs on chip (SPI_SHADER_PGM_RSRC2_VS.OC_LDS_EN=0) reads them from LDS, which is not implemented", flags.pc);
                     } else {
                         Fail("unsupported LDS access in a tessellation stage", flags.pc);
                     }

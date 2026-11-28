@@ -641,7 +641,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     const auto decodeVertexInfo = [&](std::size_t i) {
         const auto& program = programs[i];
         if (program.binary.stage == Stage::Fragment || roles[i] == Role::GeometryBack) return;
-        vertexInfos[i] = DecodeOrderedVertexStageInfo(program.binary.header, program.binary.headerAddress, program.userData, decodeReads[i], 8u - program.firstUserSgpr);
+        vertexInfos[i] = DecodeOrderedVertexStageInfo(program.binary.header, program.binary.headerAddress, program.userData, decodeReads[i], program.hiddenUserWords);
         if (vertexInfos[i]) {
             vertexInfos[i]->paClVsOutCntl = PositionExportLayout(program.snapshot.get(), program.codeOffset, program.binary.code, readRegister(queue.context, 0x207), program.tailContinuation.get()) | graphics.layerExports | graphics.viewportExports;
             vertexInfos[i]->depthRemapMode = graphics.depthRemap.mode;
@@ -920,7 +920,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         if (location == 0x280u) return std::nullopt;
         for (std::size_t i = 0; i < programs.size(); ++i) {
             if (roles[i] == Role::Fragment || roles[i] == Role::GeometryBack || location < programs[i].userDataBase) continue;
-            const auto word = location - programs[i].userDataBase + (8u - programs[i].firstUserSgpr);
+            const auto word = location - programs[i].userDataBase + programs[i].hiddenUserWords;
             if (word < programs[i].userData.size()) return std::make_pair(i, static_cast<std::size_t>(word));
         }
         return std::nullopt;
@@ -929,7 +929,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         const auto& program = programs[i];
         if (program.binary.stage == Stage::Fragment || roles[i] == Role::GeometryBack) return;
         decodeReads[i].clear();
-        vertexInfos[i] = Graphics::DecodeVertexStageInfo(program.binary.header, program.binary.headerAddress, program.userData, &decodeReads[i], false, 8u - program.firstUserSgpr);
+        vertexInfos[i] = Graphics::DecodeVertexStageInfo(program.binary.header, program.binary.headerAddress, program.userData, &decodeReads[i], false, program.hiddenUserWords);
         if (vertexInfos[i]) {
             vertexInfos[i]->paClVsOutCntl = PositionExportLayout(program.snapshot.get(), program.codeOffset, program.binary.code, tail.reg207, program.tailContinuation.get()) | graphics.layerExports | graphics.viewportExports;
             vertexInfos[i]->depthRemapMode = graphics.depthRemap.mode;
@@ -1596,7 +1596,7 @@ void Driver::restartFinishedDraw(DrawTail& tail) {
         tail.vertexInfos[i].reset();
         const auto& program = programs[i];
         if (program.binary.stage == Stage::Fragment || roles[i] == Role::GeometryBack) continue;
-        tail.vertexInfos[i] = DecodeOrderedVertexStageInfo(program.binary.header, program.binary.headerAddress, program.userData, tail.decodeReads[i], 8u - program.firstUserSgpr);
+        tail.vertexInfos[i] = DecodeOrderedVertexStageInfo(program.binary.header, program.binary.headerAddress, program.userData, tail.decodeReads[i], program.hiddenUserWords);
         if (!tail.vertexInfos[i]) continue;
         tail.vertexInfos[i]->paClVsOutCntl = PositionExportLayout(program.snapshot.get(), program.codeOffset, program.binary.code, tail.reg207, program.tailContinuation.get()) | graphics.layerExports | graphics.viewportExports;
         tail.vertexInfos[i]->depthRemapMode = graphics.depthRemap.mode;

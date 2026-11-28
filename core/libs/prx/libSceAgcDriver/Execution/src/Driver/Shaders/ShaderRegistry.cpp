@@ -1158,8 +1158,8 @@ std::optional<std::vector<std::uint32_t>> RetargetDriverBlockPointers(std::span<
 #endif
 
 std::shared_ptr<const PreparedShaderState::UserDataLink> LinkUserDataCallees(const ShaderRecompiler::RecompileRequest& request, const ShaderSnapshot& snapshot, std::size_t codeOffset) {
-    const bool gcnVertex = ShaderRecompiler::GcnGuestShaders() && request.shader.stage == ShaderRecompiler::ShaderStage::Vertex;
-    if (request.shader.stage != ShaderRecompiler::ShaderStage::Compute && !gcnVertex) return nullptr;
+    const bool gcnFetch = ShaderRecompiler::GcnGuestShaders() && (request.shader.stage == ShaderRecompiler::ShaderStage::Vertex || request.shader.stage == ShaderRecompiler::ShaderStage::Local);
+    if (request.shader.stage != ShaderRecompiler::ShaderStage::Compute && !gcnFetch) return nullptr;
     const auto code = request.shader.code;
     if (std::none_of(code.begin(), code.end(), [](std::uint32_t word) { return (word & 0xff80ff00u) == 0xbe802100u; })) return nullptr;
     const ShaderRecompiler::SwappcInfo swappc{false, request.context.userDataBaseRegister, static_cast<std::uint32_t>(request.context.userData.size()), request.context.waveSize};
@@ -2693,7 +2693,7 @@ std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decod
         }
         std::optional<ShaderRecompiler::ShaderVertexStageInfo> vertex;
         try {
-            if (!fragment) vertex = Graphics::DecodeVertexStageInfo(program.binary.header, program.binary.headerAddress, program.userData, nullptr, true, 8u - program.firstUserSgpr);
+            if (!fragment) vertex = Graphics::DecodeVertexStageInfo(program.binary.header, program.binary.headerAddress, program.userData, nullptr, true, program.hiddenUserWords);
         } catch (const std::exception& error) {
             if (!deferUnprepared) throw;
             DeferPipelineStage(transaction.Edit(*program.snapshot), *program.snapshot, error.what());
