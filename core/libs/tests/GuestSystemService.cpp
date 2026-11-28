@@ -26,6 +26,10 @@
 #include <unistd.h>
 #endif
 
+#ifndef _WIN32
+extern char** environ;
+#endif
+
 namespace {
 
 constexpr int browserUnavailable = static_cast<int>(0x8002002Du);
@@ -236,7 +240,6 @@ int RunTitleContext(const char* program, const std::filesystem::path& directory)
     CloseHandle(child.hProcess);
     return static_cast<int>(code);
 #else
-    extern char** environ;
     char* arguments[] = {const_cast<char*>(program), const_cast<char*>(titleContextMode), const_cast<char*>(directory.c_str()), nullptr};
     pid_t child = 0;
     if (posix_spawnp(&child, program, nullptr, nullptr, arguments, environ) != 0) return -1;
