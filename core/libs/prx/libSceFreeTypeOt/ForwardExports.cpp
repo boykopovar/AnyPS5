@@ -175,6 +175,21 @@ std::uint64_t APS5_VABI FT_Get_Next_CharForward_nid_no_patch(FreeType::GuestFace
 }
 APS5_EXPORT("egPbre4QGBI", FT_Get_Next_CharForward_nid_no_patch);
 
+int APS5_VABI FT_Get_PFR_AdvanceForward_nid_no_patch(FreeType::GuestFaceRec* face, std::uint32_t index, std::int64_t* advance) {
+    return FT_Get_PFR_Advance_nid_postfix(face, index, advance);
+}
+APS5_EXPORT("NVuvsPgTXto", FT_Get_PFR_AdvanceForward_nid_no_patch);
+
+int APS5_VABI FT_Get_PFR_KerningForward_nid_no_patch(FreeType::GuestFaceRec* face, std::uint32_t left, std::uint32_t right, FreeType::GuestVector* vector) {
+    return FT_Get_PFR_Kerning_nid_postfix(face, left, right, vector);
+}
+APS5_EXPORT("qBohKqdkAqE", FT_Get_PFR_KerningForward_nid_no_patch);
+
+int APS5_VABI FT_Get_PFR_MetricsForward_nid_no_patch(FreeType::GuestFaceRec* face, std::uint32_t* outline, std::uint32_t* metrics, std::int64_t* xScale, std::int64_t* yScale) {
+    return FT_Get_PFR_Metrics_nid_postfix(face, outline, metrics, xScale, yScale);
+}
+APS5_EXPORT("OqaxEkRhr+8", FT_Get_PFR_MetricsForward_nid_no_patch);
+
 const char* APS5_VABI FT_Get_Postscript_NameForward_nid_no_patch(FreeType::GuestFaceRec* face) {
     return FT_Get_Postscript_Name_nid_postfix(face);
 }
