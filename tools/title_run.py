@@ -213,7 +213,7 @@ def relink_args(entry, platform, intel_host=False):
     return args
 
 
-ERROR = re.compile(r"what\(\):|FAIL:|FATAL|not implemented|unhandled exception|DEVICE_LOST|has not reached submission|Failed to load module:")
+ERROR = re.compile(r"what\(\):|libc\+\+abi: terminating|FAIL:|FATAL|not implemented|unhandled exception|DEVICE_LOST|has not reached submission|Failed to load module:")
 WARNINGS = ("destroyed with GPU results pending", "guest memory changed while GPU results were pending")
 STALL_SECONDS = 20
 MAX_WINDOW_MS = int(sys.float_info.max)
