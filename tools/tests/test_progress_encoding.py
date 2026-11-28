@@ -83,5 +83,32 @@ class ProgressEncodingTests(unittest.TestCase):
                 self.assertIn(library.removeprefix("libSce"), generated[name])
 
 
+    def test_output_into_a_closed_pipe_exits_cleanly_without_traceback(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        snapshots = [Path(directory.name) / name for name in ("base.json", "head.json")]
+        for path, implemented in zip(snapshots, (False, True)):
+            path.write_text(json.dumps(snapshot(implemented)), encoding="utf-8")
+        for arguments in (["--json"], ["--module", "libScePad"], ["--compare", *map(str, snapshots)]):
+            with self.subTest(arguments=arguments):
+                read_fd, write_fd = os.pipe()
+                os.close(read_fd)
+                try:
+                    process = subprocess.Popen([sys.executable, str(PROGRESS), *arguments],
+                                               stdout=write_fd, stderr=subprocess.PIPE)
+                finally:
+                    os.close(write_fd)
+                try:
+                    _, stderr_bytes = process.communicate(timeout=120)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    _, stderr_bytes = process.communicate()
+                    raise
+                stderr = stderr_bytes.decode("utf-8", errors="replace")
+                self.assertEqual(process.returncode, 0, stderr)
+                self.assertNotIn("Traceback", stderr)
+                self.assertNotIn("BrokenPipeError", stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
