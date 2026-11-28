@@ -1,3 +1,4 @@
+#include "prx/libc/include/General.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 
 #include <atomic>
@@ -11,6 +12,13 @@
 #include <thread>
 #include <type_traits>
 #include <vector>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -254,6 +262,111 @@ void TestInvalidArguments() {
     std::printf("ConcurrentPtrHashSet: invalid arguments throw\n");
 }
 
+struct GuardedPages {
+    unsigned char* base = nullptr;
+    std::size_t pageSize = 0;
+
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 4, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(base + pageSize, pageSize, PAGE_READONLY, &previous) != 0);
+        Require(VirtualProtect(base + pageSize * 3, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0);
+        pageSize = static_cast<std::size_t>(size);
+        void* mapped = mmap(nullptr, pageSize * 4, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        base = static_cast<unsigned char*>(mapped);
+        Require(mprotect(base + pageSize, pageSize, PROT_READ) == 0);
+        Require(mprotect(base + pageSize * 3, pageSize, PROT_NONE) == 0);
+#endif
+    }
+
+    ~GuardedPages() {
+        if (!base) return;
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, pageSize * 4);
+#endif
+    }
+
+    unsigned char* ReadOnly() const { return base + pageSize; }
+    unsigned char* Guard() const { return base + pageSize * 3; }
+};
+
+template<class Function>
+void RequireNotImplemented(Function&& function) {
+    const auto before = NotImplementedCalls_nid_no_patch();
+    bool threw = false;
+    try {
+        function();
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw);
+    Require(NotImplementedCalls_nid_no_patch() == before + 1);
+}
+
+void TestGuestPointers() {
+    GuardedPages pages;
+    auto* const guardSet = reinterpret_cast<Set*>(pages.Guard());
+    auto* const roSet = reinterpret_cast<Set*>(pages.ReadOnly());
+    auto* const guardTable = reinterpret_cast<Table*>(pages.Guard());
+    auto* const roTable = reinterpret_cast<Table*>(pages.ReadOnly());
+
+    RequireNotImplemented([&] { _ZN3WTF20ConcurrentPtrHashSetC1Ev(guardSet); });
+    RequireNotImplemented([&] { _ZN3WTF20ConcurrentPtrHashSetC2Ev(roSet); });
+    RequireNotImplemented([&] { _ZN3WTF20ConcurrentPtrHashSetD1Ev(guardSet); });
+    RequireNotImplemented([&] { _ZN3WTF20ConcurrentPtrHashSetD2Ev(roSet); });
+    RequireNotImplemented([&] { _ZN3WTF20ConcurrentPtrHashSet5clearEv(guardSet); });
+    RequireNotImplemented([&] { _ZN3WTF20ConcurrentPtrHashSet5clearEv(roSet); });
+    RequireNotImplemented([&] { _ZN3WTF20ConcurrentPtrHashSet15deleteOldTablesEv(guardSet); });
+    RequireNotImplemented([&] { _ZN3WTF20ConcurrentPtrHashSet15deleteOldTablesEv(roSet); });
+
+    unsigned char* const splitSetAddr = pages.ReadOnly() - 8;
+    std::memset(splitSetAddr, 0x5A, 8);
+    RequireNotImplemented([&] { _ZN3WTF20ConcurrentPtrHashSetC1Ev(reinterpret_cast<Set*>(splitSetAddr)); });
+    for (std::size_t i = 0; i < 8; ++i) Require(splitSetAddr[i] == 0x5A);
+
+    Set set;
+    _ZN3WTF20ConcurrentPtrHashSetC1Ev(&set);
+    auto* const validTable = CurrentTable(&set);
+    auto add = &_ZN3WTF20ConcurrentPtrHashSet7addSlowEPNS0_5TableEjjjPv;
+
+    RequireNotImplemented([&] { add(guardSet, validTable, 31, 0, 0, Key(1)); });
+    RequireNotImplemented([&] { add(roSet, validTable, 31, 0, 0, Key(1)); });
+    RequireNotImplemented([&] { add(&set, guardTable, 31, 0, 0, Key(1)); });
+    RequireNotImplemented([&] { add(&set, roTable, 0, 0, 0, Key(1)); });
+
+    Table* const truncatedTable = reinterpret_cast<Table*>(pages.Guard() - sizeof(Table));
+    truncatedTable->size = 32;
+    truncatedTable->mask = 31;
+    truncatedTable->load = 0;
+    truncatedTable->array[0] = nullptr;
+    RequireNotImplemented([&] { add(&set, truncatedTable, 31, 0, 0, Key(1)); });
+
+    Set badListSet{};
+    badListSet.tablesBuffer = reinterpret_cast<Table**>(pages.Guard());
+    badListSet.tablesCapacity = 4;
+    badListSet.tablesSize = 1;
+    badListSet.table = validTable;
+    badListSet.lock = 0;
+    RequireNotImplemented([&] { _ZN3WTF20ConcurrentPtrHashSetD1Ev(&badListSet); });
+    RequireNotImplemented([&] { _ZN3WTF20ConcurrentPtrHashSet5clearEv(&badListSet); });
+    RequireNotImplemented([&] { _ZN3WTF20ConcurrentPtrHashSet15deleteOldTablesEv(&badListSet); });
+    Require(badListSet.lock == 0);
+
+    _ZN3WTF20ConcurrentPtrHashSetD1Ev(&set);
+    std::printf("ConcurrentPtrHashSet: guest pointer validation passed\n");
+}
+
 }
 
 int main() {
@@ -262,4 +375,5 @@ int main() {
     TestRegrowAfterRetire();
     TestConcurrentAdds();
     TestInvalidArguments();
+    TestGuestPointers();
 }
