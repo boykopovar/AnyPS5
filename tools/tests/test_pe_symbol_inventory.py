@@ -47,6 +47,29 @@ class Tests(unittest.TestCase):
             self.assertEqual(r.stdout,"")
             self.assertNotIn("Traceback",r.stderr)
 
+    def test_missing_file_fails_without_traceback(self):
+        r=self.run_tool(self.root/"absent.prx")
+        self.assertEqual(r.returncode,2)
+        self.assertEqual(r.stdout,"")
+        self.assertNotIn("Traceback",r.stderr)
+
+    def test_missing_argument_is_usage_error(self):
+        r=self.run_tool()
+        self.assertEqual(r.returncode,2)
+        self.assertEqual(r.stdout,"")
+        self.assertIn("usage",r.stderr)
+
+    def test_image_without_symbols_or_exports(self):
+        sys.path.insert(0,str(Path(__file__).parent))
+        from test_symbolize_samples import build_pe
+        path=self.root/"plain.prx"
+        build_pe(path,with_symbols=False,with_exports=False)
+        r=self.run_tool(path)
+        self.assertEqual(r.returncode,0,r.stderr)
+        data=json.loads(r.stdout)
+        self.assertEqual(data["symbol_source"],"exports")
+        self.assertTrue(all(x["symbols"]==[] for x in data["code"]))
+
 
 if __name__ == "__main__":
     unittest.main()

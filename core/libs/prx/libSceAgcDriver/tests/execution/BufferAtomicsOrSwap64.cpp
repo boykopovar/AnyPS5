@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
+#include <set>
 #include <span>
 #include <string>
 #include <vector>
@@ -22,6 +23,23 @@ constexpr std::uint32_t Results = 128;
 constexpr std::uint32_t Checked = 28;
 alignas(256) std::array<std::uint32_t, MaxThreads * Inputs> Input{};
 alignas(256) std::array<std::uint32_t, MaxThreads * Results> Output{};
+
+constexpr std::uint32_t ContentionGroups = 32;
+constexpr std::uint32_t ContentionThreads = 64;
+constexpr std::uint32_t ContentionValues = ContentionGroups * ContentionThreads;
+alignas(256) std::array<std::uint64_t, ContentionValues> ContentionInput{};
+alignas(256) std::array<std::uint64_t, ContentionValues> ContentionOutput{};
+alignas(256) std::array<std::uint64_t, 32> ContentionTarget{};
+
+alignas(256) constexpr std::array<std::uint32_t, 13> ContendedSwap{
+    0x8f0d890c, 0x34060083, 0x4a06060d, 0xe0341000, 0x80000a03, 0xbf8c3f70, 0x7e080280,
+    0xe1405000, 0x80020a04, 0xbf8c3f70, 0xe0741000, 0x80010a03, 0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 12> MixedWidthOr{
+    0x360a009f, 0x7e0e0281, 0x340c0f05, 0x7e100280, 0xe0e81000, 0x80020608,
+    0x7e140280, 0x7e160306, 0xe1681000, 0x80020a08, 0xbf8c3f70, 0xbf810000,
+};
 
 alignas(256) constexpr std::array<std::uint32_t, 95> Wave32Code{
     0x34020084, 0x34060089, 0xe0381000, 0x80000401, 0xbf8c3f70, 0xbe880304, 0xbe890305, 0xbe8a03ff,
@@ -265,6 +283,60 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, s
     device.WaitIdle();
 }
 
+void Contend(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint32_t waveSize) {
+    std::vector<std::uint32_t> userData(12, 0u);
+    const auto input = BufferDescriptor(ContentionInput.data(), static_cast<std::uint32_t>(ContentionInput.size() * 8u));
+    const auto output = BufferDescriptor(ContentionOutput.data(), static_cast<std::uint32_t>(ContentionOutput.size() * 8u));
+    const auto target = BufferDescriptor(ContentionTarget.data(), static_cast<std::uint32_t>(ContentionTarget.size() * 8u));
+    std::copy(input.begin(), input.end(), userData.begin());
+    std::copy(output.begin(), output.end(), userData.begin() + 4);
+    std::copy(target.begin(), target.end(), userData.begin() + 8);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{ContentionThreads, 1, 1}, 0u, {true, false, false}, false, 1};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
+        {waveSize, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        device.Target(),
+        {0, 0, 0, 128}
+    };
+    request.useCache = false;
+    const auto result = ShaderRecompiler::Recompile(request);
+    device.Dispatch(result, ContentionGroups, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.WaitIdle();
+}
+
+std::string Hex64(std::uint64_t value) {
+    char text[24];
+    std::snprintf(text, sizeof(text), "0x%016llx", static_cast<unsigned long long>(value));
+    return text;
+}
+
+void CheckContendedSwap(AgcDriver::VulkanDevice& device, std::uint32_t waveSize) {
+    const auto name = "buffer_atomic_swap_x2 contended by " + std::to_string(ContentionValues) + " wave" + std::to_string(waveSize) + " threads on one qword";
+    constexpr std::uint64_t initial = 0x0123456789abcdefull;
+    std::uint64_t state = 0x853c49e6748fea9bull + waveSize;
+    std::multiset<std::uint64_t> expected{initial};
+    for (auto& value : ContentionInput) {
+        state = state * 6364136223846793005ull + 1442695040888963407ull;
+        value = state ^ (state >> 29u);
+        expected.insert(value);
+    }
+    ContentionOutput.fill(0xdeadbeefdeadbeefull);
+    ContentionTarget.fill(0u);
+    ContentionTarget[0] = initial;
+    Contend(device, ContendedSwap, waveSize);
+    std::multiset<std::uint64_t> seen(ContentionOutput.begin(), ContentionOutput.end());
+    seen.insert(ContentionTarget[0]);
+    Require(seen == expected, name + ": the returned values and the final " + Hex64(ContentionTarget[0]) + " are not a permutation of the initial and swapped values");
+}
+
+void CheckMixedWidthOr(AgcDriver::VulkanDevice& device, std::uint32_t waveSize) {
+    const auto name = "buffer_atomic_or and buffer_atomic_or_x2 contended by " + std::to_string(ContentionValues) + " wave" + std::to_string(waveSize) + " threads on one qword";
+    ContentionTarget.fill(0u);
+    Contend(device, MixedWidthOr, waveSize);
+    Require(ContentionTarget[0] == ~std::uint64_t{0}, name + ": the qword holds " + Hex64(ContentionTarget[0]) + ", expected every bit set");
+}
+
 template <std::size_t Lanes>
 void Check(const std::uint32_t (&expected)[Lanes][Checked], const char* const (&names)[Checked], const char* run) {
     for (std::uint32_t tid = 0; tid < Lanes; ++tid) {
@@ -281,16 +353,16 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        if (!TargetHasCapability(device->Target(), spv::CapabilityInt64Atomics)) {
-            std::puts("skipped, the device has no shaderBufferInt64Atomics");
-            return VulkanTestSkipped;
-        }
         Run(*device, Wave32Code, 32, device->Target());
         Check(Expected32, Names, "wave32");
         Run(*device, Wave64Code, 64, device->Target());
         Check(Expected64, Names, "wave64");
         Run(*device, Wave64Code, 64, device->ComputeTarget(32));
         Check(Expected64, Names, "wave64 split");
+        for (const auto waveSize : {32u, 64u}) {
+            CheckContendedSwap(*device, waveSize);
+            CheckMixedWidthOr(*device, waveSize);
+        }
         std::puts("buffer 64-bit or/swap atomics tests passed");
         return 0;
     } catch (const std::exception& error) {

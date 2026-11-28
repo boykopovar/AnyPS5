@@ -209,6 +209,12 @@ static void Destroy() {
     CHECK(sceUltUlthreadRuntimeDestroy(nullptr) == Null);
     CHECK(sceUltUlthreadRuntimeDestroy(&runtime) == State);
     CHECK(_sceUltUlthreadRuntimeCreate(&runtime, "runtime", 1, 1, nullptr, nullptr) == Ok);
+    runtime.bytes[0] = 0x5A;
+    CHECK(_sceUltUlthreadRuntimeCreate(&runtime, "again", 2, 2, nullptr, nullptr) == State);
+    CHECK(runtime.bytes[0] == 0x5A);
+    UltUlthreadRuntimeInfo runtimeInfo{};
+    CHECK(sceUltGetUlthreadRuntimeInfo(&runtime, &runtimeInfo, nullptr, 0, nullptr, 0) == Ok);
+    CHECK(std::strcmp(runtimeInfo.name, "runtime") == 0 && runtimeInfo.maxUlthreads == 1 && runtimeInfo.workerThreads == 1);
     CHECK(_sceUltUlthreadRuntimeCreate(&other, "other", 1, 1, nullptr, nullptr) == Ok);
     CHECK(_sceUltUlthreadCreate(&thread, "thread", Immediate, 0x11, nullptr, 0, &runtime, nullptr) == Ok);
     CHECK(sceUltUlthreadRuntimeDestroy(&other) == Ok);
@@ -237,6 +243,12 @@ static void UnderscoredCreate() {
     CHECK(_sceUltWaitingQueueResourcePoolCreate(pool, "pool", 1, 1, workArea, commonOptions) == Invalid);
     commonOptions[31] = 0;
     CHECK(_sceUltWaitingQueueResourcePoolCreate(pool, "pool", 1, 1, workArea, commonOptions) == Ok);
+    pool[0] = 0x5A;
+    CHECK(_sceUltWaitingQueueResourcePoolCreate(pool, "again", 2, 2, workArea, nullptr) == State);
+    CHECK(pool[0] == 0x5A);
+    UltWaitingQueueResourcePoolInfo poolInfo{};
+    CHECK(sceUltGetWaitingQueueResourcePoolInfo(pool, &poolInfo) == Ok);
+    CHECK(std::strcmp(poolInfo.name, "pool") == 0 && poolInfo.maxThreads == 1 && poolInfo.maxSyncObjects == 1);
     CHECK(_sceUltSemaphoreCreate(nullptr, "semaphore", 1, pool, nullptr) == Null);
     CHECK(_sceUltSemaphoreCreate(semaphore, "semaphore", UINT32_MAX, pool, nullptr) == Ok);
     CHECK(sceUltSemaphoreTryAcquire(semaphore, 1) == Again);

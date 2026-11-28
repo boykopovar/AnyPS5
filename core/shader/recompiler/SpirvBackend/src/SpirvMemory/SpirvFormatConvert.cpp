@@ -35,6 +35,56 @@ namespace {
         return EmitSelectValueU32(state, zero, ConstantU32(state, 0u), EmitAddU32(state, exponent, rounded));
     }
 
+    std::uint32_t UnormWidthToF32Bits(SpirvEmitterState& state, std::uint32_t value, std::uint32_t bits) {
+        const auto maximum = EmitBinaryU32(state, spv::OpISub, EmitBinaryU32(state, spv::OpShiftLeftLogical, ConstantU32(state, 1u), bits), ConstantU32(state, 1u));
+        const auto zero = EmitCompareU32Constant(state, spv::OpIEqual, value, 0u);
+        const auto safe = EmitSelectValueU32(state, zero, ConstantU32(state, 1u), value);
+        const auto msb = state.module.AllocateId();
+        state.module.AddFunction(spv::OpExtInst, TypeU32(state), msb, GlslStd450(state), GLSLstd450FindUMsb, safe);
+        const auto leading = EmitBinaryU32(state, spv::OpISub, EmitBinaryU32(state, spv::OpISub, bits, ConstantU32(state, 1u)), msb);
+        const auto high = EmitBinaryU32(state, spv::OpShiftLeftLogical, safe, leading);
+        const auto low = EmitBinaryU32(state, spv::OpShiftRightLogical, safe, EmitBinaryU32(state, spv::OpISub, bits, leading));
+        const auto rotated = EmitBinaryU32(state, spv::OpBitwiseAnd, EmitOrU32(state, high, low), maximum);
+        auto pattern = EmitBinaryU32(state, spv::OpShiftLeftLogical, rotated, EmitBinaryU32(state, spv::OpISub, ConstantU32(state, 32u), bits));
+        for (std::uint32_t step = 0; step < 5u; ++step) {
+            const auto shift = EmitBinaryU32(state, spv::OpShiftLeftLogical, bits, ConstantU32(state, step));
+            const auto repeated = EmitOrU32(state, pattern, EmitBinaryU32(state, spv::OpShiftRightLogical, pattern, EmitAndConstant(state, shift, 31u)));
+            pattern = EmitSelectValueU32(state, Binary(state, spv::OpULessThan, TypeBool(state), shift, ConstantU32(state, 32u)), repeated, pattern);
+        }
+        const auto round = EmitAndConstant(state, EmitBinaryU32(state, spv::OpShiftRightLogical, pattern, ConstantU32(state, 7u)), 1u);
+        const auto rounded = EmitAddU32(state, EmitBinaryU32(state, spv::OpShiftRightLogical, pattern, ConstantU32(state, 8u)), round);
+        const auto exponent = EmitBinaryU32(state, spv::OpShiftLeftLogical, EmitBinaryU32(state, spv::OpISub, EmitAddU32(state, msb, ConstantU32(state, 126u)), bits), ConstantU32(state, 23u));
+        return EmitSelectValueU32(state, zero, ConstantU32(state, 0u), EmitAddU32(state, exponent, rounded));
+    }
+
+}
+
+std::uint32_t NormalizeFormatComponentWidth(SpirvEmitterState& state, SpirvFormatComponentType type, std::uint32_t bits, std::uint32_t raw) {
+    switch (type) {
+    case SpirvFormatComponentType::Uint:
+    case SpirvFormatComponentType::Sint:
+    case SpirvFormatComponentType::Uscaled:
+    case SpirvFormatComponentType::Sscaled: {
+            SpirvBufferFormatInfo info{};
+            info.type = type;
+            info.componentCount = 1u;
+            return NormalizeFormatComponent(state, info, 0u, raw);
+    }
+    case SpirvFormatComponentType::Unorm:
+        return UnormWidthToF32Bits(state, raw, bits);
+    case SpirvFormatComponentType::Snorm: {
+            const auto magnitudeBits = EmitBinaryU32(state, spv::OpISub, bits, ConstantU32(state, 1u));
+            const auto maximum = EmitBinaryU32(state, spv::OpISub, EmitBinaryU32(state, spv::OpShiftLeftLogical, ConstantU32(state, 1u), magnitudeBits), ConstantU32(state, 1u));
+            const auto negative = Binary(state, spv::OpSLessThan, TypeBool(state), EmitTBufferBitcastU32ToI32(state, raw), EmitTBufferBitcastU32ToI32(state, ConstantU32(state, 0u)));
+            const auto magnitude = EmitSelectValueU32(state, negative, Unary(state, spv::OpSNegate, TypeU32(state), raw), raw);
+            const auto clamped = state.module.AllocateId();
+            state.module.AddFunction(spv::OpExtInst, TypeU32(state), clamped, GlslStd450(state), GLSLstd450UMin, magnitude, maximum);
+            const auto sign = EmitSelectValueU32(state, negative, ConstantU32(state, 0x80000000u), ConstantU32(state, 0u));
+            return EmitOrU32(state, sign, UnormWidthToF32Bits(state, clamped, magnitudeBits));
+    }
+    default:
+        FailEmit("buffer format component type has no width-independent conversion");
+    }
 }
 
 std::uint32_t EmitTBufferBitcastU32ToI32(SpirvEmitterState& state, std::uint32_t value) {
@@ -70,8 +120,25 @@ std::uint32_t EmitUFloatToF32Bits(SpirvEmitterState& state, std::uint32_t raw, s
     return EmitBitcastF32ToU32(state, result);
 }
 
+std::uint32_t EmitUFloat6E4ToF32Bits(SpirvEmitterState& state, std::uint32_t raw) {
+    const auto mantissa = EmitBinaryU32(state, spv::OpBitwiseAnd, raw, ConstantU32(state, 0x3fu));
+    const auto exponent = EmitBinaryU32(state, spv::OpBitwiseAnd, EmitBinaryU32(state, spv::OpShiftRightLogical, raw, ConstantU32(state, 6u)), ConstantU32(state, 0xfu));
+    const auto exponentBits = EmitBinaryU32(state, spv::OpShiftLeftLogical, EmitAddU32(state, exponent, ConstantU32(state, 127u - 7u)), ConstantU32(state, 23u));
+    const auto mantissaBits = EmitBinaryU32(state, spv::OpShiftLeftLogical, mantissa, ConstantU32(state, 17u));
+    const auto normal = EmitBitcastU32ToF32(state, EmitBinaryU32(state, spv::OpBitwiseOr, exponentBits, mantissaBits));
+    const auto mantissaF32 = state.module.AllocateId();
+    const auto subnormal = state.module.AllocateId();
+    state.module.AddFunction(spv::OpConvertUToF, TypeF32(state), mantissaF32, mantissa);
+    state.module.AddFunction(spv::OpFMul, TypeF32(state), subnormal, mantissaF32, ConstantF32Value(state, std::ldexp(1.0f, 1 - 7 - 6)));
+    const auto result = EmitTBufferSelectF32(state, EmitCompareU32Constant(state, spv::OpIEqual, exponent, 0u), subnormal, normal);
+    return EmitBitcastF32ToU32(state, result);
+}
+
 std::uint32_t NormalizeFormatComponent(SpirvEmitterState& state, const SpirvBufferFormatInfo& info, std::uint32_t component, std::uint32_t raw) {
     const auto bits = info.componentBits[component];
+    if (info.format == IrBufferFormat::Format6E4Float) {
+        return component < 3u ? EmitUFloat6E4ToF32Bits(state, raw) : UnormToF32Bits(state, raw, bits);
+    }
     switch (info.type) {
     case SpirvFormatComponentType::Uint:
     case SpirvFormatComponentType::Sint:
@@ -280,6 +347,9 @@ std::uint32_t EmitD16FormatComponent(SpirvEmitterState& state, const SpirvBuffer
 }
 
 std::uint32_t EmitFormatStoreComponent(SpirvEmitterState& state, const SpirvBufferFormatInfo& info, std::uint32_t component, std::uint32_t data) {
+    if (info.format == IrBufferFormat::Format6E4Float) {
+        FailEmit("stores a 10_10_10_2 float format, which is not implemented");
+    }
     const auto bits = info.componentBits[component];
     const std::uint32_t mask = bits >= 32u ? 0xffffffffu : (1u << bits) - 1u;
     switch (info.type) {
@@ -334,14 +404,19 @@ std::uint32_t EmitD16StoreComponent(SpirvEmitterState& state, const SpirvBufferF
     return EmitFormatStoreComponent(state, info, component, EmitOrU32(state, sign, magnitude));
 }
 
-void EmitDeviceAtomicMemoryBarrier(SpirvEmitterState& state) {
+void EmitDeviceAtomicMemoryBarrier(SpirvEmitterState& state, std::uint32_t memorySemantics) {
     // GCN atomics imply no fence; this device-scope barrier is the acquire side of lock/publish
     // patterns (atomic, then loads of data other waves wrote). It also makes every non-returning
     // atomic wait for its completion. Experiment switch: APS5_NO_ATOMIC_BARRIER=1 drops it.
     static const bool disabled = std::getenv("APS5_NO_ATOMIC_BARRIER") != nullptr;
     if (disabled) return;
-    const auto semantics = spv::MemorySemanticsAcquireReleaseMask | spv::MemorySemanticsUniformMemoryMask;
+    const auto effectiveMemory = state.deviceAtomicWorkgroupMemoryBarriers ? static_cast<std::uint32_t>(spv::MemorySemanticsWorkgroupMemoryMask) : memorySemantics;
+    const auto semantics = spv::MemorySemanticsAcquireReleaseMask | effectiveMemory;
     state.module.AddFunction(spv::OpMemoryBarrier, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, semantics));
+}
+
+void EmitDeviceAtomicMemoryBarrier(SpirvEmitterState& state) {
+    EmitDeviceAtomicMemoryBarrier(state, spv::MemorySemanticsUniformMemoryMask);
 }
 
 std::uint32_t EmitDsSwizzleTargetLane(SpirvEmitterState& state, std::uint32_t subid, std::uint32_t control) {

@@ -46,7 +46,10 @@ public:
         if (Bypass(target)) return;
         for (std::size_t frame = 0; frame < frames; ++frame) {
             const float gain = static_cast<float>(advance(target)) / static_cast<float>(Unity);
-            for (unsigned channel = 0; channel < channels; ++channel) samples[frame * channels + channel] *= gain;
+            for (unsigned channel = 0; channel < channels; ++channel) {
+                auto& sample = samples[frame * channels + channel];
+                sample = gain == 0.0f ? 0.0f : sample * gain;
+            }
         }
     }
 

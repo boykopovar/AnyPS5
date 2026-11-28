@@ -1,11 +1,13 @@
 #include "prx/libSceSaveData/include/Api.hpp"
 #include "prx/libSceSaveData.native/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "SceTypes.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <iterator>
 #include <limits>
 #include <random>
@@ -98,9 +100,18 @@ static void CheckRoundTrip() {
     Save(second, other.data(), other.size(), other.size());
     Load(first, payload.data(), payload.size() - 3);
     Load(second, other.data(), other.size());
+    Require(std::filesystem::create_directory("app0"));
+    {
+        std::ofstream source("app0/source-icon.png", std::ios::binary);
+        Require(static_cast<bool>(source.write(reinterpret_cast<const char*>(other.data()), other.size())));
+    }
+    Require(sceSaveDataSaveIconByPath(&first, "/app0/source-icon.png") == 0);
+    Load(first, other.data(), other.size());
+    Require(sceSaveDataSaveIconByPath(&first, "/app0/missing.png") == NotFound);
+    Load(first, other.data(), other.size());
     Unmount(first);
     const auto remounted = Mount("first", ReadWrite);
-    Load(remounted, payload.data(), payload.size() - 3);
+    Load(remounted, other.data(), other.size());
     Unmount(remounted);
     Unmount(second);
 }
@@ -135,6 +146,13 @@ static void CheckReadOnly() {
 }
 
 static void CheckPreparedCreate2() {
+    const auto paramJson = ResolvePath_nid_no_patch("/app0/sce_sys/param.json");
+    std::filesystem::create_directories(paramJson.parent_path());
+    {
+        std::ofstream stream(paramJson, std::ios::binary | std::ios::trunc);
+        stream << "{\"titleId\":\"PPSA00000\",\"localizedParameters\":{\"en-US\":{\"titleName\":\"Example\"}}}";
+        Require(static_cast<bool>(stream));
+    }
     const int resource = sceSaveDataCreateTransactionResource(0);
     Require(resource > 0);
     SceSaveDataDirName directory{};
@@ -222,8 +240,8 @@ static void CheckArguments() {
     Require(sceSaveDataSaveIcon(&unterminated, &icon) == Parameter);
     Require(sceSaveDataSaveIconByPath(nullptr, nullptr) == Parameter);
     Require(sceSaveDataSaveIconByPath(&unterminated, nullptr) == Parameter);
-    Require(sceSaveDataSaveIconByPath(&point, nullptr) == 0);
-    Require(sceSaveDataSaveIconByPath(&point, "icon.png") == 0);
+    Require(sceSaveDataSaveIconByPath(&point, nullptr) == Parameter);
+    Require(sceSaveDataSaveIconByPath(&point, "icon.png") == NotFound);
     Require(sceSaveDataLoadIcon(&point, &icon) == NotFound);
     Require(icon.data_size == 0x123456);
     SaveDataMountPoint absent{};

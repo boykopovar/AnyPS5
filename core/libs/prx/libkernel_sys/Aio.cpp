@@ -1,5 +1,7 @@
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libkernel/Semaphore/include/Ksem.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include <algorithm>
@@ -13,17 +15,20 @@
 #include <mutex>
 #include <optional>
 #include <thread>
+#include <vector>
 
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
 namespace {
 
+constexpr int GuestEintr = 4;
 constexpr int GuestEbadf = 9;
 constexpr int GuestEfault = 14;
 constexpr int GuestEinval = 22;
 constexpr int GuestEagain = 35;
 constexpr int GuestEinprogress = 36;
+constexpr int GuestEpipe = 32;
 constexpr int GuestEopnotsupp = 45;
 constexpr int GuestEcanceled = 85;
 constexpr int LioWrite = 1;
@@ -37,6 +42,18 @@ constexpr int SigevSignal = 1;
 constexpr int SigevKevent = 3;
 constexpr int SigevThreadId = 4;
 constexpr int SignalMax = 128;
+constexpr int Sigpipe = 13;
+constexpr std::int32_t SiAsyncio = 0x10004;
+constexpr std::int32_t SiKernel = 0x10006;
+constexpr std::uint16_t KeventFlagsAllowed = 0x10 | 0x20 | 0x80;
+constexpr int Nonblocking = 0x4;
+constexpr int MessageDontWait = 0x80;
+constexpr int MessageNoSignal = 0x20000;
+constexpr int SocketLevel = 0xffff;
+constexpr int NoSigpipe = 0x800;
+constexpr short PollIn = 0x1;
+constexpr short PollOut = 0x4;
+constexpr int SocketPollMilliseconds = 10;
 constexpr int GuestOSync = 0x80;
 constexpr int GetFlags = 3;
 constexpr int AccessMode = 3;
@@ -64,9 +81,25 @@ struct Job {
     std::int64_t offset;
     void* buffer;
     std::uint64_t bytes;
+    std::uint64_t token = 0;
+    int notify = SigevNone;
+    int signo = 0;
+    std::int64_t value = 0;
+    std::int64_t thread = 0;
+    std::int64_t submitter = 0;
+    std::uint64_t signalTicket = 0;
+    bool socket = false;
+    bool cancelled = false;
+    std::uint64_t done = 0;
     State state = State::Queued;
     std::int64_t status = -1;
     int error = 0;
+};
+
+struct SocketQueue {
+    int descriptor;
+    bool write;
+    std::deque<std::shared_ptr<Job>> jobs;
 };
 
 struct Aio {
@@ -74,11 +107,14 @@ struct Aio {
     TimedWait::Condition changed;
     bool used = false;
     bool held = false;
+    bool socketHeld = false;
+    std::size_t socketWaiting = 0;
     bool started = false;
     std::intptr_t nextId = 0;
     std::deque<std::shared_ptr<Job>> queued;
     std::list<std::shared_ptr<Job>> all;
     std::list<std::shared_ptr<Job>> done;
+    std::list<SocketQueue> sockets;
 };
 
 Aio& Instance() {
@@ -111,10 +147,31 @@ std::int64_t Fetch(const GuestAiocb* user, std::int64_t GuestAiocb::*member) {
 void Run(Job& job) {
     std::int64_t result = 0;
     if (job.opcode == LioRead) result = job.bytes == 0 ? 0 : pread_nid_postfix(job.descriptor, job.buffer, job.bytes, job.offset);
-    else if (job.opcode == LioWrite) result = pwrite_nid_disambig1_nid_postfix(job.descriptor, job.buffer, job.bytes, job.offset);
+    else if (job.opcode == LioWrite) result = PosixPwrite_nid_no_patch(job.descriptor, job.buffer, job.bytes, job.offset);
     else result = fsync_nid_postfix(job.descriptor);
     job.status = result < 0 ? -1 : result;
     job.error = result < 0 ? *__error_nid_postfix() : 0;
+}
+
+std::uint64_t SendSignal(int guest, std::int32_t code, std::int64_t value, std::int64_t thread, bool directed) {
+    std::uint64_t ticket = 0;
+    if (SendValueSignal_nid_no_patch(guest, code, value, thread, directed, &ticket) == SignalSendUnblocked)
+        NotImplemented_nid_no_patch("aio delivering a signal to a thread that does not block it");
+    return ticket;
+}
+
+void Notify(Job& job) {
+    if (job.notify == SigevSignal || job.notify == SigevThreadId) job.signalTicket = SendSignal(job.signo, SiAsyncio, job.value, job.thread, job.notify == SigevThreadId);
+    if (job.notify == SigevKevent) KqueueAioDone_nid_no_patch(reinterpret_cast<std::uintptr_t>(job.user), job.token, job.error);
+}
+
+void Complete(Aio& aio, const std::shared_ptr<Job>& job, std::int64_t status, int error) {
+    job->status = status;
+    job->error = error;
+    job->state = State::Done;
+    aio.done.push_back(job);
+    Notify(*job);
+    aio.changed.NotifyAll();
 }
 
 void Worker() {
@@ -128,18 +185,99 @@ void Worker() {
         lock.unlock();
         Run(*job);
         lock.lock();
-        job->state = State::Done;
-        aio.done.push_back(job);
-        aio.changed.NotifyAll();
+        Complete(aio, job, job->status, job->error);
     }
 }
 
-void Complete(Aio& aio, const std::shared_ptr<Job>& job, std::int64_t status, int error) {
-    job->status = status;
-    job->error = error;
-    job->state = State::Done;
-    aio.done.push_back(job);
-    aio.changed.NotifyAll();
+bool SocketReady(int descriptor, bool write) {
+    GuestPollDescriptor entry{descriptor, write ? PollOut : PollIn, 0};
+    return poll_nid_postfix(&entry, 1, 0) > 0;
+}
+
+bool Blocking(int descriptor) {
+    const int flags = fcntl_nid_postfix(descriptor, GetFlags);
+    return flags >= 0 && (flags & Nonblocking) == 0;
+}
+
+bool NoSigpipeSet(int descriptor) {
+    int value = 0;
+    std::uint32_t length = sizeof(value);
+    return getsockopt_nid_postfix(descriptor, SocketLevel, NoSigpipe, &value, &length) == 0 && value != 0;
+}
+
+void RunSocketJob(Aio& aio, std::unique_lock<std::mutex>& lock, SocketQueue& queue) {
+    const auto job = queue.jobs.front();
+    queue.jobs.pop_front();
+    job->state = State::Running;
+    if (aio.socketHeld) {
+        ++aio.socketWaiting;
+        aio.changed.NotifyAll();
+        aio.changed.Wait(lock, [&] { return !aio.socketHeld; });
+        --aio.socketWaiting;
+    }
+    lock.unlock();
+    int error = 0;
+    bool wouldBlock = false;
+    for (;;) {
+        auto* buffer = static_cast<char*>(job->buffer) + job->done;
+        const std::uint64_t left = job->bytes - job->done;
+        const std::int64_t moved = queue.write ? send_nid_postfix(job->descriptor, buffer, left, MessageDontWait | MessageNoSignal)
+                                               : recv_nid_postfix(job->descriptor, buffer, left, MessageDontWait);
+        error = moved < 0 ? *__error_nid_postfix() : 0;
+        if (moved > 0) job->done += static_cast<std::uint64_t>(moved);
+        if (queue.write && error == GuestEpipe && !NoSigpipeSet(job->descriptor)) SendSignal(Sigpipe, SiKernel, 0, job->submitter, false);
+        wouldBlock = error == GuestEagain || (queue.write && error == 0 && job->done != job->bytes);
+        if (!wouldBlock) break;
+        if ((job->done != 0 && !Blocking(job->descriptor)) || !SocketReady(job->descriptor, queue.write)) break;
+    }
+    lock.lock();
+    if (wouldBlock && (job->done == 0 || Blocking(job->descriptor)) && job->cancelled) {
+        if (job->done != 0) Complete(aio, job, static_cast<std::int64_t>(job->done), 0);
+        else Complete(aio, job, -1, GuestEcanceled);
+        return;
+    }
+    if (wouldBlock && (job->done == 0 || Blocking(job->descriptor))) {
+        job->state = State::Queued;
+        queue.jobs.push_front(job);
+        return;
+    }
+    if (job->done != 0 && (error == GuestEintr || error == GuestEagain)) error = 0;
+    if (error != 0) Complete(aio, job, -1, error);
+    else Complete(aio, job, static_cast<std::int64_t>(job->done), 0);
+}
+
+void SocketWorker(std::list<SocketQueue>::iterator queue) {
+    auto& aio = Instance();
+    std::unique_lock lock(aio.lock);
+    while (!queue->jobs.empty()) {
+        GuestPollDescriptor entry{queue->descriptor, queue->write ? PollOut : PollIn, 0};
+        lock.unlock();
+        const int ready = poll_nid_postfix(&entry, 1, SocketPollMilliseconds);
+        lock.lock();
+        if (ready > 0 && !queue->jobs.empty()) RunSocketJob(aio, lock, *queue);
+    }
+    aio.sockets.erase(queue);
+}
+
+void QueueSocket(Aio& aio, const std::shared_ptr<Job>& job) {
+    const bool write = job->opcode == LioWrite;
+    auto found = std::find_if(aio.sockets.begin(), aio.sockets.end(), [&](const SocketQueue& queue) {
+        return queue.descriptor == job->descriptor && queue.write == write;
+    });
+    const bool fresh = found == aio.sockets.end();
+    if (fresh) found = aio.sockets.insert(aio.sockets.end(), SocketQueue{job->descriptor, write, {}});
+    found->jobs.push_back(job);
+    if (fresh) std::thread(SocketWorker, found).detach();
+}
+
+bool CancelSocketJob(Aio& aio, const std::shared_ptr<Job>& job) {
+    for (auto& queue : aio.sockets) std::erase(queue.jobs, job);
+    if (job->done != 0) {
+        Complete(aio, job, static_cast<std::int64_t>(job->done), 0);
+        return false;
+    }
+    Complete(aio, job, -1, GuestEcanceled);
+    return true;
 }
 
 std::optional<int> ReadyError(const std::shared_ptr<Job>& job) {
@@ -151,6 +289,8 @@ std::int64_t Consume(Aio& aio, std::list<std::shared_ptr<Job>>::iterator found) 
     const auto job = *found;
     aio.done.erase(found);
     aio.all.remove(job);
+    if (job->notify == SigevKevent) KqueueAioFree_nid_no_patch(reinterpret_cast<std::uintptr_t>(job->user), job->token);
+    if (job->notify == SigevSignal || job->notify == SigevThreadId) TakeValueSignal_nid_no_patch(job->signo, job->signalTicket);
     Store(job->user, &GuestAiocb::error, std::int64_t{job->error});
     Store(job->user, &GuestAiocb::status, job->status);
     return job->error != 0 ? Fail(job->error) : job->status;
@@ -192,20 +332,41 @@ int Queue(GuestAiocb* user, int opcode) {
     FileStat status{};
     if (_fstat_nid_postfix(request.fildes, &status) != 0) return fail(GuestEbadf);
     const auto type = static_cast<std::uint16_t>(status.st_mode & TypeMask);
-    if (type == TypeSocket) NotImplemented_nid_no_patch("aio on a socket");
-    const bool vnode = type != 0 && type != TypeFifo;
+    const bool ksem = IsKsemDescriptor_nid_no_patch(request.fildes);
+    const bool vnode = !ksem && type != 0 && type != TypeFifo && type != TypeSocket;
     if (opcode == LioSync && !vnode) return fail(GuestEinval);
     if (opcode != LioSync && request.offset < 0) return fail(GuestEinval);
+    const auto token = static_cast<std::uint64_t>(aio.nextId);
     if (!Store(user, &GuestAiocb::kernelinfo, reinterpret_cast<void*>(aio.nextId++))) return fail(GuestEinval);
-    if (notify != SigevNone) NotImplemented_nid_no_patch("aio completion delivering a signal or a kevent");
+    const auto ident = reinterpret_cast<std::uintptr_t>(user);
+    if (notify == SigevKevent) {
+        const auto keventFlags = static_cast<std::uint16_t>(request.sigevent.extra[0]);
+        if ((keventFlags & ~KeventFlagsAllowed) != 0) return fail(GuestEinval);
+        if (const int error = KqueueAddAio_nid_no_patch(request.sigevent.signo, ident, keventFlags, reinterpret_cast<void*>(request.sigevent.value), token))
+            return fail(error);
+    }
     Store(user, &GuestAiocb::error, std::int64_t{GuestEinprogress});
-    if (type != TypeRegular && type != TypeDirectory) return fail(GuestEopnotsupp);
+    if (ksem || (type != TypeRegular && type != TypeDirectory && type != TypeSocket)) {
+        if (notify == SigevKevent) KqueueAioFree_nid_no_patch(ident, token);
+        return fail(GuestEopnotsupp);
+    }
     auto job = std::make_shared<Job>(Job{user, request.fildes, opcode, request.offset, request.buf, request.nbytes});
+    job->token = token;
+    job->notify = notify;
+    job->signo = request.sigevent.signo;
+    job->value = request.sigevent.value;
+    job->submitter = scePthreadGetthreadid();
+    job->thread = notify == SigevThreadId ? static_cast<std::int32_t>(request.sigevent.extra[0]) : job->submitter;
+    job->socket = type == TypeSocket;
     aio.all.push_back(job);
-    aio.queued.push_back(job);
-    if (!aio.started) {
-        aio.started = true;
-        std::thread(Worker).detach();
+    if (job->socket) {
+        QueueSocket(aio, job);
+    } else {
+        aio.queued.push_back(job);
+        if (!aio.started) {
+            aio.started = true;
+            std::thread(Worker).detach();
+        }
     }
     aio.changed.NotifyAll();
     return 0;
@@ -220,6 +381,19 @@ void AioHoldWorkerForTest_nid_no_patch(bool hold) {
     std::lock_guard lock(aio.lock);
     aio.held = hold;
     aio.changed.NotifyAll();
+}
+
+void AioHoldSocketForTest_nid_no_patch(bool hold) {
+    auto& aio = Instance();
+    std::lock_guard lock(aio.lock);
+    aio.socketHeld = hold;
+    aio.changed.NotifyAll();
+}
+
+std::size_t AioSocketsHeldForTest_nid_no_patch() {
+    auto& aio = Instance();
+    std::lock_guard lock(aio.lock);
+    return aio.socketWaiting;
 }
 
 int APS5_VABI aio_read_nid_postfix(GuestAiocb* aiocb) {
@@ -336,11 +510,15 @@ int APS5_VABI aio_cancel_nid_postfix(int descriptor, GuestAiocb* aiocb) {
     int notCancelled = 0;
     for (const auto& job : std::list<std::shared_ptr<Job>>(aio.all)) {
         if (job->state == State::Done || job->descriptor != descriptor || (aiocb != nullptr && job->user != aiocb)) continue;
-        if (job->state == State::Queued) {
+        if (job->state == State::Queued && job->socket) {
+            if (CancelSocketJob(aio, job)) ++cancelled;
+            else ++notCancelled;
+        } else if (job->state == State::Queued) {
             std::erase(aio.queued, job);
             Complete(aio, job, -1, GuestEcanceled);
             ++cancelled;
         } else {
+            job->cancelled = true;
             ++notCancelled;
         }
         if (aiocb != nullptr) break;

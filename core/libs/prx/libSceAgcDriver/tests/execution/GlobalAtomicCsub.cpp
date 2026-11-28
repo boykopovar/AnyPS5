@@ -284,6 +284,7 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         if (SkipWithoutSharedMemoryStores()) return VulkanTestSkipped;
+        if (SkipOnLlvmpipe(*device, "global atomic csub without glc: wave64 byte 644 is 146, expected 0 on subgroup size 8")) return VulkanTestSkipped;
         GuestBlock guest;
         Run(*device, guest, 32);
         Run(*device, guest, 64);

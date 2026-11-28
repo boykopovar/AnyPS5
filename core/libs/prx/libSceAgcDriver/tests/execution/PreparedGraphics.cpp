@@ -89,6 +89,7 @@ void Check(AgcDriver::VulkanDevice& device, AgcDriver::Graphics::ShaderPath path
     ShaderRegistry registry;
     for (const auto* fixture : {&front, &back, &domain, &fragment}) registry.emplace(fixture->snapshot->codeAddress, std::vector<std::shared_ptr<const ShaderSnapshot>>{fixture->snapshot});
     AgcDriver::QueueState queue{};
+    queue.context[0x31c] = 10u << 2u;
     queue.context[0x8e] = 0xfu;
     queue.context[0x8f] = 0xfu;
     front.Bind(queue, tessellation ? 0x148u : 0xc8u, tessellation ? 0x10bu : 0x8bu);
@@ -539,6 +540,7 @@ void RetainedPixelMatchesNullProgram(AgcDriver::VulkanDevice& device) {
     queue.shader[0x00cu] = 0x12345678u;
     for (const auto trigger : {0u, 1u, 2u}) {
         auto active = queue;
+        if (trigger == 0) active.context[0x31c] = 10u << 2u;
         if (trigger == 0) active.context[0x8e] = active.context[0x8f] = 0xf;
         if (trigger == 1) active.context[0x203] = 0x400;
         if (trigger == 2) active.context[0x2dc] = 0xaa01;
@@ -561,6 +563,7 @@ void CheckMergedHull(AgcDriver::VulkanDevice& device) {
     ShaderRegistry registry;
     for (const auto* fixture : {&merged, &domain, &fragment}) registry.emplace(fixture->snapshot->codeAddress, std::vector<std::shared_ptr<const ShaderSnapshot>>{fixture->snapshot});
     AgcDriver::QueueState queue{};
+    queue.context[0x31c] = 10u << 2u;
     queue.context[0x8e] = 0xfu;
     queue.context[0x8f] = 0xfu;
     merged.Bind(queue, 0x148u, 0x10bu);
@@ -704,6 +707,7 @@ void CheckMergedHullVertexTables(AgcDriver::VulkanDevice& device) {
     registry.emplace(merged->codeAddress, std::vector<std::shared_ptr<const ShaderSnapshot>>{merged});
     for (const auto* fixture : {&domain, &fragment}) registry.emplace(fixture->snapshot->codeAddress, std::vector<std::shared_ptr<const ShaderSnapshot>>{fixture->snapshot});
     AgcDriver::QueueState queue{};
+    queue.context[0x31c] = 10u << 2u;
     queue.context[0x8e] = 0xfu;
     queue.context[0x8f] = 0xfu;
     const auto entry = merged->codeAddress + 256u;
@@ -787,10 +791,10 @@ int main(int argc, char** argv) {
         Require(argc <= 2, "invalid test arguments");
         if (argc == 2 && std::string_view(argv[1]).starts_with("--prebuild-")) {
             const auto mode = std::string_view(argv[1]).substr(11u);
-            const auto* value = std::getenv("APS5_NO_LIBRARY_PREBUILD");
+            const auto* value = std::getenv("APS5_LIBRARY_PREBUILD");
             Require(mode == "unset" ? value == nullptr : (mode == "0" || mode == "1") && value != nullptr && mode == value, "prebuild policy test has the wrong startup environment");
             if (!device->Target().registrationModules) return VulkanTestSkipped;
-            PrebuildPolicyReadback(*device, mode == "1");
+            PrebuildPolicyReadback(*device, mode != "1");
             std::cout << "prebuild policy native readback passed\n";
             return 0;
         }

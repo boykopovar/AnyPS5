@@ -1,0 +1,5 @@
+# shader
+
+## change [SDWA selectors on `v_frexp_mant_f16` and `v_frexp_exp_i16_f16`]
+
+- [SDWA selectors on `v_frexp_mant_f16` and `v_frexp_exp_i16_f16`](../../../core/shader/recompiler/RdnaDecoder/src/RdnaVectorOpDecoder.cpp) (shader recompiler) - the PS5's gfx1013 is not measured. WORD_0, WORD_1 and DWORD source selects with abs and neg, and WORD_0 and WORD_1 destinations with pad, sign-extend or preserve, are accepted; modifiers apply before extraction. SDWA clamp and omod: accepted on mant, thrown on exp. Sources: [RDNA2 ISA](https://gpuopen.com/download/rdna2-shader-instruction-set-architecture.pdf) §12.8 opcodes 89-90, §6.8, Table 88. On RDNA2 (gfx1036, AMD Windows driver 32.0.21045.16010, [hardware oracle](../HW_ORACLE.md)) [SdwaFrexpF16](../../../core/libs/prx/libSceAgcDriver/tests/execution/SdwaFrexpF16.cpp)'s words match in wave32 and wave64; outside its inputs, a denormal is normalized when f16 denormals are kept and reads as a signed zero (exponent 0) when flushed, and a NaN is quieted only in IEEE mode, as the translation does.

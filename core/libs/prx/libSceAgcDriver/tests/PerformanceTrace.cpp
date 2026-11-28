@@ -327,6 +327,28 @@ void FullBufferEvents() {
     Check(TraceFormat::Events(7, origin, std::vector<TraceThread::Snapshot>{snapshot}, 0, presents, 5).find("trace buffer full") == std::string::npos, "a thread that lost nothing got a cut-off event");
 }
 
+void SummaryAllPhaseTotals() {
+    const auto origin = Clock::now();
+    AgcDriver::TraceSummary summary;
+    const std::vector<Clock::time_point> presents{origin, origin + milliseconds(16), origin + milliseconds(32)};
+    std::vector<TraceThread::Total> totals;
+    for (const auto* scope : {"A", "B", "C", "D", "E", "F", "G", "H", "I"}) totals.push_back({scope, nullptr, milliseconds(1), 1});
+    totals.push_back({"Small", nullptr, microseconds(5), 2});
+    totals.push_back({"Driver.WorkerWait", nullptr, milliseconds(3), 4});
+    const std::vector<TraceThread::Snapshot> threads{{"a", {}, totals, false}, {"b", {}, {{"Small", nullptr, microseconds(7), 3}, {"Driver.WorkerWait", nullptr, milliseconds(2), 1}}, false}};
+    const auto compact = TraceFormat::Summary(summary, threads, presents);
+    Check(compact.find("\"phase_totals\":{") == std::string::npos, "compact summary exported the gated phase totals");
+    Check(compact.find("\"Small\":{") == std::string::npos, "compact summary carried per-phase count objects");
+    summary.environment = {{"APS5_TRACE_ALL_PHASES", "1"}};
+    const auto full = TraceFormat::Summary(summary, threads, presents);
+    Check(full.find("\"phase_totals\":{") != std::string::npos, "full phase totals were not exported");
+    Check(full.find("\"Small\":{\"count\":5,\"sum_ms\":0.012,\"ms_per_present\":0.006}") != std::string::npos, "short phase totals or counts did not merge across threads");
+    Check(full.find("\"Driver.WorkerWait\":{\"count\":5,\"sum_ms\":5.000,\"ms_per_present\":2.500}") != std::string::npos, "the wait scope is missing from the phase totals");
+    const auto topBegin = full.find("\"top_phases_ms_per_frame\":{");
+    Check(topBegin != std::string::npos, "the top phases section is missing");
+    Check(full.substr(topBegin, full.find('}', topBegin) - topBegin).find("Driver.WorkerWait") == std::string::npos, "the wait scope leaked into the top phases");
+}
+
 void SummaryFields() {
     const auto origin = Clock::now();
     AgcDriver::TraceSummary summary;
@@ -361,6 +383,9 @@ void SummaryFields() {
     unboundSummary.ownedDrawUnbound = 3;
     const auto unboundLine = TraceFormat::Summary(unboundSummary, threads, presents);
     Check(unboundLine.find("\"owned_draw_counts\":{\"OwnedDraw.unbound\":3},\"graphics_track\":{},\"trace_dropped\":true") != std::string::npos, "unbound draw counts were not marked as incomplete");
+    auto drained = threads;
+    drained[0].totals.push_back({"Driver.FinisherDrain", nullptr, milliseconds(4), 2});
+    Check(TraceFormat::Summary(summary, drained, presents).find("\"worker_busy_pct\":{\"queue worker 0x0\":45.000}") != std::string::npos, "the queue worker's waits for the draw finisher were not counted as busy");
     auto counted = threads;
     counted[0].totals.push_back({"OwnedDraw.arm_attempt", nullptr, {}, 5});
     counted[1].totals.push_back({"OwnedDraw.arm_attempt", nullptr, {}, 3});
@@ -859,6 +884,7 @@ int main() {
         BatchIds();
         SummaryFields();
         SummaryRetainsAllPhases();
+        SummaryAllPhaseTotals();
         GpuClock();
         IntervalDue();
         SummaryOnlyThread();

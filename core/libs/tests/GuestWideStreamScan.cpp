@@ -221,6 +221,29 @@ static void CheckWideText() {
     Require(fwscanf_nid_postfix(stream, u"%ls", letters) == 1 && std::u16string(letters) == u"té", "the rest decodes");
     Close(stream);
 
+    stream = Open("12\xf0\x9f\x98\x80z");
+    Require(ScanStream(stream, u"%d", &value) == 1 && value == 12, "an integer before a supplementary character");
+    Require(fgetwc_nid_postfix(stream) == 0xd83d && fgetwc_nid_postfix(stream) == 0xde00, "a supplementary lookahead goes back as one character");
+    Require(fgetwc_nid_postfix(stream) == u'z', "the character after a supplementary lookahead");
+    Close(stream);
+
+    stream = Open("ab\xf0\x9f\x98\x80\xf0\x9f\x98\x80");
+    Require(ScanStream(stream, u"%l[a-z]", letters) == 1 && std::u16string(letters) == u"ab", "a scanset stops at a supplementary character");
+    Require(fgetc_nid_postfix(stream) == 0xf0 && fgetc_nid_postfix(stream) == 0x9f && fgetc_nid_postfix(stream) == 0x98 && fgetc_nid_postfix(stream) == 0x80,
+        "a supplementary lookahead goes back as its four UTF-8 bytes");
+    Require(fgetwc_nid_postfix(stream) == 0xd83d && fgetwc_nid_postfix(stream) == 0xde00, "the next supplementary character decodes");
+    Close(stream);
+
+    stream = Open("7\xed\xa0\xbdq");
+    Require(ScanStream(stream, u"%d", &value) == 1 && value == 7, "an integer before a lone high surrogate");
+    Require(fgetwc_nid_postfix(stream) == 0xd83d && fgetwc_nid_postfix(stream) == u'q', "a lone high surrogate lookahead goes back as itself");
+    Close(stream);
+
+    stream = Open("\xf0\x9f\x98\x80");
+    Require(fgetwc_nid_postfix(stream) == 0xd83d && ungetwc_nid_postfix(u'x', stream) == u'x' && ScanStream(stream, u"%d", &value) == 0, "%d stops at a letter pushed back in front of a pending low surrogate");
+    Require(fgetwc_nid_postfix(stream) == u'x' && fgetwc_nid_postfix(stream) == 0xde00, "the letter goes back in front of the low surrogate");
+    Close(stream);
+
     stream = Open("hello world");
     char16_t small[4]{};
     Require(ScanStreamSized(stream, u"%3ls", small, 4u) == 1 && std::u16string(small) == u"hel", "vfwscanf_s %ls with a size");

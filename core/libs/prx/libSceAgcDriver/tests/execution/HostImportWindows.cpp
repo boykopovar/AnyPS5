@@ -11,6 +11,8 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#else
+#include <sys/mman.h>
 #endif
 #include <array>
 #include <cstdint>
@@ -54,14 +56,18 @@ std::string Hex(std::uint64_t value) {
 
 class GuestBlock {
 public:
-    explicit GuestBlock(std::uint64_t size) : bytes(size) {
+    explicit GuestBlock(std::uint64_t size, std::uint64_t committedBytes = 0) : bytes(size), committed(committedBytes == 0 ? size : committedBytes) {
 #ifdef _WIN32
-        block = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        block = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, bytes, MEM_RESERVE, PAGE_NOACCESS));
+        Require(block != nullptr && VirtualAlloc(block, committed, MEM_COMMIT, PAGE_READWRITE) != nullptr, "host import windows: cannot commit guest memory");
 #else
         block = static_cast<std::uint8_t*>(std::aligned_alloc(GuestAlignment, bytes));
 #endif
         Require(block != nullptr, "host import windows: cannot allocate a guest block of " + Hex(bytes));
-        std::memset(block, 0, bytes);
+#ifndef _WIN32
+        if (committed < bytes) Require(mprotect(block + committed, bytes - committed, PROT_NONE) == 0, "host import windows: cannot protect uncommitted guest memory");
+#endif
+        std::memset(block, 0, committed);
         GuestAllocations::Mutation().Add(block, bytes, true, true, true);
     }
 
@@ -70,6 +76,7 @@ public:
 #ifdef _WIN32
         VirtualFree(block, 0, MEM_RELEASE);
 #else
+        if (committed < bytes) mprotect(block + committed, bytes - committed, PROT_READ | PROT_WRITE);
         std::free(block);
 #endif
     }
@@ -83,6 +90,7 @@ public:
 private:
     std::uint8_t* block = nullptr;
     std::uint64_t bytes = 0;
+    std::uint64_t committed = 0;
 };
 
 enum class Outcome : std::uint8_t { NoDevice, NoImport, Passed };
@@ -135,6 +143,21 @@ Outcome WindowsFollowTheirRange() {
     Require(Fill(*device, address), "host import windows: the window at " + Hex(address) + " cannot be filled after its range was mapped again");
     const auto second = Graphics::HostImportSerial(probe, address, ProbeBytes, false);
     Require(second != 0 && second != first, "host import windows: the window of the range mapped again kept the serial " + Hex(first));
+    return Outcome::Passed;
+}
+
+Outcome PartlyCommittedWindow() {
+    GuestBlock guest(BlockBytes, GuestAlignment);
+    auto device = OpenVulkanTestDevice();
+    if (!device) return Outcome::NoDevice;
+    Require(!AgcDriver::GuestMemory::DescribeCommitted(guest.Address(), WindowBytes).whole, "host import windows: the partial window has no inaccessible tail");
+    Require(Fill(*device, guest.Address()), "host import windows: cannot fill the committed prefix");
+    const auto probe = Probe(*device);
+    Require(Graphics::HostImportCovers(probe, guest.Address(), ProbeBytes), "host import windows: a committed prefix fell back to copies because of an inaccessible tail");
+    std::array<std::uint32_t, 4> actual{};
+    std::memcpy(actual.data(), guest.Data(), sizeof(actual));
+    Require(actual == std::array<std::uint32_t, 4>{0x11111111u, 0x22222222u, 0x33333333u, 0x44444444u}, "host import windows: the imported committed prefix lost its GPU stores");
+    Graphics::ClearHostImports(device->Device());
     return Outcome::Passed;
 }
 
@@ -405,6 +428,52 @@ void PartialResidentAliasDispatch(AgcDriver::VulkanDevice& device, bool left) {
 
 }
 
+Outcome SegmentsCoverAdjacentImports() {
+    constexpr std::uint64_t piece = 2 * MiB;
+    GuestBlock guest(2 * piece + GuestAlignment);
+    GuestAllocations::Mutation().Remove(guest.Data());
+    GuestAllocations::Mutation().Add(guest.Data(), piece, true, true, true);
+    GuestAllocations::Mutation().Add(guest.Data() + piece, piece, true, true, true);
+    const auto restore = [&] {
+        GuestAllocations::Mutation().Remove(guest.Data() + piece);
+        GuestAllocations::Mutation().Remove(guest.Data());
+        GuestAllocations::Mutation().Add(guest.Data(), 2 * piece + GuestAlignment, true, true, true);
+    };
+    try {
+        auto device = OpenVulkanTestDevice();
+        if (!device) {
+            restore();
+            return Outcome::NoDevice;
+        }
+        const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+        if (context.hostImportAlignment == 0) {
+            restore();
+            return Outcome::NoImport;
+        }
+        Graphics::ClearHostImports(device->Device());
+        const auto first = guest.Address();
+        const auto second = first + piece;
+        const auto across = first + piece / 2;
+        Require(!Graphics::HostImportSegmentsCover(context, across, piece), "import segments: two unimported allocations count as covered");
+        Require(Fill(*device, first), "import segments: cannot fill the first allocation");
+        Require(!Graphics::HostImportSegmentsCover(context, across, piece), "import segments: an unimported second allocation counts as covered");
+        Require(Fill(*device, second), "import segments: cannot fill the second allocation");
+        Require(Graphics::HostImportCovers(context, first, piece) && Graphics::HostImportCovers(context, second, piece), "import segments: an allocation was not imported whole");
+        Require(!Graphics::HostImportCovers(context, across, piece), "import segments: one import covers both allocations, so nothing straddles");
+        Require(Graphics::HostImportSegmentsCover(context, across, piece), "import segments: the imports of two adjacent allocations do not cover the range across them");
+        Require(Graphics::HostImportSegmentsCover(context, first, 2 * piece), "import segments: the imports do not cover both allocations whole");
+        Require(!Graphics::HostImportSegmentsCover(context, first, piece / 2), "import segments: a range inside one allocation counts as segments");
+        Require(!Graphics::HostImportSegmentsCover(context, across, piece + piece / 2 + GuestAlignment), "import segments: a range past the registered allocations counts as covered");
+        Graphics::ClearHostImports(device->Device());
+        Require(!Graphics::HostImportSegmentsCover(context, across, piece), "import segments: cleared imports still cover the range");
+    } catch (...) {
+        restore();
+        throw;
+    }
+    restore();
+    return Outcome::Passed;
+}
+
 int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string_view(argv[1]) == "--alias-failure") {
@@ -437,9 +506,11 @@ int main(int argc, char** argv) {
         }
         const auto windows = WindowsFollowTheirRange();
         Require(windows == Outcome::Passed, "host import windows: the device stopped importing guest memory between two scenarios");
+        Require(PartlyCommittedWindow() == Outcome::Passed, "host import windows: the partial window lost its device");
         Require(ResidentMappingsImportAfterCollection() == Outcome::Passed, "resident import test failed");
         Require(MixedBlocksImportInSmallerRuns() == Outcome::Passed, "mixed import test failed");
         Require(SmallMappingsImportOnFirstUse() == Outcome::Passed, "mapped import test lost its Vulkan device or host import support");
+        Require(SegmentsCoverAdjacentImports() == Outcome::Passed, "import segments test lost its Vulkan device or host import support");
         std::puts("host import windows tests passed");
         return 0;
     } catch (const std::exception& error) {

@@ -8,17 +8,33 @@ from pathlib import Path
 SETTINGS = ("body", "wave_size", "floating_point_modes", "lds_bytes", "memory",
             "extra_bytes", "extra_sha256", "output_registers")
 MODES = dict(ieee=2, denorm32=4, denorm16=4, dx10_clamp=2, round32=4, round16=4, fp16_overflow=2)
+GFX12_REMOVED_MODES = ("ieee", "dx10_clamp")
 
 
 def integer(value, minimum, maximum):
     return type(value) is int and minimum <= value <= maximum
 
 
+def is_gfx12(target):
+    return target.startswith("gfx12")
+
+
+def unique_object(pairs):
+    result = {}
+    for name, value in pairs:
+        if name in result:
+            raise ValueError(f"duplicate JSON field {name!r}")
+        result[name] = value
+    return result
+
+
 def read_report(path):
     try:
-        report = json.loads(path.read_text(encoding="utf-8-sig"))
+        report = json.loads(path.read_text(encoding="utf-8-sig"), object_pairs_hook=unique_object)
     except RecursionError as error:
         raise ValueError(f"{path}: JSON nested too deeply") from error
+    except ValueError as error:
+        raise ValueError(f"{path}: {error}") from error
     if not isinstance(report, dict):
         raise ValueError(f"{path}: expected a JSON object")
     required = {"schema_version", "assembly_target", "rows", *SETTINGS}
@@ -27,14 +43,21 @@ def read_report(path):
         raise ValueError(f"{path}: missing fields: {', '.join(sorted(missing))}")
     if not integer(report["schema_version"], 1, 1):
         raise ValueError(f"{path}: unsupported schema_version")
-    modes = report["floating_point_modes"]
-    if not isinstance(modes, dict) or modes.keys() != MODES.keys() or any(
-            not integer(modes[name], 0, limit - 1) for name, limit in MODES.items()):
-        raise ValueError(f"{path}: invalid floating_point_modes")
-    if not isinstance(report["body"], str):
-        raise ValueError(f"{path}: body must be text")
     if not isinstance(report["assembly_target"], str) or not report["assembly_target"].strip():
         raise ValueError(f"{path}: assembly_target must be nonempty text")
+    modes = report["floating_point_modes"]
+    if not isinstance(modes, dict) or modes.keys() != MODES.keys() or any(
+            not integer(modes[name], 0, limit - 1) and not (name in GFX12_REMOVED_MODES and modes[name] is None)
+            for name, limit in MODES.items()):
+        raise ValueError(f"{path}: invalid floating_point_modes")
+    target = report["assembly_target"]
+    for name in GFX12_REMOVED_MODES:
+        if is_gfx12(target) and modes[name] is not None:
+            raise ValueError(f"{path}: {name} must be null on {target}, whose kernel descriptor has no {name} field")
+        if not is_gfx12(target) and modes[name] is None:
+            raise ValueError(f"{path}: {name} must be an integer from 0 to 1 on {target}")
+    if not isinstance(report["body"], str):
+        raise ValueError(f"{path}: body must be text")
     if type(report["wave_size"]) is not int or report["wave_size"] not in (32, 64):
         raise ValueError(f"{path}: wave_size must be 32 or 64")
     if not integer(report["lds_bytes"], 0, 65536):

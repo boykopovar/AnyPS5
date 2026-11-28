@@ -8,9 +8,6 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
-#if LOWERING_EXECUTION_AVAILABLE
-#include <unistd.h>
-#endif
 
 namespace {
 
@@ -29,6 +26,11 @@ Bytes memorySite(std::uint8_t opcode, bool wide256, std::uint8_t dst) {
     return {0xC4, static_cast<std::uint8_t>(((dst & 8) ? 0 : 0x80) | 0x60 | 2), static_cast<std::uint8_t>(0x78 | (wide256 ? 4 : 0) | 1), opcode, static_cast<std::uint8_t>((dst & 7) << 3)};
 }
 
+Bytes withW(Bytes bytes) {
+    bytes[2] |= 0x80;
+    return bytes;
+}
+
 constexpr std::array<std::uint8_t, 12> kWidenOpcodes{0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35};
 
 void decoding() {
@@ -38,12 +40,15 @@ void decoding() {
         require(operands && operands->Kind == Codegen::WidenBroadcastKind::Widen && operands->Destination == 9 && operands->Source == 3, "a 256-bit widening move was not decoded");
         const auto narrow = site(opcode, false, 9, 3);
         require(!Codegen::DecodeWidenBroadcast(narrow.data(), narrow.size()), "a 128-bit widening move, which AVX has, was lowered");
+        const auto ignoredW = withW(site(opcode, true, 9, 3));
+        const auto ignoredWOperands = Codegen::DecodeWidenBroadcast(ignoredW.data(), ignoredW.size());
+        require(ignoredWOperands && ignoredWOperands->Kind == Codegen::WidenBroadcastKind::Widen && ignoredWOperands->Destination == 9 && ignoredWOperands->Source == 3, "a 256-bit widening move with VEX.W=1, which the move ignores, was not decoded");
     }
     for (const auto& [opcode, wide] : std::array<std::pair<std::uint8_t, bool>, 9>{{{0x18, false}, {0x18, true}, {0x58, false}, {0x58, true}, {0x19, true}, {0x59, false}, {0x59, true}, {0x78, true}, {0x79, false}}}) {
         const auto bytes = site(opcode, wide, 1, 14);
         require(Codegen::DecodeWidenBroadcast(bytes.data(), bytes.size()).has_value(), "a register-source broadcast was not decoded");
     }
-    for (const Bytes bytes : {memorySite(0x18, true, 0), memorySite(0x58, true, 0), memorySite(0x59, true, 0), site(0x19, false, 0, 1), Bytes{0xC4, 0xE2, 0xFD, 0x31, 0xC1}, Bytes{0xC4, 0xE2, 0x7D, 0x36, 0xC1}, Bytes{0x90}})
+    for (const Bytes bytes : {memorySite(0x18, true, 0), memorySite(0x58, true, 0), memorySite(0x59, true, 0), site(0x19, false, 0, 1), withW(site(0x18, true, 0, 1)), withW(site(0x59, true, 0, 1)), withW(site(0x78, true, 0, 1)), Bytes{0xC4, 0xE2, 0x7D, 0x36, 0xC1}, Bytes{0x90}})
         require(!Codegen::DecodeWidenBroadcast(bytes.data(), bytes.size()), "an AVX broadcast, a twin or an unrelated instruction was taken as widen/broadcast");
     const Bytes trailing{0xC4, 0xE2, 0x7D, 0x31, 0xC1, 0x90};
     bool rejected = false;
@@ -59,6 +64,9 @@ void matching() {
     require(!rosetta->Match(bytes.data(), bytes.size()), "Rosetta mode lowered a widening move");
     const auto match = avx->Match(bytes.data(), bytes.size());
     require(match && match->InstructionName == "VPMOVZXBD" && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline && match->RelocatableWindow, "AVX mode did not lower VPMOVZXBD through a movable stub");
+    const auto ignoredW = withW(bytes);
+    const auto ignoredWMatch = avx->Match(ignoredW.data(), ignoredW.size());
+    require(ignoredWMatch && ignoredWMatch->InstructionName == "VPMOVZXBD" && ignoredWMatch->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "AVX mode left a VEX.W=1 VPMOVZXBD unlowered");
 }
 
 #if LOWERING_EXECUTION_AVAILABLE
@@ -136,6 +144,10 @@ void execution() {
         const auto start = machine;
         Runner(lowered(memorySite(opcode, true, 5))).Run(machine);
         verify(start, machine, 5, widened(opcode, start.Memory), "widen " + std::to_string(opcode) + " from memory");
+        auto ignoredW = VectorExecution::Initial();
+        const auto ignoredWStart = ignoredW;
+        Runner(lowered(withW(site(opcode, true, 8, 2)))).Run(ignoredW);
+        verify(ignoredWStart, ignoredW, 8, widened(opcode, ignoredWStart.Ymm[2]), "widen " + std::to_string(opcode) + " with VEX.W=1");
     }
     for (const auto& [opcode, wide] : std::array<std::pair<std::uint8_t, bool>, 11>{{{0x18, false}, {0x18, true}, {0x58, false}, {0x58, true}, {0x19, true}, {0x59, false}, {0x59, true}, {0x78, false}, {0x78, true}, {0x79, false}, {0x79, true}}}) {
         for (const auto pair : pairs) {
@@ -154,10 +166,10 @@ void execution() {
 }
 
 void pageEndMemory() {
-    const auto pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
-    auto* area = static_cast<std::uint8_t*>(mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
-    require(area != MAP_FAILED, "cannot allocate the guarded operand pages");
-    require(mprotect(area + pageSize, pageSize, PROT_NONE) == 0, "cannot protect the page after the operand");
+    const auto pageSize = LoweringExecution::PageSize();
+    auto* area = LoweringExecution::AllocatePages(pageSize * 2);
+    require(area != nullptr, "cannot allocate the guarded operand pages");
+    require(LoweringExecution::ProtectPages(area + pageSize, pageSize, false, false), "cannot protect the page after the operand");
     const auto memory = VectorExecution::Initial().Memory;
     const auto runAtPageEnd = [&](const Bytes& instruction, unsigned width, std::uint8_t dst, const Vector& wanted, const std::string& describe) {
         auto* operand = area + pageSize - width;
@@ -179,12 +191,12 @@ void pageEndMemory() {
     }
     for (const auto& [opcode, wide] : std::array<std::pair<std::uint8_t, bool>, 4>{{{0x78, false}, {0x78, true}, {0x79, false}, {0x79, true}}})
         runAtPageEnd(memorySite(opcode, wide, 6), broadcastSize(opcode), 6, broadcast(memory, broadcastSize(opcode), wide), "broadcast " + std::to_string(opcode) + " from memory");
-    munmap(area, pageSize * 2);
+    LoweringExecution::FreePages(area, pageSize * 2);
 }
 
 #else
 
-void execution() { std::cout << "widen/broadcast execution checks require a Linux/macOS x86-64 build\n"; }
+void execution() { std::cout << "widen/broadcast execution checks require an x86-64 Linux, macOS or Windows build\n"; }
 void pageEndMemory() {}
 
 #endif

@@ -1,0 +1,5 @@
+# libkernel
+
+## change [clock_gettime](../../../core/libs/prx/libkernel/Time/Time.cpp) (libkernel). Id 21 shares
+
+- [clock_gettime](../../../core/libs/prx/libkernel/Time/Time.cpp) (libkernel). Id 21 shares the process CPU clock and microsecond precision measured in a firmware 13.590.001 payload in [#15725](https://github.com/boykopovar/AnyPS5/issues/15725). Its retail export behavior is unverified. Ids 3, 6 and 22 to 31 fail with `EINVAL` and 16 to 19 with `EIO` through both exports, the time left unwritten, as measured there; the raw system call also failed 3, 6 and 22 to 31 with `EINVAL`. A PS5 Pro payload process (13.60) did not reproduce the `EIO`: ids 16 to 19 answered success with epoch-scale times, in two equal pairs that setting ids 16 and 17 moved without moving realtime. The divergence is unexplained; the answers here stay at the 13.59 measurement until a version-aware model exists. Id 15 measures elapsed time from libkernel initialization: the 13.59 payload showed wall time since process start, idle and under load. Closes when: id 15's retail export and initialization boundary are measured and the ids 16 to 19 divergence is explained.

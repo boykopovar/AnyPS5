@@ -16,7 +16,7 @@ const void* APS5_VABI WKUserContentExtensionStoreCreate(const void* pathRef) {
     return NKWebKit::ToRef(store);
 }
 
-void APS5_VABI WKUserContentExtensionStoreCompile(const void* storeRef, const void* identifierRef, const void* jsonSourceRef, void* context, void (*callback)(const void*, std::uint32_t, void*)) {
+void APS5_VABI WKUserContentExtensionStoreCompile(const void* storeRef, const void* identifierRef, const void* jsonSourceRef, void* context, WKUserContentExtensionStoreFunction callback) {
     auto* store = NKWebKit::Cast<NKWebKit::ContentRuleListStore>(storeRef, __func__);
     const auto* identifier = NKWebKit::Cast<NKWebKit::String>(identifierRef, __func__);
     const auto* jsonSource = NKWebKit::Cast<NKWebKit::String>(jsonSourceRef, __func__);
@@ -48,7 +48,7 @@ void APS5_VABI WKUserContentExtensionStoreCompile(const void* storeRef, const vo
     }
 }
 
-void APS5_VABI WKUserContentExtensionStoreLookup(const void* storeRef, const void* identifierRef, void* context, void (*callback)(const void*, std::uint32_t, void*)) {
+void APS5_VABI WKUserContentExtensionStoreLookup(const void* storeRef, const void* identifierRef, void* context, WKUserContentExtensionStoreFunction callback) {
     auto* store = NKWebKit::Cast<NKWebKit::ContentRuleListStore>(storeRef, __func__);
     const auto* identifier = NKWebKit::Cast<NKWebKit::String>(identifierRef, __func__);
 

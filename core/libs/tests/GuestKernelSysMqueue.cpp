@@ -1,7 +1,10 @@
 #include "SceTypes.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
+#include "prx/libkernel_sys/MqueueWait.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libc/include/GuestErrno.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -10,6 +13,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <source_location>
 #include <string>
 #include <thread>
@@ -37,6 +41,17 @@ constexpr int ORdwr = 0x0002;
 constexpr int ONonblock = 0x0004;
 constexpr int OCreat = 0x0200;
 constexpr int OExcl = 0x0800;
+
+KernelTimespec g_fakeRealtime{};
+std::int64_t g_fakeRealtimeStepSeconds = 0;
+std::atomic<unsigned> g_fakeRealtimeClockCalls{0};
+
+int FakeRealtimeClock(KernelTimespec* realtime) {
+    g_fakeRealtimeClockCalls.fetch_add(1, std::memory_order_relaxed);
+    *realtime = g_fakeRealtime;
+    g_fakeRealtime.tv_sec += g_fakeRealtimeStepSeconds;
+    return 0;
+}
 
 void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (condition) return;
@@ -120,6 +135,120 @@ void Messages() {
     Require(Receive(queue, &priority) == "low2" && priority == 1);
     char buffer[16]{};
     Require(kmq_timedreceive_nid_postfix(queue, buffer, sizeof(buffer), nullptr, nullptr) == -1 && Error() == Eagain);
+    Require(close_nid_postfix(queue) == 0 && kmq_unlink_nid_postfix(name.c_str()) == 0);
+}
+
+void DeadlineConversion() {
+    constexpr std::uint64_t monotonic = 20000000000ULL;
+    const std::uint64_t deadline = MqueueWait::MonotonicDeadline(102, 250000000, 100, 500000000, monotonic);
+    Require(deadline == monotonic + 1750000000ULL);
+    const std::uint64_t monotonicAfterStep = monotonic + 500000000ULL;
+    const std::uint64_t deadlineAfterForwardStep = MqueueWait::MonotonicDeadline(102, 250000000, 102, 750000000, monotonicAfterStep);
+    const std::uint64_t deadlineAfterBackwardStep = MqueueWait::MonotonicDeadline(102, 250000000, 99, 0, monotonicAfterStep);
+    Require(deadline > monotonicAfterStep);
+    Require(deadline - monotonicAfterStep == 1250000000ULL);
+    Require(deadlineAfterForwardStep == monotonicAfterStep);
+    Require(deadlineAfterBackwardStep > deadline);
+    Require(MqueueWait::MonotonicDeadline(100, 400000000, 100, 500000000, monotonic) == monotonic);
+    Require(MqueueWait::MonotonicDeadline(std::numeric_limits<std::int64_t>::max(), 0, 0, 0,
+                                          std::numeric_limits<std::uint64_t>::max() - 500000000ULL) ==
+            std::numeric_limits<std::uint64_t>::max());
+}
+
+void MonotonicWaitIgnoresRealtimeSteps() {
+    constexpr std::uint64_t NanosecondsPerSecond = 1000000000ULL;
+    constexpr std::uint64_t monotonicStart = 20ULL * NanosecondsPerSecond;
+    constexpr std::int64_t realtimeStart = 100LL * static_cast<std::int64_t>(NanosecondsPerSecond) + 500000000LL;
+    constexpr std::int64_t absoluteDeadline = 102LL * static_cast<std::int64_t>(NanosecondsPerSecond) + 250000000LL;
+    const std::uint64_t deadline = MqueueWait::MonotonicDeadline(102, 250000000, 100, 500000000, monotonicStart);
+    Require(deadline == monotonicStart + 1750000000ULL);
+
+    const auto verifyRealtimeStep = [&](std::int64_t stepSeconds) {
+        std::uint64_t monotonicNow = monotonicStart;
+        std::int64_t realtimeNow = realtimeStart;
+        unsigned waitCalls = 0;
+        const bool completed = MqueueWait::WaitUntilMonotonic(
+            deadline, [] { return false; }, [&] { return monotonicNow; },
+            [&](std::uint64_t waitDeadline, const auto& ready) {
+                ++waitCalls;
+                Require(waitDeadline == deadline);
+                monotonicNow += 250000000ULL;
+                realtimeNow += stepSeconds * static_cast<std::int64_t>(NanosecondsPerSecond);
+                Require(monotonicNow < deadline);
+                if (stepSeconds > 0) Require(realtimeNow > absoluteDeadline);
+                else Require(realtimeNow < absoluteDeadline);
+                monotonicNow = waitDeadline;
+                return ready();
+            });
+
+        Require(!completed);
+        Require(waitCalls == 1);
+        Require(monotonicNow == deadline);
+        Require(monotonicNow - monotonicStart == 1750000000ULL);
+        if (stepSeconds > 0) Require(realtimeNow > absoluteDeadline);
+        else Require(realtimeNow < absoluteDeadline);
+    };
+
+    verifyRealtimeStep(3600);
+    verifyRealtimeStep(-3600);
+}
+
+void MonotonicWaitChunksLongDeadlines() {
+    constexpr std::uint64_t NanosecondsPerHour = 60ULL * 60 * 1000000000ULL;
+    constexpr std::uint64_t MaxWaitChunk = 24ULL * NanosecondsPerHour;
+    std::uint64_t now = 100;
+    const std::uint64_t deadline = now + 49ULL * NanosecondsPerHour + 1;
+    std::array<std::uint64_t, 3> chunks{};
+    std::size_t chunkCount = 0;
+
+    const bool completed = MqueueWait::WaitUntilMonotonic(
+        deadline, [] { return false; }, [&] { return now; }, [&](std::uint64_t waitDeadline, auto ready) {
+            if (chunkCount < chunks.size()) chunks[chunkCount] = waitDeadline - now;
+            ++chunkCount;
+            now = waitDeadline;
+            return ready();
+        });
+
+    Require(!completed);
+    Require(chunkCount == 3);
+    Require(chunks[0] == MaxWaitChunk);
+    Require(chunks[1] == MaxWaitChunk);
+    Require(chunks[2] == NanosecondsPerHour + 1);
+    Require(now == deadline);
+}
+
+void ProductionWaitUsesMonotonicClock() {
+    const auto name = Name("monotonic-production");
+    const GuestMqAttr one{0, 1, 16, 0, {}};
+    const int queue = kmq_open_nid_postfix(name.c_str(), ORdwr | OCreat, 0600, &one);
+    Require(queue >= 0);
+
+    for (const std::int64_t offset : {2, -2}) {
+        SetRealtimeClockHookForTesting(nullptr);
+        KernelTimespec realtime{};
+        Require(clock_gettime_nid_postfix(0, &realtime) == 0);
+        g_fakeRealtime = KernelTimespec{realtime.tv_sec + offset, realtime.tv_nsec};
+        g_fakeRealtimeStepSeconds = offset > 0 ? -3600 : 3600;
+        const std::int64_t fakeRealtimeBeforeStep = g_fakeRealtime.tv_sec;
+        g_fakeRealtimeClockCalls.store(0, std::memory_order_relaxed);
+        SetRealtimeClockHookForTesting(FakeRealtimeClock);
+
+        GuestTimespec deadline{g_fakeRealtime.tv_sec, g_fakeRealtime.tv_nsec + 500000000};
+        if (deadline.nanoseconds >= 1000000000) {
+            ++deadline.seconds;
+            deadline.nanoseconds -= 1000000000;
+        }
+
+        char buffer[16]{};
+        const auto start = std::chrono::steady_clock::now();
+        Require(kmq_timedreceive_nid_postfix(queue, buffer, sizeof(buffer), nullptr, &deadline) == -1 && Error() == Etimedout);
+        const auto elapsed = std::chrono::steady_clock::now() - start;
+        Require(elapsed >= std::chrono::milliseconds(300));
+        Require(elapsed < std::chrono::milliseconds(1500));
+        Require(g_fakeRealtimeClockCalls.load(std::memory_order_relaxed) == 1);
+        Require(g_fakeRealtime.tv_sec == fakeRealtimeBeforeStep + g_fakeRealtimeStepSeconds);
+    }
+    SetRealtimeClockHookForTesting(nullptr);
     Require(close_nid_postfix(queue) == 0 && kmq_unlink_nid_postfix(name.c_str()) == 0);
 }
 
@@ -290,6 +419,22 @@ void BadPointers() {
         Require(kmq_timedsend_nid_postfix(queue, "bad", 3, 1, nullptr) == 0);
         Require(kmq_timedreceive_nid_postfix(queue, buffer, sizeof(buffer), const_cast<unsigned*>(static_cast<const unsigned*>(pointer)), nullptr) == -1 && Error() == Efault);
     }
+    for (const void* pointer : bad) {
+        const auto badAttr = static_cast<const GuestMqAttr*>(pointer);
+        auto badOut = const_cast<GuestMqAttr*>(badAttr);
+        const auto createBad = Name("badcreate");
+        Require(kmq_open_nid_postfix(createBad.c_str(), ORdwr | OCreat, 0600, badAttr) == -1 && Error() == Efault);
+        const int opened = kmq_open_nid_postfix(name.c_str(), ORdwr, 0600, badAttr);
+        Require(opened >= 0 && close_nid_postfix(opened) == 0);
+        Require(kmq_setattr_nid_postfix(queue, badAttr, nullptr) == -1 && Error() == Efault);
+        Require(kmq_setattr_nid_postfix(queue, nullptr, badOut) == -1 && Error() == Efault);
+        Require(kmq_setattr_nid_postfix(queue, badAttr, badOut) == -1 && Error() == Efault);
+    }
+    const GuestMqAttr on{ONonblock, 0, 0, 0, {}};
+    Require(kmq_setattr_nid_postfix(queue, &on, const_cast<GuestMqAttr*>(static_cast<const GuestMqAttr*>(bad[0]))) == -1 && Error() == Efault);
+    GuestMqAttr check{};
+    Require(kmq_setattr_nid_postfix(queue, nullptr, &check) == 0);
+    Require((check.flags & ONonblock) == 0);
     Require(close_nid_postfix(queue) == 0 && kmq_unlink_nid_postfix(name.c_str()) == 0);
 }
 
@@ -299,6 +444,10 @@ int main() {
     OpenRules();
     BadPointers();
     Messages();
+    DeadlineConversion();
+    MonotonicWaitIgnoresRealtimeSteps();
+    MonotonicWaitChunksLongDeadlines();
+    ProductionWaitUsesMonotonicClock();
     Waiting();
     Access();
     NullBuffer();

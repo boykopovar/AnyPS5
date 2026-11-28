@@ -1,0 +1,11 @@
+# libSceXml
+
+## change [Document]
+
+- [Document](../../../core/libs/prx/libSceXml/src/Document.cpp) and [its reads](../../../core/libs/prx/libSceXml/src/DomReader.cpp) (libSceXml) - follow `libSceXml.sprx` of firmware 13.42 run under an emulator, not measured on a console; its 16 node, string and number reads and the status `getParent` sets give its results on 107,121 of 107,185 checks over 369 parses; the other 64 are string reads past the end of a table, which throw as described below. Not modelled:
+  - A string past the used end of a table is empty only while the table is below the size the module first zeroes and the read is inside it: 5,240 bytes of text and 2,024 of element names, with the same 2,024 taken for attribute names, which were measured only up to 980 used bytes. A grown table is zeroed further (element names with 2,103 bytes used read zero up to 9,352), which isn't modelled; those reads and any other read past the end throw.
+  - After the builder parses again or terminates, an older `Document` reads freed memory in the module; every read of it throws, including `getStatus`, which returned 0. Assigning an empty `Document` over a live one faults in the module and throws.
+  - A string taken from a document still being fed stays valid until the builder starts another document or terminates and no `Document` of it is left; how long the module's pointer stays valid is not measured.
+  - `getAttribute` compares the name with `strcmp` up to its first differing or zero byte and ignores the size (13.42 `0x80f0`, read from disassembly, not measured on a console), so the console faults where that comparison reaches an unreadable byte. Here the name is read byte by byte through a guarded copy, and reaching an unreadable byte throws.
+  - `Document::resetStatus` sets the status `getStatus` reports to 0, as a decrypted PS4 `libSceXml.sprx` does by zeroing the internal document's status word, and does nothing for a document that is not initialized; not compared with a PS5 module. After the builder parses again or terminates it throws, as the reads do, because the module writes freed memory.
+  - `invalidNodeId` is the zeroed `NodeId` data export; its name is in the pinned NID name database and in the export table of 13.42 `libSceXml.sprx`.

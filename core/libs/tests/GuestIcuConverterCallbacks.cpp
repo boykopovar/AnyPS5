@@ -156,10 +156,46 @@ void InvalidReasons() {
     }
 }
 
+void ReplacementCallbacks() {
+    const auto* unused = reinterpret_cast<const void*>(std::uintptr_t{1});
+    auto* from = reinterpret_cast<Icu::ConverterFromUnicodeArgs*>(std::uintptr_t{1});
+    auto* to = reinterpret_cast<Icu::ConverterToUnicodeArgs*>(std::uintptr_t{1});
+    const auto* units = reinterpret_cast<const char16_t*>(std::uintptr_t{1});
+    const auto* bytes = reinterpret_cast<const char*>(std::uintptr_t{1});
+    for (std::int32_t reason = 3; reason <= 7; ++reason) {
+        std::int32_t status = 12;
+        UCNV_FROM_U_CALLBACK_SUBSTITUTE_nid_postfix(unused, from, units, -1, 0x41, reason, &status);
+        UCNV_FROM_U_CALLBACK_ESCAPE_nid_postfix(unused, from, units, -1, 0x41, reason, &status);
+        UCNV_TO_U_CALLBACK_SUBSTITUTE_nid_postfix(unused, to, bytes, -1, reason, &status);
+        UCNV_TO_U_CALLBACK_ESCAPE_nid_postfix(unused, to, bytes, -1, reason, &status);
+        Require(status == 12, "reset, close and clone calls leave the error untouched");
+    }
+    std::int32_t status = 10;
+    UCNV_FROM_U_CALLBACK_SUBSTITUTE_nid_postfix(unused, from, units, -1, 0xad, 0, &status);
+    Require(status == 0, "FROM SUBSTITUTE clears default-ignorable unassigned code points");
+    status = 10;
+    UCNV_FROM_U_CALLBACK_ESCAPE_nid_postfix(unused, from, units, -1, 0xad, 0, &status);
+    Require(status == 0, "FROM ESCAPE clears default-ignorable unassigned code points");
+    Require(Rejects([&] { UCNV_FROM_U_CALLBACK_SUBSTITUTE_nid_postfix(unused, from, units, -1, 0x41, 3, nullptr); }), "FROM SUBSTITUTE requires an error pointer");
+    Require(Rejects([&] { UCNV_FROM_U_CALLBACK_SUBSTITUTE_nid_postfix(unused, nullptr, units, -1, 0x41, 3, &status); }), "FROM SUBSTITUTE requires converter arguments");
+    Require(Rejects([&] { UCNV_FROM_U_CALLBACK_ESCAPE_nid_postfix(unused, from, nullptr, 1, 0x41, 3, &status); }), "FROM ESCAPE requires code units when given a length");
+    Require(Rejects([&] { UCNV_TO_U_CALLBACK_SUBSTITUTE_nid_postfix(unused, to, bytes, -1, 3, nullptr); }), "TO SUBSTITUTE requires an error pointer");
+    Require(Rejects([&] { UCNV_TO_U_CALLBACK_ESCAPE_nid_postfix(unused, nullptr, bytes, -1, 3, &status); }), "TO ESCAPE requires converter arguments");
+    status = 10;
+    for (std::int32_t reason : {INT32_MIN, -1, 8, INT32_MAX}) {
+        Require(Rejects([&] { UCNV_FROM_U_CALLBACK_SUBSTITUTE_nid_postfix(unused, nullptr, nullptr, 0, 0xad, reason, &status); }), "FROM SUBSTITUTE rejects values outside the enum range");
+        Require(Rejects([&] { UCNV_FROM_U_CALLBACK_ESCAPE_nid_postfix(unused, nullptr, nullptr, 0, 0xad, reason, &status); }), "FROM ESCAPE rejects values outside the enum range");
+        Require(Rejects([&] { UCNV_TO_U_CALLBACK_SUBSTITUTE_nid_postfix(unused, nullptr, nullptr, 0, reason, &status); }), "TO SUBSTITUTE rejects values outside the enum range");
+        Require(Rejects([&] { UCNV_TO_U_CALLBACK_ESCAPE_nid_postfix(unused, nullptr, nullptr, 0, reason, &status); }), "TO ESCAPE rejects values outside the enum range");
+    }
+    Require(status == 10, "invalid replacement reasons preserve the error");
+}
+
 }
 
 int main() {
     PolicyMatrix();
     IgnoredPointers();
     InvalidReasons();
+    ReplacementCallbacks();
 }

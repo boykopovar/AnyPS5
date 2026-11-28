@@ -25,39 +25,56 @@
  */
 
 #include "prx/libSceNKWebKit/include/ProtoCallFrameExports.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <cstddef>
 #include <cstdint>
 
 using NKWebKit::JscAbi::ProtoCallFrame;
+using NKWebKit::JscAbi::Register;
 
 extern "C" {
 
 int APS5_VABI _ZNK3JSC14ProtoCallFrame13argumentCountEv(const ProtoCallFrame* self) {
-    return static_cast<int>(static_cast<std::uint32_t>(self->argCountAndCodeOriginValue.payload) - 1u);
+    ProtoCallFrame frame{};
+    if (!GuestCopyIn_nid_no_patch(&frame, self, sizeof(frame))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return static_cast<int>(static_cast<std::uint32_t>(frame.argCountAndCodeOriginValue.payload) - 1u);
 }
 
 std::uint64_t APS5_VABI _ZN3JSC14ProtoCallFrame8argumentEm(ProtoCallFrame* self, std::size_t argumentIndex) {
-    return self->args[argumentIndex];
+    ProtoCallFrame frame{};
+    if (!GuestCopyIn_nid_no_patch(&frame, self, sizeof(frame))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    std::uint64_t value = 0;
+    if (!GuestCopyIn_nid_no_patch(&value, frame.args + argumentIndex, sizeof(value))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return value;
 }
 
 void APS5_VABI _ZN3JSC14ProtoCallFrame11setArgumentEmNS_7JSValueE(ProtoCallFrame* self, std::size_t argumentIndex, std::uint64_t value) {
-    self->args[argumentIndex] = value;
+    ProtoCallFrame frame{};
+    if (!GuestCopyIn_nid_no_patch(&frame, self, sizeof(frame))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (!GuestCopyOut_nid_no_patch(frame.args + argumentIndex, &value, sizeof(value))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
 void APS5_VABI _ZN3JSC14ProtoCallFrame15clearCurrentVPCEv(ProtoCallFrame* self) {
-    self->argCountAndCodeOriginValue.tag = 0;
+    const std::int32_t tag = 0;
+    auto* destination = reinterpret_cast<std::uint8_t*>(self) + offsetof(ProtoCallFrame, argCountAndCodeOriginValue) + offsetof(Register, tag);
+    if (!GuestCopyOut_nid_no_patch(destination, &tag, sizeof(tag))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
 }
 
-ProtoCallFrame& APS5_VABI _ZN3JSC14ProtoCallFrameaSERKS0_(ProtoCallFrame* self, const ProtoCallFrame& other) {
-    self->codeBlockValue = other.codeBlockValue;
-    self->calleeValue = other.calleeValue;
-    self->argCountAndCodeOriginValue = other.argCountAndCodeOriginValue;
-    self->thisArg = other.thisArg;
-    self->paddedArgCount = other.paddedArgCount;
-    self->args = other.args;
-    self->globalObject = other.globalObject;
-    return *self;
+ProtoCallFrame* APS5_VABI _ZN3JSC14ProtoCallFrameaSERKS0_(ProtoCallFrame* self, const ProtoCallFrame& other) {
+    ProtoCallFrame source{};
+    if (!GuestCopyIn_nid_no_patch(&source, &other, sizeof(source))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    ProtoCallFrame target{};
+    if (!GuestCopyIn_nid_no_patch(&target, self, sizeof(target))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    target.codeBlockValue = source.codeBlockValue;
+    target.calleeValue = source.calleeValue;
+    target.argCountAndCodeOriginValue = source.argCountAndCodeOriginValue;
+    target.thisArg = source.thisArg;
+    target.paddedArgCount = source.paddedArgCount;
+    target.args = source.args;
+    target.globalObject = source.globalObject;
+    if (!GuestCopyOut_nid_no_patch(self, &target, sizeof(target))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    return self;
 }
 
 }

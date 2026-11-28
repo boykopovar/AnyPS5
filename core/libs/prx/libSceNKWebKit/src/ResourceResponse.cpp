@@ -89,7 +89,7 @@ auto VisitString(const StringImpl* impl, Operation operation) {
 }
 
 bool IsSpace(char16_t value) {
-    return value == ' ' || value == '\t' || value == '\n' || value == '\r' || value == '\f';
+    return value == ' ' || (value >= '\t' && value <= '\r');
 }
 
 template<class Char>

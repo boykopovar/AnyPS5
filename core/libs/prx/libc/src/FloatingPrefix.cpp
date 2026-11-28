@@ -1,5 +1,6 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/Api.hpp"
+#include <cerrno>
 
 namespace {
 
@@ -18,9 +19,20 @@ template<> struct CharacterRules<char16_t> {
 };
 
 template<typename TChar>
+TChar ReadGuestChar(const TChar* address) {
+    const int savedErrno = errno;
+    TChar value{};
+    const bool ok = GuestCopyIn_nid_no_patch(&value, address, sizeof(value));
+    errno = savedErrno;
+    if (!ok) APS5_INVALID_ARG_EX;
+    return value;
+}
+
+template<typename TChar>
 bool Matches(const TChar* input, const char* word) {
     while (*word) {
-        if (*input != *word && *input != *word - ('a' - 'A')) return false;
+        const TChar ch = ReadGuestChar(input);
+        if (ch != *word && ch != *word - ('a' - 'A')) return false;
         ++input;
         ++word;
     }
@@ -29,27 +41,39 @@ bool Matches(const TChar* input, const char* word) {
 
 template<typename TChar>
 int ParsePrefix(const TChar** cursor, TChar** end) {
-    const TChar* const original = *cursor;
+    if (cursor == nullptr) APS5_INVALID_ARG_EX;
+    const TChar* original = nullptr;
+    {
+        const int savedErrno = errno;
+        const bool readable = GuestCopyIn_nid_no_patch(&original, cursor, sizeof(original));
+        const bool writableCursor = readable && original != nullptr && GuestWritable_nid_no_patch(const_cast<TChar**>(cursor), sizeof(*cursor));
+        const bool writableEnd = end == nullptr || GuestWritable_nid_no_patch(end, sizeof(*end));
+        errno = savedErrno;
+        if (!readable || original == nullptr || !writableCursor || !writableEnd) APS5_INVALID_ARG_EX;
+    }
     const TChar* current = original;
-    while (CharacterRules<TChar>::Space(*current)) ++current;
-    const int negative = *current == '-' ? 8 : 0;
-    if (*current == '-' || *current == '+') ++current;
+    while (CharacterRules<TChar>::Space(ReadGuestChar(current))) ++current;
+    const TChar signChar = ReadGuestChar(current);
+    const int negative = signChar == '-' ? 8 : 0;
+    if (signChar == '-' || signChar == '+') ++current;
     int result = negative | 1;
-    if (*current == 'n' || *current == 'N') {
+    bool writeEnd = false;
+    const TChar head = ReadGuestChar(current);
+    if (head == 'n' || head == 'N') {
         if (Matches(current, "nan")) {
             current += 3;
             result = 4;
-            if (*current == '(') {
+            if (ReadGuestChar(current) == '(') {
                 const TChar* payload = current + 1;
-                while (CharacterRules<TChar>::Payload(*payload)) ++payload;
-                if (*payload == ')') current = payload + 1;
+                while (CharacterRules<TChar>::Payload(ReadGuestChar(payload))) ++payload;
+                if (ReadGuestChar(payload) == ')') current = payload + 1;
             }
         } else {
             current = original;
             result = 0;
         }
-        if (end) *end = const_cast<TChar*>(current);
-    } else if (*current == 'i' || *current == 'I') {
+        writeEnd = true;
+    } else if (head == 'i' || head == 'I') {
         if (Matches(current, "inf")) {
             current += 3;
             if (Matches(current, "inity")) current += 5;
@@ -58,16 +82,33 @@ int ParsePrefix(const TChar** cursor, TChar** end) {
             current = original;
             result = 0;
         }
-        if (end) *end = const_cast<TChar*>(current);
-    } else if (*current == '0' && (current[1] == 'x' || current[1] == 'X')) {
-        const TChar* digit = current + 2;
-        if (*digit == '.') ++digit;
-        if (CharacterRules<TChar>::Hex(*digit)) {
-            current += 2;
-            result = negative | 2;
+        writeEnd = true;
+    } else if (head == '0') {
+        const TChar next = ReadGuestChar(current + 1);
+        if (next == 'x' || next == 'X') {
+            const TChar* digit = current + 2;
+            if (ReadGuestChar(digit) == '.') ++digit;
+            if (CharacterRules<TChar>::Hex(ReadGuestChar(digit))) {
+                current += 2;
+                result = negative | 2;
+            }
         }
     }
-    *cursor = current;
+    {
+        const int savedErrno = errno;
+        if (writeEnd && end != nullptr) {
+            auto* endValue = const_cast<TChar*>(current);
+            if (!GuestCopyOut_nid_no_patch(end, &endValue, sizeof(endValue))) {
+                errno = savedErrno;
+                APS5_INVALID_ARG_EX;
+            }
+        }
+        if (!GuestCopyOut_nid_no_patch(const_cast<TChar**>(cursor), &current, sizeof(current))) {
+            errno = savedErrno;
+            APS5_INVALID_ARG_EX;
+        }
+        errno = savedErrno;
+    }
     return result;
 }
 
@@ -76,12 +117,10 @@ int ParsePrefix(const TChar** cursor, TChar** end) {
 extern "C" {
 
 int APS5_VABI _Stopfx_nid_postfix(const char** cursor, char** end) {
-    if (cursor == nullptr || *cursor == nullptr) APS5_INVALID_ARG_EX;
     return ParsePrefix(cursor, end);
 }
 
 int APS5_VABI _WStopfx_nid_postfix(const char16_t** cursor, char16_t** end) {
-    if (cursor == nullptr || *cursor == nullptr) APS5_INVALID_ARG_EX;
     return ParsePrefix(cursor, end);
 }
 

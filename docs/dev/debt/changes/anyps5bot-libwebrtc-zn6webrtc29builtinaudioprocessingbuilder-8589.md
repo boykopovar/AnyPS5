@@ -1,0 +1,5 @@
+# libwebrtc
+
+## add Public source implementations
+
+- [webrtc::AudioDeviceBuffer SetRecordingSampleRate, SetPlayoutSampleRate, SetRecordingChannels, SetPlayoutChannels and RegisterAudioCallback](../../../core/libs/prx/libwebrtc/src/AudioDeviceBuffer.cpp) (libwebrtc) - nothing is checked on the console, the constructor still throws, and the `RTC_LOG` messages upstream writes are not emitted. The layout assumes a build without `RTC_DCHECK_IS_ON` (empty `SequenceChecker`, `Mutex` as one guest `pthread_mutex_t`): `lock_` at 8, `task_queue_` at 16, `audio_transport_cb_` at 24, sample rates at 32 and 36, channel counts at 40 and 48, `playing_` at 56, `recording_` at 57; with `RTC_DCHECK_IS_ON` every offset moves. A null buffer throws. Adapted from [audio_device_buffer.cc](https://webrtc.googlesource.com/src/+/8d78f5de6c27b2c793039989ea381f1428fb0100/modules/audio_device/audio_device_buffer.cc). Closes when: the build flags are known, the messages are logged and the layout is compared with the console.

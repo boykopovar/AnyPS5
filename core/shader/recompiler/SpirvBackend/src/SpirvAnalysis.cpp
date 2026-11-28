@@ -85,6 +85,7 @@ bool LaneSource(const IrProgram& program, const IrValue& value) {
     case IrOpcode::DataAppend:
     case IrOpcode::DataConsume:
     case IrOpcode::LoadVectorWindow:
+    case IrOpcode::LoadSplitState:
     case IrOpcode::DataOrderedCount:
     case IrOpcode::DataOrderedSwap:
         return true;
@@ -430,6 +431,7 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
             const auto addressAccess = AddressOpcodeInfoOf(inst->Opcode()).access;
             if ((BufferAccessOf(inst->Opcode()) == BufferAccess::Atomic || addressAccess == AddressAccess::Atomic) && inst->Type() == IrType::U64) {
                 requirements.bufferInt64Atomics = true;
+                requirements.addressInt64Atomics = requirements.addressInt64Atomics || addressAccess == AddressAccess::Atomic;
                 if (!IsSplittableBufferAtomic64(inst)) {
                     requirements.bufferInt64AtomicsExact = true;
                 } else if (!splitOpcode) {

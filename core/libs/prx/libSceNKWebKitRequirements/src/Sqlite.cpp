@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <new>
 #include <string>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -89,9 +90,14 @@ int RegisterGuestVfs() {
     if (guest.iVersion >= 2) guest.xCurrentTimeInt64 = ForwardVfs<&sqlite3_vfs::xCurrentTimeInt64>;
 
     auto* memory = sqlite3_vfs_find("memdb");
-    while (auto* registered = sqlite3_vfs_find(nullptr)) sqlite3_vfs_unregister(registered);
-    if (memory) sqlite3_vfs_register(memory, 0);
-    return sqlite3_vfs_register(&guest, 1);
+    std::vector<sqlite3_vfs*> replaced;
+    for (auto* registered = native; registered; registered = registered->pNext) {
+        if (registered != memory) replaced.push_back(registered);
+    }
+    const int result = sqlite3_vfs_register(&guest, 1);
+    if (result != SQLITE_OK) return result;
+    for (auto* registered : replaced) sqlite3_vfs_unregister(registered);
+    return SQLITE_OK;
 }
 
 int InitializeGuestVfs() {
@@ -440,9 +446,7 @@ int APS5_VABI sqlite3_open_v2_nid_postfix(const char* filename, sqlite3** db, in
     static_cast<void>(vfs);
     if (!db) return SQLITE_MISUSE;
     sqlite3* localDb = nullptr;
-    const int savedErrno = errno;
     const bool writable = GuestWritable_nid_no_patch(db, sizeof(localDb));
-    errno = savedErrno;
     if (!writable) return SQLITE_MISUSE;
     const int ready = InitializeGuestVfs();
     if (ready != SQLITE_OK) {
@@ -452,9 +456,7 @@ int APS5_VABI sqlite3_open_v2_nid_postfix(const char* filename, sqlite3** db, in
         return ready;
     }
     const int result = sqlite3_open_v2(filename, &localDb, flags, nullptr);
-    const int copyErrno = errno;
     const bool copiedOut = GuestCopyOut_nid_no_patch(db, &localDb, sizeof(localDb));
-    errno = copyErrno;
     if (!copiedOut) {
         if (localDb) sqlite3_close(localDb);
         return SQLITE_MISUSE;

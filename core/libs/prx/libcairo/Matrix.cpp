@@ -105,13 +105,15 @@ void APS5_VABI cairo_matrix_transform_distance(const CairoMatrix* matrix, double
 
 void APS5_VABI cairo_matrix_transform_point(const CairoMatrix* matrix, double* x, double* y) {
     const cairo_matrix_t backend = Backend(ReadGuest(matrix, __func__));
+    const bool sharedCoordinate = x == y;
     double pointX = ReadGuest(x, __func__);
-    double pointY = ReadGuest(y, __func__);
-    if (!GuestWritable_nid_no_patch(x, sizeof(pointX)) || !GuestWritable_nid_no_patch(y, sizeof(pointY)))
+    double pointY = sharedCoordinate ? 0.0 : ReadGuest(y, __func__);
+    if (!GuestWritable_nid_no_patch(x, sizeof(pointX)) ||
+        (!sharedCoordinate && !GuestWritable_nid_no_patch(y, sizeof(pointY))))
         NotImplemented_nid_no_patch(__func__);
-    aps5_cairo_matrix_transform_point(&backend, &pointX, &pointY);
+    aps5_cairo_matrix_transform_point(&backend, &pointX, sharedCoordinate ? &pointX : &pointY);
     WriteGuest(x, pointX, __func__);
-    WriteGuest(y, pointY, __func__);
+    if (!sharedCoordinate) WriteGuest(y, pointY, __func__);
 }
 
 }

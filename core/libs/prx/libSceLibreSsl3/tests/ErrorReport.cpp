@@ -1,6 +1,8 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include <array>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
@@ -104,6 +106,53 @@ void CheckThreads(const std::string& prefix) {
     Require(ERR_get_error_nid_postfix() == 0x03064041);
 }
 
+std::uint64_t PackErrorCode(int library, int function, int reason) {
+    return (static_cast<std::uint64_t>(library) & 0xff) << 24 |
+           (static_cast<std::uint64_t>(function) & 0xfff) << 12 |
+           (static_cast<std::uint64_t>(reason) & 0xfff);
+}
+
+std::string FormatExpectedLine(const std::string& prefix, int library, int function, int reason, const char* file, int line) {
+    const auto code = PackErrorCode(library, function, reason);
+    char buffer[256]{};
+    std::snprintf(buffer, sizeof(buffer), "error:%08llX:lib(%d):func(%d):reason(%d):%s:%d:\n",
+        static_cast<unsigned long long>(code), library & 0xff, function & 0xfff, reason & 0xfff, file ? file : "NA", file ? line : 0);
+    return prefix + buffer;
+}
+
+void CheckRingWrap(const std::string& prefix) {
+    ERR_clear_error_nid_postfix();
+    Require(ERR_peek_error_nid_postfix() == 0 && ERR_get_error_nid_postfix() == 0);
+
+    constexpr int queueCapacity = 15;
+    constexpr int totalEntries = 37;
+    constexpr std::array<const char*, 5> files{"ring_0.c", "ring_1.c", "ring_2.c", "ring_3.c", "ring_4.c"};
+
+    std::vector<std::string> expected;
+    expected.reserve(queueCapacity);
+
+    for (int index = 0; index < totalEntries; ++index) {
+        const int library = 3 + (index % 7);
+        const int function = 100 + index;
+        const int reason = 200 + index * 3;
+        const char* file = files[index % files.size()];
+        const int line = 10 + index * 7;
+        LibreSslPutError_nid_no_patch(library, function, reason, file, line);
+        if (index >= totalEntries - queueCapacity)
+            expected.push_back(FormatExpectedLine(prefix, library, function, reason, file, line));
+    }
+
+    const int firstRetained = totalEntries - queueCapacity;
+    const int lastRetained = totalEntries - 1;
+    Require(ERR_peek_error_nid_postfix() == PackErrorCode(3 + (firstRetained % 7), 100 + firstRetained, 200 + firstRetained * 3));
+    Require(ERR_peek_last_error_nid_postfix() == PackErrorCode(3 + (lastRetained % 7), 100 + lastRetained, 200 + lastRetained * 3));
+
+    Report report;
+    ERR_print_errors_cb_nid_postfix(Capture_nid_no_patch, &report);
+    Require(report.lines == expected);
+    Require(ERR_peek_error_nid_postfix() == 0 && ERR_get_error_nid_postfix() == 0 && ERR_peek_last_error_nid_postfix() == 0);
+}
+
 } // namespace
 
 int main() {
@@ -114,6 +163,7 @@ int main() {
         CheckGuestProducer(prefix);
         CheckTruncation(prefix);
         CheckThreads(prefix);
+        CheckRingWrap(prefix);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;

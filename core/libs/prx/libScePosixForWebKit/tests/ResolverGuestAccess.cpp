@@ -196,11 +196,59 @@ void HostEntry() {
     Require(result == nullptr && errno == 34);
 }
 
+void FreeAddressInfo() {
+    Pages nodes;
+    errno = 77;
+    freeaddrinfo_nid_postfix(nullptr);
+    Require(errno == 77);
+
+    errno = 77;
+    freeaddrinfo_nid_postfix(reinterpret_cast<GuestResolver::AddressInfo*>(0x10));
+    Require(errno == 77);
+
+    errno = 77;
+    freeaddrinfo_nid_postfix(reinterpret_cast<GuestResolver::AddressInfo*>(nodes.End()));
+    Require(errno == 77);
+
+    errno = 77;
+    freeaddrinfo_nid_postfix(
+        reinterpret_cast<GuestResolver::AddressInfo*>(nodes.End(sizeof(GuestResolver::AddressInfo) - 1)));
+    Require(errno == 77);
+
+    auto* tail = static_cast<GuestResolver::AddressInfo*>(std::calloc(1, sizeof(GuestResolver::AddressInfo)));
+    auto* head = static_cast<GuestResolver::AddressInfo*>(std::calloc(1, sizeof(GuestResolver::AddressInfo)));
+    Require(tail != nullptr && head != nullptr);
+    tail->address = std::calloc(1, 16);
+    tail->canonicalName = static_cast<char*>(std::malloc(10));
+    Require(tail->address != nullptr && tail->canonicalName != nullptr);
+    std::memcpy(tail->canonicalName, "127.0.0.1", 10);
+    head->address = std::calloc(1, 16);
+    head->canonicalName = static_cast<char*>(std::malloc(10));
+    Require(head->address != nullptr && head->canonicalName != nullptr);
+    std::memcpy(head->canonicalName, "localhost", 10);
+    head->next = tail;
+    errno = 77;
+    freeaddrinfo_nid_postfix(head);
+    Require(errno == 77);
+
+    auto* broken = static_cast<GuestResolver::AddressInfo*>(std::calloc(1, sizeof(GuestResolver::AddressInfo)));
+    Require(broken != nullptr);
+    broken->address = std::calloc(1, 16);
+    broken->canonicalName = static_cast<char*>(std::malloc(10));
+    Require(broken->address != nullptr && broken->canonicalName != nullptr);
+    std::memcpy(broken->canonicalName, "127.0.0.1", 10);
+    broken->next = reinterpret_cast<GuestResolver::AddressInfo*>(0x10);
+    errno = 77;
+    freeaddrinfo_nid_postfix(broken);
+    Require(errno == 77);
+}
+
 }
 
 int main() {
     AddressInfo();
     NumericCanonicalNames();
     HostEntry();
+    FreeAddressInfo();
     std::puts("resolver checked guest access tests passed");
 }

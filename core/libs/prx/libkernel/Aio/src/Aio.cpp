@@ -177,7 +177,9 @@ std::int64_t NativePread(std::int32_t fd, void* buf, std::size_t nbyte, std::int
     }
     return NativePositioned_nid_no_patch(fd, buf, nbyte, offset, false);
 #else
-    return static_cast<std::int64_t>(::pread(fd, buf, nbyte, static_cast<off_t>(offset)));
+    const iovec whole{buf, nbyte};
+    const auto parts = File::TransferInParts(fd, &whole, 1, &offset, false);
+    return parts == -2 ? static_cast<std::int64_t>(::pread(fd, buf, nbyte, static_cast<off_t>(offset))) : parts;
 #endif
 }
 
@@ -193,15 +195,21 @@ std::int64_t NativePwrite(std::int32_t fd, const void* buf, std::size_t nbyte, s
 #else
     const auto result = File::PwriteSharedMemory_nid_no_patch(fd, buf, nbyte, offset);
     if (result != -2) return result;
-#ifdef __APPLE__
     const iovec whole{const_cast<void*>(buf), nbyte};
+#ifdef __APPLE__
     if (const auto appended = File::WritevAtEnd(fd, &whole, 1); appended != -2) return appended;
 #endif
-    return static_cast<std::int64_t>(::pwrite(fd, buf, nbyte, static_cast<off_t>(offset)));
+    const auto parts = File::TransferInParts(fd, &whole, 1, &offset, true);
+    return parts == -2 ? static_cast<std::int64_t>(::pwrite(fd, buf, nbyte, static_cast<off_t>(offset))) : parts;
 #endif
 }
 
-void RunRequest(KernelAioRwRequest& req, bool write) {
+bool RunRequest(KernelAioRwRequest& req, bool write) {
+    const int savedErrno = errno;
+    const GuestArena::HostWrite completion(req.result, sizeof(*req.result));
+    const bool writable = completion.Open() && GuestWritable_nid_no_patch(req.result, sizeof(*req.result));
+    errno = savedErrno;
+    if (!writable) return false;
     const std::int64_t done = write
         ? NativePwrite(req.fd, req.buf, req.nbyte, req.offset)
         : NativePread(req.fd, req.buf, req.nbyte, req.offset);
@@ -213,10 +221,11 @@ void RunRequest(KernelAioRwRequest& req, bool write) {
         if (error == EINVAL) req.result->return_value = static_cast<std::int64_t>(SCE_KERNEL_ERROR_EINVAL);
         if (error == EISDIR) req.result->return_value = static_cast<std::int64_t>(SCE_KERNEL_ERROR_EISDIR);
         req.result->state = AioCompleted;
-        return;
+        return true;
     }
     req.result->return_value = done;
     req.result->state = AioCompleted;
+    return true;
 }
 
 int SubmitCommands(const KernelAioRwRequest* req, std::int32_t size, std::int32_t prio, bool write, bool multiple, std::int32_t* id) {
@@ -238,7 +247,9 @@ int SubmitCommands(const KernelAioRwRequest* req, std::int32_t size, std::int32_
         if (!writable) return SCE_KERNEL_ERROR_EFAULT;
     }
     Reservation reservation(count);
-    for (std::int32_t i = 0; i < size; ++i) RunRequest(requests[i], write);
+    for (std::int32_t i = 0; i < size; ++i) {
+        if (!RunRequest(requests[i], write)) return SCE_KERNEL_ERROR_EFAULT;
+    }
     return reservation.Publish(id) ? 0 : SCE_KERNEL_ERROR_EFAULT;
 }
 

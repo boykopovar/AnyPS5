@@ -139,6 +139,11 @@ void CheckRequests() {
 
     req = NewRequest();
     Require(sceNpScoreRecordScore(req, 1, 5, nullptr, nullptr, nullptr, nullptr, nullptr) == SignedOut, "sceNpScoreRecordScore", "the first call did not return SIGNED_OUT");
+    errno = 71;
+    Require(sceNpScorePollAsync(req, reinterpret_cast<int*>(0x10)) == InvalidArgument, "sceNpScorePollAsync", "an unwritable result was not refused with INVALID_ARGUMENT");
+    Require(errno == 71, "sceNpScorePollAsync", "errno was not preserved");
+    Require(sceNpScoreWaitAsync(req, reinterpret_cast<int*>(0x10)) == InvalidArgument, "sceNpScoreWaitAsync", "an unwritable result was not refused with INVALID_ARGUMENT");
+    Require(errno == 71, "sceNpScoreWaitAsync", "errno was not preserved");
     Require(sceNpScoreAbortRequest(req) == 0, "sceNpScoreAbortRequest", "aborting a finished request failed");
     Require(sceNpScorePollAsync(req, &result) == PollFinished && result == SignedOut, "sceNpScoreAbortRequest", "aborting a finished request changed its result");
     Require(sceNpScoreRecordScore(req, 1, 5, nullptr, nullptr, nullptr, nullptr, nullptr) == SignedOut, "sceNpScoreRecordScore", "a finished request was not reused");

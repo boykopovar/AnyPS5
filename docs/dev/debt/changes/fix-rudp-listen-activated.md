@@ -1,0 +1,5 @@
+# libSceRudp
+
+## change [sceRudpActivate]
+
+- [sceRudpActivate](../../../core/libs/prx/libSceRudp/Export.cpp) (libSceRudp) - follows @BunnyFl's firmware 13.42 [run](https://github.com/boykopovar/AnyPS5/issues/13682#issuecomment-6906135610) under an emulator with imports stubbed, not on a console. `(ctxId, addr, addrLen)` returns, after initialization, `0x80770004` for a negative id or null `addr`, `0x80770022` with no `sceRudpSetEventHandler` handler (before the id), `0x80770003` for an unknown id, `0x80770013` unbound, `0x80770011` listening and `0x80770021` once activated. On a bound context it returns 0 at once, with no check of the length or family, and `sceRudpGetContextStatus` then reports state 1. No connection follows, and what the firmware queues and sends wasn't read. A [later run](https://github.com/boykopovar/AnyPS5/issues/13682#issuecomment-6911969111) shows `sceRudpListen` on an activated context giving `0x80770011` with the state left at 1, and `sceRudpTerminate` freeing its binding at once, as for a bound one.

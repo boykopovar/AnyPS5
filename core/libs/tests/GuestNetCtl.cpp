@@ -4,6 +4,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <mswsock.h>
 #include <windows.h>
 #else
 #include <arpa/inet.h>
@@ -11,6 +12,8 @@
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/mman.h>
+#include <sys/resource.h>
+#include <fcntl.h>
 #include <unistd.h>
 #endif
 #ifdef __APPLE__
@@ -18,6 +21,8 @@
 #include <net/route.h>
 #endif
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "SceTypes.hpp"
 #include <array>
 #include <cerrno>
@@ -373,6 +378,9 @@ TestSocket OpenTestUdpSocket(sockaddr_in& bound) {
     local.sin_port = 0;
     Require(bind(descriptor, reinterpret_cast<const sockaddr*>(&local), sizeof(local)) == 0);
 #ifdef _WIN32
+    BOOL reportUnreachable = FALSE;
+    DWORD returned = 0;
+    Require(WSAIoctl(descriptor, SIO_UDP_CONNRESET, &reportUnreachable, sizeof(reportUnreachable), nullptr, 0, &returned, nullptr, nullptr) == 0);
     int length = sizeof(bound);
 #else
     socklen_t length = sizeof(bound);
@@ -662,6 +670,37 @@ void CheckNatDiscovery(in_addr address) {
     RecordUniqueTransactionId(seenIds, responseOriginTx);
     Require(!WaitReadable(server2, 300));
 
+#ifndef _WIN32
+    rlimit limit{};
+    Require(getrlimit(RLIMIT_NOFILE, &limit) == 0);
+    const rlimit originalLimit = limit;
+    if (limit.rlim_cur < 2 * FD_SETSIZE) {
+        limit.rlim_cur = limit.rlim_max < 2 * FD_SETSIZE ? limit.rlim_max : 2 * FD_SETSIZE;
+        Require(setrlimit(RLIMIT_NOFILE, &limit) == 0);
+    }
+    std::vector<int> filler;
+    while (filler.empty() || filler.back() < FD_SETSIZE) {
+        filler.push_back(open("/dev/null", O_RDONLY));
+        Require(filler.back() >= 0);
+    }
+    NetCtlSetStunServers_nid_no_patch(&server1Addr, 1, 1000);
+    StunTxId highTx{};
+    std::thread highWorker([&] {
+        sockaddr_in client{};
+        highTx = ReceiveStunBindingRequest(server1, client);
+        SendStunBindingResponse(server1, client, highTx, address.s_addr, 0, true);
+    });
+    natInfo = {sizeof(natInfo), 99, 99, 0};
+    Require(sceNetCtlGetNatInfo(&natInfo) == 0);
+    highWorker.join();
+    for (const int descriptor : filler) close(descriptor);
+    Require(setrlimit(RLIMIT_NOFILE, &originalLimit) == 0);
+    RecordUniqueTransactionId(seenIds, highTx);
+    Require(natInfo.stun_status == 2);
+    Require(natInfo.nat_type == 1);
+    Require(natInfo.mapped_addr == address.s_addr);
+#endif
+
     NetCtlSetStunServers_nid_no_patch(nullptr, 0, 0);
     CloseTestSocket(server1);
     CloseTestSocket(server2);
@@ -734,9 +773,88 @@ int main() {
     Require(sceNetCtlCheckCallback() == 0);
     auto* const unwritable = reinterpret_cast<int*>(0x10);
     Require(sceNetCtlGetState(nullptr) == kErrInvalidAddr);
+    errno = 71;
     Require(sceNetCtlGetState(unwritable) == kErrInvalidAddr);
+    Require(errno == 71);
     Require(sceNetCtlGetStateV6(nullptr) == kErrInvalidAddr);
+    errno = 71;
     Require(sceNetCtlGetStateV6(unwritable) == kErrInvalidAddr);
+    Require(errno == 71);
+    if (GuestArena::GuestArenaAvailable_nid_postfix()) {
+        constexpr std::size_t kArenaBytes = 0x10000;
+        auto* const mapped = static_cast<unsigned char*>(GuestArena::GuestArenaAllocate_nid_postfix(kArenaBytes, kArenaBytes));
+        Require(mapped != nullptr);
+#ifdef _WIN32
+        const HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, kArenaBytes, nullptr);
+        Require(section != nullptr);
+        GuestArena::GuestArenaMap_nid_postfix(mapped, kArenaBytes, section, 0, PAGE_READWRITE);
+        CloseHandle(section);
+        const bool watchedWrites = GuestArena::GuestArenaWriteWatched_nid_postfix();
+#else
+        GuestArena::GuestArenaCommit_nid_postfix(mapped, kArenaBytes, 0x04, kArenaBytes);
+        const bool watchedWrites = GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix();
+        if (watchedWrites) {
+            GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(mapped, kArenaBytes);
+        }
+#endif
+        const auto collectDirty = [&]() -> bool {
+            if (!watchedWrites) {
+                return true;
+            }
+#ifdef _WIN32
+            std::array<void*, 16> pages{};
+            std::size_t count = pages.size();
+            Require(GuestArena::GuestArenaCollectWrites_nid_postfix(reinterpret_cast<std::uintptr_t>(mapped), kArenaBytes, pages.data(), &count, true));
+            return count != 0;
+#else
+            bool dirty = false;
+            Require(GuestWriteWatch::GuestWriteWatchCollect_nid_postfix(reinterpret_cast<std::uintptr_t>(mapped), kArenaBytes,
+                [](void* context, std::uintptr_t, std::uintptr_t) { *static_cast<bool*>(context) = true; }, &dirty));
+            return dirty;
+#endif
+        };
+        const auto armWatch = [&](void* target) {
+            if (!watchedWrites) {
+                return;
+            }
+            static_cast<void>(collectDirty());
+            Require(!collectDirty());
+#ifdef _WIN32
+            MEMORY_BASIC_INFORMATION mbi{};
+            Require(VirtualQuery(target, &mbi, sizeof(mbi)) == sizeof(mbi) && mbi.Protect == PAGE_READONLY);
+#else
+            static_cast<void>(target);
+#endif
+        };
+        auto* const watched = reinterpret_cast<int*>(mapped);
+        watched[0] = -1;
+        armWatch(watched);
+        errno = 71;
+        Require(sceNetCtlGetState(watched) == 0 && (watched[0] == 0 || watched[0] == kStateIpObtained));
+        Require(errno == 71);
+        Require(collectDirty());
+        watched[0] = -1;
+        armWatch(watched);
+        errno = 71;
+        Require(sceNetCtlGetStateV6(watched) == 0 && (watched[0] == 0 || watched[0] == kStateIpObtained));
+        Require(errno == 71);
+        Require(collectDirty());
+        GuestArena::GuestArenaSetProtection_nid_postfix(reinterpret_cast<std::uintptr_t>(mapped), kArenaBytes, 0x02);
+        errno = 71;
+        Require(sceNetCtlGetState(watched) == kErrInvalidAddr);
+        Require(errno == 71);
+        errno = 71;
+        Require(sceNetCtlGetStateV6(watched) == kErrInvalidAddr);
+        Require(errno == 71);
+        GuestArena::GuestArenaSetProtection_nid_postfix(reinterpret_cast<std::uintptr_t>(mapped), kArenaBytes, 0x04);
+#ifndef _WIN32
+        if (watchedWrites) {
+            GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(mapped, kArenaBytes);
+        }
+#endif
+        GuestArena::GuestArenaReset_nid_postfix(mapped, kArenaBytes);
+        GuestArena::GuestArenaRelease_nid_postfix(mapped, kArenaBytes);
+    }
     Require(sceNetCtlGetInfo(0, nullptr) == kErrInvalidAddr);
     Require(sceNetCtlGetResult(0, nullptr) == kErrInvalidAddr);
     Require(sceNetCtlGetResult(0, unwritable) == kErrInvalidAddr);

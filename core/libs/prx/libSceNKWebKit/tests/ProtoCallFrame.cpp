@@ -8,6 +8,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
+#include <string>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 using NKWebKit::JscAbi::ProtoCallFrame;
 
@@ -138,8 +145,8 @@ void TestAssignment() {
 
     Frame destination(0xa5);
     const Frame destinationBefore = destination;
-    ProtoCallFrame& result = _ZN3JSC14ProtoCallFrameaSERKS0_(destination.Get(), *source.Get());
-    Require(&result == destination.Get());
+    ProtoCallFrame* result = _ZN3JSC14ProtoCallFrameaSERKS0_(destination.Get(), *source.Get());
+    Require(result == destination.Get());
     for (std::size_t i = 0; i < 56; ++i) {
         if (i >= 36 && i < 40) continue;
         Require(destination.bytes[i] == source.bytes[i]);
@@ -151,9 +158,92 @@ void TestAssignment() {
     Require(_ZNK3JSC14ProtoCallFrame13argumentCountEv(destination.Get()) == _ZNK3JSC14ProtoCallFrame13argumentCountEv(source.Get()));
 
     const Frame selfBefore = destination;
-    ProtoCallFrame& selfResult = _ZN3JSC14ProtoCallFrameaSERKS0_(destination.Get(), *destination.Get());
-    Require(&selfResult == destination.Get());
+    ProtoCallFrame* selfResult = _ZN3JSC14ProtoCallFrameaSERKS0_(destination.Get(), *destination.Get());
+    Require(selfResult == destination.Get());
     Require(SameExcept(destination, selfBefore, 0, 0));
+}
+
+template <typename Function>
+bool FaultsAsNotImplemented(Function function, const char* name) {
+    try {
+        static_cast<void>(function());
+    } catch (const std::runtime_error& error) {
+        return std::string(error.what()) == std::string(name) + " not implemented";
+    }
+    return false;
+}
+
+std::uint8_t* MapReadOnlyCopy(const Frame& frame, const std::array<std::uint64_t, 2>& arguments) {
+#ifdef _WIN32
+    auto* page = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(page != nullptr);
+#else
+    void* mapped = mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+    Require(mapped != MAP_FAILED);
+    auto* page = static_cast<std::uint8_t*>(mapped);
+#endif
+    std::memcpy(page, frame.bytes.data(), frame.bytes.size());
+    std::memcpy(page + 128, arguments.data(), sizeof(arguments));
+    auto* args = reinterpret_cast<std::uint64_t*>(page + 128);
+    std::memcpy(page + 40, &args, sizeof(args));
+#ifdef _WIN32
+    DWORD previous = 0;
+    Require(VirtualProtect(page, 4096, PAGE_READONLY, &previous) != 0);
+#else
+    Require(mprotect(page, 4096, PROT_READ) == 0);
+#endif
+    return page;
+}
+
+void UnmapPage(void* page) {
+#ifdef _WIN32
+    Require(VirtualFree(page, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(page, 4096) == 0);
+#endif
+}
+
+void TestGuestPointers() {
+    auto* unreadable = reinterpret_cast<ProtoCallFrame*>(0x10);
+    Frame frame(0xa5);
+    frame.Put<std::int32_t>(16, 3);
+    frame.Put<std::int32_t>(20, 7);
+    std::uint8_t* page = MapReadOnlyCopy(frame, {0x1111ull, 0x2222ull});
+    auto* readOnly = reinterpret_cast<ProtoCallFrame*>(page);
+    auto* readOnlyArguments = reinterpret_cast<std::uint64_t*>(page + 128);
+
+    Require(FaultsAsNotImplemented([&] { return _ZNK3JSC14ProtoCallFrame13argumentCountEv(unreadable); }, "_ZNK3JSC14ProtoCallFrame13argumentCountEv"));
+    Require(_ZNK3JSC14ProtoCallFrame13argumentCountEv(readOnly) == 2);
+
+    Require(FaultsAsNotImplemented([&] { return _ZN3JSC14ProtoCallFrame8argumentEm(unreadable, 0); }, "_ZN3JSC14ProtoCallFrame8argumentEm"));
+    Require(_ZN3JSC14ProtoCallFrame8argumentEm(readOnly, 1) == 0x2222ull);
+    Frame dangling(0xa5);
+    dangling.Put<std::uint64_t*>(40, reinterpret_cast<std::uint64_t*>(0x10));
+    Require(FaultsAsNotImplemented([&] { return _ZN3JSC14ProtoCallFrame8argumentEm(dangling.Get(), 1); }, "_ZN3JSC14ProtoCallFrame8argumentEm"));
+
+    Require(FaultsAsNotImplemented([&] { _ZN3JSC14ProtoCallFrame11setArgumentEmNS_7JSValueE(unreadable, 0, 1); return 0; },
+        "_ZN3JSC14ProtoCallFrame11setArgumentEmNS_7JSValueE"));
+    Require(FaultsAsNotImplemented([&] { _ZN3JSC14ProtoCallFrame11setArgumentEmNS_7JSValueE(dangling.Get(), 0, 1); return 0; },
+        "_ZN3JSC14ProtoCallFrame11setArgumentEmNS_7JSValueE"));
+    Require(FaultsAsNotImplemented([&] { _ZN3JSC14ProtoCallFrame11setArgumentEmNS_7JSValueE(readOnly, 0, 1); return 0; },
+        "_ZN3JSC14ProtoCallFrame11setArgumentEmNS_7JSValueE"));
+    Require(readOnlyArguments[0] == 0x1111ull);
+
+    Require(FaultsAsNotImplemented([&] { _ZN3JSC14ProtoCallFrame15clearCurrentVPCEv(unreadable); return 0; }, "_ZN3JSC14ProtoCallFrame15clearCurrentVPCEv"));
+    Require(FaultsAsNotImplemented([&] { _ZN3JSC14ProtoCallFrame15clearCurrentVPCEv(readOnly); return 0; }, "_ZN3JSC14ProtoCallFrame15clearCurrentVPCEv"));
+
+    Frame destination(0x5a);
+    const Frame destinationBefore = destination;
+    Require(FaultsAsNotImplemented([&] { return _ZN3JSC14ProtoCallFrameaSERKS0_(destination.Get(), *unreadable); }, "_ZN3JSC14ProtoCallFrameaSERKS0_"));
+    Require(FaultsAsNotImplemented([&] { return _ZN3JSC14ProtoCallFrameaSERKS0_(unreadable, *destination.Get()); }, "_ZN3JSC14ProtoCallFrameaSERKS0_"));
+    Require(FaultsAsNotImplemented([&] { return _ZN3JSC14ProtoCallFrameaSERKS0_(readOnly, *destination.Get()); }, "_ZN3JSC14ProtoCallFrameaSERKS0_"));
+    Require(SameExcept(destination, destinationBefore, 0, 0));
+    Require(std::memcmp(page, frame.bytes.data(), 40) == 0);
+    Require(_ZN3JSC14ProtoCallFrameaSERKS0_(destination.Get(), *readOnly) == destination.Get());
+    Require(destination.Read<std::int32_t>(16) == 3 && destination.Read<std::uint64_t*>(40) == readOnlyArguments);
+    Require(destination.Read<std::uint32_t>(36) == 0x5a5a5a5au);
+
+    UnmapPage(page);
 }
 
 }
@@ -164,5 +254,6 @@ int main() {
     TestSetArgument();
     TestClearCurrentVPC();
     TestAssignment();
+    TestGuestPointers();
     return 0;
 }

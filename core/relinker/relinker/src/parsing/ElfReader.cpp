@@ -135,6 +135,9 @@ std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
     if (!_rangeFits(header.ProgramHeaderOffset, tableSize, _fileBuffer.size())) {
         throw RelinkerException("FileByteOffset out of bounds", header.ProgramHeaderOffset);
     }
+    if (header.ProgramHeaderCount == PN_XNUM) {
+        throw RelinkerException("Extended program header counts are not supported", 0x38);
+    }
 
     std::vector<ProgramHeader> headers;
     FileByteOffset offset = header.ProgramHeaderOffset;

@@ -512,6 +512,10 @@ extern const char GuardedCompareWideLoad[];
 extern const char GuardedCompareByteLoad[];
 extern const char GuardedReadFailed[];
 extern const char GuardedReadFailedAvx2[];
+int GuardedStore(std::uintptr_t destination, const void* source, std::size_t bytes);
+extern const char GuardedStoreWideStore[];
+extern const char GuardedStoreByteStore[];
+extern const char GuardedWriteFailed[];
 }
 
 asm(".text\n"
@@ -623,6 +627,34 @@ asm(".text\n"
     "    ret\n"
     ".seh_endproc\n");
 
+asm(".text\n"
+    ".seh_proc GuardedStore\n"
+    "GuardedStore:\n"
+    ".seh_endprologue\n"
+    "    leaq (%rcx,%r8), %r9\n"
+    "    subq %rcx, %rdx\n"
+    "    jmp 2f\n"
+    "1:  movdqu (%rcx,%rdx), %xmm0\n"
+    "GuardedStoreWideStore:\n"
+    "    movdqu %xmm0, (%rcx)\n"
+    "    addq $16, %rcx\n"
+    "2:  leaq 16(%rcx), %rax\n"
+    "    cmpq %r9, %rax\n"
+    "    jbe 1b\n"
+    "    jmp 4f\n"
+    "3:  movzbl (%rcx,%rdx), %eax\n"
+    "GuardedStoreByteStore:\n"
+    "    movb %al, (%rcx)\n"
+    "    incq %rcx\n"
+    "4:  cmpq %r9, %rcx\n"
+    "    jb 3b\n"
+    "    xorl %eax, %eax\n"
+    "    ret\n"
+    "GuardedWriteFailed:\n"
+    "    movl $-1, %eax\n"
+    "    ret\n"
+    ".seh_endproc\n");
+
 namespace {
 
 bool HasAvx2() {
@@ -646,6 +678,23 @@ bool GuestArenaCompareOwned_nid_no_patch(std::uintptr_t source, const void* expe
     const auto result = (HasAvx2() ? GuardedCompareAvx2 : GuardedCompare)(source, expected, bytes);
     *equal = result == 0;
     return result >= 0;
+}
+
+bool GuestArenaStoreOwned_nid_no_patch(std::uintptr_t destination, const void* source, std::size_t bytes) {
+    return OwnedByGuest(destination, bytes) && GuardedStore(destination, source, bytes) == 0;
+}
+
+bool GuestArenaRecoverWrite_nid_no_patch(EXCEPTION_POINTERS* exception) {
+    const auto* record = exception->ExceptionRecord;
+    const auto code = record->ExceptionCode;
+    if ((code != EXCEPTION_ACCESS_VIOLATION && code != EXCEPTION_IN_PAGE_ERROR) || record->NumberParameters < 2 || record->ExceptionInformation[0] != 1) return false;
+    auto* context = exception->ContextRecord;
+    const auto at = reinterpret_cast<const char*>(context->Rip);
+    if (at != GuardedStoreWideStore && at != GuardedStoreByteStore) return false;
+    const auto address = static_cast<std::uintptr_t>(record->ExceptionInformation[1]);
+    if (address < context->Rcx || address >= context->R9) return false;
+    context->Rip = reinterpret_cast<DWORD64>(GuardedWriteFailed);
+    return true;
 }
 
 bool GuestArenaRecoverRead_nid_no_patch(EXCEPTION_POINTERS* exception) {
@@ -822,6 +871,10 @@ void GuestArenaForgetKnownZero_nid_no_patch(std::uintptr_t address, std::size_t 
     WindowsMappings::Get().ForgetKnownZero(address, bytes);
 }
 
+std::uint64_t GuestArenaKnownZeroMarks_nid_no_patch() {
+    return WindowsMappings::Get().KnownZeroMarks();
+}
+
 void GuestArenaForgetSection_nid_postfix(void* section) {
     WindowsMappings::Get().ForgetSection(section);
 }
@@ -855,7 +908,7 @@ void* PlaceAt(void* pointer, std::size_t bytes, std::uint32_t protection) {
 #if defined(__linux__) || defined(__APPLE__)
 void GuestArenaSetProtection_nid_postfix(std::uintptr_t address, std::size_t bytes, std::uint32_t protection) {
     if (!Arena::Get().Contains(reinterpret_cast<void*>(address), bytes)) throw OutsideArena("set protection", reinterpret_cast<void*>(address), bytes);
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__linux__)
     if (const int error = GuestWriteWatch::GuestWriteWatchProtect_nid_postfix(reinterpret_cast<void*>(address), bytes, PosixProtection(protection)); error != 0)
         throw std::system_error(error, std::generic_category(), "guest arena protection failed");
 #else
@@ -987,6 +1040,7 @@ namespace {
 std::atomic<SharedBackingResolver> sharedBackingResolver{nullptr};
 std::atomic<SharedBackingWriter> sharedBackingWriter{nullptr};
 std::atomic<SharedBackingRunsResolver> sharedBackingRunsResolver{nullptr};
+std::atomic<SharedBackingHostFallback> sharedBackingHostFallback{nullptr};
 
 }
 
@@ -1015,6 +1069,15 @@ void GuestArenaSetSharedBackingRuns_nid_postfix(SharedBackingRunsResolver resolv
 bool GuestArenaSharedBackingRuns_nid_postfix(std::uintptr_t address, std::size_t bytes, int* file, SharedBackingRun* runs, std::size_t capacity, std::size_t* count) {
     const auto resolver = sharedBackingRunsResolver.load(std::memory_order_acquire);
     return resolver != nullptr && resolver(address, bytes, file, runs, capacity, count);
+}
+
+void GuestArenaSetSharedBackingHostFallback_nid_no_patch(SharedBackingHostFallback fallback) {
+    sharedBackingHostFallback.store(fallback, std::memory_order_release);
+}
+
+bool GuestArenaSharedBackingHostFallback_nid_no_patch(std::uintptr_t address, std::size_t bytes) {
+    const auto fallback = sharedBackingHostFallback.load(std::memory_order_acquire);
+    return fallback != nullptr && fallback(address, bytes);
 }
 
 bool GuestArenaOverlapsHostRegion_nid_no_patch(std::uintptr_t address, std::size_t bytes) {

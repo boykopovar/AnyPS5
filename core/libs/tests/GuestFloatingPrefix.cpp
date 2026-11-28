@@ -1,6 +1,8 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/CommandLineArgument.hpp"
 #include <nid/NidCompute.hpp>
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -174,6 +176,113 @@ static void CheckNull(Prefix<TChar> function) {
 }
 
 template<typename TChar>
+static void CheckGuestPointers(Prefix<TChar> function) {
+    struct OutputBuffer {
+        TChar* end;
+        std::uint64_t guard;
+    };
+    OutputBuffer untouched{};
+    std::memset(&untouched, 0xA5, sizeof(untouched));
+    OutputBuffer expected{};
+    std::memset(&expected, 0xA5, sizeof(expected));
+
+    auto* badCursorPtr = reinterpret_cast<const TChar**>(static_cast<std::uintptr_t>(1));
+    errno = 42;
+    RequireInvalidArgument([&] { function(badCursorPtr, &untouched.end); }, "unmapped cursor");
+    Require(errno == 42, "unmapped cursor preserves errno");
+    Require(std::memcmp(&untouched, &expected, sizeof(untouched)) == 0, "unmapped cursor leaves output untouched");
+
+    const TChar* badText = reinterpret_cast<const TChar*>(static_cast<std::uintptr_t>(1));
+    errno = 43;
+    RequireInvalidArgument([&] { function(&badText, &untouched.end); }, "unmapped text");
+    Require(errno == 43, "unmapped text preserves errno");
+    Require(badText == reinterpret_cast<const TChar*>(static_cast<std::uintptr_t>(1)), "unmapped text leaves cursor untouched");
+    Require(std::memcmp(&untouched, &expected, sizeof(untouched)) == 0, "unmapped text leaves output untouched");
+
+    const auto nanText = Text<TChar>("nan");
+    const auto numText = Text<TChar>("12.5e4");
+    auto* badEndPtr = reinterpret_cast<TChar**>(static_cast<std::uintptr_t>(1));
+    const TChar* cursorNan = nanText.data();
+    errno = 44;
+    RequireInvalidArgument([&] { function(&cursorNan, badEndPtr); }, "unmapped end on nan");
+    Require(errno == 44, "unmapped end on nan preserves errno");
+    Require(cursorNan == nanText.data(), "unmapped end on nan leaves cursor untouched");
+
+    const TChar* cursorNum = numText.data();
+    errno = 45;
+    RequireInvalidArgument([&] { function(&cursorNum, badEndPtr); }, "unmapped end on numeric");
+    Require(errno == 45, "unmapped end on numeric preserves errno");
+    Require(cursorNum == numText.data(), "unmapped end on numeric leaves cursor untouched");
+
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::size_t page = info.dwPageSize;
+    auto* roPage = static_cast<unsigned char*>(VirtualAlloc(nullptr, page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(roPage != nullptr, "readonly allocation");
+    auto* guardPage = static_cast<unsigned char*>(VirtualAlloc(nullptr, page * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(guardPage != nullptr, "unterminated guard allocation");
+    DWORD previous = 0;
+#else
+    const std::size_t page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    auto* roPage = static_cast<unsigned char*>(mmap(nullptr, page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(roPage != MAP_FAILED, "readonly allocation");
+    auto* guardPage = static_cast<unsigned char*>(mmap(nullptr, page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(guardPage != MAP_FAILED, "unterminated guard allocation");
+#endif
+
+    const TChar* textPtr = nanText.data();
+    std::memcpy(roPage, &textPtr, sizeof(textPtr));
+    TChar* endPlaceholder = nullptr;
+    std::memcpy(roPage + sizeof(textPtr), &endPlaceholder, sizeof(endPlaceholder));
+
+#ifdef _WIN32
+    Require(VirtualProtect(roPage, page, PAGE_READONLY, &previous) != 0, "readonly protection");
+    Require(VirtualProtect(guardPage + page, page, PAGE_NOACCESS, &previous) != 0, "unterminated guard protection");
+#else
+    Require(mprotect(roPage, page, PROT_READ) == 0, "readonly protection");
+    Require(mprotect(guardPage + page, page, PROT_NONE) == 0, "unterminated guard protection");
+#endif
+
+    const auto* roCursor = reinterpret_cast<const TChar* const*>(roPage);
+    errno = 46;
+    RequireInvalidArgument([&] { function(const_cast<const TChar**>(roCursor), &untouched.end); }, "readonly cursor");
+    Require(errno == 46, "readonly cursor preserves errno");
+    Require(std::memcmp(&untouched, &expected, sizeof(untouched)) == 0, "readonly cursor leaves output untouched");
+
+    auto* roEnd = reinterpret_cast<TChar**>(roPage + sizeof(textPtr));
+    cursorNan = nanText.data();
+    errno = 47;
+    RequireInvalidArgument([&] { function(&cursorNan, roEnd); }, "readonly end on nan");
+    Require(errno == 47, "readonly end on nan preserves errno");
+    Require(cursorNan == nanText.data(), "readonly end on nan leaves cursor untouched");
+
+    cursorNum = numText.data();
+    errno = 48;
+    RequireInvalidArgument([&] { function(&cursorNum, roEnd); }, "readonly end on numeric");
+    Require(errno == 48, "readonly end on numeric preserves errno");
+    Require(cursorNum == numText.data(), "readonly end on numeric leaves cursor untouched");
+
+    auto* unterminated = reinterpret_cast<TChar*>(guardPage + page - 2 * sizeof(TChar));
+    unterminated[0] = static_cast<TChar>('n');
+    unterminated[1] = static_cast<TChar>('a');
+    const TChar* guardCursor = unterminated;
+    errno = 49;
+    RequireInvalidArgument([&] { function(&guardCursor, &untouched.end); }, "unterminated string");
+    Require(errno == 49, "unterminated string preserves errno");
+    Require(guardCursor == unterminated, "unterminated string leaves cursor untouched");
+    Require(std::memcmp(&untouched, &expected, sizeof(untouched)) == 0, "unterminated string leaves output untouched");
+
+#ifdef _WIN32
+    Require(VirtualFree(roPage, 0, MEM_RELEASE) != 0, "readonly release");
+    Require(VirtualFree(guardPage, 0, MEM_RELEASE) != 0, "unterminated guard release");
+#else
+    Require(munmap(roPage, page) == 0, "readonly release");
+    Require(munmap(guardPage, page * 2) == 0, "unterminated guard release");
+#endif
+}
+
+template<typename TChar>
 static void CheckConcurrent(Prefix<TChar> function) {
     std::array<std::thread, 4> workers;
     for (auto& worker : workers) {
@@ -195,7 +304,7 @@ int main(int argc, char** argv) {
     Require(wide || std::string(argv[3]) == "narrow", "width selection");
     const std::string name = wide ? "_WStopfx" : "_Stopfx";
     const std::string symbol = std::string(argv[2]) == "patched" ? Nid::ComputeNid(name, "") : name + "_nid_postfix";
-    const auto path = std::filesystem::absolute(argv[1]) / "libc.prx";
+    const auto path = std::filesystem::absolute(ArgumentPath(argv, 1)) / "libc.prx";
 #ifdef _WIN32
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
     const auto startup = GetModuleHandleW(L"libc.prx");
@@ -218,11 +327,13 @@ int main(int argc, char** argv) {
         const auto prefix = reinterpret_cast<Prefix<char16_t>>(function);
         Check(prefix);
         CheckNull(prefix);
+        CheckGuestPointers(prefix);
         CheckConcurrent(prefix);
     } else {
         const auto prefix = reinterpret_cast<Prefix<char>>(function);
         Check(prefix);
         CheckNull(prefix);
+        CheckGuestPointers(prefix);
         CheckConcurrent(prefix);
     }
     std::printf("%s: prefix codes, pointer updates, input/output bounds, null arguments and guarded reads passed\n", name.c_str());

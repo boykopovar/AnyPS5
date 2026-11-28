@@ -134,6 +134,56 @@ bool Pad::KeyboardMouse::MouseMode() const {
     return mouseMode;
 }
 
+const char* Pad::KeyboardMouse::MouseModeShortcut(bool guestReadsMouse) const {
+    MouseButton button = MouseButton::None;
+    for (const auto& binding : configuration.bindings) {
+        if (binding.control != InputControl::ToggleMouse) continue;
+        switch (binding.key) {
+            case SDL_SCANCODE_UNKNOWN: break;
+            case SDL_SCANCODE_BACKSLASH: return "Backslash";
+            case SDL_SCANCODE_NONUSBACKSLASH: return "Non-US backslash";
+            case SDL_SCANCODE_LEFTBRACKET: return "Left bracket";
+            case SDL_SCANCODE_RIGHTBRACKET: return "Right bracket";
+            case SDL_SCANCODE_NONUSHASH: return "Non-US hash";
+            case SDL_SCANCODE_SEMICOLON: return "Semicolon";
+            case SDL_SCANCODE_APOSTROPHE: return "Apostrophe";
+            case SDL_SCANCODE_GRAVE: return "Grave accent";
+            case SDL_SCANCODE_COMMA: return "Comma";
+            case SDL_SCANCODE_EQUALS: return "Equals";
+            case SDL_SCANCODE_KP_MULTIPLY: return "Keypad multiply";
+            case SDL_SCANCODE_KP_EQUALS: return "Keypad equals";
+            case SDL_SCANCODE_KP_COMMA: return "Keypad comma";
+            case SDL_SCANCODE_KP_EQUALSAS400: return "Keypad equals AS400";
+            case SDL_SCANCODE_KP_LEFTPAREN: return "Keypad left parenthesis";
+            case SDL_SCANCODE_KP_RIGHTPAREN: return "Keypad right parenthesis";
+            case SDL_SCANCODE_KP_LEFTBRACE: return "Keypad left brace";
+            case SDL_SCANCODE_KP_RIGHTBRACE: return "Keypad right brace";
+            case SDL_SCANCODE_KP_POWER: return "Keypad power";
+            case SDL_SCANCODE_KP_LESS: return "Keypad less than";
+            case SDL_SCANCODE_KP_GREATER: return "Keypad greater than";
+            case SDL_SCANCODE_KP_AMPERSAND: return "Keypad ampersand";
+            case SDL_SCANCODE_KP_DBLAMPERSAND: return "Keypad double ampersand";
+            case SDL_SCANCODE_KP_VERTICALBAR: return "Keypad vertical bar";
+            case SDL_SCANCODE_KP_DBLVERTICALBAR: return "Keypad double bar";
+            case SDL_SCANCODE_KP_HASH: return "Keypad hash";
+            case SDL_SCANCODE_KP_AT: return "Keypad at";
+            case SDL_SCANCODE_KP_EXCLAM: return "Keypad exclamation";
+            default: return SDL_GetScancodeName(binding.key);
+        }
+        if (button == MouseButton::None) button = binding.mouseButton;
+    }
+    if (guestReadsMouse && !mouseMode) return "";
+    switch (button) {
+        case MouseButton::Left: return "Left click";
+        case MouseButton::Middle: return "Middle click";
+        case MouseButton::Right: return "Right click";
+        case MouseButton::X1: return "Mouse X1";
+        case MouseButton::X2: return "Mouse X2";
+        case MouseButton::None: return "";
+    }
+    return "";
+}
+
 Pad::KeyboardMouse::StickInput Pad::KeyboardMouse::stickInput() const {
     std::array<bool, 4> negative{};
     std::array<bool, 4> positive{};
@@ -162,11 +212,22 @@ Pad::KeyboardMouse::StickInput Pad::KeyboardMouse::stickInput() const {
     return input;
 }
 
+bool Pad::KeyboardMouse::isToggleBinding(const InputBinding& binding) const {
+    const bool keyOrMouse = binding.key != SDL_SCANCODE_UNKNOWN || binding.mouseButton != MouseButton::None;
+    return keyOrMouse && binding.control == InputControl::Button && (configuration.toggleButtons & static_cast<std::uint32_t>(binding.button)) != 0;
+}
+
+bool Pad::KeyboardMouse::bindingHeld(std::size_t index) const {
+    const auto& binding = configuration.bindings[index];
+    if (isToggleBinding(binding)) return toggles.Held(static_cast<std::uint32_t>(binding.button));
+    return pressed[index];
+}
+
 std::array<double, 2> Pad::KeyboardMouse::triggerTargets() const {
     std::array<double, 2> targets{};
     for (std::size_t index = 0; index < configuration.bindings.size(); ++index) {
         const auto& binding = configuration.bindings[index];
-        if (!pressed[index] || binding.control != InputControl::Button) continue;
+        if (binding.control != InputControl::Button || !bindingHeld(index)) continue;
         if (binding.button == PadButton::L2) targets[0] = 1.0;
         if (binding.button == PadButton::R2) targets[1] = 1.0;
     }
@@ -220,6 +281,14 @@ bool Pad::KeyboardMouse::Advance(Clock::time_point now) {
 
 void Pad::KeyboardMouse::SetMouseMode(bool enabled) {
     if (enabled) mouseTouch.reset();
+    if (mouseMode && !enabled && titleReadsMouse) {
+        for (std::size_t index = 0; index < configuration.bindings.size(); ++index) {
+            const auto& binding = configuration.bindings[index];
+            if (binding.mouseButton == MouseButton::None && binding.wheelDirection == 0 && binding.wheelTilt == 0) continue;
+            pressed[index] = false;
+            wheelReleaseTimes[index] = {};
+        }
+    }
     mouseMode = enabled;
     mouse.Reset();
 }
@@ -230,6 +299,7 @@ void Pad::KeyboardMouse::SetTitleReadsMouse(bool reads) {
 
 void Pad::KeyboardMouse::Release() {
     std::fill(pressed.begin(), pressed.end(), false);
+    toggles.Clear();
     std::fill(wheelReleaseTimes.begin(), wheelReleaseTimes.end(), Clock::time_point{});
     stickAxes = {};
     triggerAxes = {};
@@ -278,11 +348,11 @@ Pad::InputRequests Pad::KeyboardMouse::HandleEvent(const SDL_Event& event, Clock
             gyroCountsX += event.motion.xrel;
             gyroCountsY += event.motion.yrel;
         }
-        if (mouseMode && !titleReadsMouse) mouse.Move(event.motion.xrel, event.motion.yrel);
+        if (mouseMode) mouse.Move(event.motion.xrel, event.motion.yrel);
         return requests;
     }
     if (event.type == SDL_MOUSEWHEEL) {
-        if (titleReadsMouse) return requests;
+        if (titleReadsMouse && !mouseMode) return requests;
         int direction = (event.wheel.y > 0) - (event.wheel.y < 0);
         int tilt = (event.wheel.x > 0) - (event.wheel.x < 0);
         if (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) {
@@ -305,7 +375,7 @@ Pad::InputRequests Pad::KeyboardMouse::HandleEvent(const SDL_Event& event, Clock
     const bool mouseButton = event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEBUTTONUP;
     if (!keyboard && !mouseButton) return requests;
     if (keyboard && event.key.repeat != 0) return requests;
-    if (event.type == SDL_MOUSEBUTTONDOWN && titleReadsMouse) return requests;
+    if (event.type == SDL_MOUSEBUTTONDOWN && titleReadsMouse && !mouseMode) return requests;
     if (event.type == SDL_MOUSEBUTTONUP && event.button.button == SDL_BUTTON_LEFT) mouseTouch.reset();
     if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT && mouseTouchpad && !mouseMode) mouseTouch = touchAt(event.button.x, event.button.y);
     advanceAxes(now);
@@ -316,7 +386,9 @@ Pad::InputRequests Pad::KeyboardMouse::HandleEvent(const SDL_Event& event, Clock
             ? binding.key != SDL_SCANCODE_UNKNOWN && binding.key == event.key.keysym.scancode
             : binding.mouseButton != MouseButton::None && binding.mouseButton == static_cast<MouseButton>(event.button.button);
         if (!matches) continue;
+        if (down && !pressed[index] && isToggleBinding(binding)) toggles.Toggle(static_cast<std::uint32_t>(binding.button));
         if (binding.control == InputControl::ToggleFullscreen && keyboard && down && !pressed[index]) requests.toggleFullscreen = true;
+        if (binding.control == InputControl::ToggleBorderless && keyboard && down && !pressed[index]) requests.toggleBorderless = true;
         if (binding.control == InputControl::TogglePerformanceOverlay && keyboard && down && !pressed[index]) requests.togglePerformanceOverlay = true;
         if (binding.control == InputControl::Screenshot && keyboard && down && !pressed[index]) requests.screenshot = true;
         if (binding.control == InputControl::ShowPadStatus && keyboard && down && !pressed[index]) requests.showPadStatus = true;
@@ -354,7 +426,7 @@ Pad::InputRequests Pad::KeyboardMouse::PadChordRequests(std::uint32_t buttons) {
 PadInputState Pad::KeyboardMouse::Compose(const PadInputState& controller) const {
     PadInputState state = controller;
     for (std::size_t index = 0; index < configuration.bindings.size(); ++index) {
-        if (!pressed[index]) continue;
+        if (!bindingHeld(index)) continue;
         const auto& binding = configuration.bindings[index];
         switch (binding.control) {
             case InputControl::Button:
@@ -383,6 +455,7 @@ PadInputState Pad::KeyboardMouse::Compose(const PadInputState& controller) const
             }
             case InputControl::ToggleMouse: break;
             case InputControl::ToggleFullscreen: break;
+            case InputControl::ToggleBorderless: break;
             case InputControl::TogglePerformanceOverlay: break;
             case InputControl::Screenshot: break;
             case InputControl::ShowPadStatus: break;
@@ -397,8 +470,8 @@ PadInputState Pad::KeyboardMouse::Compose(const PadInputState& controller) const
     for (std::size_t axis = 0; axis < state.sticks.size(); ++axis) {
         if (input.held[axis] || axes[axis] != 0.0) state.sticks[axis] = StickByte(axes[axis]);
     }
-    if (mouseMode) {
-        const auto deflection = mouse.Deflection();
+    const auto deflection = mouse.Deflection();
+    if (mouseMode && (deflection[0] != 0.0 || deflection[1] != 0.0)) {
         const std::size_t offset = configuration.settings.mouseControlsRightStick ? 2 : 0;
         state.sticks[offset] = StickByte(deflection[0]);
         state.sticks[offset + 1] = StickByte(deflection[1]);

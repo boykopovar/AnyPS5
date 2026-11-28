@@ -20,6 +20,12 @@ namespace {
 
 void Require(bool value) { if (!value) std::abort(); }
 
+constexpr int InvalidState = static_cast<int>(0x809D3002u);
+constexpr int NotInitialized = static_cast<int>(0x809D3004u);
+constexpr int InvalidContentType = static_cast<int>(0x809D3012u);
+constexpr int InvalidArgument = static_cast<int>(0x809D3016u);
+constexpr int InvalidThumbnailType = static_cast<int>(0x809D3019u);
+
 template <typename TException = std::logic_error, typename TAction>
 bool Throws(TAction action) {
     try {
@@ -41,11 +47,11 @@ void APS5_VABI MockFree(void*, void*) {}
 
 std::int32_t APS5_VABI DataCallback(const void**, std::size_t*, void*) { return 0; }
 
-void Export(std::int32_t expId) {
+int Export(std::int32_t expId) {
     ContentExportParam param{};
     ContentExportCallbackParam content{};
     ContentExportCallbackParam thumbnail{};
-    sceContentExportFromDataWithThumbnail(expId, &param, &content, "image/png", &thumbnail, path, sizeof(path));
+    return sceContentExportFromDataWithThumbnail(expId, &param, &content, "image/png", &thumbnail, path, sizeof(path));
 }
 
 int ExportData(std::int32_t expId) {
@@ -77,6 +83,19 @@ std::int32_t APS5_VABI InvalidChunks(const void**, std::size_t*, void*) {
 
 std::int32_t APS5_VABI NegativeChunks(const void**, std::size_t*, void*) {
     return -1;
+}
+
+std::int32_t APS5_VABI SingleChunk(const void** data, std::size_t* size, void* userData) {
+    const auto& text = *static_cast<const std::string*>(userData);
+    *data = text.data();
+    *size = text.size();
+    return 1;
+}
+
+std::int32_t APS5_VABI InvalidDataChunk(const void** data, std::size_t* size, void*) {
+    *data = reinterpret_cast<const void*>(0x10);
+    *size = 5;
+    return 1;
 }
 
 struct OldChunks {
@@ -128,9 +147,23 @@ void ExportFileWithContentIdList(std::int32_t expId) {
     sceContentExportFromFileWithContentIdList(expId, &param, "source", "thumb", &id, 1, path, sizeof(path));
 }
 
-void ExportFileWithTitleIdList(std::int32_t expId) {
+int ExportFileWithTitleIdList(std::int32_t expId) {
     ContentExportParam param{};
-    sceContentExportFromFileWithTitleIdList(expId, &param, "source", "thumb", "CUSA00001", path, sizeof(path));
+    return sceContentExportFromFileWithTitleIdList(expId, &param, "source", "thumb", "CUSA00001", path, sizeof(path));
+}
+
+ContentExportParam ExportParam(const char* contentType) {
+    ContentExportParam param{};
+    std::strncpy(param.content_type, contentType, sizeof(param.content_type) - 1);
+    return param;
+}
+
+int ExportTitleIds(std::int32_t expId, const ContentExportParam* param, const char* sourcePath, const char* thumbnailPath, const char* titleIdList) {
+    return sceContentExportFromFileWithTitleIdList(expId, param, sourcePath, thumbnailPath, titleIdList, path, sizeof(path));
+}
+
+int ExportWithThumbnail(std::int32_t expId, const ContentExportParam* param, const ContentExportCallbackParam* content, const char* thumbnailType, const ContentExportCallbackParam* thumbnail) {
+    return sceContentExportFromDataWithThumbnail(expId, param, content, thumbnailType, thumbnail, path, sizeof(path));
 }
 
 }
@@ -140,6 +173,7 @@ int main() {
     Require(ProcessParametersFixture::Install(process.data(), process.size()));
     std::uint32_t sdkVersion = 0x08000000;
     std::memcpy(process.data() + 0x10, &sdkVersion, sizeof(sdkVersion));
+    const auto setSdk = [](std::uint32_t version) { std::memcpy(process.data() + 0x10, &version, sizeof(version)); };
     const auto originalDirectory = std::filesystem::current_path();
     const auto testDirectory = originalDirectory / ("content-export-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(testDirectory));
@@ -170,16 +204,24 @@ int main() {
     Require(sceContentExportStart() == static_cast<int>(0x809D3004u));
     Require(Throws([] { sceContentExportFinish(1); }));
     Require(ExportData(1) == static_cast<int>(0x809D3004u));
+    Require(sceContentExportGetProgress(0) == NotInitialized);
+    Require(sceContentExportGetProgress(10) == NotInitialized);
+    Require(sceContentExportValidateContents(nullptr, 0) == NotInitialized);
+    Require(Export(10) == NotInitialized);
     sdkVersion = 0x03000000;
     std::memcpy(process.data() + 0x10, &sdkVersion, sizeof(sdkVersion));
     Require(ExportData(1) == static_cast<int>(0x809D3016u));
+    Require(sceContentExportGetProgress(1) == InvalidArgument);
+    Require(ExportFileWithTitleIdList(1) == InvalidArgument);
+    Require(Export(1) == InvalidArgument);
+    Require(sceContentExportValidateContents(nullptr, 0) == NotInitialized);
     sdkVersion = 0x08000000;
     std::memcpy(process.data() + 0x10, &sdkVersion, sizeof(sdkVersion));
     Require(Throws([] { ExportFile(1); }));
     Require(Throws([] { ExportFileWithThumbnail(1); }));
     Require(Throws([] { ExportFileForSf(1); }));
     Require(Throws([] { ExportFileWithContentIdList(1); }));
-    Require(Throws([] { ExportFileWithTitleIdList(1); }));
+    Require(ExportFileWithTitleIdList(1) == NotInitialized);
     ContentExportInitParam2 missing = param;
     missing.free_func = nullptr;
     Require(Throws([&] { sceContentExportInit2(&missing); }));
@@ -192,6 +234,12 @@ int main() {
     Require(sceContentExportTerm() == 0);
     Require(sceContentExportTerm() == static_cast<int>(0x809D3004u));
     Require(sceContentExportInit2(&param) == 0);
+    Require(sceContentExportGetProgress(0) == InvalidArgument);
+    Require(sceContentExportValidateContents(nullptr, 0) == 0);
+    Require(sceContentExportValidateContents(nullptr, 1) == InvalidArgument);
+    std::array<std::int64_t, 257> contentIds{};
+    Require(sceContentExportValidateContents(contentIds.data(), 257) == InvalidArgument);
+    Require(sceContentExportValidateContents(contentIds.data(), 0) == 0);
 
     std::set<int> sessions;
     for (int i = 0; i < 10; ++i) {
@@ -201,6 +249,59 @@ int main() {
     }
     Require(sceContentExportStart() == static_cast<int>(0x809D3018u));
     Require(sceContentExportTerm() == static_cast<int>(0x809D3003u));
+    const ContentExportParam png = ExportParam("image/png");
+    const ContentExportParam plain = ExportParam("text/plain");
+    ContentExportParam commented = png;
+    commented.comment[0] = 'c';
+    ContentExportParam unterminated{};
+    std::memset(unterminated.content_type, 'a', sizeof(unterminated.content_type));
+    const ContentExportCallbackParam callback{5, reinterpret_cast<void*>(&DataCallback), nullptr};
+    const ContentExportCallbackParam emptyCallback{0, reinterpret_cast<void*>(&DataCallback), nullptr};
+    const ContentExportCallbackParam missingProvider{5, nullptr, nullptr};
+    const std::string longestThumbnail(0x400, 't');
+    const std::string longThumbnail(0x401, 't');
+    const std::string longestList(15000, 'l');
+    const std::string longList(15001, 'l');
+    Require(sceContentExportGetProgress(9) == 0);
+    Require(sceContentExportGetProgress(10) == InvalidArgument);
+    Require(sceContentExportGetProgress(-1) == InvalidArgument);
+    setSdk(0x05000000);
+    Require(sceContentExportGetProgress(9) == InvalidState);
+    setSdk(sdkVersion);
+    Require(ExportTitleIds(9, nullptr, "/x", "/y", nullptr) == InvalidArgument);
+    Require(ExportTitleIds(9, &png, nullptr, "/y", nullptr) == InvalidArgument);
+    Require(ExportTitleIds(9, &png, "/x", nullptr, nullptr) == InvalidArgument);
+    Require(ExportTitleIds(9, &png, "/x", "", nullptr) == InvalidArgument);
+    Require(ExportTitleIds(9, &png, "/x", longThumbnail.c_str(), nullptr) == InvalidArgument);
+    Require(ExportTitleIds(9, &png, "/x", "/y", "") == InvalidArgument);
+    Require(ExportTitleIds(9, &png, "/x", "/y", longList.c_str()) == InvalidArgument);
+    Require(ExportTitleIds(9, &commented, "/x", "/y", nullptr) == InvalidArgument);
+    Require(ExportTitleIds(10, &plain, "/x", "/y", nullptr) == InvalidArgument);
+    Require(ExportTitleIds(-1, &plain, "/x", "/y", nullptr) == InvalidArgument);
+    Require(ExportWithThumbnail(9, &png, &callback, "image/jpeg", nullptr) == InvalidArgument);
+    Require(ExportWithThumbnail(9, &png, nullptr, "image/jpeg", &callback) == InvalidArgument);
+    Require(ExportWithThumbnail(9, nullptr, &callback, "image/jpeg", &callback) == InvalidArgument);
+    Require(ExportWithThumbnail(9, &commented, &callback, "image/jpeg", &callback) == InvalidArgument);
+    Require(ExportWithThumbnail(9, &png, &callback, "image/jpeg", &emptyCallback) == InvalidArgument);
+    Require(ExportWithThumbnail(9, &png, &emptyCallback, "image/jpeg", &callback) == InvalidArgument);
+    Require(ExportWithThumbnail(9, &png, &callback, "image/jpeg", &missingProvider) == InvalidArgument);
+    Require(ExportWithThumbnail(9, &png, &missingProvider, "image/png", &callback) == InvalidArgument);
+    Require(ExportWithThumbnail(10, &png, &callback, "image/png", &callback) == InvalidArgument);
+    Require(sceContentExportGetProgress(9) == 0);
+    Require(ExportWithThumbnail(8, &png, &callback, "image/png", &callback) == InvalidThumbnailType);
+    Require(sceContentExportGetProgress(8) == 100);
+    setSdk(0x05000000);
+    Require(sceContentExportGetProgress(8) == InvalidState);
+    setSdk(sdkVersion);
+    Require(ExportWithThumbnail(7, &png, &callback, nullptr, &callback) == InvalidThumbnailType);
+    Require(ExportWithThumbnail(6, &png, &callback, "image/jpegs", &callback) == InvalidThumbnailType);
+    Require(ExportWithThumbnail(5, &plain, &callback, "image/jpeg", &callback) == InvalidContentType);
+    Require(sceContentExportGetProgress(5) == 100);
+    Require(ExportWithThumbnail(4, &unterminated, &callback, "image/jpeg", &callback) == InvalidContentType);
+    Require(ExportTitleIds(9, &plain, "/x", "/y", "[\"CUSA04934\"]") == InvalidContentType);
+    Require(sceContentExportGetProgress(9) == 100);
+    Require(ExportTitleIds(3, &plain, "/x", longestThumbnail.c_str(), longestList.c_str()) == InvalidContentType);
+    Require(ExportTitleIds(2, &unterminated, "/x", "/y", nullptr) == InvalidContentType);
     Require(ExportDataCallback(10) == static_cast<int>(0x809D3016u));
     int first = *sessions.begin();
     ContentExportParam fromData{};
@@ -216,6 +317,13 @@ int main() {
     const std::string exportedContents((std::istreambuf_iterator<char>(exportedFile)), std::istreambuf_iterator<char>());
     exportedFile.close();
     Require(exportedContents == "hello world");
+    std::string largeChunk(8193, 'x');
+    largeChunk.back() = 'z';
+    Require(sceContentExportFromData(first, &fromData, largeChunk.size(), SingleChunk, &largeChunk, nullptr, 0) == 0);
+    {
+        std::ifstream largeFile(exportedHostPath, std::ios::binary);
+        Require(std::string((std::istreambuf_iterator<char>(largeFile)), std::istreambuf_iterator<char>()) == largeChunk);
+    }
     chunks = DataChunks{};
     Require(sceContentExportFromData(first, &fromData, 11, ProvideChunks, &chunks, nullptr, 0) == 0);
     chunks = DataChunks{};
@@ -224,11 +332,17 @@ int main() {
     Require(errno == 71);
     chunks = DataChunks{};
     Require(sceContentExportFromData(first, &fromData, 10, ProvideChunks, &chunks, exported, sizeof(exported)) == static_cast<int>(0x809D3016u));
+    errno = 71;
+    Require(sceContentExportFromData(first, &fromData, 5, InvalidDataChunk, nullptr, nullptr, 0) == static_cast<int>(0x809D3017u));
+    Require(errno == 71);
     Require(sceContentExportFromData(first, &fromData, 0, InvalidChunks, nullptr, nullptr, 0) == static_cast<int>(0x809D301Bu));
     Require(sceContentExportFromData(first, &fromData, 0, NegativeChunks, nullptr, nullptr, 0) == static_cast<int>(0x809D301Bu));
     ContentExportParam badType = fromData;
     std::strncpy(badType.content_type, "text/plain", sizeof(badType.content_type) - 1);
     Require(sceContentExportFromData(first, &badType, 0, InvalidChunks, nullptr, nullptr, 0) == static_cast<int>(0x809D3012u));
+    ContentExportParam unterminatedType = fromData;
+    std::memset(unterminatedType.content_type, 'a', sizeof(unterminatedType.content_type));
+    Require(sceContentExportFromData(first, &unterminatedType, 0, InvalidChunks, nullptr, nullptr, 0) == static_cast<int>(0x809D3016u));
     Require(sceContentExportFromData(first, nullptr, 0, InvalidChunks, nullptr, nullptr, 0) == static_cast<int>(0x809D3016u));
     errno = 71;
     Require(sceContentExportFromData(first, reinterpret_cast<const ContentExportParam*>(0x10), 0, InvalidChunks, nullptr, nullptr, 0) == static_cast<int>(0x809D3016u));
@@ -244,15 +358,15 @@ int main() {
     Require(sceContentExportCancel(first) == static_cast<int>(0x809D3002u));
     Require(sceContentExportFinish(first) == 0);
     Require(Throws<std::invalid_argument>([&] { sceContentExportFinish(first); }));
-    Require(Throws<std::invalid_argument>([&] { sceContentExportGetProgress(first); }));
+    Require(sceContentExportGetProgress(first) == InvalidArgument);
     Require(Throws<std::invalid_argument>([&] { sceContentExportCancel(first); }));
-    Require(Throws<std::invalid_argument>([&] { Export(first); }));
+    Require(Export(first) == InvalidArgument);
     Require(ExportData(first) == static_cast<int>(0x809D3016u));
     Require(Throws<std::invalid_argument>([&] { ExportFile(first); }));
     Require(Throws<std::invalid_argument>([&] { ExportFileWithThumbnail(first); }));
     Require(Throws<std::invalid_argument>([&] { ExportFileForSf(first); }));
     Require(Throws<std::invalid_argument>([&] { ExportFileWithContentIdList(first); }));
-    Require(Throws<std::invalid_argument>([&] { ExportFileWithTitleIdList(first); }));
+    Require(ExportFileWithTitleIdList(first) == InvalidArgument);
     Require(ExportData(0) == static_cast<int>(0x809D3016u));
     Require(Throws<std::invalid_argument>([] { ExportFile(0); }));
     Require(Throws<std::invalid_argument>([] { ExportFileWithThumbnail(0); }));

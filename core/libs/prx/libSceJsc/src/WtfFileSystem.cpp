@@ -29,6 +29,7 @@
  */
 
 #include "prx/libc/include/GuestErrno.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceJsc/include/WtfFileSystemExports.hpp"
@@ -58,9 +59,10 @@ int APS5_VABI _ZN3WTF14FileSystemImpl12readFromFileEiPci(int handle, char* data,
 }
 
 Jsc::WtfAbi::OptionalInt32 APS5_VABI _ZN3WTF14FileSystemImpl15getFileDeviceIdERKNS_7CStringE(const Jsc::WtfAbi::CString* fsFile) {
-    if (!fsFile) throw std::invalid_argument("WTF::FileSystemImpl::getFileDeviceId: null CString reference");
+    Jsc::WtfAbi::CString file{};
+    if (!GuestPtr<Jsc::WtfAbi::CString>(fsFile).CopyIn(file)) throw std::invalid_argument("WTF::FileSystemImpl::getFileDeviceId: invalid CString reference");
     FileStat fileStat{};
-    if (stat_nid_postfix(CStringData(*fsFile), &fileStat) == -1) return {};
+    if (stat_nid_postfix(CStringData(file), &fileStat) == -1) return {};
     return {true, static_cast<std::int32_t>(fileStat.st_dev)};
 }
 

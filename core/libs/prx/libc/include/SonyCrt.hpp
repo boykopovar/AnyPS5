@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBC_INCLUDE_SONYCRT_HPP
 #define CORE_LIBS_PRX_LIBC_INCLUDE_SONYCRT_HPP
 
+#include <bit>
 #include <cfenv>
 #include <cerrno>
 #include <climits>
@@ -11,9 +12,11 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <limits>
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 
 #include "SceTypes.hpp"
 #include "prx/libc/include/Api.hpp"
@@ -94,6 +97,16 @@ inline std::int64_t SonyHostDaylightAmount_nid_no_patch(std::int64_t utcTime) {
 
 template<typename TInteger>
 inline TInteger ParseInteger(const char* text, char** end, int base, TInteger (*parse)(const char*, char**, int)) {
+#ifdef _WIN32
+    if constexpr (std::is_unsigned_v<TInteger>) {
+        const int saved = errno;
+        errno = 0;
+        const TInteger value = parse(text, end, base);
+        if (errno == ERANGE) return std::numeric_limits<TInteger>::max();
+        if (errno == 0) errno = saved;
+        return value;
+    }
+#endif
 #ifdef __APPLE__
     const int saved = errno;
     char* parsedEnd = nullptr;
@@ -300,10 +313,11 @@ inline std::size_t SonyMbstowcs(std::uint16_t* dest, const char* src, std::size_
 }
 
 inline int SonyFpclassifyd(double value) {
-    if (std::isnan(value)) return 2;
-    if (std::isinf(value)) return 1;
-    if (value == 0.0) return 0;
-    if (std::fpclassify(value) == FP_SUBNORMAL) return -2;
+    const std::uint64_t magnitude = std::bit_cast<std::uint64_t>(value) & 0x7fffffffffffffffull;
+    if (magnitude > 0x7ff0000000000000ull) return 2;
+    if (magnitude == 0x7ff0000000000000ull) return 1;
+    if (magnitude == 0) return 0;
+    if (magnitude < 0x0010000000000000ull) return -2;
     return -1;
 }
 

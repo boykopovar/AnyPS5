@@ -4,6 +4,10 @@
 
 struct USet;
 
+namespace Icu {
+const USet* NativeSet(const USet* set);
+}
+
 extern "C" {
 const USet* APS5_VABI u_getBinaryPropertySet_nid_postfix(std::int32_t, std::int32_t*);
 USet* APS5_VABI uset_openEmpty_nid_postfix();

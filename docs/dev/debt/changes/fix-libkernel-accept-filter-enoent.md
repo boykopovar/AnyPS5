@@ -1,0 +1,5 @@
+# libkernel
+
+## change a set naming a filter throws, as the PS5 kernel's filters are unknown
+
+- [getsockopt, setsockopt](../../../core/libs/prx/libkernel/Socket/src/SocketOptions.cpp) (libkernel) - a guest socket has the SOL_SOCKET level, eight `IPPROTO_TCP` options, `IPV6_V6ONLY` and ten `IPPROTO_IP` options; their other options fail with `ENOPROTOOPT`, not all measured. `SO_ACCEPTFILTER` (0x1000) follows the 13.60 kernel (kernel-13.60 @ 0xffffffff9eef65d0): a value is copied in (under 256 bytes `EINVAL`, unreadable `EFAULT`), then fails with `ENOENT` on any socket as no filter is registered (@ 0xffffffff9eef670c); a NULL value removes the filter on a listener and fails with `EINVAL` elsewhere, and a get fails with `EINVAL` (measured on a non-listener). `SO_KEEPALIVE`, `SO_DONTROUTE`, `SO_BROADCAST`, `SO_OOBINLINE` and `SO_LINGER` act on the host socket; a boolean one reads back as its own bit. Winsock does not clear a pending error when `SO_ERROR` reads it: on Windows it is reported again only after a new `connect`, so a second failure with the same code before one is hidden

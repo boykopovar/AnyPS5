@@ -31,7 +31,7 @@ struct Use {
     Ranges reads;
     Ranges writes;
     Images images;
-    Images attachments;
+    std::vector<PassAttachment> attachments;
     bool anyReads = false;
     bool anyWrites = false;
     Ranges writeOnly;
@@ -254,12 +254,33 @@ void testWriteOnly() {
     Expect(hazards.Empty(), "cleared write-only stores");
 }
 
+void testAttachmentSlices() {
+    PassHazards hazards;
+    hazards.BeginPass();
+    Use slice0;
+    slice0.attachments = {{image(9), true, 0u, 0u, 8u}};
+    hazards.Add(slice0.View());
+    Use slice8;
+    slice8.attachments = {{image(9), true, 0u, 8u, 8u}};
+    Expect(hazards.Check(slice8.View(), false) == PassHazard::None, "disjoint slice range of the same attachment across passes");
+    Use mip1;
+    mip1.attachments = {{image(9), true, 1u, 0u, 8u}};
+    Expect(hazards.Check(mip1.View(), false) == PassHazard::None, "different mip of the same attachment across passes");
+    Use overlap;
+    overlap.attachments = {{image(9), true, 0u, 4u, 8u}};
+    Expect(hazards.Check(overlap.View(), false) == PassHazard::Image, "overlapping slice range of the same attachment across passes");
+    Use whole;
+    whole.attachments = {{image(9), true, 0u, 0u, 0u}};
+    Expect(hazards.Check(whole.View(), false) == PassHazard::Image, "whole-image attachment overlaps a slice write across passes");
+}
+
 int main() {
     testRangeSet();
     testRanges();
     testUnknown();
     testImages();
     testAttachments();
+    testAttachmentSlices();
     testWriteOnly();
     if (failures != 0) {
         std::fprintf(stderr, "%d pass hazard checks failed\n", failures);

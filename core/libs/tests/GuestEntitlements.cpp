@@ -238,6 +238,10 @@ int main(int argc, char** argv) {
     }
     std::int64_t consumeReq = 0;
     Require(sceNpEntitlementAccessRequestConsumeUnifiedEntitlement(1, 0, &label, nullptr, 1, &consumeReq) == static_cast<int>(0x80550006));
+    Require(sceNpEntitlementAccessRequestConsumeServiceEntitlement(1, 0,
+        reinterpret_cast<const NpServiceEntitlementLabel*>(0x10),
+        reinterpret_cast<const NpEntitlementAccessTransactionId*>(0x10), 1,
+        reinterpret_cast<std::int64_t*>(0x10)) == static_cast<int>(0x80550006));
     Require(sceNpEntitlementAccessPollConsumeEntitlement(1, nullptr, nullptr) == static_cast<int>(0x80550006));
     std::filesystem::remove_all(root);
     std::puts("Guest entitlements passed");

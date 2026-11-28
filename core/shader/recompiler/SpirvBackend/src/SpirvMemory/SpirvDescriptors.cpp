@@ -1,4 +1,5 @@
 #include "SpirvBackend/SpirvMemory/SpirvDescriptors.hpp"
+#include "SpirvBackend/SpirvMemory/SpirvBufferAccess.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvTypes.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvConstants.hpp"
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
@@ -55,13 +56,9 @@ std::uint32_t DescriptorElementPointer(SpirvEmitterState& state, std::uint32_t r
 }
 
 std::uint32_t RuntimeImageDword(SpirvEmitterState& state, std::uint32_t resource, std::uint32_t member) {
-    const auto index = ConstantU32(state, resource);
-    const auto dword = Binary(state, spv::OpIAdd, TypeU32(state), ConstantU32(state, state.program.Metadata().bindings.ImageMetadataDword() + member), Binary(state, spv::OpIMul, TypeU32(state), index, ConstantU32(state, sizeof(RuntimeAbi::ResourceMetadata) / sizeof(std::uint32_t))));
-    const auto pointer = state.module.AllocateId();
-    state.module.AddFunction(spv::OpAccessChain, TypeStorageBufferElementPointer(state), pointer, state.shaderDataStorageVariable, ConstantU32(state, 0u), dword);
-    const auto value = state.module.AllocateId();
-    state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer);
-    return value;
+    constexpr auto metadataDwords = sizeof(RuntimeAbi::ResourceMetadata) / sizeof(std::uint32_t);
+    const auto first = state.program.Metadata().bindings.ImageMetadataDword();
+    return EmitShaderDataDwordLoad(state, first + resource * metadataDwords + member);
 }
 
 std::uint32_t RuntimeMipCount(SpirvEmitterState& state, std::uint32_t resource) {
@@ -113,6 +110,7 @@ std::uint32_t ImageVectorType(SpirvEmitterState& state, IrTextureNumericClass nu
 std::uint32_t ImageType(SpirvEmitterState& state, const ImageResource& image) {
     std::uint32_t sampled = 0;
     std::uint32_t format = spv::ImageFormatUnknown;
+    const bool lockedAtomic64 = image.atomic64 && state.requirements.imageAtomicLocks;
     if (image.resourceClass == ImageResourceClass::Sampled) {
         if (image.atomic) {
             FailEmit("sampled image cannot be atomic");
@@ -127,7 +125,7 @@ std::uint32_t ImageType(SpirvEmitterState& state, const ImageResource& image) {
             if (image.numericClass != IrTextureNumericClass::Uint) {
                 FailEmit("atomic storage image must be uint");
             }
-            format = image.atomic64 ? spv::ImageFormatR64ui : spv::ImageFormatR32ui;
+            if (!lockedAtomic64) format = image.atomic64 ? spv::ImageFormatR64ui : spv::ImageFormatR32ui;
         }
     } else {
         FailEmit("invalid image resource class");
@@ -140,7 +138,7 @@ std::uint32_t ImageType(SpirvEmitterState& state, const ImageResource& image) {
             if (info.arrayed != 0u) state.module.EmitCapability(spv::CapabilityImageMSArray);
         }
     }
-    const auto scalar = image.atomic64 ? TypeScalarU64(state) : ImageScalarType(state, image.numericClass);
+    const auto scalar = image.atomic64 && !lockedAtomic64 ? TypeScalarU64(state) : ImageScalarType(state, image.numericClass);
     return state.module.Type(spv::OpTypeImage, scalar, info.spirvDimension, image.depthCompare ? 1u : 0u, info.arrayed, info.multisampled, sampled, format);
 }
 

@@ -1,0 +1,16 @@
+add_library(libSceWebRtc SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceWebRtc PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceWebRtc PRIVATE libSceSysmodule)
+configure_windows_unwind(libSceWebRtc)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_webrtc_tests ${LIBS_INCLUDE_DIR}/tests/GuestWebRtc.cpp)
+    target_include_directories(guest_webrtc_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_webrtc_tests PRIVATE libSceWebRtc libSceSysmodule libc)
+    configure_windows_unwind(guest_webrtc_tests)
+    add_test(NAME guest_webrtc COMMAND guest_webrtc_tests)
+    if(WIN32)
+        set_tests_properties(guest_webrtc PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceWebRtc>")
+    endif()
+endif()

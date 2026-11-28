@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
+#include <set>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -18,7 +20,7 @@ using ShaderRecompiler::ShaderStage;
 constexpr std::uint32_t Threads = 32;
 constexpr std::uint32_t Inputs = 8;
 constexpr std::uint32_t Results = 64;
-constexpr std::uint32_t Operations = 11;
+constexpr std::uint32_t Operations = 13;
 constexpr std::uint32_t Format32_32UInt = 62;
 constexpr std::uint32_t Format32_32SInt = 63;
 constexpr std::uint32_t Format32_32Float = 64;
@@ -27,7 +29,30 @@ alignas(256) std::array<std::uint32_t, Threads * Inputs> Input{};
 alignas(256) std::array<std::uint32_t, Threads * Results> Output{};
 alignas(4096) std::array<std::uint32_t, 4096> Texels{};
 
-alignas(256) constexpr std::array<std::uint32_t, 219> Code{
+constexpr std::uint32_t ContentionGroups = 32;
+constexpr std::uint32_t ContentionThreads = 64;
+constexpr std::uint32_t ContentionValues = ContentionGroups * ContentionThreads;
+constexpr std::uint32_t ContentionExtent = 8;
+constexpr std::uint64_t AddStep = 0x0000000100000001ull;
+alignas(256) std::array<std::uint64_t, ContentionValues> ContentionInput{};
+alignas(256) std::array<std::uint64_t, ContentionValues> ContentionOutput{};
+alignas(4096) std::array<std::uint32_t, 1024> ContentionTexels{};
+
+alignas(256) constexpr std::array<std::uint32_t, 14> ContentionAdd{
+    0x8f118910, 0x34060083, 0x4a060611, 0xe0341000, 0x80000a03, 0xbf8c3f70, 0x7e100280,
+    0x7e120280, 0xf0442308, 0x00020a08, 0xbf8c3f70, 0xe0741000, 0x80010a03, 0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 14> ContentionUMax{
+    0x8f118910, 0x34060083, 0x4a060611, 0xe0341000, 0x80000a03, 0xbf8c3f70, 0x7e100280,
+    0x7e120280, 0xf05c2308, 0x00020a08, 0xbf8c3f70, 0xe0741000, 0x80010a03, 0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 11> ReadBack{
+    0x7e100280, 0x7e120280, 0x7e140280, 0x7e160280, 0xf0442308, 0x00020a08, 0xbf8c3f70, 0x7e060280, 0xe0741000, 0x80010a03, 0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 257> Code{
     0x34020085, 0x34060088, 0xe0381000, 0x80000401, 0xe0341010, 0x80001001, 0xbf8c3f70, 0x7e100300,
     0x7e120280, 0x7e140304, 0x7e160305, 0xf03c0308, 0x00020a08, 0x7e180306, 0x7e1a0307, 0xf03c2308,
     0x00020c08, 0x7e240280, 0x7e260280, 0xf0442308, 0x00021208, 0xbf8c3f70, 0xe0741000, 0x80010c03,
@@ -55,7 +80,12 @@ alignas(256) constexpr std::array<std::uint32_t, 219> Code{
     0xbf8c3f70, 0xe0741090, 0x80010c03, 0xe0741098, 0x80011203, 0x7e100300, 0x7e12028a, 0x7e140304,
     0x7e160305, 0xf03c0308, 0x00020a08, 0x7e180306, 0x7e1a0307, 0x7e1c0310, 0x7e1e0311, 0xf0402f08,
     0x00020c08, 0x7e240280, 0x7e260280, 0xf0442308, 0x00021208, 0xbf8c3f70, 0xe07410a0, 0x80010c03,
-    0xe07410a8, 0x80011203, 0xbf810000,
+    0xe07410a8, 0x80011203, 0x7e100300, 0x7e12028b, 0x7e140304, 0x7e160305, 0xf03c0308, 0x00020a08,
+    0x7e180306, 0x7e1a0307, 0xf06c2308, 0x00020c08, 0x7e240280, 0x7e260280, 0xf0442308, 0x00021208,
+    0xbf8c3f70, 0xe07410b0, 0x80010c03, 0xe07410b8, 0x80011203, 0x7e100300, 0x7e12028c, 0x7e140304,
+    0x7e160305, 0xf03c0308, 0x00020a08, 0x7e180306, 0x7e1a0307, 0xf0702308, 0x00020c08, 0x7e240280,
+    0x7e260280, 0xf0442308, 0x00021208, 0xbf8c3f70, 0xe07410c0, 0x80010c03, 0xe07410c8, 0x80011203,
+    0xbf810000,
 };
 
 constexpr std::array<std::array<std::uint64_t, 2>, 12> Edges{{
@@ -139,7 +169,7 @@ std::string Hex(std::uint64_t value) {
 }
 
 void Check(std::uint32_t format) {
-    constexpr std::array<const char*, Operations> names{"image_atomic_swap", "image_atomic_add", "image_atomic_sub", "image_atomic_smin", "image_atomic_umin", "image_atomic_smax", "image_atomic_umax", "image_atomic_and", "image_atomic_or", "image_atomic_xor", "image_atomic_cmpswap"};
+    constexpr std::array<const char*, Operations> names{"image_atomic_swap", "image_atomic_add", "image_atomic_sub", "image_atomic_smin", "image_atomic_umin", "image_atomic_smax", "image_atomic_umax", "image_atomic_and", "image_atomic_or", "image_atomic_xor", "image_atomic_cmpswap", "image_atomic_inc", "image_atomic_dec"};
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const auto* in = &Input[tid * Inputs];
         const std::uint64_t a = Word(in);
@@ -159,6 +189,8 @@ void Check(std::uint32_t format) {
             a | b,
             a ^ b,
             a == c ? b : a,
+            a >= b ? 0u : a + 1u,
+            a == 0u || a > b ? b : a - 1u,
         };
         for (std::uint32_t j = 0; j < Operations; ++j) {
             const std::uint64_t returned = Word(&Output[tid * Results + 4u * j]);
@@ -169,20 +201,89 @@ void Check(std::uint32_t format) {
     }
 }
 
+void DispatchContention(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint32_t waveSize, std::uint32_t groups) {
+    std::vector<std::uint32_t> userData(16, 0u);
+    const auto input = BufferDescriptor(ContentionInput.data(), static_cast<std::uint32_t>(ContentionInput.size() * 8u));
+    const auto output = BufferDescriptor(ContentionOutput.data(), static_cast<std::uint32_t>(ContentionOutput.size() * 8u));
+    const auto texture = TextureDescriptor(ContentionTexels.data(), ContentionExtent, ContentionExtent, Format32_32UInt);
+    std::copy(input.begin(), input.end(), userData.begin());
+    std::copy(output.begin(), output.end(), userData.begin() + 4);
+    std::copy(texture.begin(), texture.end(), userData.begin() + 8);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{ContentionThreads, 1, 1}, 0u, {true, false, false}, false, 1};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
+        {waveSize, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        device.Target(),
+        {0, 0, 0, 128}
+    };
+    request.useCache = false;
+    const auto result = ShaderRecompiler::Recompile(request);
+    device.Dispatch(result, groups, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.WaitIdle();
+}
+
+std::uint64_t Contend(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint32_t waveSize, std::uint64_t initial) {
+    ContentionOutput.fill(0xdeadbeefdeadbeefull);
+    ContentionTexels.fill(0u);
+    SetWord(ContentionTexels.data(), initial);
+    DispatchContention(device, code, waveSize, ContentionGroups);
+    const auto returned = ContentionOutput;
+    ContentionOutput.fill(0xdeadbeefdeadbeefull);
+    DispatchContention(device, ReadBack, waveSize, 1u);
+    const auto final = ContentionOutput[0];
+    ContentionOutput = returned;
+    return final;
+}
+
+void CheckContendedAdd(AgcDriver::VulkanDevice& device, std::uint32_t waveSize) {
+    const auto name = "image_atomic_add contended by " + std::to_string(ContentionValues) + " wave" + std::to_string(waveSize) + " threads on one texel";
+    ContentionInput.fill(AddStep);
+    const auto final = Contend(device, ContentionAdd, waveSize, 0u);
+    std::vector<bool> seen(ContentionValues, false);
+    for (std::uint32_t thread = 0; thread < ContentionValues; ++thread) {
+        const auto returned = ContentionOutput[thread];
+        const auto step = returned / AddStep;
+        Require(returned % AddStep == 0u && step < ContentionValues && !seen[step], name + ": thread " + std::to_string(thread) + " returned " + Hex(returned) + ", which is not a distinct earlier sum");
+        seen[step] = true;
+    }
+    Require(final == ContentionValues * AddStep, name + ": the texel holds " + Hex(final) + ", expected " + Hex(ContentionValues * AddStep));
+}
+
+void CheckContendedUMax(AgcDriver::VulkanDevice& device, std::uint32_t waveSize) {
+    const auto name = "image_atomic_umax contended by " + std::to_string(ContentionValues) + " wave" + std::to_string(waveSize) + " threads on one texel";
+    constexpr std::uint64_t initial = 0x0000000300000005ull;
+    std::uint64_t state = 0x2545f4914f6cdd1dull + waveSize;
+    std::set<std::uint64_t> values{initial};
+    std::uint64_t expected = initial;
+    for (auto& value : ContentionInput) {
+        state = state * 6364136223846793005ull + 1442695040888963407ull;
+        value = ((state >> 61u) << 32u) | (state >> 16u & 0xffffffffull);
+        values.insert(value);
+        expected = std::max(expected, value);
+    }
+    const auto final = Contend(device, ContentionUMax, waveSize, initial);
+    for (std::uint32_t thread = 0; thread < ContentionValues; ++thread) {
+        const auto returned = ContentionOutput[thread];
+        Require(values.contains(returned) && returned <= expected, name + ": thread " + std::to_string(thread) + " returned " + Hex(returned) + ", which no thread stored");
+    }
+    Require(final == expected, name + ": the texel holds " + Hex(final) + ", expected " + Hex(expected));
+}
+
 }
 
 int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        if (!TargetHasCapability(device->Target(), spv::CapabilityInt64ImageEXT)) {
-            std::puts("skipped, the device has no shaderImageInt64Atomics");
-            return VulkanTestSkipped;
-        }
         FillInput();
         for (const auto format : {Format32_32UInt, Format32_32SInt, Format32_32Float}) {
             Run(*device, format);
             Check(format);
+        }
+        for (const auto waveSize : {32u, 64u}) {
+            CheckContendedAdd(*device, waveSize);
+            CheckContendedUMax(*device, waveSize);
         }
         std::puts("64-bit image atomics tests passed");
         return 0;

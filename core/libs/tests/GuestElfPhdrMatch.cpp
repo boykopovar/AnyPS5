@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -36,6 +37,17 @@ static void CheckQueriedModule() {
         Require(__elf_phdr_match_addr_nid_postfix(&module, data.data()) == 0);
         Require(std::memcmp(before.data(), &module, sizeof(module)) == 0);
     }
+}
+
+static void CheckUnreadableModule() {
+    errno = 71;
+    bool threw = false;
+    try {
+        __elf_phdr_match_addr_nid_postfix(reinterpret_cast<const ModuleInfoEx*>(0x10), Address(0x403800));
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw && errno == 71);
 }
 
 static void CheckSegments() {
@@ -78,6 +90,7 @@ static void CheckSegments() {
 int main() {
     CheckQueriedModule();
     CheckSegments();
+    CheckUnreadableModule();
     bool threw = false;
     try {
         __elf_phdr_match_addr_nid_postfix(nullptr, nullptr);

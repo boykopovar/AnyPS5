@@ -519,15 +519,129 @@ void Run() {
 
 } // namespace UcalSetMillis
 
+namespace UcalGetAttribute {
+
+using IcuRecoveredTest::Filler;
+using IcuRecoveredTest::Require;
+using IcuRecoveredTest::RequireThrows;
+using IcuRecoveredTest::Unchanged;
+
+static_assert(std::is_same_v<decltype(&ucal_getAttribute_nid_postfix), std::int32_t (APS5_VABI*)(const UCalendar*, std::int32_t)>);
+
+void Run() {
+    const auto storage = Filler();
+    const auto cal = reinterpret_cast<const UCalendar*>(storage.data());
+    for (const std::int32_t attr : {-1, 5, 6, 1000, std::numeric_limits<std::int32_t>::min(), std::numeric_limits<std::int32_t>::max()}) {
+        Require(ucal_getAttribute_nid_postfix(cal, attr) == -1);
+        Require(ucal_getAttribute_nid_postfix(nullptr, attr) == -1);
+    }
+    for (const std::int32_t attr : {0, 1, 2, 3, 4}) {
+        RequireThrows([&] { ucal_getAttribute_nid_postfix(cal, attr); });
+        RequireThrows([&] { ucal_getAttribute_nid_postfix(nullptr, attr); });
+    }
+    Require(Unchanged(storage));
+}
+
+} // namespace UcalGetAttribute
+
+namespace UcalGetDayOfWeekType {
+
+using IcuRecoveredTest::Filler;
+using IcuRecoveredTest::Require;
+using IcuRecoveredTest::RequireThrows;
+using IcuRecoveredTest::Unchanged;
+
+static_assert(std::is_same_v<decltype(&ucal_getDayOfWeekType_nid_postfix), std::int32_t (APS5_VABI*)(const UCalendar*, std::int32_t, std::int32_t*)>);
+
+void Run() {
+    const auto storage = Filler();
+    const auto cal = reinterpret_cast<const UCalendar*>(storage.data());
+    for (const std::int32_t incoming : {1, 2, 7, 15, 16, 27, 0x7fffffff}) {
+        for (const auto* target : {cal, static_cast<const UCalendar*>(nullptr)}) {
+            for (const std::int32_t day : {0, 1, 7, 8}) {
+                std::int32_t status = incoming;
+                Require(ucal_getDayOfWeekType_nid_postfix(target, day, &status) == 0);
+                Require(status == incoming);
+            }
+        }
+    }
+    for (const std::int32_t incoming : {0, -128, -124, -1}) {
+        for (const auto* target : {cal, static_cast<const UCalendar*>(nullptr)}) {
+            std::int32_t status = incoming;
+            RequireThrows([&] { ucal_getDayOfWeekType_nid_postfix(target, 1, &status); });
+            Require(status == incoming);
+        }
+    }
+    RequireThrows([&] { ucal_getDayOfWeekType_nid_postfix(cal, 1, nullptr); });
+    Require(Unchanged(storage));
+}
+
+} // namespace UcalGetDayOfWeekType
+
+namespace UcalOpenTimeZoneIDEnumeration {
+
+using IcuRecoveredTest::Require;
+using IcuRecoveredTest::RequireThrows;
+
+static_assert(std::is_same_v<decltype(&ucal_openTimeZoneIDEnumeration_nid_postfix),
+                             UEnumeration* (APS5_VABI*)(std::int32_t, const char*, const std::int32_t*, std::int32_t*)>);
+
+void Run() {
+    const std::int32_t offset = 3600000;
+    for (const std::int32_t incoming : {1, 2, 7, 15, 16, 27, 0x7fffffff}) {
+        std::int32_t status = incoming;
+        Require(ucal_openTimeZoneIDEnumeration_nid_postfix(0, nullptr, nullptr, &status) == nullptr);
+        Require(ucal_openTimeZoneIDEnumeration_nid_postfix(1, "US", &offset, &status) == nullptr);
+        Require(ucal_openTimeZoneIDEnumeration_nid_postfix(-1, "", nullptr, &status) == nullptr);
+        Require(status == incoming);
+    }
+    for (const std::int32_t incoming : {0, -128, -124, -1}) {
+        std::int32_t status = incoming;
+        RequireThrows([&] { ucal_openTimeZoneIDEnumeration_nid_postfix(0, nullptr, nullptr, &status); });
+        RequireThrows([&] { ucal_openTimeZoneIDEnumeration_nid_postfix(1, "US", &offset, &status); });
+        Require(status == incoming);
+    }
+    RequireThrows([&] { ucal_openTimeZoneIDEnumeration_nid_postfix(0, nullptr, nullptr, nullptr); });
+}
+
+} // namespace UcalOpenTimeZoneIDEnumeration
+
+namespace UcalOpenTimeZones {
+
+using IcuRecoveredTest::Require;
+using IcuRecoveredTest::RequireThrows;
+
+static_assert(std::is_same_v<decltype(&ucal_openTimeZones_nid_postfix), UEnumeration* (APS5_VABI*)(std::int32_t*)>);
+
+void Run() {
+    for (const std::int32_t incoming : {1, 2, 7, 15, 16, 27, 0x7fffffff}) {
+        std::int32_t status = incoming;
+        Require(ucal_openTimeZones_nid_postfix(&status) == nullptr);
+        Require(status == incoming);
+    }
+    for (const std::int32_t incoming : {0, -128, -124, -1}) {
+        std::int32_t status = incoming;
+        RequireThrows([&] { ucal_openTimeZones_nid_postfix(&status); });
+        Require(status == incoming);
+    }
+    RequireThrows([] { ucal_openTimeZones_nid_postfix(nullptr); });
+}
+
+} // namespace UcalOpenTimeZones
+
 void CheckIcuCalendar() {
     UcalClone::Run();
     UcalClose::Run();
     UcalGet::Run();
+    UcalGetAttribute::Run();
     UcalGetCanonicalTimeZoneID::Run();
+    UcalGetDayOfWeekType::Run();
     UcalGetDefaultTimeZone::Run();
     UcalGetKeywordValuesForLocale::Run();
     UcalGetTimeZoneDisplayName::Run();
     UcalOpen::Run();
+    UcalOpenTimeZoneIDEnumeration::Run();
+    UcalOpenTimeZones::Run();
     UcalSetGregorianChange::Run();
     UcalSetMillis::Run();
 }

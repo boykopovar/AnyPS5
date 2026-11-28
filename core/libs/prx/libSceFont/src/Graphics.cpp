@@ -1,5 +1,7 @@
 #include <atomic>
 #include <bit>
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 
@@ -279,9 +281,7 @@ bool IsValidFill(const FontGraphicsFill* fill) {
     const auto value = reinterpret_cast<std::intptr_t>(fill);
     if (value >= -1 && value < 3) return true;
     std::uint8_t mode{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&mode, fill, sizeof(mode));
-    errno = savedErrno;
     return copied && (mode & 0xf) == 0 && mode >= 0x10 && mode <= 0x50;
 }
 
@@ -382,26 +382,35 @@ int GraphicsFillMethodInit(FontGraphicsFillMethod* method, std::int32_t mode, st
 
 int GraphicsFillPlotInit(FontGraphicsFillPlot* plot, const FontGraphicsRegion* region) {
     if (!IsObject(plot)) return Fail(FONT_GRAPHICS_ERROR_INVALID_FILL_PLOT);
-    if (IsObject(region) && !IsUsableRegion(*region)) {
-        plot->tag = 0;
-        return Fail(FONT_GRAPHICS_ERROR_INVALID_REGION);
+    FontGraphicsRegion guestRegion{};
+    if (IsObject(region)) {
+        const bool copied = GuestCopyIn_nid_no_patch(&guestRegion, region, sizeof(guestRegion));
+        if (!copied || !IsUsableRegion(guestRegion)) {
+            constexpr std::size_t tagOffset = offsetof(FontGraphicsFillPlot, tag);
+            const auto address = reinterpret_cast<std::uintptr_t>(plot);
+            if (address > UINTPTR_MAX - tagOffset ||
+                !CopyOutGuest(reinterpret_cast<std::uint16_t*>(address + tagOffset), std::uint16_t{}))
+                return Fail(FONT_GRAPHICS_ERROR_INVALID_FILL_PLOT);
+            return Fail(FONT_GRAPHICS_ERROR_INVALID_REGION);
+        }
     }
-    *plot = {};
+    FontGraphicsFillPlot value{};
     if (!region) {
-        plot->flags = 2;
+        value.flags = 2;
     } else if (!IsObject(region)) {
-        plot->flags = 6;
-        plot->layout = DefaultLayout;
+        value.flags = 6;
+        value.layout = DefaultLayout;
     } else {
-        plot->mapping[0] = region->x;
-        plot->mapping[1] = region->y;
-        plot->mapping[2] = region->x + region->width;
-        plot->mapping[3] = region->y + region->height;
-        plot->flags = 1;
-        plot->layout = DefaultLayout;
+        value.mapping[0] = guestRegion.x;
+        value.mapping[1] = guestRegion.y;
+        value.mapping[2] = guestRegion.x + guestRegion.width;
+        value.mapping[3] = guestRegion.y + guestRegion.height;
+        value.flags = 1;
+        value.layout = DefaultLayout;
     }
-    plot->region = region;
-    plot->tag = FillPlotTag;
+    value.region = region;
+    value.tag = FillPlotTag;
+    if (!CopyOutGuest(plot, value)) return Fail(FONT_GRAPHICS_ERROR_INVALID_FILL_PLOT);
     return SCE_FONT_OK;
 }
 
@@ -1232,7 +1241,14 @@ int CreateGraphicsService(const FontMemory* memory, const FontGraphicsServicePar
     auto* const data = static_cast<FontGraphicsServiceData*>(memory->iface->alloc(memory->mspace_handle, sizeof(FontGraphicsServiceData)));
     if (data == nullptr) return Fail(FONT_GRAPHICS_ERROR_ALLOCATION_FAILED);
     std::memset(data, 0, sizeof(*data));
-    if (const int error = AttachInstance(param); error != SCE_FONT_OK) {
+    int error;
+    try {
+        error = AttachInstance(param);
+    } catch (...) {
+        memory->iface->dealloc(memory->mspace_handle, data);
+        throw;
+    }
+    if (error != SCE_FONT_OK) {
         memory->iface->dealloc(memory->mspace_handle, data);
         return Fail(error);
     }

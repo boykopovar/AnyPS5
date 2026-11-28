@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <limits>
 #include <stdexcept>
 #include <vector>
 
@@ -213,6 +214,14 @@ void f32RampContinuesAcrossBuffers() {
     require(std::memcmp(whole.data(), split.data(), whole.size() * sizeof(float)) == 0, "a float ramp split across buffers equals the same ramp in one buffer");
 }
 
+void f32MuteSilencesNonfiniteSamples() {
+    HostGainRamp ramp(1);
+    const auto infinity = std::numeric_limits<float>::infinity();
+    float samples[]{infinity, -infinity, std::numeric_limits<float>::quiet_NaN(), 0.75f};
+    ramp.Apply(samples, 2, 2, 0);
+    for (float sample : samples) require(sample == 0.0f, "zero gain silences every float channel");
+}
+
 void f32DoesNotClamp() {
     HostGainRamp ramp(1);
     auto samples = constantF32(2, 1, 0.75f);
@@ -272,6 +281,7 @@ int main() try {
     f32FirstSampleAndLanding();
     f32RampHasNoDiscontinuity();
     f32RampContinuesAcrossBuffers();
+    f32MuteSilencesNonfiniteSamples();
     f32DoesNotClamp();
     filterPassesTheTitleBufferAtUnity();
     filterLeavesTheTitleBufferUntouched();
