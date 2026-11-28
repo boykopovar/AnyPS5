@@ -2,6 +2,8 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 
+struct USet;
+
 namespace Icu {
 struct Normalizer2;
 struct Normalizer2Impl;
@@ -35,4 +37,5 @@ std::int8_t APS5_VABI _ZNK6icu_6815Normalizer2Impl29norm16HasDecompBoundaryBefor
                                                                                               std::uint16_t);
 std::int8_t APS5_VABI _ZNK6icu_6815Normalizer2Impl19ensureCanonIterDataER10UErrorCode_nid_postfix(const Icu::Normalizer2Impl*,
                                                                                                  std::int32_t*);
+void APS5_VABI _ZNK6icu_6815Normalizer2Impl12addLcccCharsERNS_10UnicodeSetE_nid_postfix(const Icu::Normalizer2Impl*, USet*);
 }

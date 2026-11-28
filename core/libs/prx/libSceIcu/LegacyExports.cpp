@@ -5789,10 +5789,6 @@ int APS5_VABI _ZN6icu_689BytesTrieD2Ev_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK6icu_6815Normalizer2Impl12addLcccCharsERNS_10UnicodeSetE_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI ucnv_getMinCharSize_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }

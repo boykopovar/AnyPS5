@@ -1,9 +1,11 @@
 #include "prx/libSceIcu/Normalizer2Accessors.hpp"
+#include "prx/libSceIcu/Set.hpp"
 #include "prx/libc/include/General.hpp"
 #include "norm2allmodes.h"
 #include "normalizer2impl.h"
 #include "unicode/normalizer2.h"
 #include "unicode/stringpiece.h"
+#include "unicode/uniset.h"
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
@@ -197,6 +199,14 @@ std::int8_t APS5_VABI _ZNK6icu_6815Normalizer2Impl19ensureCanonIterDataER10UErro
     return WithStatus<std::int8_t>(error, __func__, [native](UErrorCode& status) {
         return static_cast<std::int8_t>(native->ensureCanonIterData(status));
     });
+}
+
+void APS5_VABI _ZNK6icu_6815Normalizer2Impl12addLcccCharsERNS_10UnicodeSetE_nid_postfix(const Icu::Normalizer2Impl* impl,
+                                                                                    USet* set) {
+    const auto* native = Native(impl, __func__);
+    if (!set) throw std::invalid_argument(std::string(__func__) + ": null set");
+    auto* target = const_cast<icu::UnicodeSet*>(icu::UnicodeSet::fromUSet(Icu::NativeSet(set)));
+    native->addLcccChars(*target);
 }
 
 }
