@@ -971,7 +971,6 @@ int APS5_VABI _ZN3WTF10AtomString6numberEy();
 int APS5_VABI _ZN3WTF10ParkingLot11forEachImplERKNS_12ScopedLambdaIFvRNS_6ThreadEPKvEEE();
 int APS5_VABI _ZN3WTF10StringImpl5adoptEONS_12StringBufferIDsEE();
 int APS5_VABI _ZN3WTF10StringImpl5adoptEONS_12StringBufferIhEE();
-int APS5_VABI _ZN3WTF10StringImpl7destroyEPS0_();
 int APS5_VABI _ZN3WTF10StringView16GraphemeClusters8IteratorC1EOS2_();
 int APS5_VABI _ZN3WTF10StringView16GraphemeClusters8IteratorC2EOS2_();
 int APS5_VABI _ZN3WTF10StringView16GraphemeClusters8IteratorD1Ev();

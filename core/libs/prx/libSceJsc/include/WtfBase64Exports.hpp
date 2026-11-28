@@ -9,7 +9,7 @@
 
 namespace Jsc::WtfAbi {
 
-struct String {
+struct StringHandle {
     StringImpl* impl;
 };
 
@@ -24,7 +24,7 @@ struct SignedOrUnsignedCharVectorAdapter {
     bool isSigned;
 };
 
-static_assert(sizeof(String) == 8);
+static_assert(sizeof(StringHandle) == 8);
 static_assert(sizeof(CharVector) == 16);
 static_assert(offsetof(CharVector, buffer) == 0);
 static_assert(offsetof(CharVector, capacity) == 8);
@@ -38,6 +38,6 @@ static_assert(std::is_trivially_copyable_v<SignedOrUnsignedCharVectorAdapter>);
 
 extern "C" {
 
-bool APS5_VABI _ZN3WTF15base64URLDecodeERKNS_6StringENS_33SignedOrUnsignedCharVectorAdapterE(const Jsc::WtfAbi::String* in, Jsc::WtfAbi::SignedOrUnsignedCharVectorAdapter out);
+bool APS5_VABI _ZN3WTF15base64URLDecodeERKNS_6StringENS_33SignedOrUnsignedCharVectorAdapterE(const Jsc::WtfAbi::StringHandle* in, Jsc::WtfAbi::SignedOrUnsignedCharVectorAdapter out);
 
 }
