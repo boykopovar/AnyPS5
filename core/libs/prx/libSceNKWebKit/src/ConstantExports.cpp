@@ -6,54 +6,6 @@ int APS5_VABI WKAccessibilityCanUseSecondaryAXThread() {
     return 0;
 }
 
-int APS5_VABI WKBundleBackForwardListCopyItemAtIndex() {
-    return 0;
-}
-
-int APS5_VABI WKBundleBackForwardListGetBackListCount() {
-    return 0;
-}
-
-int APS5_VABI WKBundleBackForwardListGetForwardListCount() {
-    return 0;
-}
-
-int APS5_VABI WKBundleBackForwardListItemCopyChildren() {
-    return 0;
-}
-
-int APS5_VABI WKBundleBackForwardListItemCopyOriginalURL() {
-    return 0;
-}
-
-int APS5_VABI WKBundleBackForwardListItemCopyTarget() {
-    return 0;
-}
-
-int APS5_VABI WKBundleBackForwardListItemCopyTitle() {
-    return 0;
-}
-
-int APS5_VABI WKBundleBackForwardListItemCopyURL() {
-    return 0;
-}
-
-int APS5_VABI WKBundleBackForwardListItemHasCachedPageExpired() {
-    return 0;
-}
-
-int APS5_VABI WKBundleBackForwardListItemIsInBackForwardCache() {
-    return 0;
-}
-
-int APS5_VABI WKBundleBackForwardListItemIsSame() {
-    return 0;
-}
-
-int APS5_VABI WKBundleBackForwardListItemIsTargetItem() {
-    return 0;
-}
-
 int APS5_VABI WKBundleFileHandleCreateWithPath() {
     return 0;
 }

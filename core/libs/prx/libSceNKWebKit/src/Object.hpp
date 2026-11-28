@@ -144,6 +144,7 @@ enum class ObjectType : std::uint32_t {
     PopupMenuItem,
     AccessibilityObject,
     MediaSessionMetadata,
+    BundlePageGroup,
 };
 
 class Object {
