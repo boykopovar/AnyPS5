@@ -24,6 +24,7 @@
 #include <mutex>
 #include <stdexcept>
 #ifdef _WIN32
+#include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include <string_view>
 #include <windows.h>
 #else
@@ -946,7 +947,7 @@ thread_local PendingFault pendingFault;
 
 std::int32_t SegvCode(ULONG_PTR address) {
     MEMORY_BASIC_INFORMATION info{};
-    return VirtualQuery(reinterpret_cast<const void*>(address), &info, sizeof(info)) == sizeof(info) && info.State == MEM_COMMIT ? 2 : 1;
+    return (VirtualQuery(reinterpret_cast<const void*>(address), &info, sizeof(info)) == sizeof(info) && info.State == MEM_COMMIT) || FileMappingPastEnd(address) ? 2 : 1;
 }
 
 bool Committed(ULONG_PTR address) {
