@@ -726,6 +726,8 @@ FileStream* APS5_VABI fopen_nid_postfix(const char* filename, const char* mode) 
     std::filesystem::path fpath;
     if (const int error = ResolvePathError_nid_no_patch(filename, fpath, false, true)) { errno = error; return nullptr; }
     if (const auto archived = OpenArchivedStream(fpath, *parsed)) return *archived;
+    if (parsed->native.front() != 'r')
+        if (const int error = AppArchiveCreateError_nid_no_patch(fpath)) { errno = error; return nullptr; }
     std::unique_ptr<std::FILE, int (*)(std::FILE*)> handle(OpenNative(fpath, parsed->native), std::fclose);
     if (!handle) {
         const int hostError = errno;

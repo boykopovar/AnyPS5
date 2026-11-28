@@ -307,6 +307,8 @@ static int OpenNative(const std::filesystem::path& native, int flags, std::uint1
         File::RememberDescriptor(*archived, flags);
         return *archived;
     }
+    if ((flags & SCE_KERNEL_O_CREAT) != 0)
+        if (const int error = AppArchiveCreateError_nid_no_patch(native)) return SceErrorFromErrno(error);
 #ifdef _WIN32
     std::error_code pathError;
     const auto metadataOpenPath = NativeMetadataPath(native, pathError);

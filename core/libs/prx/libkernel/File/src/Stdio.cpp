@@ -1348,12 +1348,19 @@ int64_t APS5_VABI lseek_nid_postfix(int d, int64_t offset, int whence) {
     return PosixResult(sceKernelLseek(d, offset, whence));
 }
 
+static int ArchivedMkdirError(const std::filesystem::path& native) {
+    const auto target = WithoutTrailingSeparator(native);
+    if (AppArchiveOnly_nid_no_patch(target)) return GUEST_EEXIST;
+    return AppArchiveCreateError_nid_no_patch(target);
+}
+
 int APS5_VABI mkdir_nid_postfix(const char* path, uint16_t mode) {
     std::string copy;
     if (const int error = PathError(path, copy)) return PosixFailure(error);
     path = copy.c_str();
     std::filesystem::path native;
-    if (const int error = ResolvePathError_nid_no_patch(path, native)) return PosixFailure(error);
+    if (const int error = ResolvePathError_nid_no_patch(path, native, false, true)) return PosixFailure(error);
+    if (const int archived = ArchivedMkdirError(native)) return PosixFailure(archived);
     if (NativeMkdir(native, mode) != 0) {
         const int nativeError = errno;
 #ifdef _WIN32
@@ -1813,8 +1820,9 @@ static int KernelMkdir(const char* path, uint16_t mode) {
     path = copy.c_str();
     if (copy.empty()) return SceErrorFromErrno(GUEST_ENOENT);
     std::filesystem::path native;
-    if (const int error = ResolvePathError_nid_no_patch(path, native)) return SceKernelError(error);
+    if (const int error = ResolvePathError_nid_no_patch(path, native, false, true)) return SceKernelError(error);
     while (!native.has_filename() && native.has_relative_path()) native = native.parent_path();
+    if (const int archived = ArchivedMkdirError(native)) return SceErrorFromErrno(archived);
 #ifdef _WIN32
     std::error_code pathError;
     const auto verbatimNative = NativeVerbatimPath_nid_no_patch(native, pathError, WindowsMaxDirectoryPathLength);

@@ -40,6 +40,7 @@ void AppArchiveRefuseDescriptor_nid_no_patch(int descriptor, const char* operati
 std::filesystem::path AppArchivePath_nid_no_patch();
 bool AppArchiveOnly_nid_no_patch(const std::filesystem::path& hostPath);
 bool AppArchiveHasDirectory_nid_no_patch(const std::filesystem::path& hostPath);
+int AppArchiveCreateError_nid_no_patch(const std::filesystem::path& hostPath);
 
 void AppArchiveAttach_nid_no_patch(int descriptor, const AppArchiveNode& node);
 void AppArchiveShare_nid_no_patch(int from, int to);
