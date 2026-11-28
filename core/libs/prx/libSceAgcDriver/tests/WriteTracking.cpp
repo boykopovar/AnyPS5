@@ -12,6 +12,7 @@
 #include <windows.h>
 #include <psapi.h>
 #else
+#include <fcntl.h>
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
@@ -589,6 +590,16 @@ void CheckOwnStore() {
 std::atomic<int> sameValuePhase{0};
 std::thread sameValueThread;
 
+#if defined(__linux__)
+bool WriteThroughProcMem(std::uintptr_t address, const void* source, std::size_t bytes) {
+    const int fd = ::open("/proc/self/mem", O_WRONLY | O_CLOEXEC);
+    if (fd < 0) return false;
+    const auto written = ::pwrite(fd, source, bytes, static_cast<off_t>(address));
+    ::close(fd);
+    return written == static_cast<ssize_t>(bytes);
+}
+#endif
+
 void StoreSameValueDuringCommit(std::uint64_t address, std::size_t) {
     if (sameValuePhase.exchange(1) != 0) return;
     const auto value = *reinterpret_cast<const std::uint8_t*>(address);
@@ -611,9 +622,16 @@ void CheckWriteChangedIfHeldSameValue() {
     original.fill(std::byte{0x11});
     current.fill(std::byte{0x22});
     sameValuePhase.store(0);
+#if defined(__linux__)
+    GuestArena::GuestArenaSetSharedBackingWriter_nid_no_patch(&WriteThroughProcMem);
+#endif
     SetWriteChangedIfHeldHookForTest(&StoreSameValueDuringCommit);
-    WriteChangedIfHeld(base, current, original, synced);
+    const auto lost = WriteChangedIfHeld(base, current, original, synced);
     SetWriteChangedIfHeldHookForTest(nullptr);
+#if defined(__linux__)
+    GuestArena::GuestArenaSetSharedBackingWriter_nid_no_patch(nullptr);
+    Require(lost == 0, "the guarded publication reported a lost write for an aliasable range");
+#endif
     sameValueThread.join();
     Require(sameValuePhase.load() == 3, "the same-value guest store did not finish");
     Require(*reinterpret_cast<const std::uint8_t*>(memory) == 0x11u, "a guarded publication overwrote a same-value guest store made during its commit");
@@ -639,8 +657,10 @@ void CheckPublicationKeepsPageProtection() {
     Require(executableMapping && executableMapping->writable && executableMapping->executable, "a guarded publication lost the execute permission of a page");
     const auto writable = HostMapping::Find(base, "write tracking protection test");
     Require(writable && writable->writable, "a guarded publication left a writable page read-only");
+    const auto beforeStore = TrackerGeneration();
     *reinterpret_cast<volatile std::uint8_t*>(memory) = 0x22;
-    Require(CollectWrites(base, Page) != 0, "a guarded publication stopped the write watch from seeing a later store");
+    CollectWritesUncached(base, Page);
+    Require(!UnchangedSince(base, Page, beforeStore), "a guarded publication stopped the write watch from seeing a later store");
     Require(::mprotect(readOnly, Page, PROT_READ | PROT_WRITE) == 0, "cannot restore the read-only test page");
     GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(memory, Pages * Page);
     Require(::munmap(memory, Pages * Page) == 0, "cannot release the protected publication block");
@@ -692,7 +712,7 @@ void CheckPublicationBench() {
     for (int thread = 0; thread < StoreThreads; ++thread) {
         threads.emplace_back([&, thread] {
             auto* bytes = static_cast<volatile std::uint8_t*>(memory);
-            std::size_t offset = static_cast<std::size_t>(thread) * 4096;
+            std::size_t offset = static_cast<std::size_t>(thread) * 4096 + static_cast<std::size_t>(thread);
             while (running.load(std::memory_order_acquire)) {
                 bytes[offset] = static_cast<std::uint8_t>(offset);
                 offset = (offset + 4096) % Bytes;

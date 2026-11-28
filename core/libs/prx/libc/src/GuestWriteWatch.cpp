@@ -76,6 +76,8 @@ constexpr std::uintptr_t PageBytes = 4096;
 char g_unavailableReason[192];
 thread_local char t_registrationFailure[192];
 
+void noteReadTrapProtectionChange(std::uintptr_t begin, std::uintptr_t end) noexcept;
+
 class PublicationLock {
 public:
     bool tryLock() {
@@ -106,6 +108,11 @@ class Watch {
         std::uintptr_t end;
         int protection;
     };
+    struct PublicationSlot {
+        std::atomic<std::uintptr_t> begin{0};
+        std::atomic<std::uintptr_t> end{0};
+        std::atomic<int> protection{0};
+    };
     static constexpr std::size_t PublicationRunCapacity = 1024;
     static constexpr std::size_t RecentPublicationRangeCount = 8;
 
@@ -130,30 +137,7 @@ public:
         const auto first = address & ~(PageBytes - 1);
         const auto last = (address + bytes + PageBytes - 1) & ~(PageBytes - 1);
         if (last <= first) return false;
-        std::vector<PublicationRun> runs;
-        try {
-            HostMapping::Walk(first, last, "write watch publication", [&](const HostMapping::Mapping& mapping) {
-                const auto begin = std::max<std::uintptr_t>(mapping.start, first);
-                const auto end = std::min<std::uintptr_t>(mapping.end, last);
-                if (begin >= end) return;
-                const int protection = (mapping.readable ? PROT_READ : 0) | (mapping.writable ? PROT_WRITE : 0) | (mapping.executable ? PROT_EXEC : 0);
-                runs.push_back({begin, end, protection});
-            });
-        } catch (...) {
-            return false;
-        }
-        if (runs.empty()) return false;
-        {
-            std::shared_lock lock(_lock);
-            if (!covers(first, last)) return false;
-        }
-        if (runs.size() > PublicationRunCapacity) return false;
         std::vector<PublicationRun> opened;
-        try {
-            opened.reserve(runs.size());
-        } catch (...) {
-            return false;
-        }
         _publicationState.lock();
         if (_publicationRecovery.load(std::memory_order_acquire)) {
             if (!recoverPublicationLocked()) {
@@ -165,26 +149,56 @@ public:
             _publicationState.unlock();
             return false;
         }
+        std::vector<PublicationRun> runs;
+        try {
+            HostMapping::Walk(first, last, "write watch publication", [&](const HostMapping::Mapping& mapping) {
+                const auto begin = std::max<std::uintptr_t>(mapping.start, first);
+                const auto end = std::min<std::uintptr_t>(mapping.end, last);
+                if (begin >= end) return;
+                const int protection = (mapping.readable ? PROT_READ : 0) | (mapping.writable ? PROT_WRITE : 0) | (mapping.executable ? PROT_EXEC : 0);
+                runs.push_back({begin, end, protection});
+            });
+        } catch (...) {
+            _publicationState.unlock();
+            return false;
+        }
+        if (runs.empty() || runs.size() > PublicationRunCapacity) {
+            _publicationState.unlock();
+            return false;
+        }
+        {
+            std::shared_lock lock(_lock);
+            if (!covers(first, last)) {
+                _publicationState.unlock();
+                return false;
+            }
+        }
+        try {
+            opened.reserve(runs.size());
+        } catch (...) {
+            _publicationState.unlock();
+            return false;
+        }
         _publicationBegin.store(first, std::memory_order_relaxed);
         _publicationEnd.store(last, std::memory_order_relaxed);
-        std::copy(runs.begin(), runs.end(), _publicationRuns.begin());
-        _publicationRunCount.store(runs.size(), std::memory_order_release);
+        publishPublicationRunsLocked(runs);
         _publication.store(true, std::memory_order_release);
         try {
             for (const auto& run : runs) {
                 if ((run.protection & PROT_WRITE) == 0) continue;
+                opened.push_back(run);
                 if (::mprotect(reinterpret_cast<void*>(run.begin), run.end - run.begin, run.protection & ~PROT_WRITE) != 0) {
                     abortPublicationLocked(opened);
                     _publicationState.unlock();
                     return false;
                 }
-                opened.push_back(run);
             }
         } catch (...) {
             abortPublicationLocked(opened);
             _publicationState.unlock();
             return false;
         }
+        noteReadTrapProtectionChange(first, last);
         _publicationState.unlock();
         return true;
     }
@@ -195,8 +209,9 @@ public:
             if (::mprotect(reinterpret_cast<void*>(run.begin), run.end - run.begin, run.protection) != 0) restored = false;
         }
         if (restored) {
+            noteReadTrapProtectionChange(_publicationBegin.load(std::memory_order_relaxed), _publicationEnd.load(std::memory_order_relaxed));
             recordPublicationRangeLocked();
-            _publicationRunCount.store(0, std::memory_order_release);
+            clearPublicationRunsLocked();
             _publicationRecovery.store(false, std::memory_order_release);
             _publication.store(false, std::memory_order_release);
         } else {
@@ -210,7 +225,7 @@ public:
             _publicationState.unlock();
             return;
         }
-        const auto count = _publicationRunCount.load(std::memory_order_acquire);
+        const auto count = snapshotPublicationRunsLocked();
         if (count == 0) {
             recordPublicationRangeLocked();
             _publicationRecovery.store(false, std::memory_order_release);
@@ -218,15 +233,16 @@ public:
             _publicationState.unlock();
             return;
         }
-        const std::span<const PublicationRun> runs(_publicationRuns.data(), count);
+        const std::span<const PublicationRun> runs(_publicationSnapshot.data(), count);
+        armPublicationRuns(runs);
         if (!restorePublicationRuns(runs) || !verifyPublicationRuns(runs)) {
             _publicationRecovery.store(true, std::memory_order_release);
             _publicationState.unlock();
             return;
         }
-        armPublicationRuns(runs);
+        noteReadTrapProtectionChange(_publicationBegin.load(std::memory_order_relaxed), _publicationEnd.load(std::memory_order_relaxed));
         recordPublicationRangeLocked();
-        _publicationRunCount.store(0, std::memory_order_release);
+        clearPublicationRunsLocked();
         _publicationRecovery.store(false, std::memory_order_release);
         _publication.store(false, std::memory_order_release);
         _publicationState.unlock();
@@ -264,21 +280,28 @@ public:
         for (;;) {
             if (_publicationRecovery.load(std::memory_order_acquire)) {
                 if (!RecoverPublication()) return false;
-                return publicationPageWritable(address);
+                continue;
             }
             if (_publication.load(std::memory_order_acquire)) {
-                const auto count = _publicationRunCount.load(std::memory_order_acquire);
-                if (count != 0) {
-                    bool opened = false;
+                bool opened = false;
+                for (;;) {
+                    const auto before = _publicationRunsGeneration.load(std::memory_order_acquire);
+                    if ((before & 1u) != 0u) continue;
+                    const auto count = _publicationRunCount.load(std::memory_order_acquire);
+                    opened = false;
                     for (std::size_t index = 0; index < count; ++index) {
-                        const auto& run = _publicationRuns[index];
-                        if (address >= run.begin && address < run.end && (run.protection & PROT_WRITE) != 0) {
+                        const auto begin = _publicationRuns[index].begin.load(std::memory_order_relaxed);
+                        const auto end = _publicationRuns[index].end.load(std::memory_order_relaxed);
+                        const auto protection = _publicationRuns[index].protection.load(std::memory_order_relaxed);
+                        if (address >= begin && address < end && (protection & PROT_WRITE) != 0) {
                             opened = true;
                             break;
                         }
                     }
-                    if (!opened) return publicationPageWritable(address);
+                    const auto after = _publicationRunsGeneration.load(std::memory_order_acquire);
+                    if (before == after) break;
                 }
+                if (!opened) return publicationPageWritable(address);
             } else {
                 if (publicationPageWritable(address)) return true;
                 if (_publication.load(std::memory_order_acquire) || _publicationRecovery.load(std::memory_order_acquire)) continue;
@@ -755,24 +778,29 @@ private:
             sched_yield();
 #endif
         }
+        if (!_publicationRecovery.load(std::memory_order_acquire)) {
+            _publicationState.unlock();
+            return true;
+        }
         const bool recovered = recoverPublicationLocked();
         _publicationState.unlock();
         return recovered;
     }
 
     bool recoverPublicationLocked() noexcept {
-        const auto count = _publicationRunCount.load(std::memory_order_acquire);
+        const auto count = snapshotPublicationRunsLocked();
         if (count == 0) {
             recordPublicationRangeLocked();
             _publicationRecovery.store(false, std::memory_order_release);
             _publication.store(false, std::memory_order_release);
             return true;
         }
-        const std::span<const PublicationRun> runs(_publicationRuns.data(), count);
-        if (!restorePublicationRuns(runs) || !verifyPublicationRuns(runs)) return false;
+        const std::span<const PublicationRun> runs(_publicationSnapshot.data(), count);
         armPublicationRuns(runs);
+        if (!restorePublicationRuns(runs) || !verifyPublicationRuns(runs)) return false;
+        noteReadTrapProtectionChange(_publicationBegin.load(std::memory_order_relaxed), _publicationEnd.load(std::memory_order_relaxed));
         recordPublicationRangeLocked();
-        _publicationRunCount.store(0, std::memory_order_release);
+        clearPublicationRunsLocked();
         _publicationRecovery.store(false, std::memory_order_release);
         _publication.store(false, std::memory_order_release);
         return true;
@@ -885,8 +913,37 @@ private:
     std::atomic<bool> _publicationRecovery{false};
     std::atomic<std::uintptr_t> _publicationBegin{0};
     std::atomic<std::uintptr_t> _publicationEnd{0};
-    std::array<PublicationRun, PublicationRunCapacity> _publicationRuns{};
+    void publishPublicationRunsLocked(std::span<const PublicationRun> runs) noexcept {
+        _publicationRunsGeneration.fetch_add(1, std::memory_order_acq_rel);
+        for (std::size_t index = 0; index < runs.size(); ++index) {
+            _publicationRuns[index].begin.store(runs[index].begin, std::memory_order_relaxed);
+            _publicationRuns[index].end.store(runs[index].end, std::memory_order_relaxed);
+            _publicationRuns[index].protection.store(runs[index].protection, std::memory_order_relaxed);
+        }
+        _publicationRunCount.store(runs.size(), std::memory_order_release);
+        _publicationRunsGeneration.fetch_add(1, std::memory_order_release);
+    }
+
+    void clearPublicationRunsLocked() noexcept {
+        _publicationRunsGeneration.fetch_add(1, std::memory_order_acq_rel);
+        _publicationRunCount.store(0, std::memory_order_release);
+        _publicationRunsGeneration.fetch_add(1, std::memory_order_release);
+    }
+
+    std::size_t snapshotPublicationRunsLocked() noexcept {
+        const auto count = _publicationRunCount.load(std::memory_order_acquire);
+        for (std::size_t index = 0; index < count; ++index) {
+            _publicationSnapshot[index].begin = _publicationRuns[index].begin.load(std::memory_order_relaxed);
+            _publicationSnapshot[index].end = _publicationRuns[index].end.load(std::memory_order_relaxed);
+            _publicationSnapshot[index].protection = _publicationRuns[index].protection.load(std::memory_order_relaxed);
+        }
+        return count;
+    }
+
+    std::array<PublicationSlot, PublicationRunCapacity> _publicationRuns{};
+    std::array<PublicationRun, PublicationRunCapacity> _publicationSnapshot{};
     std::atomic<std::size_t> _publicationRunCount{0};
+    std::atomic<std::uint64_t> _publicationRunsGeneration{0};
     std::array<RecentPublicationRange, RecentPublicationRangeCount> _recentPublications{};
     std::atomic<std::size_t> _recentPublicationNext{0};
     std::atomic<std::uint64_t> _linkVersion{0};
@@ -1071,6 +1128,12 @@ public:
         const std::lock_guard lock(_lock);
         const auto found = std::find(_hostWrites.begin(), _hostWrites.end(), std::pair{pageStart(begin), pageEnd(end)});
         if (found != _hostWrites.end()) _hostWrites.erase(found);
+    }
+
+    void NoteProtectionChange(std::uintptr_t begin, std::uintptr_t end) {
+        if (end <= begin) return;
+        const std::lock_guard lock(_lock);
+        eraseProtections(begin, end);
     }
 
     bool BeginUntrapped(std::uintptr_t begin, std::uintptr_t end) {
@@ -1438,6 +1501,10 @@ private:
     struct sigaction _previousBus {};
     struct sigaction _previousSegv {};
 };
+
+void noteReadTrapProtectionChange(std::uintptr_t begin, std::uintptr_t end) noexcept {
+    ReadTraps::Get().NoteProtectionChange(begin, end);
+}
 
 const bool g_trapsOpened = (ReadTraps::Get(), true);
 #elif defined(__APPLE__)

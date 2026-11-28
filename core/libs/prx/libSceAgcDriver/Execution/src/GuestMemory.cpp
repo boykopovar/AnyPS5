@@ -3320,8 +3320,15 @@ static bool writeOwnBytesAlias(std::uint64_t address, std::span<const std::byte>
     return false;
 }
 
-static void MarkPublicationWrite(void* context, std::uintptr_t, std::uintptr_t) {
-    *static_cast<bool*>(context) = true;
+struct PublicationWrite {
+    bool written = false;
+    std::vector<std::pair<std::uintptr_t, std::uintptr_t>> runs;
+};
+
+static void MarkPublicationWrite(void* context, std::uintptr_t begin, std::uintptr_t end) {
+    auto& state = *static_cast<PublicationWrite*>(context);
+    state.written = true;
+    state.runs.emplace_back(begin, end);
 }
 
 static void copyOwnBytes(std::uint64_t address, std::span<const std::byte> source) {
@@ -4523,18 +4530,23 @@ std::size_t WriteChangedIfHeld(std::uint64_t address, std::span<const std::byte>
     bool publication = false;
     struct PublicationEnd {
         bool& active;
+        std::uint64_t address;
+        std::size_t size;
         ~PublicationEnd() {
-            if (active) GuestWriteWatch::GuestWriteWatchEndPublication_nid_no_patch();
+            if (!active) return;
+            GuestWriteWatch::GuestWriteWatchEndPublication_nid_no_patch();
+            Pages().accessSerial.fetch_add(1, std::memory_order_acq_rel);
+            Pages().forget(address, size);
         }
-    } publicationEnd{publication};
+    } publicationEnd{publication, address, size};
+    PublicationWrite publicationWrite;
     std::size_t lost = 0;
     storeOwn(address, size, false, [&](std::span<std::byte>) {
         CheckRange(destination, size, 1, true);
         if (unchangedSince != 0u) {
             publication = GuestWriteWatch::GuestWriteWatchBeginPublication_nid_no_patch(address, size);
             if (publication) {
-                bool written = false;
-                if (!GuestWriteWatch::GuestWriteWatchCollect_nid_postfix(address, size, &MarkPublicationWrite, &written) || written) {
+                if (!GuestWriteWatch::GuestWriteWatchCollect_nid_postfix(address, size, &MarkPublicationWrite, &publicationWrite) || publicationWrite.written) {
                     lost = size;
                     return std::pair<std::uint64_t, std::uint64_t>{0, 0};
                 }
@@ -4583,6 +4595,10 @@ std::size_t WriteChangedIfHeld(std::uint64_t address, std::span<const std::byte>
         for (; at < size && lost == 0; ++at) exchange(at);
         return firstChanged < lastChanged ? std::pair<std::uint64_t, std::uint64_t>{address + firstChanged, address + lastChanged} : std::pair<std::uint64_t, std::uint64_t>{0, 0};
     }, false);
+    if (publicationWrite.written) {
+        StampRuns runs{Tracker(), StampKind::Cpu};
+        for (const auto& [begin, end] : publicationWrite.runs) stampWrittenRun(&runs, begin, end);
+    }
     return lost;
 }
 
