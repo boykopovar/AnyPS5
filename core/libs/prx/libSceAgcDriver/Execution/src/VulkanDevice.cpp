@@ -662,6 +662,7 @@ struct VulkanDevice::State {
     bool fillModeNonSolid = false;
     bool wideLines = false;
     std::uint32_t srgbDecodeFormats = 0;
+    std::array<std::uint64_t, 2> storageReadFormats{};
     std::uint32_t srgbCopyFormats = 0;
     std::uint32_t scaledSampledFormats = 0;
     std::uint32_t optionalSampledFormats = 0;
@@ -1754,6 +1755,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     state->InstanceFunction<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(selected, &floatProperties);
     require(floatControls.shaderSignedZeroInfNanPreserveFloat32 == VK_TRUE, "shaderSignedZeroInfNanPreserveFloat32 is unavailable");
     const std::array<const char*, 2> meshExtensions{VK_EXT_MESH_SHADER_EXTENSION_NAME, VK_KHR_SPIRV_1_4_EXTENSION_NAME};
+    if (hasExtension(VK_KHR_FORMAT_FEATURE_FLAGS_2_EXTENSION_NAME)) state->storageReadFormats = Graphics::StorageReadFormats(state->InstanceFunction<PFN_vkGetPhysicalDeviceFormatProperties2>("vkGetPhysicalDeviceFormatProperties2"), selected);
     const bool meshAvailable = std::all_of(meshExtensions.begin(), meshExtensions.end(), hasExtension);
     VkPhysicalDeviceMeshShaderFeaturesEXT meshFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT};
     if (meshAvailable) {
@@ -4989,6 +4991,7 @@ ShaderRecompiler::SpirvTarget VulkanDevice::buildTarget() const {
     target.spannedUnreachableStays = std::getenv("APS5_SPANNED_UNREACHABLE_STAYS") != nullptr;
     target.spannedUnreachableVerify = std::getenv("APS5_VERIFY_SPANNED_UNREACHABLE_STAYS") != nullptr;
     target.srgbDecodeFormats = state->srgbDecodeFormats & ~state->srgbCopyFormats;
+    target.storageReadFormats = state->storageReadFormats;
     target.maxImageArrayLayers = limits.maxImageArrayLayers;
     target.vertexSubgroups = (state->subgroup.supportedStages & VK_SHADER_STAGE_VERTEX_BIT) != 0;
     target.tessellationEvaluationSubgroups = (state->subgroup.supportedStages & VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT) != 0;
