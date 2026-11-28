@@ -1,4 +1,5 @@
 #include "prx/libSceFreeType/include/Api.hpp"
+#include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libharfbuzz/libharfbuzz.hpp"
 #include "tests/CommandLineArgument.hpp"
 
@@ -27,6 +28,8 @@
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -295,6 +298,42 @@ static void CheckInvalidInputs(const Api& api, const FreeTypeApi& ft, const std:
     rejectsRuntime([&] { api.cachedFace(reinterpret_cast<FreeType::GuestFaceRec*>(std::uintptr_t{0x10})); });
     rejectsRuntime([&] { api.cachedFace(&forged); });
     rejectsRuntime([&] { api.cachedFace(&mismatchedOwner); });
+
+#ifdef _WIN32
+    SYSTEM_INFO sysInfo{};
+    GetSystemInfo(&sysInfo);
+    const std::size_t pageSize = sysInfo.dwPageSize;
+    auto* guarded = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(guarded != nullptr);
+    DWORD oldProtect = 0;
+    Require(VirtualProtect(guarded + pageSize * 2, pageSize, PAGE_NOACCESS, &oldProtect) != 0);
+#else
+    const long rawPageSize = sysconf(_SC_PAGESIZE);
+    Require(rawPageSize > 0);
+    const std::size_t pageSize = static_cast<std::size_t>(rawPageSize);
+    void* mapped = mmap(nullptr, pageSize * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(mapped != MAP_FAILED);
+    auto* guarded = static_cast<unsigned char*>(mapped);
+    Require(mprotect(guarded + pageSize * 2, pageSize, PROT_NONE) == 0);
+#endif
+    auto* readOnlyOwner = reinterpret_cast<FreeType::GuestFace*>(guarded);
+    std::memcpy(readOnlyOwner, validFace->internal, sizeof(FreeType::GuestFace));
+    readOnlyOwner->rec.internal = readOnlyOwner;
+    FaceGenericState readOnlyGeneric{&readOnlyOwner->rec, 0};
+    readOnlyOwner->rec.generic = {&readOnlyGeneric, FinalizeGuestGeneric};
+#ifdef _WIN32
+    Require(VirtualProtect(guarded, pageSize, PAGE_READONLY, &oldProtect) != 0);
+#else
+    Require(mprotect(guarded, pageSize, PROT_READ) == 0);
+#endif
+    rejectsRuntime([&] { api.cachedFace(&readOnlyOwner->rec); });
+    Require(readOnlyGeneric.calls == 0);
+    rejectsRuntime([&] { api.cachedFace(reinterpret_cast<FreeType::GuestFaceRec*>(guarded + pageSize * 2 - 8)); });
+#ifdef _WIN32
+    Require(VirtualFree(guarded, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(guarded, pageSize * 3) == 0);
+#endif
 
     const std::array<std::uint16_t, 2> pair{'V', 'a'};
     auto* buffer = api.bufferCreate();
