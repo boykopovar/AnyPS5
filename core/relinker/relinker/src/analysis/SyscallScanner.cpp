@@ -494,9 +494,6 @@ std::vector<std::size_t> SyscallScanner::ScanCodeSectionForSyscalls(const std::v
         if (routedStubs != nullptr && kind == ForbiddenInstruction::Invocation) {
             if (const auto number = SdkSyscallStubNumber(codeSection, opcode, limit); number && *number == 191) {
                 routedStubs->push_back({opcode - 10u, 13u, 191});
-                std::ostringstream message;
-                message << "Routing SDK syscall stub 191 at code offset 0x" << std::hex << (match.Offset - 10u) << '\n';
-                progress.Message(message.str());
                 return;
             }
         }
