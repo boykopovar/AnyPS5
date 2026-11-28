@@ -1,0 +1,5 @@
+# libSceXml
+
+## change [Node](../../../core/libs/prx/libSceXml/src/Node.cpp)
+
+- [Node](../../../core/libs/prx/libSceXml/src/Node.cpp) (libSceXml) - builds a node handle from a `NodeId` and answers the node type and the child and attribute flags through it; the behaviour is not measured on a console. `Node(NodeId)` copies the id, keeps its two pointers as the document and the position, and zeroes the three state words; the two-handle layout is inferred from `isAvailable` and the 64-byte copy, not read from the module. `getNodeType` gives the `Document` read's node type and `0xffffffff` for a null `NodeId`, the value `Document::getNodeType` gives an empty document. `hasChildNodes` and `hasAttributes` are false for that node. The destructor frees nothing, the handle owning no block. Reading a node after its builder parsed again or terminated throws, as the document reads do, also after every document of that parse is gone: a released parse keeps its small header, marked dead, for the life of the process.

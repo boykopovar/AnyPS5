@@ -18,8 +18,10 @@ struct Generation {
     bool alive = true;
     bool writable = false;
     std::unique_ptr<WritableTree> tree;
+    Generation* retiredNext = nullptr;
 };
 
+std::shared_ptr<Generation> NewGeneration();
 int DocumentInitialize(XmlHandle* document, const XmlHandle* initializer);
 void DocumentCreate(XmlHandle* document, XmlMemAllocator* allocator, void* userData, std::shared_ptr<Generation> generation);
 void DocumentCopy(XmlHandle* document, const XmlHandle* other);

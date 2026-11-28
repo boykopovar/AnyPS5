@@ -121,7 +121,7 @@ int BuilderParse(XmlHandle* self, const XmlString* text, bool last) {
         state->documentOptions = state->options;
         state->stalledInsideTag = false;
         if (state->generation) state->generation->alive = false;
-        state->generation = std::make_shared<Generation>();
+        state->generation = NewGeneration();
     } else {
         if (state->stalledInsideTag) {
             state->failed = true;
