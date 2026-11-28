@@ -412,7 +412,7 @@ int APS5_VABI tls_read_nid_postfix();
 int APS5_VABI tls_write_nid_postfix();
 void APS5_VABI EC_KEY_set_asn1_flag_nid_postfix(EcKey* key, int flag);
 void APS5_VABI BIO_set_init_nid_postfix(LibreSsl::Bio* bio, int init);
-int APS5_VABI EC_POINT_get_affine_coordinates_GFp_nid_postfix();
+int APS5_VABI EC_POINT_get_affine_coordinates_GFp_nid_postfix(const EcGroup* group, const EcPoint* point, LibreSsl3Bignum* x, LibreSsl3Bignum* y, void* context);
 int APS5_VABI SSL_SESSION_get_protocol_version_nid_postfix(const void* session);
 int APS5_VABI X509_NAME_add_entry_by_txt_nid_postfix();
 void APS5_VABI BIO_meth_free_nid_postfix(LibreSsl::BioMethod* method);
@@ -429,7 +429,7 @@ int APS5_VABI BIO_meth_set_write_nid_postfix(LibreSsl::BioMethod* method, declty
 int APS5_VABI BIO_meth_set_create_nid_postfix(LibreSsl::BioMethod* method, decltype(LibreSsl::BioMethod::create) create);
 void APS5_VABI X509_CRL_free_nid_postfix(LibreSsl3X509Crl* crl);
 int APS5_VABI BIO_meth_set_read_nid_postfix(LibreSsl::BioMethod* method, decltype(LibreSsl::BioMethod::read) read);
-int APS5_VABI EC_POINT_set_affine_coordinates_GFp_nid_postfix();
+int APS5_VABI EC_POINT_set_affine_coordinates_GFp_nid_postfix(const EcGroup* group, EcPoint* point, const LibreSsl3Bignum* x, const LibreSsl3Bignum* y, void* context);
 int APS5_VABI SSL_CTX_set_max_early_data_nid_postfix(void* ctx, std::uint32_t maxEarlyData);
 int APS5_VABI i2d_PUBKEY_nid_postfix();
 void APS5_VABI ERR_load_X509_strings_nid_postfix(void);
