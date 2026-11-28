@@ -88,6 +88,7 @@ constexpr int ErrorFatalAlert = static_cast<int>(0x8095f010);
 constexpr int ErrorWantPollIn = static_cast<int>(0x8095f013);
 constexpr int ErrorWantPollOut = static_cast<int>(0x8095f014);
 constexpr int ErrorSocketClosed = static_cast<int>(0x8095170d);
+constexpr int ErrorOutOfMemory = static_cast<int>(0x809517d5);
 constexpr int ErrorCallbackCheck = static_cast<int>(0x8095f0fd);
 constexpr int ErrorInvalidValue = static_cast<int>(0x8095f007);
 constexpr int ErrorBadLength = static_cast<int>(0x80951773);
@@ -617,12 +618,14 @@ void RegisterPeer(Session& session) {
     for (const auto* entry = certificate; entry && entry->raw.p; entry = entry->next)
         CheckBackend(mbedtls_x509_crt_parse_der(&chain->root, entry->raw.p, entry->raw.len), "SSL peer certificate copy failed");
     std::lock_guard lock(State().mutex);
+    std::vector<void*> peerHandles;
     for (const auto* entry = &chain->root; entry && entry->raw.p; entry = entry->next) {
         auto handle = std::make_unique<CertificateHandle>(CertificateHandle{chain, entry});
-        session.peerHandles.push_back(handle.get());
+        peerHandles.push_back(handle.get());
         chain->handles.push_back(handle.get());
         session.context->certificateHandles.push_back(std::move(handle));
     }
+    session.peerHandles = std::move(peerHandles);
     session.peer = std::move(chain);
 }
 
@@ -990,8 +993,15 @@ namespace {
 int RunCallback(Session& session, std::unique_lock<std::mutex>& sessionLock, SslVerifyCallback callback, void* argument) {
     session.verifying = true;
     sessionLock.unlock();
-    const int decision = callback(session.contextHandle, session.failedOptions, session.peerHandles.data(),
-        static_cast<int>(session.peerHandles.size()), argument);
+    int decision;
+    try {
+        decision = callback(session.contextHandle, session.failedOptions, session.peerHandles.data(),
+            static_cast<int>(session.peerHandles.size()), argument);
+    } catch (const std::bad_alloc&) {
+        sessionLock.lock();
+        session.verifying = false;
+        throw;
+    }
     sessionLock.lock();
     session.verifying = false;
     return decision < 0 ? ErrorCallbackCheck : 0;
@@ -1070,7 +1080,11 @@ extern "C" {
 
 int APS5_VABI sceSslConnect(int sslConnectionId) {
     std::shared_ptr<Session> session;
-    return Establish(__func__, sslConnectionId, session);
+    try {
+        return Establish(__func__, sslConnectionId, session);
+    } catch (const std::bad_alloc&) {
+        return ErrorOutOfMemory;
+    }
 }
 
 int APS5_VABI sceSslRead(int sslConnectionId, void* buf, size_t len, int flags) {
