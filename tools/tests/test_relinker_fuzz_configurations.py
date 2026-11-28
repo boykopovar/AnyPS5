@@ -20,7 +20,7 @@ class RelinkerFuzzConfigurationsTests(unittest.TestCase):
                 output = root / ("all" if all_configurations else "default")
                 command = [sys.executable, str(Path(relinker_fuzz_seeds.__file__)), str(output)]
                 result = subprocess.run(command + (["--all-configurations"] if all_configurations else []),
-                                        capture_output=True, text=True, timeout=20)
+                                        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 count = 18 if all_configurations else 4
                 self.assertEqual(len(list(output.iterdir())), len(images) * count)
@@ -47,7 +47,7 @@ class RelinkerFuzzConfigurationsTests(unittest.TestCase):
             for output in (existing, existing / "child"):
                 with self.subTest(output=output):
                     result = subprocess.run([sys.executable, relinker_fuzz_seeds.__file__, str(output), "--all-configurations"],
-                                            capture_output=True, text=True, timeout=5)
+                                            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5)
                     self.assertEqual(result.returncode, 2, result.stderr)
                     self.assertEqual(result.stdout, "")
                     self.assertNotIn("Traceback", result.stderr)
