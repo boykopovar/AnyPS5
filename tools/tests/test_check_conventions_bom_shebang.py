@@ -43,6 +43,11 @@ class BomShebangTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("[comment]", result.stdout)
 
+    def test_shebang_on_second_line_is_flagged_as_comment(self):
+        result = self.check("\n#!/usr/bin/env python3")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("[comment]", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
