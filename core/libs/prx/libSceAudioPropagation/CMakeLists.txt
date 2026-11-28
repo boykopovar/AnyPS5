@@ -12,4 +12,14 @@ if(BUILD_TESTING)
         set_tests_properties(guest_audio_propagation PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioPropagation>")
     endif()
+
+    add_test_executable(libSceAudioPropagation_inventory_tests tests/InventoryExports.cpp)
+    target_include_directories(libSceAudioPropagation_inventory_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(libSceAudioPropagation_inventory_tests PRIVATE libSceAudioPropagation libc ${CMAKE_DL_LIBS})
+    configure_windows_unwind(libSceAudioPropagation_inventory_tests)
+    add_test(NAME libSceAudioPropagation_inventory COMMAND libSceAudioPropagation_inventory_tests)
+    if(WIN32)
+        set_tests_properties(libSceAudioPropagation_inventory PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioPropagation>")
+    endif()
 endif()
