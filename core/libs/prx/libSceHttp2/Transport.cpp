@@ -18,6 +18,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
+#include "prx/libkernel/Time/include/TimedWait.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <nghttp2/nghttp2.h>
 #include <algorithm>
@@ -243,7 +244,7 @@ struct Lookup {
     std::string host;
     std::uint16_t port;
     std::mutex mutex;
-    std::condition_variable changed;
+    TimedWait::Condition changed;
     bool complete = false;
     int error = 0;
     std::vector<Address> addresses;
@@ -328,7 +329,7 @@ private:
                 std::lock_guard lock(job->mutex);
                 job->complete = true;
             }
-            job->changed.notify_all();
+            job->changed.NotifyAll();
         }
     }
     std::mutex mutex;
@@ -615,7 +616,9 @@ struct Request::State {
             std::unique_lock lock(job->mutex);
             while (!job->complete) {
                 Check(deadline);
-                job->changed.wait_for(lock, std::chrono::milliseconds(5));
+                const auto remaining = std::chrono::ceil<std::chrono::microseconds>(deadline.at - Clock::now()).count();
+                const auto step = std::min<std::uint64_t>(5000, remaining > 0 ? static_cast<std::uint64_t>(remaining) : 1ULL);
+                job->changed.WaitUntil(lock, TimedWait::DeadlineNanos(step));
             }
             Check(deadline);
             if (!job->failure && !job->error) break;
