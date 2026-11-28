@@ -2076,8 +2076,7 @@ int APS5_VABI sceSystemServiceUsbStorageRequestMap(std::uint32_t device, const c
 }
 
 int APS5_VABI sceSystemServiceUsbStorageRequestMapWSB(std::uint32_t device, const char* directory, std::int32_t flags, std::uint64_t volumeSize, char* mountPoint, std::uint64_t* mountId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceUsbStorageRequestMapWSB(device, directory, flags, static_cast<std::int32_t>(static_cast<std::uint32_t>(volumeSize)), mountPoint, reinterpret_cast<std::int32_t*>(mountId));
 }
 
 int APS5_VABI sceSystemServiceUsbStorageRequestUnmap(std::uint32_t device, const char* directory) {
