@@ -155,7 +155,11 @@ static void CheckUnmappedOutputs(int box) {
 #ifndef _WIN32
     rusage after{};
     getrusage(RUSAGE_SELF, &after);
+#ifdef __APPLE__
+    Require(after.ru_maxrss - before.ru_maxrss < 64 * 1024 * 1024);
+#else
     Require(after.ru_maxrss - before.ru_maxrss < 64 * 1024);
+#endif
 #endif
     Require(errno == 71);
 
