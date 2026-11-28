@@ -43,6 +43,16 @@ void CheckNumeric() {
     Require(SameData(shortObject, small));
     ASN1_OBJECT_free_nid_postfix(shortObject);
 
+    constexpr std::array<unsigned char, 2> zeroPrefix{0x00, 0x01};
+    auto* zeroPrefixObject = OBJ_txt2obj_nid_postfix("0.0.1", 1);
+    Require(SameData(zeroPrefixObject, zeroPrefix));
+    ASN1_OBJECT_free_nid_postfix(zeroPrefixObject);
+
+    constexpr std::array<unsigned char, 2> boundarySecond{0x4f, 0x01};
+    auto* boundarySecondObject = OBJ_txt2obj_nid_postfix("1.39.1", 1);
+    Require(SameData(boundarySecondObject, boundarySecond));
+    ASN1_OBJECT_free_nid_postfix(boundarySecondObject);
+
     constexpr std::array<unsigned char, 3> secondArc{0x88, 0x37, 0x03};
     auto* secondArcObject = OBJ_txt2obj_nid_postfix("2.999.3", 1);
     Require(SameData(secondArcObject, secondArc));
@@ -77,11 +87,16 @@ void CheckNames() {
 }
 
 void CheckInvalid() {
-    for (const char* text : {"", "1", "1.", ".1.2", "1..2", "3.2", "1.2.x", "1.2.3 "}) {
+    for (const char* text : {
+             "", "1", "1.", ".1.2", "1..2", "3.2", "1.2.x", "1.2.3 ",
+             " 1.2.3", "0.40", "1.40", "0.99.1", "1.999.2", "00.1.2", "1.00.2"}) {
         ERR_clear_error_nid_postfix();
         Require(OBJ_txt2obj_nid_postfix(text, 1) == nullptr);
         Require(ERR_get_error_nid_postfix() != 0);
     }
+    ERR_clear_error_nid_postfix();
+    Require(OBJ_txt2obj_nid_postfix("0.40", 0) == nullptr);
+    Require(ERR_get_error_nid_postfix() != 0);
     ERR_clear_error_nid_postfix();
     Require(OBJ_txt2obj_nid_postfix(nullptr, 1) == nullptr);
 }
