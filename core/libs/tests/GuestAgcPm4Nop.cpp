@@ -1,6 +1,8 @@
 #include "prx/libSceAgc/Cb/include/Sync.hpp"
+#include "prx/libSceAgc/DcbState/include/Marker.hpp"
 #include "prx/libSceAgc/Patch/include/Nop.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
+#include "prx/libSceAgc/include/Agc.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libSceAgcDriver/include/AgcDriver.hpp"
@@ -8,6 +10,7 @@
 #include <array>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 #include <vector>
 
@@ -228,6 +231,63 @@ int main() {
     Require(dataStorage[1] == 0x2000u);
     Require(dataStorage[2] == 0x12345678u);
     AgcDriver::Pm4::Validate({dataStorage.data(), 3}, 0);
+
+    std::array<std::uint32_t, 16> markerWords{};
+    CommandBuffer markerBuffer{markerWords.data(), markerWords.data() + markerWords.size(), markerWords.data(), markerWords.data() + markerWords.size(), nullptr, nullptr, 0};
+
+    auto* setFrame = sceAgcDcbSetMarker(&markerBuffer, "frame", 0xff0000u);
+    Require(setFrame == markerWords.data());
+    Require(markerBuffer.cursor_up == markerWords.data() + 5);
+    Require(setFrame[0] == Agc::Command::Header(0x10u, 3u, 0x0bu << 2u));
+    Require(std::memcmp(setFrame + 1, "frame\0\0\0", 8) == 0);
+    Require(setFrame[3] == Agc::Command::Header(0x10u, 2u, 0x0cu << 2u));
+    Require(setFrame[4] == 0u);
+    AgcDriver::Pm4::Validate({setFrame, 3}, 0);
+    AgcDriver::Pm4::Validate({setFrame + 3, 2}, 0);
+
+    auto* setSpan = sceAgcDcbSetMarkerSpan(&markerBuffer, "framebuffer", 5u, 0x00ff00u);
+    Require(setSpan == markerWords.data() + 5);
+    Require(markerBuffer.cursor_up == markerWords.data() + 10);
+    Require(setSpan[0] == Agc::Command::Header(0x10u, 3u, 0x0bu << 2u));
+    Require(std::memcmp(setSpan + 1, "frame\0\0\0", 8) == 0);
+    Require(setSpan[3] == Agc::Command::Header(0x10u, 2u, 0x0cu << 2u));
+    Require(setSpan[4] == 0u);
+
+    auto* setEmpty = sceAgcDcbSetMarkerSpan(&markerBuffer, nullptr, 0u, 0u);
+    Require(setEmpty == markerWords.data() + 10);
+    Require(markerBuffer.cursor_up == markerWords.data() + 14);
+    Require(setEmpty[0] == Agc::Command::Header(0x10u, 2u, 0x0bu << 2u));
+    Require(setEmpty[1] == 0u);
+    Require(setEmpty[2] == Agc::Command::Header(0x10u, 2u, 0x0cu << 2u));
+    Require(setEmpty[3] == 0u);
+
+    markerWords.fill(0xA5A5A5A5u);
+    markerBuffer.cursor_up = markerWords.data();
+    const auto expectedMarkerWords = markerWords;
+    auto* const savedMarkerCursor = markerBuffer.cursor_up;
+
+    markerBuffer.cursor_down = markerBuffer.cursor_up + 3;
+    Reject([&] { sceAgcDcbSetMarker(&markerBuffer, "frame", 0u); });
+    Require(markerBuffer.cursor_up == savedMarkerCursor);
+    Require(markerWords == expectedMarkerWords);
+    Reject([&] { sceAgcDcbSetMarkerSpan(&markerBuffer, "framebuffer", 5u, 0u); });
+    Require(markerBuffer.cursor_up == savedMarkerCursor);
+    Require(markerWords == expectedMarkerWords);
+
+    markerBuffer.cursor_down = markerBuffer.cursor_up + 2;
+    Reject([&] { sceAgcDcbSetMarker(&markerBuffer, nullptr, 0u); });
+    Require(markerBuffer.cursor_up == savedMarkerCursor);
+    Require(markerWords == expectedMarkerWords);
+    Reject([&] { sceAgcDcbSetMarkerSpan(&markerBuffer, nullptr, 0u, 0u); });
+    Require(markerBuffer.cursor_up == savedMarkerCursor);
+    Require(markerWords == expectedMarkerWords);
+
+    markerBuffer.cursor_down = markerWords.data() + markerWords.size();
+    Reject([&] { sceAgcDcbSetMarker(nullptr, "frame", 0u); });
+    Reject([&] { sceAgcDcbSetMarkerSpan(nullptr, "frame", 5u, 0u); });
+    Reject([&] { sceAgcDcbSetMarkerSpan(&markerBuffer, nullptr, 4u, 0u); });
+    Require(markerBuffer.cursor_up == savedMarkerCursor);
+    Require(markerWords == expectedMarkerWords);
 
     return 0;
 }
