@@ -57,20 +57,24 @@ constexpr std::uint32_t Second = 0x9abcdef0u;
 
 class GuestBlock {
 public:
-    explicit GuestBlock(bool watched) : watched(watched) {
+    explicit GuestBlock(bool watched, std::size_t reserved = BlockBytes) : watched(watched), reserved(reserved) {
 #ifdef _WIN32
-        block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(BlockBytes, 65536));
+        block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(reserved, 65536));
         if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, BlockBytes, PAGE_READWRITE, BlockBytes);
 #else
         constexpr std::uintptr_t alignment = 65536;
-        void* mapped = mmap(nullptr, BlockBytes + alignment, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        void* mapped = mmap(nullptr, reserved + alignment, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         if (mapped != MAP_FAILED) {
             const auto begin = reinterpret_cast<std::uintptr_t>(mapped);
             const auto aligned = (begin + alignment - 1) & ~(alignment - 1);
             if (aligned != begin) munmap(mapped, aligned - begin);
-            if (aligned + BlockBytes != begin + BlockBytes + alignment) munmap(reinterpret_cast<void*>(aligned + BlockBytes), begin + alignment - aligned);
+            if (aligned + reserved != begin + reserved + alignment) munmap(reinterpret_cast<void*>(aligned + reserved), begin + alignment - aligned);
             block = reinterpret_cast<std::uint8_t*>(aligned);
-            if (watched) GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, BlockBytes);
+            if (mprotect(block, BlockBytes, PROT_READ | PROT_WRITE) != 0) {
+                munmap(block, reserved);
+                block = nullptr;
+            }
+            if (block != nullptr && watched) GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, BlockBytes);
         }
 #endif
         Require(block != nullptr, "upload cache: cannot allocate the guest block");
@@ -84,9 +88,9 @@ public:
         GuestAllocations::Mutation().Remove(block);
 #ifdef _WIN32
         GuestArena::GuestArenaReset_nid_postfix(block, BlockBytes);
-        GuestArena::GuestArenaRelease_nid_postfix(block, BlockBytes);
+        GuestArena::GuestArenaRelease_nid_postfix(block, reserved);
 #else
-        munmap(block, BlockBytes);
+        munmap(block, reserved);
         if (watched) GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(block, BlockBytes);
 #endif
     }
@@ -99,6 +103,7 @@ public:
 
 private:
     bool watched;
+    std::size_t reserved;
     std::uint8_t* block = nullptr;
 };
 
@@ -341,14 +346,58 @@ bool BlockContains(const std::uint8_t* block, std::size_t bytes, std::uint32_t v
     return std::find(words, words + bytes / sizeof(std::uint32_t), value) != words + bytes / sizeof(std::uint32_t);
 }
 
+void CheckSparseAddressReads(const AgcDriver::Graphics::Context& context) {
+    using AgcDriver::Graphics::GuestBufferMemory;
+    constexpr std::size_t extent = BlockBytes + 65536;
+    GuestBlock block(true, extent);
+    const auto address = block.Address();
+    AgcDriver::GuestMemory::Unwatch(address, BlockBytes);
+    Require(!AgcDriver::GuestMemory::CollectWritesUncached(address, BlockBytes), "sparse address reads need unwatched backing");
+    const auto upload = [&](GuestBufferMemory& memory, bool writable) {
+        memory.AddReadable(address, extent);
+        if (writable) memory.AddWritable(address, sizeof(std::uint32_t));
+        memory.Upload(true);
+        std::uint32_t adjustment = 0;
+        return memory.Descriptor(address, sizeof(std::uint32_t), adjustment).buffer;
+    };
+    {
+        GuestBufferMemory dense(context), next(context);
+        const auto first = upload(dense, false);
+        Require(upload(next, false) != first, "a trimmed dense address upload took the sparse comparison path");
+    }
+    constexpr std::size_t page = 65536;
+    auto* gap = block.Data() + page;
+    GuestAllocations::Mutation().Protect(gap, page, false, false, false, [&] {
+#ifdef _WIN32
+        DWORD prior = 0;
+        Require(VirtualProtect(gap, page, PAGE_NOACCESS, &prior) != 0, "cannot protect sparse address gap");
+#else
+        Require(mprotect(gap, page, PROT_NONE) == 0, "cannot protect sparse address gap");
+#endif
+    });
+    GuestBufferMemory original(context), equal(context), changed(context), writer(context);
+    const auto first = upload(original, false);
+    Require(upload(equal, false) == first, "equal sparse address reads allocated another buffer");
+    std::memcpy(block.Data(), &Second, sizeof(Second));
+    const auto replacement = upload(changed, false);
+    Require(replacement != first, "a changed address read reused a live snapshot");
+    Require(ReadUploaded(context, original, address, sizeof(Initial)).front() == Initial, "a live address read lost its old bytes");
+    Require(ReadUploaded(context, changed, address, sizeof(Second)).front() == Second, "a new address read missed a guest store");
+    const auto writable = upload(writer, true);
+    Require(writable != first && writable != replacement, "a descriptor write shared a read-only address snapshot");
+    std::puts("sparse address snapshot readbacks passed");
+}
+
 }
 
 int main() {
     try {
 #ifdef _WIN32
         _putenv_s("APS5_NO_LEASE_MIRROR", "1");
+        _putenv_s("APS5_COMPARE_SPARSE_UPLOADS", "1");
 #else
         setenv("APS5_NO_LEASE_MIRROR", "1", 1);
+        setenv("APS5_COMPARE_SPARSE_UPLOADS", "1", 1);
 #endif
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
@@ -402,6 +451,7 @@ int main() {
             memory.WriteBack();
         }
 
+        if (context.bufferDeviceAddress) CheckSparseAddressReads(context);
         std::puts("upload cache read-only flush tests passed");
         return 0;
     } catch (const std::exception& error) {

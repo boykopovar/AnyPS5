@@ -3407,7 +3407,7 @@ std::shared_ptr<Buffer> refreshSparseUpload(const Context& context, const Upload
         const auto found = copies.entries.find(key);
         if (found == copies.entries.end() || !found->second.sparseSpans || found->second.pieces != pieces) return nullptr;
         spans = *found->second.sparseSpans;
-        exclusive = found->second.buffer.use_count() == 1;
+        exclusive = (std::get<2>(key) & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) == 0 && found->second.buffer.use_count() == 1;
         buffer = found->second.buffer;
         if (exclusive) {
             copies.bytes -= std::get<1>(key);
@@ -7618,8 +7618,10 @@ void GuestBufferMemory::copyRegion(Region& region, bool addressable) {
         forgetUploaded(context, region.begin, static_cast<std::size_t>(allocated), usage);
     }
     static const bool compareSparse = std::getenv("APS5_COMPARE_SPARSE_UPLOADS") != nullptr;
+    const bool fullyBacked = region.backed.size() == 1 && region.backed.front().first == region.begin && region.backed.front().second == region.begin + allocated;
     std::shared_ptr<UploadCopies::Spans> sparseSpans;
-    if (compareSparse && cacheable && !addressable && region.sparse && !region.backed.empty() && !uploadGeneration && allocated <= uploadCacheBudget()) {
+    if (compareSparse && cacheable && region.sparse && !region.backed.empty() && !uploadGeneration && allocated <= uploadCacheBudget() &&
+        (!addressable || (!fullyBacked && !addressWritable(region) && !WritesOverlap(region.begin, static_cast<std::size_t>(bytes))))) {
         sparseSpans = std::make_shared<UploadCopies::Spans>();
         if (auto cached = refreshSparseUpload(context, {region.begin, allocated, usage}, region.backed, *sparseSpans)) {
             region.buffer = std::move(cached);
