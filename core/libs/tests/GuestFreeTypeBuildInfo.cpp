@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <source_location>
 #include <stdexcept>
 #include <string>
@@ -50,13 +51,14 @@ static void CheckVersionProtection(GuestLibrary* library) {
             const auto before = values;
             std::array outputs{&values[0], &values[1], &values[2]};
             outputs[selected] = static_cast<std::int32_t*>(pointer);
+            errno = 71;
             bool refused = false;
             try {
                 FT_Library_Version_nid_postfix(library, outputs[0], outputs[1], outputs[2]);
             } catch (const std::invalid_argument&) {
                 refused = true;
             }
-            return refused && values == before;
+            return refused && errno == 71 && values == before;
         });
     }
     FT_Int major = 0;
@@ -66,6 +68,14 @@ static void CheckVersionProtection(GuestLibrary* library) {
         FT_Library_Version_nid_postfix(library, output, nullptr, nullptr);
         return *output == major;
     });
+    alignas(4) std::array<unsigned char, 16> unaligned{};
+    FT_Library_Version_nid_postfix(library,
+        reinterpret_cast<std::int32_t*>(unaligned.data() + 1),
+        reinterpret_cast<std::int32_t*>(unaligned.data() + 5),
+        reinterpret_cast<std::int32_t*>(unaligned.data() + 9));
+    std::int32_t unalignedMajor = 0;
+    std::memcpy(&unalignedMajor, unaligned.data() + 1, sizeof(unalignedMajor));
+    Require(unalignedMajor == major);
 }
 
 static bool RefusesAsNotImplemented(const char* function, auto call) {

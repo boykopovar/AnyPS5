@@ -6,6 +6,7 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -14,9 +15,28 @@ using FreeType::GuestLibrary;
 
 namespace {
 
+struct ErrnoGuard {
+    int saved = errno;
+    ~ErrnoGuard() { errno = saved; }
+};
+
 bool ReadGuestLibrary(GuestLibrary* library, FT_Library& host) {
     host = nullptr;
-    return !library || (reinterpret_cast<std::uintptr_t>(library) % alignof(GuestLibrary) == 0 && GuestCopyIn_nid_no_patch(&host, &library->host, sizeof(host)));
+    if (!library) return true;
+    const std::uintptr_t address = reinterpret_cast<std::uintptr_t>(library);
+    if (address % alignof(GuestLibrary) != 0) return false;
+    static const std::size_t hostOffset = [] {
+        GuestLibrary sample{};
+        return reinterpret_cast<std::uintptr_t>(&sample.host) - reinterpret_cast<std::uintptr_t>(&sample);
+    }();
+    if (hostOffset > std::numeric_limits<std::uintptr_t>::max() - address) return false;
+    const std::uintptr_t hostAddress = address + hostOffset;
+    if (sizeof(host) - 1 > std::numeric_limits<std::uintptr_t>::max() - hostAddress) return false;
+    const void* hostPointer = reinterpret_cast<const void*>(hostAddress);
+    const ErrnoGuard savedErrno;
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(hostPointer, sizeof(host));
+    return GuestReadable_nid_no_patch(hostPointer, sizeof(host)) &&
+        GuestCopyIn_nid_no_patch(&host, hostPointer, sizeof(host));
 }
 
 FT_Library ReadGuestLibraryVersion(GuestLibrary* library) {
@@ -40,6 +60,10 @@ void APS5_VABI FT_Library_Version_nid_postfix(FreeType::GuestLibrary* library, s
     FT_Int hostMinor = 0;
     FT_Int hostPatch = 0;
     FT_Library_Version(ReadGuestLibraryVersion(library), &hostMajor, &hostMinor, &hostPatch);
+    const std::int32_t outMajor = static_cast<std::int32_t>(hostMajor);
+    const std::int32_t outMinor = static_cast<std::int32_t>(hostMinor);
+    const std::int32_t outPatch = static_cast<std::int32_t>(hostPatch);
+    const ErrnoGuard savedErrno;
     GuestArena::HostWrite majorWrite(major, major ? sizeof(*major) : 0);
     GuestArena::HostWrite minorWrite(minor, minor ? sizeof(*minor) : 0);
     GuestArena::HostWrite patchWrite(patch, patch ? sizeof(*patch) : 0);
@@ -48,9 +72,11 @@ void APS5_VABI FT_Library_Version_nid_postfix(FreeType::GuestLibrary* library, s
         (patch && (!patchWrite.Open() || !GuestWritable_nid_no_patch(patch, sizeof(*patch))))) {
         throw std::invalid_argument("FT_Library_Version: unwritable output");
     }
-    if (major) *major = hostMajor;
-    if (minor) *minor = hostMinor;
-    if (patch) *patch = hostPatch;
+    if ((major && !GuestCopyOut_nid_no_patch(major, &outMajor, sizeof(outMajor))) ||
+        (minor && !GuestCopyOut_nid_no_patch(minor, &outMinor, sizeof(outMinor))) ||
+        (patch && !GuestCopyOut_nid_no_patch(patch, &outPatch, sizeof(outPatch)))) {
+        throw std::invalid_argument("FT_Library_Version: unwritable output");
+    }
 }
 
 std::int32_t APS5_VABI FT_Get_TrueType_Engine_Type_nid_postfix(FreeType::GuestLibrary* library) {
