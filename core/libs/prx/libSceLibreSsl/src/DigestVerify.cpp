@@ -61,6 +61,10 @@ constexpr int OperationTypeSign = OperationSign | OperationVerify | OperationVer
 
 constexpr int ControlMd = 1;
 constexpr int ControlDigestInit = 7;
+constexpr int ControlPadding = 0x1001;
+constexpr int ControlPssSaltLen = 0x1002;
+constexpr int ControlGetPadding = 0x1006;
+constexpr int ControlGetPssSaltLen = 0x1007;
 
 int APS5_VABI EvpSha1Init(EvpMdContext* context) {
     return SHA1_Init_nid_postfix(static_cast<Sha1Context*>(context->mdData));
@@ -137,6 +141,8 @@ int APS5_VABI RsaContextCopy(PkeyContext* target, PkeyContext* source) {
     to.bits = from.bits;
     to.padding = from.padding;
     to.digest = from.digest;
+    to.maskDigest = from.maskDigest;
+    to.saltLength = from.saltLength;
     return 1;
 }
 
@@ -163,8 +169,18 @@ int APS5_VABI RsaVerify(PkeyContext* context, const unsigned char* signature, st
             RSA_free_nid_postfix(rsa);
             return result;
         }
+        if (method.padding == PaddingPss) {
+            const int digestSize = EVP_MD_size_nid_postfix(method.digest);
+            if (digestSize < 0 || dataLength != static_cast<std::size_t>(digestSize) || !SetupTemporaryBuffer(method, *rsa, "pkey_rsa_verify")) {
+                RSA_free_nid_postfix(rsa);
+                return -1;
+            }
+            const int recovered = RSA_public_decrypt_nid_postfix(static_cast<int>(signatureLength), signature, method.buffer, rsa, PaddingNone);
+            const int result = recovered <= 0 ? 0 : RSA_verify_PKCS1_PSS_nid_postfix(rsa, data, method.digest, method.buffer, method.saltLength);
+            RSA_free_nid_postfix(rsa);
+            return result;
+        }
         RSA_free_nid_postfix(rsa);
-        if (method.padding == PaddingPss) NotImplemented_nid_no_patch("EVP_DigestVerifyFinal with RSA-PSS padding");
         if (method.padding != PaddingX931) return -1;
         NotImplemented_nid_no_patch("EVP_DigestVerifyFinal with RSA X9.31 padding");
     }
@@ -184,7 +200,7 @@ int APS5_VABI RsaVerify(PkeyContext* context, const unsigned char* signature, st
 
 bool CheckPaddingDigest(const EvpMd* digest, int padding) {
     if (!digest) return true;
-    if (padding != PaddingPkcs1) NotImplemented_nid_no_patch("pkey_rsa_ctrl with a padding mode other than PKCS#1 v1.5");
+    if (padding != PaddingPkcs1 && padding != PaddingPss) NotImplemented_nid_no_patch("pkey_rsa_ctrl with a padding mode other than PKCS#1 v1.5 or PSS");
     return true;
 }
 
@@ -196,6 +212,21 @@ int APS5_VABI RsaControl(PkeyContext* context, int command, int argument, void* 
         data.digest = static_cast<const EvpMd*>(pointer);
         return 1;
     case ControlDigestInit:
+        return 1;
+    case ControlPadding:
+        if (argument != PaddingPkcs1 && argument != PaddingPss) return -2;
+        data.padding = argument;
+        return 1;
+    case ControlGetPadding:
+        *static_cast<int*>(pointer) = data.padding;
+        return 1;
+    case ControlPssSaltLen:
+        if (data.padding != PaddingPss || argument < LongestSalt) return -2;
+        data.saltLength = argument;
+        return 1;
+    case ControlGetPssSaltLen:
+        if (data.padding != PaddingPss) return -2;
+        *static_cast<int*>(pointer) = data.saltLength;
         return 1;
     default:
         return -2;
