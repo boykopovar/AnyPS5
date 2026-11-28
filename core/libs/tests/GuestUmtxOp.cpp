@@ -594,14 +594,19 @@ static void MutexWake2LeavesAnUnwaitedMutexAlone() {
     Require(Umtx(&mutex, UMTX_OP_MUTEX_WAKE2, PRIO_PROTECT) == 0 && mutex.owner == CONTESTED);
     Require(Umtx(nullptr, UMTX_OP_MUTEX_WAKE2, 0) == 0);
     Require(FailsWith(Umtx(&mutex, UMTX_OP_MUTEX_WAKE2, PRIO_INHERIT | PRIO_PROTECT), GUEST_EINVAL) && mutex.owner == CONTESTED);
-    bool threw = false;
-    try { Umtx(&mutex, UMTX_OP_MUTEX_WAKE2, ROBUST); }
-    catch (const std::runtime_error&) { threw = true; }
-    Require(threw);
+    mutex.flags = ROBUST;
+    Require(Umtx(&mutex, UMTX_OP_MUTEX_WAKE2, ROBUST) == 0 && mutex.owner == CONTESTED);
+    for (const std::uint32_t flags : {ROBUST | PRIO_INHERIT, ROBUST | PRIO_PROTECT}) {
+        bool threw = false;
+        try { Umtx(&mutex, UMTX_OP_MUTEX_WAKE2, flags); }
+        catch (const std::runtime_error&) { threw = true; }
+        Require(threw);
+    }
 }
 
-static void MutexWake2RepairsTheContestedBitAndWakesOneWaiter() {
+static void MutexWake2RepairsTheContestedBitAndWakesOneWaiter(std::uint32_t flags) {
     Umutex mutex;
+    mutex.flags = flags;
     mutex.owner = 12345;
     std::atomic<int> started{0};
     std::atomic<int> slot{0};
@@ -626,12 +631,12 @@ static void MutexWake2RepairsTheContestedBitAndWakesOneWaiter() {
     Require(owner.load() == (CONTESTED | 12345));
 
     owner.store(12345);
-    Require(Umtx(&mutex, UMTX_OP_MUTEX_WAKE2, 0) == 0 && owner.load() == (CONTESTED | 12345));
+    Require(Umtx(&mutex, UMTX_OP_MUTEX_WAKE2, flags) == 0 && owner.load() == (CONTESTED | 12345));
     std::this_thread::sleep_for(SETTLE);
     Require(acquired.load() == 0);
 
     owner.store(0);
-    Require(Umtx(&mutex, UMTX_OP_MUTEX_WAKE2, 0) == 0);
+    Require(Umtx(&mutex, UMTX_OP_MUTEX_WAKE2, flags) == 0);
     AwaitCount(acquired, 1);
     std::this_thread::sleep_for(SETTLE);
     Require(acquired.load() == 1 && (owners[0] & CONTESTED) != 0 && (owners[0] & ~CONTESTED) != 0);
@@ -653,11 +658,11 @@ static void MutexWake2RepairsTheContestedBitAndWakesOneWaiter() {
     AwaitCount(lastStarted, 1);
     std::this_thread::sleep_for(SETTLE);
     owner.store(12345);
-    Require(Umtx(&mutex, UMTX_OP_MUTEX_WAKE2, 0) == 0 && owner.load() == (CONTESTED | 12345));
+    Require(Umtx(&mutex, UMTX_OP_MUTEX_WAKE2, flags) == 0 && owner.load() == (CONTESTED | 12345));
     std::this_thread::sleep_for(SETTLE);
     Require(lastWoken.load() == 0);
     owner.store(0);
-    Require(Umtx(&mutex, UMTX_OP_MUTEX_WAKE2, 0) == 0);
+    Require(Umtx(&mutex, UMTX_OP_MUTEX_WAKE2, flags) == 0);
     AwaitCount(lastWoken, 1);
     last.join();
     Require(mutex.owner == 0);
@@ -1026,7 +1031,8 @@ int main() {
     MutexOwnershipFollowsTheConsole();
     MutexLockWaitsForTheOwnerToUnlock();
     MutexWake2LeavesAnUnwaitedMutexAlone();
-    MutexWake2RepairsTheContestedBitAndWakesOneWaiter();
+    MutexWake2RepairsTheContestedBitAndWakesOneWaiter(0);
+    MutexWake2RepairsTheContestedBitAndWakesOneWaiter(ROBUST);
     MutexLockAndWaitDoNotLoseAWakeupToAUserlandUnlock();
     ConditionWaitReleasesTheMutexAndWakes();
     RwlockStateFollowsTheConsole();
