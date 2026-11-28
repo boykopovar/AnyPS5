@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/include/WideCollate.hpp"
+#include "prx/libSceLibcInternal/include/InventoryExports6.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
@@ -10,6 +11,7 @@
 #include <cstring>
 #include <exception>
 #include <string>
+#include <type_traits>
 
 extern "C" {
 extern GuestLocale::Implementation* _ZSt21_sceLibcClassicLocale_nid_postfix;
@@ -162,6 +164,30 @@ void CheckVirtualDispatch(const GuestLocale::CollateFacet* classic) {
     Require(Throws([&] { sceLibcInternalWideCollateTransform_nid_no_patch(&result, &empty, left.data(), left.data() + 3); }), "transform rejects a missing facet");
 }
 
+void CheckWideLStrcoll() {
+    static_assert(std::is_same_v<
+        decltype(&_ZSt9_LStrcollIwEiPKT_S2_S2_S2_PKSt8_Collvec_nid_postfix),
+        int (APS5_VABI*)(const char16_t*, const char16_t*, const char16_t*, const char16_t*, const void*)>);
+    const char16_t empty[] = u"";
+    const char16_t alpha[] = u"alpha";
+    const char16_t beta[] = u"beta";
+    const char16_t embeddedLeft[] = {u'a', u'\0', u'b'};
+    const char16_t embeddedRight[] = {u'a', u'\0', u'c'};
+    const char16_t nonAscii[] = {0x00e9};
+    const char16_t highUnit[] = {0x8000};
+    Require(_ZSt9_LStrcollIwEiPKT_S2_S2_S2_PKSt8_Collvec_nid_postfix(empty, empty, empty, empty, nullptr) == 0, "_LStrcoll<wchar_t> empty ranges are equal");
+    Require(_ZSt9_LStrcollIwEiPKT_S2_S2_S2_PKSt8_Collvec_nid_postfix(alpha, alpha + 5, alpha, alpha + 5, nullptr) == 0, "_LStrcoll<wchar_t> equal ranges return zero");
+    Require(_ZSt9_LStrcollIwEiPKT_S2_S2_S2_PKSt8_Collvec_nid_postfix(alpha, alpha + 5, beta, beta + 4, nullptr) == -1, "_LStrcoll<wchar_t> orders alpha before beta");
+    Require(_ZSt9_LStrcollIwEiPKT_S2_S2_S2_PKSt8_Collvec_nid_postfix(beta, beta + 4, alpha, alpha + 5, nullptr) == 1, "_LStrcoll<wchar_t> orders beta after alpha");
+    Require(_ZSt9_LStrcollIwEiPKT_S2_S2_S2_PKSt8_Collvec_nid_postfix(alpha, alpha + 2, alpha, alpha + 3, &alpha) == -1, "_LStrcoll<wchar_t> orders shorter prefix before longer string");
+    Require(_ZSt9_LStrcollIwEiPKT_S2_S2_S2_PKSt8_Collvec_nid_postfix(alpha, alpha + 3, alpha, alpha + 2, &alpha) == 1, "_LStrcoll<wchar_t> orders longer string after shorter prefix");
+    Require(_ZSt9_LStrcollIwEiPKT_S2_S2_S2_PKSt8_Collvec_nid_postfix(embeddedLeft, embeddedLeft + 3, embeddedRight, embeddedRight + 3, nullptr) == -1, "_LStrcoll<wchar_t> compares past embedded nul units");
+    Require(_ZSt9_LStrcollIwEiPKT_S2_S2_S2_PKSt8_Collvec_nid_postfix(highUnit, highUnit + 1, nonAscii, nonAscii + 1, nullptr) == 1, "_LStrcoll<wchar_t> compares 16-bit code units unsigned");
+    Require(Throws([&] { (void)_ZSt9_LStrcollIwEiPKT_S2_S2_S2_PKSt8_Collvec_nid_postfix(nullptr, alpha, alpha, alpha + 5, nullptr); }), "_LStrcoll<wchar_t> rejects null first1");
+    Require(Throws([&] { (void)_ZSt9_LStrcollIwEiPKT_S2_S2_S2_PKSt8_Collvec_nid_postfix(alpha + 2, alpha, alpha, alpha + 5, nullptr); }), "_LStrcoll<wchar_t> rejects inverted first range");
+    Require(Throws([&] { (void)_ZSt9_LStrcollIwEiPKT_S2_S2_S2_PKSt8_Collvec_nid_postfix(alpha, alpha + 5, beta + 2, beta, nullptr); }), "_LStrcoll<wchar_t> rejects inverted second range");
+}
+
 }
 
 int main() {
@@ -175,6 +201,7 @@ int main() {
 
     CheckClassicFacet(classic);
     CheckVirtualDispatch(classic);
+    CheckWideLStrcoll();
     reinterpret_cast<const GuestLocale::CollateVtable*>(facet->vtable)->facet.deleteObject(facet);
 
     std::puts("libc internal collate<wchar_t> member checks passed");
