@@ -315,12 +315,6 @@ int APS5_VABI sceLibcInternalPending3_042_nid_no_patch() {
 APS5_EXPORT("G1zcPUEvY7U", sceLibcInternalPending3_042_nid_no_patch);
 
 
-int APS5_VABI sceLibcInternalPending3_066_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("VKdXFE7ualw", sceLibcInternalPending3_066_nid_no_patch);
-
 int APS5_VABI sceLibcInternalPending3_067_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
