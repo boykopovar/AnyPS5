@@ -26,7 +26,7 @@ LC_RPATH = 0x8000001C
 LC_DYLD_INFO_ONLY = 0x80000022
 LC_MAIN = 0x80000028
 PAGE = 0x1000
-IMAGE_BASE = 0x140000000
+IMAGE_BASE = 0x3F0000
 META_VERSION = 2
 PROT_EXEC = 4
 CODE_SIGNATURE_RESERVE = 0x400
@@ -100,6 +100,16 @@ def check_structure(name, data):
     check(names[:2] == ["__PAGEZERO", "__TEXT"] and names[-1] == "__LINKEDIT", f"{name}: unexpected segment order {names}")
     check(any(n.startswith("__ELF") for n in names) and "__APS5DATA" in names, f"{name}: image segments missing")
     zero = macho.segment("__PAGEZERO")
+    first_load = next(segment for segment in macho.segments if segment["name"].startswith("__ELF"))
+    check(first_load["vmaddr"] == 0x400000, f"{name}: the lowest ELF load page is at {first_load['vmaddr']:#x}, not at the default 0x400000")
+    low = macho.segment("__APS5LOW")
+    text = macho.segment("__TEXT")
+    linkedit = macho.segment("__LINKEDIT")
+    check(low["vmaddr"] + low["vmsize"] == linkedit["vmaddr"] and linkedit["vmaddr"] + linkedit["vmsize"] == 0x100000000
+          and low["initprot"] == 0 and low["maxprot"] == 0 and low["filesize"] == 0,
+          f"{name}: the address range from the image to 0x100000000 is not taken by __APS5LOW and __LINKEDIT: {low} {linkedit}")
+    export_end = macho.dyld_info[8] + macho.dyld_info[9] - linkedit["fileoff"] + linkedit["vmaddr"] - text["vmaddr"]
+    check(export_end <= 0xFFFFFFFF, f"{name}: the export trie ends {export_end:#x} past __TEXT, beyond dyld's 32-bit runtime offset")
     check(zero["vmaddr"] == 0 and zero["vmsize"] == IMAGE_BASE and zero["initprot"] == 0, f"{name}: bad __PAGEZERO")
     expected = IMAGE_BASE
     for segment in macho.segments[1:]:

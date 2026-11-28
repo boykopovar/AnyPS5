@@ -134,11 +134,11 @@ def main():
         entries = exports(data)
         base = MachO(data).segment('__ELF0')['vmaddr']
         assert entries == {
-            '_FixtureExport': (0, base + 0x210 - 0x140000000),
-            '_FixtureData': (0, base + 0x280 - 0x140000000),
-            '_FixtureWeak': (4, base + 0x220 - 0x140000000),
+            '_FixtureExport': (0, base + 0x210 - 0x3F0000),
+            '_FixtureData': (0, base + 0x280 - 0x3F0000),
+            '_FixtureWeak': (4, base + 0x220 - 0x3F0000),
             '_FixtureAbsolute': (2, ABSOLUTE),
-            '_FixtureProtected': (0, base + 0x210 - 0x140000000),
+            '_FixtureProtected': (0, base + 0x210 - 0x3F0000),
         }, entries
         assert MachO(data).flags & 0x8000
         native_execution(work, output)
@@ -151,7 +151,7 @@ def main():
             assert entry[0] == flags
             assert bool(MachO(data).flags & 0x8000) == bool(flags)
             meta = MachO(data).segment('__APS5DATA')
-            slot = meta['fileoff'] + entry[1] + 0x140000000 - meta['vmaddr']
+            slot = meta['fileoff'] + entry[1] + 0x3F0000 - meta['vmaddr']
             assert struct.unpack_from('<QQ', data, slot) == (meta['vmaddr'] + 0x20, 4)
         for name, symbols, tls, error in (
                 ('duplicate', SYMBOLS + (SYMBOLS[0],), False, 'Duplicate Mach-O export'),
