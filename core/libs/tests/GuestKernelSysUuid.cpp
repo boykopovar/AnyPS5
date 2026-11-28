@@ -25,11 +25,11 @@ int Error() {
 }
 
 std::uint64_t Timestamp(const GuestUuid& uuid) {
-    return (static_cast<std::uint64_t>(uuid.timeHiAndVersion & 0x0fff) << 48) | (static_cast<std::uint64_t>(uuid.timeMid) << 32) | uuid.timeLow;
+    return (static_cast<std::uint64_t>(uuid.time_hi_and_version & 0x0fff) << 48) | (static_cast<std::uint64_t>(uuid.time_mid) << 32) | uuid.time_low;
 }
 
 std::uint16_t Sequence(const GuestUuid& uuid) {
-    return static_cast<std::uint16_t>(((uuid.clockSeqHiAndReserved & 0x3f) << 8) | uuid.clockSeqLow);
+    return static_cast<std::uint16_t>(((uuid.clock_seq_hi_and_reserved & 0x3f) << 8) | uuid.clock_seq_low);
 }
 
 }
@@ -44,8 +44,8 @@ int main() {
     Require(uuidgen_nid_postfix(first.data(), static_cast<int>(first.size())) == 0);
     Require(uuidgen_nid_postfix(second.data(), static_cast<int>(second.size())) == 0);
     for (const auto& uuid : first) {
-        Require((uuid.timeHiAndVersion >> 12) == 1);
-        Require((uuid.clockSeqHiAndReserved & 0xc0) == 0x80);
+        Require((uuid.time_hi_and_version >> 12) == 1);
+        Require((uuid.clock_seq_hi_and_reserved & 0xc0) == 0x80);
         Require((uuid.node[0] & 0x01) == 0);
         Require(std::memcmp(uuid.node, first[0].node, sizeof(uuid.node)) == 0);
         Require(Sequence(uuid) == Sequence(first[0]));

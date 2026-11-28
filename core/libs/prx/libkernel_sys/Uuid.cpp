@@ -74,11 +74,11 @@ void GenerateUuidV1(GuestUuid* destination, int count) {
     }
     const auto variantSequence = static_cast<std::uint16_t>(sequence | 0x8000);
     for (int index = 0; index < count; ++index, ++time) {
-        destination[index].timeLow = static_cast<std::uint32_t>(time);
-        destination[index].timeMid = static_cast<std::uint16_t>(time >> 32);
-        destination[index].timeHiAndVersion = static_cast<std::uint16_t>(((time >> 48) & 0x0fff) | 0x1000);
-        destination[index].clockSeqHiAndReserved = static_cast<std::uint8_t>(variantSequence >> 8);
-        destination[index].clockSeqLow = static_cast<std::uint8_t>(variantSequence);
+        destination[index].time_low = static_cast<std::uint32_t>(time);
+        destination[index].time_mid = static_cast<std::uint16_t>(time >> 32);
+        destination[index].time_hi_and_version = static_cast<std::uint16_t>(((time >> 48) & 0x0fff) | 0x1000);
+        destination[index].clock_seq_hi_and_reserved = static_cast<std::uint8_t>(variantSequence >> 8);
+        destination[index].clock_seq_low = static_cast<std::uint8_t>(variantSequence);
         std::memcpy(destination[index].node, node.data(), node.size());
     }
 }
@@ -102,16 +102,16 @@ int APS5_VABI sceKernelCreateUuidV1(std::uint8_t* uuid) {
     GuestUuid generated{};
     GenerateUuidV1(&generated, 1);
     std::array<std::uint8_t, 16> bytes{};
-    bytes[0] = static_cast<std::uint8_t>(generated.timeLow >> 24);
-    bytes[1] = static_cast<std::uint8_t>(generated.timeLow >> 16);
-    bytes[2] = static_cast<std::uint8_t>(generated.timeLow >> 8);
-    bytes[3] = static_cast<std::uint8_t>(generated.timeLow);
-    bytes[4] = static_cast<std::uint8_t>(generated.timeMid >> 8);
-    bytes[5] = static_cast<std::uint8_t>(generated.timeMid);
-    bytes[6] = static_cast<std::uint8_t>(generated.timeHiAndVersion >> 8);
-    bytes[7] = static_cast<std::uint8_t>(generated.timeHiAndVersion);
-    bytes[8] = generated.clockSeqHiAndReserved;
-    bytes[9] = generated.clockSeqLow;
+    bytes[0] = static_cast<std::uint8_t>(generated.time_low >> 24);
+    bytes[1] = static_cast<std::uint8_t>(generated.time_low >> 16);
+    bytes[2] = static_cast<std::uint8_t>(generated.time_low >> 8);
+    bytes[3] = static_cast<std::uint8_t>(generated.time_low);
+    bytes[4] = static_cast<std::uint8_t>(generated.time_mid >> 8);
+    bytes[5] = static_cast<std::uint8_t>(generated.time_mid);
+    bytes[6] = static_cast<std::uint8_t>(generated.time_hi_and_version >> 8);
+    bytes[7] = static_cast<std::uint8_t>(generated.time_hi_and_version);
+    bytes[8] = generated.clock_seq_hi_and_reserved;
+    bytes[9] = generated.clock_seq_low;
     std::memcpy(&bytes[10], generated.node, sizeof(generated.node));
     if (!GuestCopyOut_nid_no_patch(uuid, bytes.data(), bytes.size())) {
         return SCE_KERNEL_ERROR_EFAULT;
