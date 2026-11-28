@@ -39,7 +39,6 @@ int main() {
     WKContextSetPrimaryWebsiteDataStore();
     WKCookieManagerDeleteAllCookies();
     WKCookieManagerSetHTTPCookieAcceptPolicy();
-    WKPreferencesSetQTKitEnabled();
     WKWebsiteDataStoreClearAllDeviceOrientationPermissions();
     WKWebsiteDataStoreReinitializeAppBoundDomains();
     WKWebsiteDataStoreSetAppBoundDomainsForTesting();

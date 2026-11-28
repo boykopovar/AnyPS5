@@ -95,9 +95,6 @@ void APS5_VABI WKCookieManagerDeleteAllCookies() {
 void APS5_VABI WKCookieManagerSetHTTPCookieAcceptPolicy() {
 }
 
-void APS5_VABI WKPreferencesSetQTKitEnabled() {
-}
-
 void APS5_VABI WKWebsiteDataStoreClearAllDeviceOrientationPermissions() {
 }
 
