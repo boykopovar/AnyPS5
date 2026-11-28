@@ -64,6 +64,27 @@ class ComputedEnvironmentTests(unittest.TestCase):
         self.assertEqual(set(found), {"ANYPS5_PAD_PLAYER_1_SERIAL", "ANYPS5_PAD_PLAYER_2_SERIAL"})
         self.assertEqual(found["ANYPS5_PAD_PLAYER_1_SERIAL"][0][1], 3)
 
+    def test_a_name_that_ends_with_to_string_is_read_for_every_slot(self):
+        root = self.fixture('for (int slot = 0; slot < 2; ++slot) {\n'
+                            '    const std::string name = "ANYPS5_PAD_PLAYER_" + std::to_string(slot + 1);\n'
+                            '    if (const char* value = std::getenv(name.c_str()); value != nullptr) use(value);\n'
+                            '}\n')
+        found = env_reference.reads([root / "core"], BOTH)
+        self.assertEqual(set(found), {"ANYPS5_PAD_PLAYER_1", "ANYPS5_PAD_PLAYER_2"})
+        self.assertEqual(found["ANYPS5_PAD_PLAYER_1"][0][1], 3)
+
+    def test_a_name_that_ends_with_to_string_without_a_loop_is_an_undetermined_read(self):
+        root = self.fixture('const std::string name = "ANYPS5_PAD_PLAYER_" + std::to_string(slot);\n'
+                            'if (const char* value = std::getenv(name.c_str()); value != nullptr) use(value);\n')
+        self.assertEqual(set(env_reference.reads([root / "core"], BOTH)), {"ANYPS5_PAD_PLAYER_*"})
+
+    def test_a_name_with_a_runtime_part_after_to_string_is_not_a_pattern(self):
+        root = self.fixture('for (int slot = 0; slot < 2; ++slot) {\n'
+                            '    const std::string name = "ANYPS5_PAD_PLAYER_" + std::to_string(slot) + suffix;\n'
+                            '    if (const char* value = std::getenv(name.c_str()); value != nullptr) use(value);\n'
+                            '}\n')
+        self.assertEqual(env_reference.reads([root / "core"], BOTH), {})
+
     def test_computed_names_use_the_exclusive_loop_bound(self):
         for start, bound, expected in ((2, 4, {"ANYPS5_PAD_PLAYER_3_SERIAL", "ANYPS5_PAD_PLAYER_4_SERIAL"}),
                                        (2, 2, set()), (0, 0, set())):
