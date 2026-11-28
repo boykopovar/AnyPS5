@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#include <limits>
 #include <source_location>
 #include <stdexcept>
 #include <unordered_map>
@@ -2041,8 +2042,7 @@ void TestLongFormTags() {
 
     RequireNotImplemented([] { Parse(BuildCrl(TbsHead(), AlgorithmWithParameter(Hex("8102ffff")))); });
     DrainErrors();
-    for (const auto& [pointer, size] : allocations) std::free(pointer);
-    allocations.clear();
+    Require(allocations.empty());
 }
 
 int LookupWithIssuer(LibreSsl3X509Crl* crl, LibreSslX509Name* issuer) {
@@ -2238,6 +2238,7 @@ void TestCachedExtensions() {
     Require(ParsedFlags(CrlWithExtensions(Join({AuthorityKeyIdExtension(true), DistributionPointsExtension(true)}))) == 0x200);
     Require(ParsedFlags(CrlWithExtensions(Join({CrlNumberExtension(5), DeltaCrlExtension(true), DistributionPointsExtension(true)}))) == 0x200);
     Require(ParsedFlags(CrlWithExtensions(Join({AuthorityKeyIdExtension(true), DistributionPointsExtension(false)}))) == 0);
+    Require(ParsedFlags(CrlWithExtensions(Join({AuthorityKeyIdExtension(true), FreshestCrlExtension()}))) == 0x1000);
     Require(ParsedFlags(CrlWithExtensions(Join({DistributionPointsExtension(true), FreshestCrlExtension()}))) == 0x200);
 
     RequireNotImplemented([] { Parse(CrlWithExtensions(Join({CrlNumberExtension(5), IssuingDistributionPointExtension()}))); });
@@ -2293,6 +2294,36 @@ void TestEntryReasons() {
     Require(RevokedEntryAt(crl, 0)->reason == -1);
     FreeCrlValue(crl);
     RequireQueue({223});
+
+    crl = Parse(CrlWithEntries(RevokedEntryWithExtensions(Bytes{0x10, 0x01},
+        Extension({0x55, 0x1d, 0x15}, false, Hex("0a050100000008")))));
+    Require(crl != nullptr);
+    Require(crl->flags == 0);
+    Require(RevokedEntryAt(crl, 0)->reason == -1);
+    Require(LookupSerial(crl, 0x01, nullptr, nullptr) == 1);
+    FreeCrlValue(crl);
+    RequireQueue({223});
+
+    for (const char* tooSmallHex : {"0a05ff7fffffff", "0a05fefffffff8"}) {
+        crl = Parse(CrlWithEntries(RevokedEntryWithExtensions(Bytes{0x10, 0x01},
+            Extension({0x55, 0x1d, 0x15}, false, Hex(tooSmallHex)))));
+        Require(crl != nullptr);
+        Require(crl->flags == 0);
+        Require(RevokedEntryAt(crl, 0)->reason == -1);
+        Require(LookupSerial(crl, 0x01, nullptr, nullptr) == 1);
+        FreeCrlValue(crl);
+        RequireQueue({224});
+    }
+
+    crl = Parse(CrlWithEntries(Join({
+        RevokedEntryWithExtensions(Bytes{0x10, 0x01}, Extension({0x55, 0x1d, 0x15}, false, Hex("0a047fffffff"))),
+        RevokedEntryWithExtensions(Bytes{0x10, 0x02}, Extension({0x55, 0x1d, 0x15}, false, Hex("0a0480000000"))),
+    })));
+    Require(crl != nullptr);
+    Require(RevokedEntryAt(crl, 0)->reason == std::numeric_limits<int>::max());
+    Require(RevokedEntryAt(crl, 1)->reason == std::numeric_limits<int>::min());
+    FreeCrlValue(crl);
+    RequireQueue({});
     Require(allocations.empty());
 }
 

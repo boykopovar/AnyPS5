@@ -11,6 +11,7 @@
 #include <iterator>
 #include <limits>
 #include <memory>
+#include <new>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -500,7 +501,7 @@ void* GetExtension(const LibreSsl3Stack* extensions, int nid, int* crit, int* id
     return X509V3_EXT_d2i_nid_postfix(const_cast<LibreSsl3X509Extension*>(extension));
 }
 
-std::int64_t EnumeratedValue(const Asn1String& value) {
+int EnumeratedValue(const Asn1String& value) {
     if (value.length < 0) return -1;
     if (value.type != EnumeratedType && value.type != (EnumeratedType | NegativeType)) {
         PutError(WrongIntegerType);
@@ -516,17 +517,19 @@ std::int64_t EnumeratedValue(const Asn1String& value) {
         magnitude = (magnitude << 8) | value.data[index];
     }
     if (value.type & NegativeType) {
-        if (magnitude > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) + 1) {
+        const auto minMagnitude = static_cast<std::uint64_t>(0) -
+            static_cast<std::uint64_t>(static_cast<std::int64_t>(std::numeric_limits<int>::min()));
+        if (magnitude > minMagnitude) {
             PutError(TooSmall);
             return -1;
         }
-        return static_cast<std::int64_t>(0 - magnitude);
+        return static_cast<int>(static_cast<std::int64_t>(0 - magnitude));
     }
-    if (magnitude > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+    if (magnitude > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
         PutError(TooLarge);
         return -1;
     }
-    return static_cast<std::int64_t>(magnitude);
+    return static_cast<int>(magnitude);
 }
 
 bool HasSingleExtension(const LibreSsl3Stack* extensions, int nid) {
@@ -589,7 +592,7 @@ bool SetEntryIssuers(LibreSsl3X509Crl* crl) {
             crl->flags |= InvalidFlag;
             return true;
         }
-        entry->reason = reason ? static_cast<int>(EnumeratedValue(*reason)) : NoCrlReason;
+        entry->reason = reason ? EnumeratedValue(*reason) : NoCrlReason;
         FreeString(reason);
         const LibreSsl3Stack* extensions = entry->extensions;
         for (int extension = 0; extensions && extension < extensions->num; ++extension) {
@@ -1053,45 +1056,32 @@ LibreSsl3Asn1Type* DecodeAnyType(const Tlv& value) {
 LibreSsl3X509Algor* DecodeAlgor(std::span<const unsigned char>& input) {
     Tlv sequence;
     if (!Next(input, SequenceTag, sequence)) return nullptr;
-    auto* algor = static_cast<LibreSsl3X509Algor*>(calloc_nid_postfix(1, sizeof(LibreSsl3X509Algor)));
+    std::unique_ptr<LibreSsl3X509Algor, void (*)(LibreSsl3X509Algor*)> algor(
+        static_cast<LibreSsl3X509Algor*>(calloc_nid_postfix(1, sizeof(LibreSsl3X509Algor))), FreeAlgor);
     if (!algor) {
         PutError(MallocFailure);
         return nullptr;
     }
     std::span<const unsigned char> body = sequence.content;
     Tlv object;
-    if (!Next(body, ObjectTag, object)) {
-        free_nid_postfix(algor);
-        return nullptr;
-    }
+    if (!Next(body, ObjectTag, object)) return nullptr;
     algor->algorithm = NewObject(object.content);
-    if (!algor->algorithm) {
-        free_nid_postfix(algor);
-        return nullptr;
-    }
+    if (!algor->algorithm) return nullptr;
     if (!body.empty()) {
         if (IsEndOfContents(body)) {
             PutError(UnexpectedEndOfContents);
-            FreeAlgor(algor);
             return nullptr;
         }
         Tlv parameter;
-        if (!ReadTlv(body, parameter)) {
-            FreeAlgor(algor);
-            return nullptr;
-        }
+        if (!ReadTlv(body, parameter)) return nullptr;
         algor->parameter = DecodeAnyType(parameter);
-        if (!algor->parameter) {
-            FreeAlgor(algor);
-            return nullptr;
-        }
+        if (!algor->parameter) return nullptr;
     }
     if (!body.empty()) {
         PutError(SequenceLengthMismatch);
-        FreeAlgor(algor);
         return nullptr;
     }
-    return algor;
+    return algor.release();
 }
 
 bool TwoDigits(std::span<const unsigned char>& text, int& value) {
@@ -1255,7 +1245,8 @@ LibreSslX509NameEntry* DecodeNameEntry(std::span<const unsigned char>& input, in
         PutError(SequenceNotConstructed);
         return nullptr;
     }
-    auto* entry = static_cast<LibreSslX509NameEntry*>(calloc_nid_postfix(1, sizeof(LibreSslX509NameEntry)));
+    std::unique_ptr<LibreSslX509NameEntry, void (*)(void*)> entry(
+        static_cast<LibreSslX509NameEntry*>(calloc_nid_postfix(1, sizeof(LibreSslX509NameEntry))), FreeNameEntry);
     if (!entry) {
         PutError(MallocFailure);
         return nullptr;
@@ -1269,7 +1260,6 @@ LibreSslX509NameEntry* DecodeNameEntry(std::span<const unsigned char>& input, in
         if (IsEndOfContents(body)) {
             if (!expectEnd) {
                 PutError(UnexpectedEndOfContents);
-                FreeNameEntry(entry);
                 return nullptr;
             }
             body = body.subspan(2);
@@ -1278,38 +1268,29 @@ LibreSslX509NameEntry* DecodeNameEntry(std::span<const unsigned char>& input, in
         }
         if (fields == 0) {
             entry->object = DecodeNameObject(body);
-            if (!entry->object) {
-                FreeNameEntry(entry);
-                return nullptr;
-            }
+            if (!entry->object) return nullptr;
         } else {
             entry->value = DecodeNameValue(body);
-            if (!entry->value) {
-                FreeNameEntry(entry);
-                return nullptr;
-            }
+            if (!entry->value) return nullptr;
         }
     }
     if (expectEnd) {
         if (!IsEndOfContents(body)) {
             PutError(MissingEndOfContents);
-            FreeNameEntry(entry);
             return nullptr;
         }
         body = body.subspan(2);
     }
     if (!header.indefinite && !body.empty()) {
         PutError(SequenceLengthMismatch);
-        FreeNameEntry(entry);
         return nullptr;
     }
     if (fields < 2) {
         PutError(FieldMissing);
-        FreeNameEntry(entry);
         return nullptr;
     }
     input = input.subspan(Consumed(input, body));
-    return entry;
+    return entry.release();
 }
 
 bool DecodeRelativeName(std::span<const unsigned char>& input, int set, LibreSslX509Name* name) {
@@ -1334,12 +1315,10 @@ bool DecodeRelativeName(std::span<const unsigned char>& input, int set, LibreSsl
             expectEnd = false;
             break;
         }
-        LibreSslX509NameEntry* entry = DecodeNameEntry(body, set);
+        std::unique_ptr<LibreSslX509NameEntry, void (*)(void*)> entry(DecodeNameEntry(body, set), FreeNameEntry);
         if (!entry) return false;
-        if (!Push(reinterpret_cast<LibreSsl3Stack*>(name->entries), entry)) {
-            FreeNameEntry(entry);
-            return false;
-        }
+        if (!Push(reinterpret_cast<LibreSsl3Stack*>(name->entries), entry.get())) return false;
+        entry.release();
     }
     if (expectEnd) {
         PutError(MissingEndOfContents);
@@ -1367,53 +1346,47 @@ LibreSslX509Name* DecodeName(std::span<const unsigned char>& input) {
         PutError(WrongTag);
         return nullptr;
     }
-    auto* name = static_cast<LibreSslX509Name*>(calloc_nid_postfix(1, sizeof(LibreSslX509Name)));
+    std::unique_ptr<LibreSslX509Name, void (*)(LibreSslX509Name*)> name(
+        static_cast<LibreSslX509Name*>(calloc_nid_postfix(1, sizeof(LibreSslX509Name))), FreeName);
     if (!name) {
         PutError(MallocFailure);
         return nullptr;
     }
     name->entries = reinterpret_cast<LibreSslStack*>(NewStack());
-    if (!name->entries) {
-        free_nid_postfix(name);
-        return nullptr;
-    }
-    std::span<const unsigned char> body = input.subspan(header.headerLength, header.length);
-    bool expectEnd = header.indefinite;
-    int set = 0;
-    while (!body.empty()) {
-        if (IsEndOfContents(body)) {
-            if (!expectEnd) {
-                PutError(UnexpectedEndOfContents);
-                FreeName(name);
+    if (!name->entries) return nullptr;
+    try {
+        std::span<const unsigned char> body = input.subspan(header.headerLength, header.length);
+        bool expectEnd = header.indefinite;
+        int set = 0;
+        while (!body.empty()) {
+            if (IsEndOfContents(body)) {
+                if (!expectEnd) {
+                    PutError(UnexpectedEndOfContents);
+                    return nullptr;
+                }
+                body = body.subspan(2);
+                expectEnd = false;
+                break;
+            }
+            if (!DecodeRelativeName(body, set, name.get())) return nullptr;
+            if (set == std::numeric_limits<int>::max()) {
+                PutError(TooLong);
                 return nullptr;
             }
-            body = body.subspan(2);
-            expectEnd = false;
-            break;
+            ++set;
         }
-        if (!DecodeRelativeName(body, set, name)) {
-            FreeName(name);
+        if (expectEnd) {
+            PutError(MissingEndOfContents);
             return nullptr;
         }
-        if (set == std::numeric_limits<int>::max()) {
-            PutError(TooLong);
-            FreeName(name);
-            return nullptr;
-        }
-        ++set;
-    }
-    if (expectEnd) {
-        PutError(MissingEndOfContents);
-        FreeName(name);
+        const std::size_t consumed = Consumed(input, body);
+        if (!StoreNameEncodings(name.get(), input.first(consumed))) return nullptr;
+        input = input.subspan(consumed);
+        return name.release();
+    } catch (const std::bad_alloc&) {
+        PutError(MallocFailure);
         return nullptr;
     }
-    const std::size_t consumed = Consumed(input, body);
-    if (!StoreNameEncodings(name, input.first(consumed))) {
-        FreeName(name);
-        return nullptr;
-    }
-    input = input.subspan(consumed);
-    return name;
 }
 
 void PutNestedErrors(int count) {
@@ -1791,7 +1764,8 @@ void HashCrl(LibreSsl3X509Crl* crl, std::span<const unsigned char> infoEncoding,
 LibreSsl3X509Crl* DecodeCrl(std::span<const unsigned char>& input) {
     Tlv outer;
     if (!Next(input, SequenceTag, outer)) return nullptr;
-    auto* crl = static_cast<LibreSsl3X509Crl*>(calloc_nid_postfix(1, sizeof(LibreSsl3X509Crl)));
+    std::unique_ptr<LibreSsl3X509Crl, void (*)(LibreSsl3X509Crl*)> crl(
+        static_cast<LibreSsl3X509Crl*>(calloc_nid_postfix(1, sizeof(LibreSsl3X509Crl))), FreeCrl);
     if (!crl) {
         PutError(MallocFailure);
         return nullptr;
@@ -1799,53 +1773,26 @@ LibreSsl3X509Crl* DecodeCrl(std::span<const unsigned char>& input) {
     crl->references = 1;
     crl->idpReasons = AllCrlReasons;
     crl->crl = static_cast<LibreSsl3CrlInfo*>(calloc_nid_postfix(1, sizeof(LibreSsl3CrlInfo)));
-    if (!crl->crl) {
-        FreeCrl(crl);
-        return nullptr;
-    }
+    if (!crl->crl) return nullptr;
     std::span<const unsigned char> body = outer.content;
     Tlv tbs;
-    if (!Next(body, SequenceTag, tbs)) {
-        FreeCrl(crl);
-        return nullptr;
-    }
-    if (!DecodeCrlInfo(tbs.content, crl->crl)) {
-        FreeCrl(crl);
-        return nullptr;
-    }
+    if (!Next(body, SequenceTag, tbs)) return nullptr;
+    if (!DecodeCrlInfo(tbs.content, crl->crl)) return nullptr;
     const std::span<const unsigned char> algorithmStart = body;
     crl->sigAlg = DecodeAlgor(body);
-    if (!crl->sigAlg) {
-        FreeCrl(crl);
-        return nullptr;
-    }
+    if (!crl->sigAlg) return nullptr;
     const std::span<const unsigned char> algorithmEncoding = algorithmStart.first(algorithmStart.size() - body.size());
     Tlv signature;
-    if (!Next(body, BitStringTag, signature)) {
-        FreeCrl(crl);
-        return nullptr;
-    }
+    if (!Next(body, BitStringTag, signature)) return nullptr;
     crl->signature = NewBitString(signature.content);
-    if (!crl->signature) {
-        FreeCrl(crl);
-        return nullptr;
-    }
+    if (!crl->signature) return nullptr;
     if (!body.empty()) {
         PutError(SequenceLengthMismatch);
-        FreeCrl(crl);
         return nullptr;
     }
-    try {
-        HashCrl(crl, tbs.encoded, algorithmEncoding);
-        if (!CacheExtensions(crl)) {
-            FreeCrl(crl);
-            return nullptr;
-        }
-    } catch (...) {
-        FreeCrl(crl);
-        throw;
-    }
-    return crl;
+    HashCrl(crl.get(), tbs.encoded, algorithmEncoding);
+    if (!CacheExtensions(crl.get())) return nullptr;
+    return crl.release();
 }
 
 bool SameString(const Asn1String* first, const Asn1String* second) {
