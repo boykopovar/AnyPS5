@@ -357,7 +357,7 @@ void PrivateGate(AgcDriver::VulkanDevice& device) {
     using AgcDriver::Graphics::ImportRequester;
     using AgcDriver::Graphics::ImportWatch;
     const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
-    Block direct(ResidentBytes / 4, 0, true);
+    Block direct(BlockBytes, 0, true);
     Block flexible(2 * BlockBytes, 0);
     GuestArena::GuestArenaCommit_nid_postfix(flexible.data + BlockBytes, BlockBytes, PAGE_READONLY, BlockBytes);
     const auto decided = AgcDriver::Graphics::PrepareImportWatch(context);
