@@ -6,7 +6,7 @@
 
 ## change [sceAvControlGetPuTypeByMonitorInfo]
 
-- [sceAvControlGetPuTypeByMonitorInfo](../../../core/libs/prx/libSceAvSetting/Export.cpp) (libSceAvSetting) - measured on a PS5 Pro payload process (13.60): a null first argument answers `0x802A0002`; with a writable first argument the session ended before any answer or debug print appeared, so later arguments are not declared and the export still throws for a writable pointer.
+- [sceAvControlGetPuTypeByMonitorInfo](../../../core/libs/prx/libSceAvSetting/Export.cpp) (libSceAvSetting) - measured on a PS5 Pro payload process (13.60): a null first argument answers `0x802A0002`; with writable buffers the second argument receives 0 and the call answers 0 without touching the other buffers, implemented as that check followed by writing 0 to the second pointer; what an initialized console writes is unknown.
 
 ## change [sceAvControlGetCurrentOutputSysMode]
 
