@@ -147,7 +147,7 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc -
 
 The documentation runs the Python tools as `python3`. With the python.org installer for Windows, which provides `python.exe` and the `py` launcher but no `python3.exe`, `python3` resolves to the Microsoft Store alias in `WindowsApps`, which prints `Python was not found` and exits with code 9009 (49 in Git Bash). Installs that provide `python3.exe`, such as the Python Install Manager, are not affected. In that case run these commands with `python` or `py -3`, for example `py -3 tools/check_conventions.py`.
 
-If `windres` reports `preprocessing failed` and Windows prints the first part of the WinLibs installation path as an unrecognized command, `windres` may be splitting the path to its preprocessor at a space. This can occur when WinLibs GCC 15.2.0 r7 is installed in a directory with spaces. With the selected WinLibs `bin` directory first on `PATH`, append the following argument to the CMake configure command.
+If `windres` reports `preprocessing failed` and Windows prints the first part of the WinLibs installation path as an unrecognized command, `windres` may be splitting the path to its preprocessor at a space. CMake 3.25 or newer with Ninja or Makefiles handles this for the relinker and test manifests by selecting the `gcc.exe` alongside `windres`. For older CMake versions, put the selected WinLibs `bin` directory first on `PATH` and append the following argument to the CMake configure command.
 
 ```powershell
 '-DCMAKE_RC_FLAGS=--preprocessor=gcc.exe --preprocessor-arg=-E --preprocessor-arg=-xc --preprocessor-arg=-DRC_INVOKED'
@@ -483,6 +483,8 @@ Set `APS5_TIME_SCALE=<factor>` to scale `sceKernelGetProcessTime`, `sceKernelGet
 ## Driver profile lines
 
 With `APS5_PROFILE_DRAW` set (any value), the driver prints a profile line on stderr at most every 10 s. A line either counts the last 10 s (its counters are read and cleared when it is printed; the text says `(10 s)` or `over 10 s`) or counts from the start of the process (the text says `(cumulative)`). A rate is the difference of two cumulative lines divided by the time between them.
+
+With `APS5_DRAW_PIPELINE=1` as well, `[draw] driver phases` keeps counting every draw packet once on the queue worker: a draw handed to the draw finisher is drawn there, and its worker rows stop at the hand-off, with the enqueue in `epilogue`. The line then ends with `; draw finisher (N handed draws, N drawn, N captures), us per handed draw: queue wait X` and the same rows for the part each handed draw ran on the finisher, timed from when the finisher started it; `queue wait` is the time from the hand-off to that start and is not part of the finisher total.
 
 With `APS5_PROFILE_DRAW=1`, the `lock wait` row in `[draw] driver phases` can include time spent enqueueing a draw, including waiting for space in the draw pipeline. Draws that acquire the GPU mutex also charge that acquisition to the same row. Use the per-thread `[lock]` counters or `GpuMutex.wait.<site>` trace slices to measure GPU mutex contention. For draw pipeline backpressure, use the `for room` time on the `[draw] pipelined` line. Check the producer's sampled stacks for `DrawPipeline::Enqueue` and the draw committer's trace to see where the time goes.
 

@@ -183,9 +183,16 @@ void HandleTrap(int, siginfo_t*, void* rawContext) {
 }
 
 void CheckRestoreBelowStackWithTrap(std::uintptr_t seed) {
+    alignas(16) static unsigned char trapStack[64 * 1024];
+    stack_t altStack {};
+    altStack.ss_sp = trapStack;
+    altStack.ss_size = sizeof(trapStack);
+    stack_t previousAltStack {};
+    Require(sigaltstack(&altStack, &previousAltStack) == 0, "install SIGTRAP stack");
+
     struct sigaction action {};
     action.sa_sigaction = HandleTrap;
-    action.sa_flags = SA_SIGINFO;
+    action.sa_flags = SA_SIGINFO | SA_ONSTACK;
     sigemptyset(&action.sa_mask);
     struct sigaction previous {};
     Require(sigaction(SIGTRAP, &action, &previous) == 0, "install SIGTRAP handler");
@@ -202,6 +209,7 @@ void CheckRestoreBelowStackWithTrap(std::uintptr_t seed) {
     const int traps = g_trapCount;
 
     Require(sigaction(SIGTRAP, &previous, nullptr) == 0, "restore SIGTRAP handler");
+    Require(sigaltstack(&previousAltStack, nullptr) == 0, "restore SIGTRAP stack");
     Require(traps > 0, "single-step SIGTRAP did not fire");
     Require(restored.before == Guard && restored.after == Guard, "restore overwrote its source context");
     Require(observed.before == Guard && observed.after == Guard, "restore probe overwrote its destination context");
