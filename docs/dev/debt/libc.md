@@ -6,6 +6,8 @@
 
 ### Unknown function info
 
+- [__std_calloc_crt](../../../core/libs/prx/libc/src/FileAndHeap.cpp) (libc, NID `1a7K+jO+ST0`) is unverified on PS5. Its two `size_t` arguments and forwarding to `calloc` follow [Microsoft STL](https://github.com/microsoft/STL/blob/b6f01e438b68ee497f9c08313e49d12bb2f0d8e0/stl/src/tzdb.cpp#L647-L649); the export name and NID are listed in [ps5rs](https://github.com/claimore22/ps5rs/blob/5f252a658ff470bcb2b6cd15205fd8ca64ae4477/data/stubs/by_library/libc.txt). Whether the console wrapper uses the application allocator and preserves the same allocation errors as `calloc` is not measured.
+
 - [GuestArenaArmOwned](../../../core/libs/prx/libc/include/WindowsMappings.hpp) (libc) is a host-only byte-change proof, not console ABI. Tokens cover whole 64 KiB blocks; writes outside the requested subrange can invalidate them. Callers must synchronize stores around the snapshot they cache.
 - [GuestArenaArmOwned](../../../core/libs/prx/libc/include/WindowsMappings.hpp) (libc) accepts only fully committed writable write-watched blocks queryable as one Windows allocation. Private commits require flag 1. Shared, pinned, host-open, unwatched and incomplete blocks refuse; other platforms refuse.
 - [GuestArenaArmOwned](../../../core/libs/prx/libc/include/WindowsMappings.hpp) (libc) bounds token and pending maps to 65,536 blocks each. Full pending capacity refuses new blocks before resetting writes; token pressure invalidates lowest-address proofs. Impact on titles is unmeasured.
