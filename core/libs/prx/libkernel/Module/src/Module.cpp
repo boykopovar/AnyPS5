@@ -266,6 +266,21 @@ int FindModuleInfoForUnwind(uint64_t addr, ModuleInfoForUnwind* info) {
 #endif
 }
 
+struct ErrnoGuard {
+  int saved = errno;
+  ~ErrnoGuard() { errno = saved; }
+};
+
+bool CopyUnwindSize(const ModuleInfoForUnwind* info, std::uint64_t& size) {
+  return GuestCopyIn_nid_no_patch(&size, &info->st_size, sizeof(size));
+}
+
+bool StoreUnwindInfo(ModuleInfoForUnwind* info, const ModuleInfoForUnwind& value) {
+  const GuestArena::HostWrite guard(info, sizeof(value));
+  if (!guard.Open() || !GuestWritable_nid_no_patch(info, sizeof(value))) return false;
+  return GuestCopyOut_nid_no_patch(info, &value, sizeof(value));
+}
+
 }
 #endif
 
@@ -288,20 +303,26 @@ int APS5_VABI sceKernelGetModuleInfoForUnwind(uint64_t addr, int flags, ModuleIn
   if (!info) return SCE_KERNEL_ERROR_EFAULT;
   NotImplemented_nid_no_patch(__func__);
 #else
+  const ErrnoGuard restoreErrno;
   if (flags != 1 && flags != 2) {
     if (!info) throw std::invalid_argument("sceKernelGetModuleInfoForUnwind: a null output with flags other than 1 or 2, which the console clears without checking");
-    std::memset(info, 0, sizeof(ModuleInfoForUnwind));
+    constexpr ModuleInfoForUnwind empty{};
+    if (!StoreUnwindInfo(info, empty)) return SCE_KERNEL_ERROR_EFAULT;
     return SCE_KERNEL_ERROR_EINVAL;
   }
   if (!info) return SCE_KERNEL_ERROR_EFAULT;
-  const std::uint64_t size = info->st_size;
+  std::uint64_t size = 0;
+  if (!CopyUnwindSize(info, size)) return SCE_KERNEL_ERROR_EFAULT;
   if (size < sizeof(ModuleInfoForUnwind)) return SCE_KERNEL_ERROR_EINVAL;
   if (flags == 2) NotImplemented_nid_no_patch("sceKernelGetModuleInfoForUnwind: flags 2, a search by the module's second address range");
-  if (FindModuleInfoForUnwind(addr, info) != 0) {
-    std::memset(info, 0, sizeof(ModuleInfoForUnwind));
+  ModuleInfoForUnwind local{};
+  if (FindModuleInfoForUnwind(addr, &local) != 0) {
+    constexpr ModuleInfoForUnwind empty{};
+    if (!StoreUnwindInfo(info, empty)) return SCE_KERNEL_ERROR_EFAULT;
     return SCE_KERNEL_ERROR_ESRCH;
   }
-  info->st_size = size;
+  local.st_size = size;
+  if (!StoreUnwindInfo(info, local)) return SCE_KERNEL_ERROR_EFAULT;
   return 0;
 #endif
 }
