@@ -94,7 +94,6 @@ set_target_properties(libressl_crypto PROPERTIES
     C_VISIBILITY_PRESET hidden)
 
 target_include_directories(libressl_crypto PRIVATE ${LIBRESSL_INCLUDE_DIRS})
-target_include_directories(libressl_crypto SYSTEM PRIVATE ${LIBRESSL_INC})
 target_compile_definitions(libressl_crypto PRIVATE LIBRESSL_INTERNAL OPENSSL_NO_ASM)
 target_compile_options(libressl_crypto PRIVATE
     "-include;libressl_port.h"
