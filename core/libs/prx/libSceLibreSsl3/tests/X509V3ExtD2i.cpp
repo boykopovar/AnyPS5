@@ -1633,6 +1633,57 @@ void TestCrlDistPoints() {
         Require(allocations.empty());
     }
 
+    for (const int nid : {103, 857}) {
+        LibreSslStack* points = DecodeCrlDistPoints(nid, FromHex("30083006a204a1028000"));
+        Require(sk_num_nid_postfix(points) == 1);
+        const DistPoint* dp = DistPointAt(points, 0);
+        Require(dp->distpoint == nullptr && dp->reasons == nullptr && dp->crlIssuer != nullptr);
+        Require(sk_num_nid_postfix(dp->crlIssuer) == 1);
+        RequireString(GeneralNameAt(dp->crlIssuer, 0, 1)->value, 22, {});
+        FreeCrlDistPoints(points);
+
+        for (const auto& [hex, type, expected] : {
+                 std::tuple<std::string_view, int, Bytes>{
+                     "3011300fa00da00ba609240404026162040163", 6, {'a', 'b', 'c'}},
+                 {"3011300fa00da00ba680040261620401630000", 6, {'a', 'b', 'c'}},
+                 {"3011300fa00da00ba20924040402612e040162", 2, {'a', '.', 'b'}},
+                 {"300f300da00ba009a2800403612e620000", 2, {'a', '.', 'b'}}}) {
+            points = DecodeCrlDistPoints(nid, FromHex(hex));
+            Require(sk_num_nid_postfix(points) == 1);
+            dp = DistPointAt(points, 0);
+            Require(dp->distpoint != nullptr && dp->distpoint->type == 0 && dp->distpoint->dpname == nullptr);
+            Require(dp->reasons == nullptr && dp->crlIssuer == nullptr);
+            Require(sk_num_nid_postfix(dp->distpoint->name.fullname) == 1);
+            RequireString(GeneralNameAt(dp->distpoint->name.fullname, 0, type)->value, 22, expected);
+            FreeCrlDistPoints(points);
+        }
+
+        for (const auto& [hex, type, expected] : {
+                 std::tuple<std::string_view, int, Bytes>{
+                     "300f300da20ba609240404026162040163", 6, {'a', 'b', 'c'}},
+                 {"300f300da20ba680040261620401630000", 6, {'a', 'b', 'c'}},
+                 {"300f300da20ba20924040402612e040162", 2, {'a', '.', 'b'}},
+                 {"300d300ba209a2800403612e620000", 2, {'a', '.', 'b'}}}) {
+            points = DecodeCrlDistPoints(nid, FromHex(hex));
+            Require(sk_num_nid_postfix(points) == 1);
+            dp = DistPointAt(points, 0);
+            Require(dp->distpoint == nullptr && dp->reasons == nullptr && dp->crlIssuer != nullptr);
+            Require(sk_num_nid_postfix(dp->crlIssuer) == 1);
+            RequireString(GeneralNameAt(dp->crlIssuer, 0, type)->value, 22, expected);
+            FreeCrlDistPoints(points);
+        }
+
+        points = DecodeCrlDistPoints(nid, FromHex("308900000000000000000c300aa008a006860474657374"));
+        Require(sk_num_nid_postfix(points) == 1);
+        dp = DistPointAt(points, 0);
+        Require(dp->distpoint != nullptr && dp->distpoint->type == 0 && dp->distpoint->dpname == nullptr);
+        Require(dp->reasons == nullptr && dp->crlIssuer == nullptr);
+        Require(sk_num_nid_postfix(dp->distpoint->name.fullname) == 1);
+        RequireString(GeneralNameAt(dp->distpoint->name.fullname, 0, 6)->value, 22, {'t', 'e', 's', 't'});
+        FreeCrlDistPoints(points);
+        Require(allocations.empty());
+    }
+
     {
         LibreSslStack* points = DecodeCrlDistPoints(103, FromHex("30123010a00aa008860668747470733a810205a0"));
         const DistPoint* dp = DistPointAt(points, 0);
@@ -1811,7 +1862,6 @@ void TestCrlDistPoints() {
         FromHex("30093007a105030300ff00"),
         FromHex("30063004a2800000"),
         FromHex("30123010a00ea00ca00a06032a0304a003160178"),
-        FromHex("30083006a204a1028000"),
         FromHex("30103008a006a004860261623004a2800000"),
         FromHex("301d301ba019a117300806022a0313024341300b06022a032c050403616263"),
     };
