@@ -3167,7 +3167,7 @@ bool refreshedFromLoggedChanges(const Context& context, HostImports& state) {
     }
     const auto alignment = context.hostImportAlignment;
     for (const auto* entry : checked) {
-        if (entry->unwatched) GuestMemory::Unwatch(entry->base, entry->bytes);
+        if (entry->unwatched) GuestMemory::UnwatchImportBookkeeping(entry->base, entry->bytes);
         if (entry->joined) continue;
         const auto desired = desiredRun(local, entry->base, alignment);
         if (!desired || desired->first > entry->base || entry->base + entry->bytes > desired->second || peekImport(state, desired->first, desired->second) != nullptr) continue;
