@@ -5,6 +5,15 @@ target_sources(libSceNgs2 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/PendingExports.cpp
 set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/PendingExports.cpp PROPERTIES COMPILE_OPTIONS -fvisibility=default)
 
 if(BUILD_TESTING)
+    add_test_executable(ngs2_core_fft_tests ${CMAKE_CURRENT_SOURCE_DIR}/../libSceNgs2.native/tests/Ngs2FftGeometry.cpp)
+    target_include_directories(ngs2_core_fft_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(ngs2_core_fft_tests PRIVATE libSceNgs2 libkernel libc)
+    configure_windows_unwind(ngs2_core_fft_tests)
+    add_test(NAME ngs2_core_fft COMMAND ngs2_core_fft_tests)
+    if(WIN32)
+        set_tests_properties(ngs2_core_fft PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNgs2>")
+    endif()
     add_test_executable(ngs2_core_custom_safety_tests ${CMAKE_CURRENT_SOURCE_DIR}/../libSceNgs2.native/tests/Ngs2CustomSafety.cpp)
     target_include_directories(ngs2_core_custom_safety_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(ngs2_core_custom_safety_tests PRIVATE libSceNgs2 libkernel libc)
