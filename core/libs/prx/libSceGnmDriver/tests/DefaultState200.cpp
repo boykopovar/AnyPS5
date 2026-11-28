@@ -73,6 +73,8 @@ void CheckState(const std::array<std::uint32_t, Words>& state, const std::string
     words.fill(Untouched);
     Require(sceGnmDrawInitDefaultHardwareState200_nid_disambig1(words.data() + 1, 0x101) == 0x100, mode + ": a longer buffer did not get 256 dwords");
     Require(words.back() == Untouched, mode + ": a longer buffer was written past 256 dwords");
+    Require(sceGnmDrawInitDefaultHardwareState200_nid_disambig1(nullptr, 0x100) == static_cast<std::uint32_t>(-1), mode + ": a null buffer was accepted");
+    Require(sceGnmDrawInitDefaultHardwareState200_nid_disambig1(reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10}), 0x100) == static_cast<std::uint32_t>(-1), mode + ": an unwritable buffer was accepted");
 }
 
 void Put32(std::vector<std::uint8_t>& bytes, std::size_t offset, std::uint32_t value) {

@@ -82,6 +82,7 @@ void TestHardware350(bool neo) {
     words.fill(0xdeadbeefu);
     Require(sceGnmDrawInitDefaultHardwareState350_nid_disambig1(words.data(), 255) == 0 && words[0] == 0xdeadbeefu, "350 short buffer was modified");
     Require(sceGnmDrawInitDefaultHardwareState350_nid_disambig1(nullptr, 256) == static_cast<std::uint32_t>(-1), "350 null buffer was accepted");
+    Require(sceGnmDrawInitDefaultHardwareState350_nid_disambig1(reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10}), 256) == static_cast<std::uint32_t>(-1), "350 unwritable buffer was accepted");
     Require(sceGnmDrawInitDefaultHardwareState350_nid_disambig1(words.data(), 256) == 256, "350 returned the wrong length");
     Require(words[0] == Header(0x28, 2) && words[3] == Header(0x12, 1) && words[5] == Header(0x58, 6), "350 preamble differs");
     Require(words.back() == 0 && WholePackets(words), "350 packets or padding are invalid");
@@ -101,6 +102,7 @@ void TestContext400(bool neo) {
     words.fill(0xdeadbeefu);
     Require(sceGnmDrawInitToDefaultContextState400_nid_disambig1(words.data(), 255) == 0 && words[0] == 0xdeadbeefu, "400 short buffer was modified");
     Require(sceGnmDrawInitToDefaultContextState400_nid_disambig1(nullptr, 256) == static_cast<std::uint32_t>(-1), "400 null buffer was accepted");
+    Require(sceGnmDrawInitToDefaultContextState400_nid_disambig1(reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10}), 256) == static_cast<std::uint32_t>(-1), "400 unwritable buffer was accepted");
     Require(sceGnmDrawInitToDefaultContextState400_nid_disambig1(words.data(), 256) == 256, "400 returned the wrong length");
     Require(words[0] == Header(0x28, 2) && words[3] == Header(0x12, 1), "400 preamble differs");
     Require(WholePackets(words), "400 packets are invalid");
