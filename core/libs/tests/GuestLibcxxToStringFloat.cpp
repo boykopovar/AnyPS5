@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
 #include <string_view>
 
 namespace {
@@ -31,6 +32,16 @@ void Require(bool condition, const char* failure) {
     std::fputs(failure, stderr);
     std::fputc('\n', stderr);
     std::abort();
+}
+
+void CheckUnwritable(float input) {
+    bool threw = false;
+    try {
+        _ZNSt3__19to_stringEf_nid_postfix(nullptr, input);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, "to_string did not throw invalid_argument for unwritable result");
 }
 
 void Check(float input, std::string_view expected) {
@@ -63,6 +74,14 @@ void Check(float input, std::string_view expected) {
 int main() {
     const std::array<void*, 10> heapApi{};
     ApplicationHeapRegister_nid_no_patch(heapApi.data());
+    CheckUnwritable(0.0f);
+    CheckUnwritable(0x1p50f);
+    MallocManagedSize stats{};
+    stats.size = sizeof(stats);
+    stats.version = 1;
+    Require(malloc_stats_fast_nid_postfix(&stats) == 0, "malloc_stats_fast failed");
+    Require(stats.maxSystemSize == 0 && stats.currentSystemSize == 0,
+            "unwritable to_string allocated guest heap memory");
     Check(0.0f, "0.000000");
     Check(-0.0f, "-0.000000");
     Check(1.25f, "1.250000");

@@ -32,6 +32,9 @@ extern "C" void* APS5_VABI _ZNSt3__19to_stringEf_nid_postfix(void* result, float
     const auto size = static_cast<std::size_t>(length);
     ShortString small{};
     if (size < small.data.size()) {
+        if (!GuestWritable_nid_no_patch(result, sizeof(small))) {
+            _ZSt18_Xinvalid_argumentPKc_nid_postfix("to_string: unwritable short string");
+        }
         small.flags = static_cast<unsigned char>(size << 1u);
         std::memcpy(small.data.data(), text.data(), size + 1);
         if (!GuestCopyOut_nid_no_patch(result, &small, sizeof(small))) {
@@ -40,6 +43,9 @@ extern "C" void* APS5_VABI _ZNSt3__19to_stringEf_nid_postfix(void* result, float
         return result;
     }
 
+    if (!GuestWritable_nid_no_patch(result, sizeof(LongString))) {
+        _ZSt18_Xinvalid_argumentPKc_nid_postfix("to_string: unwritable long string");
+    }
     auto* data = static_cast<char*>(_Znwm_nid_postfix(LongStringAllocationSize));
     std::memcpy(data, text.data(), size + 1);
     const LongString large{LongStringAllocationSize | 1u, size, data};
