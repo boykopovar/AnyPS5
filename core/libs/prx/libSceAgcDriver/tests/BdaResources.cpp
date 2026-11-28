@@ -4655,10 +4655,11 @@ bool RunSparseBufferHoleTests(const Context& context, const BdaTestAccess& acces
     constexpr std::size_t copied = 3 * unit;
     bool passed = true;
     for (const bool writable : {false, true}) {
-        for (const std::string shape : {"interior", "shortened", "committed"}) {
+        for (const std::string shape : {"interior", "shortened", "committed", "decommitted", "hollowed"}) {
             const auto name = std::string(writable ? "writable " : "readable ") + shape;
             try {
-                const bool whole = shape == "committed";
+                const bool hollowed = shape == "hollowed";
+                const bool whole = shape == "committed" || hollowed;
                 const auto reserved = shape == "shortened" ? 4 * unit : copied;
                 struct Reservation {
                     std::size_t bytes;
@@ -4682,9 +4683,36 @@ bool RunSparseBufferHoleTests(const Context& context, const BdaTestAccess& acces
                     seeded = seed.Handle();
                 }
                 const auto base = reinterpret_cast<std::uintptr_t>(reservation.data);
+                const bool released = shape == "decommitted";
+                if (released) {
+                    GuestBufferMemory warm(context);
+                    if (writable) warm.AddWritable(base, reserved);
+                    else warm.AddReadable(base, reserved);
+                    warm.Upload(false);
+                    std::uint32_t warmAdjustment = 0;
+                    const auto warmed = warm.Descriptor(base, reserved, warmAdjustment);
+                    warm.WriteBack();
+                    const auto poisoned = access.bytes(warmed.buffer);
+                    std::fill(poisoned.begin(), poisoned.end(), std::byte{0xa5});
+                    seeded = warmed.buffer;
+                }
                 GuestBufferMemory memory(context);
                 if (writable) memory.AddWritable(base, reserved);
                 else memory.AddReadable(base, reserved);
+                if (released) {
+#ifdef _WIN32
+                    Require(VirtualFree(reservation.data + 2 * unit, unit, MEM_DECOMMIT) != 0, "cannot decommit the sparse heap tail");
+#else
+                    Require(mprotect(reservation.data + 2 * unit, unit, PROT_NONE) == 0, "cannot decommit the sparse heap tail");
+#endif
+                }
+                if (hollowed) {
+#ifdef _WIN32
+                    Require(VirtualFree(reservation.data + unit, unit, MEM_DECOMMIT) != 0, "cannot decommit the middle of the committed heap");
+#else
+                    Require(mprotect(reservation.data + unit, unit, PROT_NONE) == 0, "cannot decommit the middle of the committed heap");
+#endif
+                }
                 memory.Upload(false);
                 std::uint32_t adjustment = 0;
                 const auto view = memory.Descriptor(base, reserved, adjustment);
@@ -4694,14 +4722,16 @@ bool RunSparseBufferHoleTests(const Context& context, const BdaTestAccess& acces
                 const auto equals = [](std::span<const std::byte> part, std::byte value) {
                     return std::all_of(part.begin(), part.end(), [value](std::byte byte) { return byte == value; });
                 };
-                Require(equals(bytes.first(unit), std::byte{0x31}) && equals(bytes.subspan(2 * unit, unit), std::byte{0x72}), "committed GPU bytes changed during upload");
-                const bool holeZero = equals(bytes.subspan(unit, unit), whole ? std::byte{0x3c} : std::byte{});
+                Require(equals(bytes.first(unit), std::byte{0x31}) && equals(bytes.subspan(2 * unit, unit), released ? std::byte{} : std::byte{0x72}), released ? "a piece decommitted after its registration did not upload as zeros" : "committed GPU bytes changed during upload");
+                const bool holeZero = equals(bytes.subspan(unit, unit), whole && !hollowed ? std::byte{0x3c} : std::byte{});
                 bytes[8] = std::byte{0x19};
-                bytes[unit + 8] = std::byte{0xd4};
-                bytes[2 * unit + 8] = std::byte{0x27};
+                if (!hollowed) bytes[unit + 8] = std::byte{0xd4};
+                if (!released) bytes[2 * unit + 8] = std::byte{0x27};
                 memory.WriteBack();
-                Require(reservation.data[8] == (writable ? std::byte{0x19} : std::byte{0x31}) && reservation.data[2 * unit + 8] == (writable ? std::byte{0x27} : std::byte{0x72}), "sparse write-back did not preserve its writable ranges");
-                if (whole) Require(reservation.data[unit + 8] == (writable ? std::byte{0xd4} : std::byte{0x3c}), "committed middle write-back changed permissions");
+                Require(reservation.data[8] == (writable ? std::byte{0x19} : std::byte{0x31}) && (released || reservation.data[2 * unit + 8] == (writable ? std::byte{0x27} : std::byte{0x72})), "sparse write-back did not preserve its writable ranges");
+                if (released) Require(!AgcDriver::GuestMemory::Accessible(reservation.data + 2 * unit, unit), "sparse write-back committed a piece the guest had decommitted");
+                if (hollowed) Require(!AgcDriver::GuestMemory::Accessible(reservation.data + unit, unit), "write-back committed the middle the guest had decommitted");
+                else if (whole) Require(reservation.data[unit + 8] == (writable ? std::byte{0xd4} : std::byte{0x3c}), "committed middle write-back changed permissions");
                 Require(holeZero, "uncommitted GPU bytes retain prior buffer contents");
                 std::cout << "sparse buffer holes: " << name << " passed\n";
             } catch (const std::exception& error) {
@@ -4710,6 +4740,7 @@ bool RunSparseBufferHoleTests(const Context& context, const BdaTestAccess& acces
             }
         }
     }
+    ClearUploadCopies(context.device);
     return passed;
 }
 

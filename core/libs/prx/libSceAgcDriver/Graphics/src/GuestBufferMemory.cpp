@@ -7621,7 +7621,13 @@ void GuestBufferMemory::copyRegion(Region& region, bool addressable) {
     std::shared_ptr<UploadCopies::Spans> sparseSpans;
     if (compareSparse && cacheable && !addressable && region.sparse && !region.backed.empty() && !uploadGeneration && allocated <= uploadCacheBudget()) {
         sparseSpans = std::make_shared<UploadCopies::Spans>();
-        if (auto cached = refreshSparseUpload(context, {region.begin, allocated, usage}, region.backed, *sparseSpans)) {
+        std::shared_ptr<Buffer> cached;
+        try {
+            cached = refreshSparseUpload(context, {region.begin, allocated, usage}, region.backed, *sparseSpans);
+        } catch (const std::runtime_error&) {
+            cached.reset();
+        }
+        if (cached) {
             region.buffer = std::move(cached);
             region.snapshot.clear();
             insertUploaded(context, region.begin, region.backed, allocated, usage, region.buffer, 0, std::move(sparseSpans));
@@ -7641,7 +7647,12 @@ void GuestBufferMemory::copyRegion(Region& region, bool addressable) {
         // Only ranges a descriptor may write need the copy the write-back diffs against; the
         // registered ranges of an address-based shader are read-only to it (AddressRanges).
         if (!region.sparse) {
-            GuestMemory::Read(region.begin, region.buffer->Bytes());
+            try {
+                GuestMemory::Read(region.begin, region.buffer->Bytes());
+            } catch (const std::runtime_error&) {
+                GuestMemory::ReadCommitted(region.begin, region.buffer->Bytes());
+                uploadGeneration = 0;
+            }
             readBytes += region.buffer->Bytes().size();
             if (written) region.uploaded.assign(region.buffer->Bytes().begin(), region.buffer->Bytes().end());
         } else {
@@ -7652,7 +7663,13 @@ void GuestBufferMemory::copyRegion(Region& region, bool addressable) {
                 const auto at = static_cast<std::size_t>(first - region.begin);
                 if (at > cursor) std::memset(target.data() + cursor, 0, at - cursor);
                 const auto piece = target.subspan(at, static_cast<std::size_t>(last - first));
-                GuestMemory::Read(first, piece);
+                const auto mappings = GuestMemory::ForgetSerial();
+                const bool readable = GuestMemory::Accessible(reinterpret_cast<const void*>(first), piece.size());
+                GuestMemory::ReadCommitted(first, piece);
+                if (!readable || (mappings & 1u) != 0u || GuestMemory::ForgetSerial() != mappings) {
+                    uploadGeneration = 0;
+                    sparseSpans.reset();
+                }
                 readBytes += piece.size();
                 if (written) region.uploaded.insert(region.uploaded.end(), piece.begin(), piece.end());
                 cursor = at + piece.size();
