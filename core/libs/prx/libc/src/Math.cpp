@@ -1577,14 +1577,6 @@ long double APS5_VABI log1pl_nid_postfix(long double x) {
     return _LLog_nid_postfix(u, 0) + correction;
 }
 long double APS5_VABI log2l_nid_postfix(long double x) { return _LLog_nid_postfix(x, -1); }
-long double APS5_VABI lgammal_nid_postfix(long double x) {
-    long double integral = x;
-    if (_LDint_nid_postfix(&integral, 0) == 0 && x <= 0.0L) {
-        _Feraise_nid_postfix(0x04);
-        return std::numeric_limits<long double>::infinity();
-    }
-    return std::lgamma(x);
-}
 long double APS5_VABI tgammal_nid_postfix(long double x) { return std::tgamma(x); }
 float APS5_VABI tgammaf_nid_postfix(float x) { return GuestTgammaf(x); }
 long double APS5_VABI hypotl_nid_postfix(long double x, long double y) {
@@ -2314,7 +2306,11 @@ static float LogfMsun(float x, bool fused);
 double APS5_VABI lgamma_r_nid_postfix(double x, int* signgamp) {
     if (signgamp == nullptr) throw std::invalid_argument("lgamma_r: null signgamp");
     const double whole = std::floor(x);
-    *signgamp = x < 0 && whole != x && std::fmod(whole, 2.0) != 0 ? -1 : 1;
+    const int sign = x < 0 && whole != x && std::fmod(whole, 2.0) != 0 ? -1 : 1;
+    const int savedErrno = errno;
+    const bool written = GuestCopyOut_nid_no_patch(signgamp, &sign, sizeof(sign));
+    errno = savedErrno;
+    if (!written) throw std::invalid_argument("lgamma_r: unwritable signgamp");
     const double result = LgammaMsun(x);
     if (std::isinf(result) && std::isfinite(x) && x <= 0 && std::floor(x) == x) errno = ERANGE;
     return result;

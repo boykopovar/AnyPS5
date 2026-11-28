@@ -34,6 +34,7 @@ struct State {
     std::uint64_t Flags = 0;
     std::array<std::uint64_t, 16> RedZone{};
     std::uint64_t InputFlags = 0;
+    std::uint64_t StackSlot = 0;
 };
 
 inline constexpr std::uint64_t kSentinel = 0xBADC0FFEE0DDF00Dull;
@@ -266,6 +267,8 @@ public:
             memory(0x8B, 0, 4, 256 + 128 - 128 + slot * 8);
             memory(0x89, 0, 7, (33 + slot) * 8);
         }
+        memory(0x8B, 0, 4, 384 + 64);
+        memory(0x89, 0, 7, 50 * 8);
         rip({0x48, 0x8B, 0x25}, 8);
         memory(0x8D, 4, 4, 128);
         for (auto reg : {15, 14, 13, 12, 5, 3}) pop(static_cast<std::uint8_t>(reg));

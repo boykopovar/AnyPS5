@@ -169,6 +169,21 @@ std::deque<const std::uint32_t*>& Driver::releasedTails() {
     return HostThreadLocal<std::deque<const std::uint32_t*>, ReleasedTailsStorage>();
 }
 
+void Driver::copyRewindTail(Submission& tail, const std::uint32_t* guest, std::size_t words, std::span<const Submission::RewindReturn> returns) {
+    tail.rewindTail = nullptr;
+    tail.rewindWords = 0;
+    tail.rewindReturns.clear();
+    copyCommands(tail, guest, words);
+    std::size_t next = 0;
+    std::size_t budget = std::size_t{1} << 26u;
+    while (tail.rewindTail == nullptr && next < returns.size()) {
+        const auto& resume = returns[next++];
+        copySegment(tail, resume.words->data(), resume.words->size(), budget, 0, resume.origin);
+    }
+    tail.rewindReturns.insert(tail.rewindReturns.end(), returns.begin() + static_cast<std::ptrdiff_t>(next), returns.end());
+    std::ranges::sort(tail.indirectSegments, {}, &Submission::IndirectSegment::start);
+}
+
 void Driver::noteReleasedTails(const Submission& submission) {
     auto& released = releasedTails();
     released.clear();
@@ -176,18 +191,20 @@ void Driver::noteReleasedTails(const Submission& submission) {
     auto& scratch = ShaderRecompiler::ThreadOwned(scratchSlot);
     const std::uint32_t* tail = submission.rewindTail;
     std::size_t words = submission.rewindWords;
+    auto returns = submission.rewindReturns;
     for (std::size_t chunk = 0; chunk < 256 && tail != nullptr; ++chunk) {
         if ((std::atomic_ref<std::uint32_t>(*const_cast<std::uint32_t*>(tail - 1)).load(std::memory_order_acquire) & 0x80000000u) == 0) break;
         released.push_back(tail - 1);
         scratch.rewindTail = nullptr;
         scratch.rewindWords = 0;
         try {
-            copyCommands(scratch, tail, words);
+            copyRewindTail(scratch, tail, words, returns);
         } catch (const std::exception&) {
             break;
         }
         tail = scratch.rewindTail;
         words = scratch.rewindWords;
+        returns = std::move(scratch.rewindReturns);
     }
 }
 
@@ -200,19 +217,20 @@ void Driver::copyCommands(Submission& submission, const std::uint32_t* guest, st
     std::ranges::sort(submission.indirectSegments, {}, &Submission::IndirectSegment::start);
 }
 
-bool Driver::copySegment(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget, std::size_t depth) {
+bool Driver::copySegment(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget, std::size_t depth, const std::uint32_t* origin) {
     require(depth < MaximumSegmentDepth, "command buffer jumps nest too deeply (a jump loop?)");
     for (;;) {
         const std::uint32_t* chained = nullptr;
         std::size_t chainedWords = 0;
-        if (copyLink(submission, guest, words, budget, depth, chained, chainedWords)) return true;
+        if (copyLink(submission, guest, words, budget, depth, chained, chainedWords, origin)) return true;
         if (chained == nullptr) return false;
         guest = chained;
         words = chainedWords;
+        origin = nullptr;
     }
 }
 
-bool Driver::copyLink(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget, std::size_t depth, const std::uint32_t*& chained, std::size_t& chainedWords) {
+bool Driver::copyLink(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget, std::size_t depth, const std::uint32_t*& chained, std::size_t& chainedWords, const std::uint32_t* origin) {
     require(words <= budget, "command buffer jumps exceed the copy limit (a jump loop?)");
     budget -= words;
     std::vector<std::pair<std::size_t, std::size_t>> guarded;
@@ -223,6 +241,10 @@ bool Driver::copyLink(Submission& submission, const std::uint32_t* guest, std::s
             return true;
         });
         for (const auto& range : guarded) require(range.first >= next, "conditional execution range ends inside a packet");
+    };
+    const std::uint32_t* source = origin != nullptr ? origin : guest;
+    const auto resumeAfter = [&](std::size_t next) {
+        if (next < words) submission.rewindReturns.push_back({std::make_shared<const std::vector<std::uint32_t>>(guest + next, guest + words), source + next});
     };
     for (std::size_t cursor = 0; cursor < words;) {
         const auto header = guest[cursor];
@@ -289,6 +311,7 @@ bool Driver::copyLink(Submission& submission, const std::uint32_t* guest, std::s
             const auto copied = startSegmentCopy(target, targetWords);
             if (copySegment(submission, target, targetWords, budget, depth + 1)) {
                 require(guarded.empty(), "a REWIND inside a conditional execution range is not implemented");
+                resumeAfter(cursor + count);
                 return true;
             }
             noteIndirectSegment(submission, start, target, targetWords, copied);
@@ -301,7 +324,7 @@ bool Driver::copyLink(Submission& submission, const std::uint32_t* guest, std::s
             submission.commands.push_back(header);
             submission.commands.push_back(std::atomic_ref<std::uint32_t>(*const_cast<std::uint32_t*>(guest + cursor + 1)).load(std::memory_order_acquire));
             cursor += count;
-            submission.rewindTail = guest + cursor;
+            submission.rewindTail = source + cursor;
             submission.rewindWords = words - cursor;
             return true;
         }
@@ -326,7 +349,7 @@ bool Driver::refreshIndirectSegment(Submission& submission, std::size_t index) {
         return recorder != nullptr && recorder->PendingWriterSerial(address, bytes) != 0;
     }();
     if (!pipelineWrites && !finisherWrites && !recordedWrites && !segment.copiedUnderWrite && !GuestMemory::DriverStoredOver(address, bytes, segment.copiedAt)) return false;
-    if (pipelineWrites) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, 0x3f);
+    if (pipelineWrites) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, 0x3f, "indirect_buffer_written");
     if (finisherWrites) DrawFinisher::Get().Drain();
     std::vector<std::uint32_t> words(segment.words);
     GuestMemory::Read(address, std::as_writable_bytes(std::span(words)), alignof(std::uint32_t));
@@ -362,7 +385,7 @@ bool Driver::refreshIndirectSegment(Submission& submission, std::size_t index) {
             expanded.renderingWaits.emplace(cursor, prepared->second);
         }
     }
-    if (DrawPipeline::Active() && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, 0x3f);
+    if (DrawPipeline::Active() && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, 0x3f, "indirect_buffer_changed");
     if (DrawFinisher::Busy()) DrawFinisher::Get().Drain();
     const auto delta = static_cast<std::ptrdiff_t>(expanded.commands.size()) - static_cast<std::ptrdiff_t>(segment.words);
     const auto moved = [&](std::size_t cursor) { return cursor >= end ? static_cast<std::size_t>(static_cast<std::ptrdiff_t>(cursor) + delta) : cursor; };
@@ -785,11 +808,18 @@ void Driver::executeRewindTail(const Submission& stalled) {
         released.clear();
         tail.enqueuedAt = std::chrono::steady_clock::now();
     }
-    copyCommands(tail, stalled.rewindTail, stalled.rewindWords);
+    copyRewindTail(tail, stalled.rewindTail, stalled.rewindWords, stalled.rewindReturns);
     noteTailRead(stalled.rewindTail, tail.queue, tail.rewindTail);
     if (APS5_ENABLE_TIMING_LOG) tail.copiedAt = std::chrono::steady_clock::now();
     validate(tail, stalled.rewindTail);
     readRegisterLists(tail);
+    const auto scan = ReferencedPrograms(tail.commands, tail.registerLists);
+    std::shared_ptr<const ShaderRegistry> registry;
+    {
+        std::lock_guard lock(mutex);
+        registry = shaders;
+    }
+    if (registry != nullptr) AwaitReferencedPreparations(*registry, scan.addresses);
     if (LibraryPrebuildsWaiting()) PrioritizeLibraryPrebuilds(BoundGraphicsPrograms(tail));
     if (APS5_ENABLE_TIMING_LOG) tail.validatedAt = std::chrono::steady_clock::now();
     waitForFlipRoom(tail);
@@ -857,7 +887,7 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip) {
     const bool holdsWork = holdFlipBehindWorker(submission, cpuFlip);
     std::shared_ptr<FlipWork> earlierFlipWork;
     const auto scan = ReferencedPrograms(submission.commands, submission.registerLists);
-    if (!scan.complete || submission.rewindTail != nullptr) {
+    if (!scan.complete) {
         AwaitRegistrationPreparation();
     } else {
         std::shared_ptr<const ShaderRegistry> registry;

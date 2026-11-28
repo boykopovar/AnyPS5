@@ -3,10 +3,13 @@ has them in its GOT. The Linux ELF keeps them dynamic and symbolless, with the v
 TLS block as the addend, for the dynamic loader to resolve against where it puts the block; a named one
 against a defined STT_TLS symbol is folded the same way, and one against an import stays named, typed
 STT_TLS. The Windows and macOS images resolve TPOFF64 and DTPOFF64 statically against their block,
-AlignUp(p_memsz, p_align) below the thread pointer, and reject what they cannot express. Every target
-rejects the link-time types GOT32, PLT32, GOTPCREL, 32S, GOTPCRELX and REX_GOTPCRELX, which glibc's
-ld.so does not apply; the Windows and macOS images also reject other types they cannot apply, such as
-PC32 and 32. Every target rejects a non-TLS relocation against an STT_TLS symbol, defined or imported."""
+AlignUp(p_memsz, p_align) below the thread pointer. Windows also resolves the executable's own DTPMOD64
+(symbol 0, addend 0) to the address of the module's PE `_tls_index`, the module word __tls_get_addr
+reads, and rejects one inside the PT_TLS initialization template or crossing its boundary, as the guest
+module writer does; macOS still rejects DTPMOD64. Every target rejects the link-time types GOT32, PLT32,
+GOTPCREL, 32S, GOTPCRELX and REX_GOTPCRELX, which glibc's ld.so does not apply; the Windows and macOS
+images also reject other types they cannot apply, such as PC32 and 32. Every target rejects a non-TLS
+relocation against an STT_TLS symbol, defined or imported."""
 
 from pathlib import Path
 import struct
@@ -120,6 +123,45 @@ def macho_bytes_at(data, address, size):
     raise AssertionError(f"unmapped address {address:#x}")
 
 
+def pe_directories(pe):
+    """The image base and the data directory table of a PE32 or PE32+ image."""
+    header = struct.unpack_from("<I", pe, 0x3c)[0]
+    optional = header + 24
+    magic = struct.unpack_from("<H", pe, optional)[0]
+    if magic == 0x20b:
+        return struct.unpack_from("<Q", pe, optional + 24)[0], optional + 112
+    assert magic == 0x10b, hex(magic)
+    return struct.unpack_from("<I", pe, optional + 28)[0], optional + 96
+
+
+def pe_tls_index_address(pe):
+    """The virtual address of the module's `_tls_index` from the PE TLS directory."""
+    _, directories = pe_directories(pe)
+    address, size = struct.unpack_from("<II", pe, directories + 9 * 8)
+    assert address != 0 and size >= 40, "the Windows image must have a TLS directory"
+    return struct.unpack_from("<Q", pe_bytes_at(pe, address, 40), 16)[0]
+
+
+def pe_base_relocation_targets(pe):
+    """Every DIR64 target RVA of the PE base relocation table."""
+    _, directories = pe_directories(pe)
+    address, size = struct.unpack_from("<II", pe, directories + 5 * 8)
+    assert address != 0 and size != 0, "the Windows image must have base relocations"
+    data = pe_bytes_at(pe, address, size)
+    targets = set()
+    position = 0
+    while position + 8 <= len(data):
+        page, block = struct.unpack_from("<II", data, position)
+        if block < 8:
+            break
+        for entry in range(position + 8, position + block, 2):
+            value, = struct.unpack_from("<H", data, entry)
+            if value >> 12 == 10:
+                targets.add(page + (value & 0xfff))
+        position += block
+    return targets
+
+
 def main():
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix="anyps5-exec-tls-") as directory:
@@ -131,7 +173,7 @@ def main():
                         struct.pack_into("<BBH", data, 0x4900 + TLS_SYMBOL * 24 + 4, binding << 4 | 6, 0, section)
                         name = f"tls-section-{target}-{section}-{binding}-{kind}"
                         result, output = relink(relinker, directory, name, data, *flags)
-                        if section == 1 and kind == DTPMOD64 and target in ("windows", "macos"):
+                        if section == 1 and kind == DTPMOD64 and target == "macos":
                             assert result.returncode == 2 and "DTPMOD64 relocation is not supported" in result.stderr, (
                                 name, result.returncode, result.stderr)
                             assert not output.exists(), name
@@ -172,6 +214,17 @@ def main():
         pe = output.read_bytes()
         values = [struct.unpack("<q", pe_bytes_at(pe, 0x10000 + address, 8))[0] for address in (0x1000, 0x1008, 0x1010)]
         assert values == [4 - TLS_BLOCK, 8, 0x12 - TLS_BLOCK], values
+
+        result, output = relink(relinker, directory, "windows-dtpmod",
+                                image([(0x1000, DTPMOD64, NULL, 0), (0x1028, DTPMOD64, TLS_SYMBOL, 0)]), "--windows")
+        assert result.returncode == 0 and output.exists(), (result.stdout, result.stderr)
+        pe = output.read_bytes()
+        image_base, _ = pe_directories(pe)
+        tls_index = pe_tls_index_address(pe)
+        assert pe_bytes_at(pe, tls_index - image_base, 4), "the TLS index must be mapped"
+        modules = [struct.unpack("<Q", pe_bytes_at(pe, 0x10000 + address, 8))[0] for address in (0x1000, 0x1028)]
+        assert modules == [tls_index, tls_index], [hex(value) for value in modules]
+        assert {0x10000 + 0x1000, 0x10000 + 0x1028} <= pe_base_relocation_targets(pe), "the module word needs a base relocation"
 
         result, output = relink(relinker, directory, "macos", image(local), "--macos")
         assert result.returncode == 0, (result.stdout, result.stderr)
@@ -220,6 +273,10 @@ def main():
                 name = f"outside-template-import-{target:x}-{len(flags)}"
                 result, output = relink(relinker, directory, name, data, *flags)
                 assert result.returncode == 0 and output.exists(), (name, result.returncode, result.stderr)
+        for target in (0x17f8, 0x1808):
+            name = f"outside-template-dtpmod-{target:x}"
+            result, output = relink(relinker, directory, name, image([(target, DTPMOD64, NULL, 0)]), "--windows")
+            assert result.returncode == 0 and output.exists(), (name, result.returncode, result.stderr)
 
         failures = [
             ("tpoff32", [(0x1000, TPOFF32, NULL, 0)], True, (), "Unsupported relocation type 0x17"),
@@ -228,7 +285,12 @@ def main():
             ("not-tls-symbol", [(0x1000, TPOFF64, DATA_SYMBOL, 0)], True, (), "not STT_TLS"),
             ("no-tls-segment", [(0x1000, TPOFF64, NULL, 0)], False, (), "without a non-empty PT_TLS segment"),
             ("dtpmod-addend", [(0x1000, DTPMOD64, NULL, 1)], True, (), "DTPMOD64 relocation has a nonzero addend"),
-            ("windows-dtpmod", [(0x1000, DTPMOD64, NULL, 0)], True, ("--windows",), "DTPMOD64 relocation is not supported"),
+            ("windows-dtpmod-in-template", [(0x1800, DTPMOD64, NULL, 0)], True, ("--windows",),
+             "Runtime-bound executable TLS template relocation is not supported"),
+            ("windows-dtpmod-crosses-template-start", [(0x17fc, DTPMOD64, NULL, 0)], True, ("--windows",),
+             "Executable relocation crosses the TLS template boundary"),
+            ("windows-dtpmod-crosses-template-end", [(0x1804, DTPMOD64, NULL, 0)], True, ("--windows",),
+             "Executable relocation crosses the TLS template boundary"),
             ("windows-import", [(0x1000, TPOFF64, IMPORTED, 0)], True, ("--windows",), "Imported TLS relocation"),
             ("windows-pc32", [(0x1000, 2, NULL, 0)], True, ("--windows",), "Relocation type 2 is not supported for this target"),
             ("windows-32", [(0x1000, 10, NULL, 0)], True, ("--windows",), "Relocation type 10 is not supported for this target"),
