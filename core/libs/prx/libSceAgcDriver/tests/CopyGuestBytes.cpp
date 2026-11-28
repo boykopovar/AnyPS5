@@ -59,7 +59,8 @@ static void CheckComparisons() {
 #if defined(ANYPS5_ENABLE_ASAN) || defined(ANYPS5_ENABLE_TSAN)
 template <typename Write, typename Read>
 static void RunAgainstWriter(int reads, Write&& write, Read&& read) {
-    constexpr std::uint64_t MinimumWrites = 64;
+    constexpr int MinimumAdvances = 16;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
     std::atomic<bool> started{false};
     std::atomic<bool> stop{false};
     std::atomic<std::uint64_t> writes{0};
@@ -70,17 +71,19 @@ static void RunAgainstWriter(int reads, Write&& write, Read&& read) {
             writes.fetch_add(1, std::memory_order_relaxed);
         }
     });
-    while (!started.load(std::memory_order_acquire)) std::this_thread::yield();
-    const auto first = writes.load(std::memory_order_relaxed);
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
-    for (int round = 0; round < reads || writes.load(std::memory_order_relaxed) - first < MinimumWrites; ++round) {
+    while (!started.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+    int advances = 0;
+    auto seen = writes.load(std::memory_order_relaxed);
+    for (int round = 0; (round < reads || advances < MinimumAdvances) && std::chrono::steady_clock::now() < deadline; ++round) {
         read();
-        if (std::chrono::steady_clock::now() > deadline) break;
+        const auto now = writes.load(std::memory_order_relaxed);
+        if (now != seen) ++advances;
+        seen = now;
     }
-    const auto during = writes.load(std::memory_order_relaxed) - first;
+    if (advances >= MinimumAdvances) read();
     stop.store(true, std::memory_order_relaxed);
     writer.join();
-    Require(during >= MinimumWrites, "the writer did not run while the reader read");
+    Require(advances >= MinimumAdvances, "the writer did not store between the reader's reads");
 }
 
 static void CheckConcurrentAccess() {
