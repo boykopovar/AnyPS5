@@ -168,6 +168,8 @@ void APS5_VABI WKBundlePageSetPaintedObjectsCounterThreshold(const void* pageRef
 bool APS5_VABI WKBundlePageHasLocalDataForURL(const void* pageRef, const void* urlRef);
 std::uint32_t APS5_VABI WKBundlePageOverlayGetTypeID();
 std::uint32_t APS5_VABI WKBundleRangeHandleGetTypeID();
+const void* APS5_VABI WKBundleRangeHandleCreate(NKWebKit::JSContextRef context, NKWebKit::JSValueRef value);
+NKWebKit::RectValue APS5_VABI WKBundleRangeHandleGetBoundingRectInWindowCoordinates(const void* rangeHandleRef);
 std::uint32_t APS5_VABI WKBundleScriptWorldGetTypeID();
 const void* APS5_VABI WKBundleScriptWorldCreateWorld();
 const void* APS5_VABI WKBundleScriptWorldNormalWorld();

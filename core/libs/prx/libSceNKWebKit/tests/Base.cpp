@@ -1519,6 +1519,142 @@ static void TestBundleNodeHandle() {
     Require(threw);
 }
 
+static void TestBundleRangeHandle() {
+    Require(WKBundleRangeHandleGetTypeID() == 126);
+    Require(WKBundleRangeHandleCreate(nullptr, nullptr) == nullptr);
+
+    auto* ctx = JSGlobalContextCreate(nullptr);
+    Require(ctx != nullptr);
+
+    auto evalJs = [&](const char* code) -> NKWebKit::JSValueRef {
+        auto* script = JSStringCreateWithUTF8CString_nid_postfix(code);
+        NKWebKit::JSValueRef exc = nullptr;
+        auto* val = JSEvaluateScript(ctx, script, nullptr, nullptr, 1, &exc);
+        JSStringRelease_nid_postfix(script);
+        return val;
+    };
+
+    auto* numVal = JSValueMakeNumber(ctx, 123.0);
+    Require(numVal != nullptr);
+    auto* strVal = evalJs("'not a range'");
+    Require(strVal != nullptr);
+    auto* plainObj = evalJs("({ notRange: true })");
+    Require(plainObj != nullptr);
+    auto* fakeClone = evalJs("({ cloneRange: function() {} })");
+    Require(fakeClone != nullptr);
+    auto* fakeContainer = evalJs("({ startContainer: {}, endContainer: {} })");
+    Require(fakeContainer != nullptr);
+    auto* fakeNameObj = evalJs("({ constructor: { name: 'Range' }, getBoundingClientRect: function() { return { x: 1, y: 1, width: 1, height: 1 }; } })");
+    Require(fakeNameObj != nullptr);
+    auto* isolatedRange = evalJs(
+        "(function() {\n"
+        "  class Range {\n"
+        "    getBoundingClientRect() {\n"
+        "      return { x: 5.0, y: 5.0, width: 50.0, height: 50.0 };\n"
+        "    }\n"
+        "  }\n"
+        "  return new Range();\n"
+        "})()\n"
+    );
+    Require(isolatedRange != nullptr);
+
+    Require(WKBundleRangeHandleCreate(ctx, nullptr) == nullptr);
+    Require(WKBundleRangeHandleCreate(nullptr, numVal) == nullptr);
+    Require(WKBundleRangeHandleCreate(ctx, numVal) == nullptr);
+    Require(WKBundleRangeHandleCreate(ctx, strVal) == nullptr);
+    Require(WKBundleRangeHandleCreate(ctx, plainObj) == nullptr);
+    Require(WKBundleRangeHandleCreate(ctx, fakeClone) == nullptr);
+    Require(WKBundleRangeHandleCreate(ctx, fakeContainer) == nullptr);
+    Require(WKBundleRangeHandleCreate(ctx, fakeNameObj) == nullptr);
+    Require(WKBundleRangeHandleCreate(ctx, isolatedRange) == nullptr);
+
+    evalJs(
+        "globalThis.Range = class Range {\n"
+        "  static [Symbol.hasInstance](obj) { return true; }\n"
+        "  getBoundingClientRect() {\n"
+        "    return { x: 10.0, y: 20.0, width: 100.0, height: 200.0 };\n"
+        "  }\n"
+        "};\n"
+    );
+    auto* forgedGlobalVal = evalJs("new globalThis.Range();");
+    Require(forgedGlobalVal != nullptr);
+    Require(WKBundleRangeHandleCreate(ctx, forgedGlobalVal) == nullptr);
+    Require(WKBundleRangeHandleCreate(ctx, plainObj) == nullptr);
+
+    NKWebKit::JSClassDefinition rangeDef{};
+    rangeDef.className = "Range";
+    auto* rangeClass = JSClassCreate(&rangeDef);
+    Require(rangeClass != nullptr);
+
+    auto* rangeObj = JSObjectMake(ctx, rangeClass, nullptr);
+    Require(rangeObj != nullptr);
+    auto* getRectFn = evalJs("(function() { return { x: 10.0, y: 20.0, width: 100.0, height: 200.0 }; })");
+    auto* getRectName = JSStringCreateWithUTF8CString_nid_postfix("getBoundingClientRect");
+    NKWebKit::JSValueRef propExc = nullptr;
+    JSObjectSetProperty(ctx, rangeObj, getRectName, getRectFn, 0, &propExc);
+    Require(propExc == nullptr);
+
+    const void* rangeRef = WKBundleRangeHandleCreate(ctx, rangeObj);
+    Require(rangeRef != nullptr);
+    Require(WKGetTypeID(rangeRef) == WKBundleRangeHandleGetTypeID());
+
+    auto rect = WKBundleRangeHandleGetBoundingRectInWindowCoordinates(rangeRef);
+    Require(rect.origin.x == 10.0);
+    Require(rect.origin.y == 20.0);
+    Require(rect.size.width == 100.0);
+    Require(rect.size.height == 200.0);
+    WKRelease(rangeRef);
+
+    auto* throwingObj = JSObjectMake(ctx, rangeClass, nullptr);
+    Require(throwingObj != nullptr);
+    auto* throwingFn = evalJs("(function() { throw new Error('getter error'); })");
+    JSObjectSetProperty(ctx, throwingObj, getRectName, throwingFn, 0, &propExc);
+    Require(propExc == nullptr);
+
+    const void* throwingRef = WKBundleRangeHandleCreate(ctx, throwingObj);
+    Require(throwingRef != nullptr);
+    auto throwingRect = WKBundleRangeHandleGetBoundingRectInWindowCoordinates(throwingRef);
+    Require(throwingRect.origin.x == 0.0);
+    Require(throwingRect.origin.y == 0.0);
+    Require(throwingRect.size.width == 0.0);
+    Require(throwingRect.size.height == 0.0);
+    WKRelease(throwingRef);
+
+    auto* subCtx = JSGlobalContextCreate(nullptr);
+    Require(subCtx != nullptr);
+    auto* subRangeObj = JSObjectMake(subCtx, rangeClass, nullptr);
+    Require(subRangeObj != nullptr);
+    auto* subScript = JSStringCreateWithUTF8CString_nid_postfix("(function() { return { x: 5.0, y: 15.0, width: 25.0, height: 35.0 }; })");
+    NKWebKit::JSValueRef subExc = nullptr;
+    auto* subRectFn = JSEvaluateScript(subCtx, subScript, nullptr, nullptr, 1, &subExc);
+    JSStringRelease_nid_postfix(subScript);
+    Require(subRectFn != nullptr && subExc == nullptr);
+    JSObjectSetProperty(subCtx, subRangeObj, getRectName, subRectFn, 0, &subExc);
+    Require(subExc == nullptr);
+    JSStringRelease_nid_postfix(getRectName);
+
+    const void* subHandle = WKBundleRangeHandleCreate(subCtx, subRangeObj);
+    Require(subHandle != nullptr);
+    JSGlobalContextRelease(subCtx);
+    auto subRect = WKBundleRangeHandleGetBoundingRectInWindowCoordinates(subHandle);
+    Require(subRect.origin.x == 5.0);
+    Require(subRect.origin.y == 15.0);
+    Require(subRect.size.width == 25.0);
+    Require(subRect.size.height == 35.0);
+    WKRelease(subHandle);
+
+    JSClassRelease(rangeClass);
+    JSGlobalContextRelease(ctx);
+
+    bool threw = false;
+    try {
+        WKBundleRangeHandleGetBoundingRectInWindowCoordinates(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static void TestBundleFrameScroll() {
     Require(WKBundleFrameGetTypeID() == 119);
     auto frame = NKWebKit::Make<NKWebKit::BundleFrame>();
@@ -4124,6 +4260,7 @@ int main() {
     TestBundleDOMWindowExtension();
     TestBundleHitTestResult();
     TestBundleNodeHandle();
+    TestBundleRangeHandle();
     TestBundleFrameScroll();
     TestBundlePagination();
     TestBundleFrameForms();

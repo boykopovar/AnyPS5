@@ -8467,13 +8467,7 @@ int APS5_VABI WKBundleRangeHandleCopySnapshotWithOptions() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundleRangeHandleCreate() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
-int APS5_VABI WKBundleRangeHandleGetBoundingRectInWindowCoordinates() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKBundleReportException() {
     NotImplemented_nid_no_patch(__func__);

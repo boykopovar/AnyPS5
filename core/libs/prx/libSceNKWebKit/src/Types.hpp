@@ -13,6 +13,11 @@
 
 namespace NKWebKit {
 
+struct OpaqueJSContext;
+struct OpaqueJSValue;
+using JSContextRef = const OpaqueJSContext*;
+using JSValueRef = const OpaqueJSValue*;
+
 std::optional<std::u16string> DecodeUtf8(const char* text, std::size_t length);
 std::optional<std::u16string> DecodeUtf8(const char* text);
 std::string EncodeUtf8(std::u16string_view text);
@@ -241,6 +246,17 @@ public:
 
     Retained<BundleFrame> frame;
     Retained<BundleScriptWorld> scriptWorld;
+};
+
+class BundleRangeHandle final : public ObjectOf<ObjectType::BundleRangeHandle> {
+public:
+    BundleRangeHandle();
+    BundleRangeHandle(JSContextRef context, JSValueRef value);
+    ~BundleRangeHandle() override;
+
+    JSContextRef context = nullptr;
+    JSValueRef value = nullptr;
+    RectValue boundingRectInWindowCoordinates{{0.0, 0.0}, {0.0, 0.0}};
 };
 
 class BundleNodeHandle final : public ObjectOf<ObjectType::BundleNodeHandle> {
