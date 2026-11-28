@@ -3,6 +3,7 @@
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include "prx/libSceCommonDialog/include/DialogUse.hpp"
 #include "prx/libSceCommonDialog/include/Exports.hpp"
+#include "prx/libSceSystemService/include/SystemService.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include <array>
 #include <cerrno>
@@ -120,6 +121,8 @@ int main() {
     Require(!sceCommonDialogIsUsed());
     Require(CommonDialogAcquire_nid_no_patch());
     CommonDialogRelease_nid_no_patch();
+
+    Require(_ZN3sce16CommonDialogUtil12getSelfAppIdEv() == sceLncUtilGetAppIdOfRunningBigApp());
 
     CommonDialogBaseParam base{};
     base.size = sizeof(base);

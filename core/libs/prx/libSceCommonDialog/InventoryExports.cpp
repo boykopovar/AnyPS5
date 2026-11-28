@@ -1,4 +1,5 @@
 #include "prx/libSceCommonDialog/include/Exports.hpp"
+#include "prx/libSceSystemService/include/SystemService.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -29,8 +30,7 @@ bool HasClientImplementation(const void* client) {
 extern "C" {
 
 int APS5_VABI _ZN3sce16CommonDialogUtil12getSelfAppIdEv() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceLncUtilGetAppIdOfRunningBigApp();
 }
 
 int APS5_VABI _ZN3sce16CommonDialogUtil6Client11closeModuleEv(void* self) {
