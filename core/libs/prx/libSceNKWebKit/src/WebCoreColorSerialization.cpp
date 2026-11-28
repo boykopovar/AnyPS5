@@ -32,11 +32,21 @@
 #include <cstdint>
 #include <cstdio>
 #include <stdexcept>
+#include <type_traits>
 
 namespace {
 
+static_assert(std::is_trivially_copyable_v<WebCore::Color>);
+
 constexpr std::uint64_t kOutOfLine = 1ULL << 51;
 constexpr std::uint64_t kUseColorFunctionSerialization = 1ULL << 49;
+
+WebCore::Color ReadGuestColor(const WebCore::Color* color, const char* function) {
+    WebCore::Color value{};
+    if (!GuestCopyIn_nid_no_patch(&value, color, sizeof(value)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return value;
+}
 
 unsigned FractionDigits(std::uint8_t alpha, std::array<char, 4>& digits) {
     const auto digit = [](unsigned value) { return static_cast<char>('0' + value); };
@@ -62,7 +72,7 @@ NKWebKit::WtfAbi::String MakeString(const char* text, std::size_t length) {
 extern "C" NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore20serializationForHTMLERKNS_5ColorE(const WebCore::Color* color) {
     if (!color) throw std::invalid_argument("Color::serializationForHTML: null color");
 
-    const std::uint64_t bits = color->m_colorAndFlags;
+    const std::uint64_t bits = ReadGuestColor(color, __func__).m_colorAndFlags;
     if (bits & kOutOfLine)
         NotImplemented_nid_no_patch("Color::serializationForHTML: out-of-line color");
     if (bits & kUseColorFunctionSerialization)
