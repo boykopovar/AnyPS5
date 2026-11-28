@@ -5,6 +5,7 @@ import os
 import re
 import stat
 import zlib
+from collections import Counter
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -66,7 +67,7 @@ def clean_environment(base_env, extra_env, trace_dir, window_kind, window):
             if (not isinstance(name, str) or not name or "=" in name or "\x00" in name or
                     not isinstance(value, str) or "\x00" in value):
                 raise ValueError("environment must contain valid string names and values")
-            if instrumentation_name(name):
+            if instrumentation_name(name) or name.upper() == "APS5_PAD_RECORD":
                 removed.add(name)
                 continue
             if os.name == "nt":
@@ -278,6 +279,15 @@ def inspect_capture(run_dir, window_kind, window, title_id, content_version=None
                     "native_summary": summary, "process_id": int(match[2]), "warnings": []}
         trace_raw, trace_artifact = read_regular(directory / name, MAX_TRACE_BYTES)
         trace = validate_trace(trace_raw, summary, int(match[2]))
+        if "trace_dropped_threads" in summary:
+            lost_by_name = Counter()
+            for tid, _, lost in trace.losses:
+                lost_by_name[trace.name(tid)] += lost
+            reported = {thread_name: thread["events_lost"]
+                        for thread_name, thread in summary["trace_dropped_threads"].items()
+                        if thread.get("events_lost")}
+            if lost_by_name != reported:
+                raise ValueError("native trace event loss counts differ from its summary")
         warnings, completeness = capture_warnings(summary, trace)
         return {"state": "complete", "reason": "Native window summary and trace were collected.",
                 "native_summary": summary, "process_id": int(match[2]), "warnings": warnings,

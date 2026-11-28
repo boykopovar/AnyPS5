@@ -406,8 +406,8 @@ void TestLowLatencyCallsRejectBadArguments() {
     Require(sceAudioOut2LoPortCreate(session.context, nullptr, &port) == errorInvalidArgument);
     Require(port == portSentinel);
     Require(sceAudioOut2LoPortCreate(session.context, &portParams, nullptr) == errorInvalidArgument);
-    Require(sceAudioOut2LoContextSetAttributes(session.context, nullptr, 1) == errorInvalidArgument);
-    Require(sceAudioOut2LoContextSetAttributes(session.context, nullptr, 0) == 0);
+    Require(sceAudioOut2LoContextSetAttributes(session.context, nullptr, 1) == static_cast<int>(0x80268001));
+    Require(sceAudioOut2LoContextSetAttributes(session.context, nullptr, 0) == static_cast<int>(0x80268001));
     Require(sceAudioOut2LoContextSetAttributes(session.context, &attribute, 1) == 0);
     Require(sceAudioOut2LoPortSetAttributes(session.port, nullptr, 1) == errorInvalidArgument);
     Require(sceAudioOut2LoPortSetAttributes(session.port, nullptr, 0) == 0);

@@ -125,8 +125,15 @@ void Driver::completeSubmission(std::uint64_t serial, std::uint64_t received, st
             if (notify) driver.changed.notify_all();
         }
     } complete{*this, serial, received, labelWrites};
-    if (flipWork != nullptr) finishFlipWork(flipWork, submitFlipWork(0));
-    else submitOpenWork(progress);
+    try {
+        if (flipWork != nullptr) finishFlipWork(flipWork, submitFlipWork(0));
+        else submitOpenWork(progress);
+    } catch (const ProcessShutdown&) {
+        throw;
+    } catch (...) {
+        ReportFailure(std::current_exception());
+        throw;
+    }
 }
 
 const std::atomic<std::uint64_t>*& Driver::workerQueued() {
@@ -176,20 +183,24 @@ void Driver::run(std::uint32_t id) noexcept {
                 std::atomic<std::uint32_t>& count;
                 std::atomic<std::uint64_t>& idleEpoch;
                 std::condition_variable& changed;
+                std::mutex& mutex;
                 bool active = false;
-                Running(std::atomic<std::uint32_t>& count, std::atomic<std::uint64_t>& idleEpoch, std::condition_variable& changed)
-                    : count(count), idleEpoch(idleEpoch), changed(changed) {}
+                Running(std::atomic<std::uint32_t>& count, std::atomic<std::uint64_t>& idleEpoch, std::condition_variable& changed, std::mutex& mutex)
+                    : count(count), idleEpoch(idleEpoch), changed(changed), mutex(mutex) {}
                 void Start() {
                     count.fetch_add(1, std::memory_order_acq_rel);
                     active = true;
                 }
                 ~Running() {
                     if (active && count.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-                        idleEpoch.fetch_add(1, std::memory_order_release);
+                        {
+                            std::lock_guard lock(mutex);
+                            idleEpoch.fetch_add(1, std::memory_order_release);
+                        }
                         changed.notify_all();
                     }
                 }
-            } running{runningWorkers, idleEpoch, changed};
+            } running{runningWorkers, idleEpoch, changed, mutex};
             static const bool traceGpu = std::getenv("APS5_TRACE_GPU") != nullptr;
             {
                 PerformanceContext timingContext(id == 0 ? frameTiming() : FrameTiming::Async());

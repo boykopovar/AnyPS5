@@ -1581,6 +1581,7 @@ int main() {
     Require(stat_nid_postfix(viaParent.c_str(), &status) == 0 && status.st_size == 5);
     Require(stat_nid_postfix(nullptr, &status) == -1 && *__error_nid_postfix() == 14);
     Require(stat_nid_postfix(presentName.c_str(), nullptr) == -1 && *__error_nid_postfix() == 14);
+    Require(stat_nid_postfix(missingName.c_str(), nullptr) == -1 && *__error_nid_postfix() == 2);
     FileStat linkStatus{};
     Require(lstat_nid_postfix(presentName.c_str(), &linkStatus) == 0 && linkStatus.st_size == 5);
     Require((linkStatus.st_mode & 0170000) == 0100000 && linkStatus.st_ino == status.st_ino);
@@ -1589,6 +1590,7 @@ int main() {
     Require(lstat_nid_postfix("", &linkStatus) == -1 && *__error_nid_postfix() == 2);
     Require(lstat_nid_postfix(nullptr, &linkStatus) == -1 && *__error_nid_postfix() == 14);
     Require(lstat_nid_postfix(presentName.c_str(), nullptr) == -1 && *__error_nid_postfix() == 14);
+    Require(lstat_nid_postfix(missingName.c_str(), nullptr) == -1 && *__error_nid_postfix() == 2);
 #ifndef _WIN32
     const auto link = root / "link";
     std::filesystem::create_symlink("present.txt", link);
@@ -1986,6 +1988,13 @@ int main() {
     Require(sceKernelOpen(invalidFlagsName.c_str(), 0x20a02, 0600) == static_cast<int>(0x80020016u));
     Require(open_nid_postfix(invalidFlagsName.c_str(), 0x20a00, 0600) == -1 && *__error_nid_postfix() == 22);
     Require(!std::filesystem::exists(invalidFlagsName));
+    Require(sceKernelOpen(missingName.c_str(), 0x20200, 0600) == static_cast<int>(0x80020002u));
+    Require(!std::filesystem::exists(missing));
+    Require(sceKernelOpen(presentName.c_str(), 0x20200, 0600) == static_cast<int>(0x80020014u));
+    Require(open_nid_postfix(presentName.c_str(), 0x20200, 0600) == -1 && *__error_nid_postfix() == 20);
+    const int lookedUpDirectory = sceKernelOpen(rootName.c_str(), 0x20200, 0);
+    Require(lookedUpDirectory >= 0 && sceKernelClose(lookedUpDirectory) == 0);
+    Require(sceKernelOpen(rootName.c_str(), 0x20202, 0) == static_cast<int>(0x80020015u));
     Require(open_nid_postfix(nullptr, 3, 0) == -1 && *__error_nid_postfix() == 22);
     Require(open_nid_postfix("", 0x20a00, 0600) == -1 && *__error_nid_postfix() == 22);
     Require(_open_nid_postfix(nullptr, 0x403) == -1 && *__error_nid_postfix() == 22);

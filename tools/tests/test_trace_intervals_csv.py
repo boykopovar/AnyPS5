@@ -157,6 +157,7 @@ class IntervalCsvTests(unittest.TestCase):
                 self.assertEqual(completed.returncode, 2, completed.stderr)
                 self.assertEqual(completed.stdout, b"")
                 self.assertNotIn(b"Traceback", completed.stderr)
+                self.assertIn(path.name.encode(), completed.stderr)
 
 
 if __name__ == "__main__":

@@ -186,8 +186,10 @@ bool utcCalendarFields(std::int64_t time, GuestTm& result) {
 namespace {
 
 const bool timeZoneFixed = [] {
+    const int savedErrno = errno;
     if (std::getenv("TZ") == nullptr) ::setenv("TZ", ":/etc/localtime", 0);
     ::tzset();
+    errno = savedErrno;
     return true;
 }();
 

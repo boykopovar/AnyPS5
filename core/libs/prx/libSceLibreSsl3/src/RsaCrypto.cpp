@@ -536,6 +536,7 @@
 #include <utility>
 #include <vector>
 #include "mbedtls/bignum.h"
+#include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libSceLibreSsl3/include/PkeyState.hpp"
 #include "prx/libc/include/Api.hpp"
@@ -1120,6 +1121,17 @@ void CheckSignatureMethod(const LibreSsl3Rsa* rsa, const char* function) {
     if (!rsa) Reject(std::string(function) + ": a null key");
     if (rsa->flags & LibreSsl3RsaFlagSignVerify)
         NotImplemented_nid_no_patch((std::string(function) + ": a key flagged for method signatures").c_str());
+}
+
+LibreSslRsa* ParentRsa(const LibreSsl3Rsa* rsa, const char* function) {
+    if (!rsa) return nullptr;
+    LibreSsl3Rsa copy{};
+    const int savedErrno = errno;
+    const bool readable = GuestCopyIn_nid_no_patch(&copy, rsa, sizeof(copy));
+    errno = savedErrno;
+    if (!readable) throw std::invalid_argument(std::string(function) + ": unreadable rsa");
+    if (!copy.method) return nullptr;
+    return reinterpret_cast<LibreSslRsa*>(const_cast<LibreSsl3Rsa*>(rsa));
 }
 
 } // namespace
@@ -1874,6 +1886,56 @@ LibreSsl3Rsa* APS5_VABI RSA_new_nid_disambig1_nid_postfix() {
     }
     rsa->references = 1;
     return rsa;
+}
+
+int APS5_VABI RSA_size_nid_disambig1_nid_postfix(const LibreSsl3Rsa* rsa) {
+    if (auto* parent = ParentRsa(rsa, __func__)) return LibreSslRsaSize_nid_no_patch(parent);
+    return LibreSsl3::RsaByteCount_nid_no_patch(rsa);
+}
+
+int APS5_VABI RSA_flags_nid_disambig1_nid_postfix(const LibreSsl3Rsa* rsa) {
+    if (auto* parent = ParentRsa(rsa, __func__)) return LibreSslRsaFlags_nid_no_patch(parent);
+    return 0;
+}
+
+int APS5_VABI RSA_public_encrypt_nid_disambig1_nid_postfix(int length, const unsigned char* from, unsigned char* to, LibreSsl3Rsa* rsa, int padding) {
+    if (auto* parent = ParentRsa(rsa, __func__)) return LibreSslRsaPublicEncrypt_nid_no_patch(length, from, to, parent, padding);
+    return LibreSsl3::RsaPublicEncrypt_nid_no_patch(length, from, to, rsa, padding);
+}
+
+int APS5_VABI RSA_public_decrypt_nid_disambig1_nid_postfix(int length, const unsigned char* from, unsigned char* to, LibreSsl3Rsa* rsa, int padding) {
+    if (auto* parent = ParentRsa(rsa, __func__)) return LibreSslRsaPublicDecrypt_nid_no_patch(length, from, to, parent, padding);
+    return LibreSsl3::RsaPublicDecrypt_nid_no_patch(length, from, to, rsa, padding);
+}
+
+int APS5_VABI RSA_private_encrypt_nid_disambig1_nid_postfix(int length, const unsigned char* from, unsigned char* to, LibreSsl3Rsa* rsa, int padding) {
+    if (auto* parent = ParentRsa(rsa, __func__)) return LibreSslRsaPrivateEncrypt_nid_no_patch(length, from, to, parent, padding);
+    return LibreSsl3::RsaPrivateEncrypt_nid_no_patch(length, from, to, rsa, padding);
+}
+
+int APS5_VABI RSA_private_decrypt_nid_disambig1_nid_postfix(int length, const unsigned char* from, unsigned char* to, LibreSsl3Rsa* rsa, int padding) {
+    if (auto* parent = ParentRsa(rsa, __func__)) return LibreSslRsaPrivateDecrypt_nid_no_patch(length, from, to, parent, padding);
+    return LibreSsl3::RsaPrivateDecrypt_nid_no_patch(length, from, to, rsa, padding);
+}
+
+int APS5_VABI RSA_sign_nid_disambig1_nid_postfix(int type, const unsigned char* message, unsigned int messageLength, unsigned char* signature, unsigned int* signatureLength, LibreSsl3Rsa* rsa) {
+    if (auto* parent = ParentRsa(rsa, __func__)) return LibreSslRsaSign_nid_no_patch(type, message, messageLength, signature, signatureLength, parent);
+    return LibreSsl3::RsaSign_nid_no_patch(type, message, messageLength, signature, signatureLength, rsa);
+}
+
+int APS5_VABI RSA_verify_nid_disambig1_nid_postfix(int type, const unsigned char* message, unsigned int messageLength, const unsigned char* signature, unsigned int signatureLength, LibreSsl3Rsa* rsa) {
+    if (auto* parent = ParentRsa(rsa, __func__)) return LibreSslRsaVerify_nid_no_patch(type, message, messageLength, signature, signatureLength, parent);
+    return LibreSsl3::RsaVerify_nid_no_patch(type, message, messageLength, signature, signatureLength, rsa);
+}
+
+int APS5_VABI RSA_padding_add_PKCS1_PSS_nid_disambig1_nid_postfix(LibreSsl3Rsa* rsa, unsigned char* encoded, const unsigned char* messageHash, const LibreSsl3::DigestMethod* digest, int saltLength) {
+    if (auto* parent = ParentRsa(rsa, __func__)) return LibreSslRsaPaddingAddPkcs1Pss_nid_no_patch(parent, encoded, messageHash, reinterpret_cast<const EvpMd*>(digest), saltLength);
+    return LibreSsl3::RsaPaddingAddPkcs1PssMgf1_nid_no_patch(rsa, encoded, messageHash, digest, nullptr, saltLength);
+}
+
+int APS5_VABI RSA_verify_PKCS1_PSS_nid_disambig1_nid_postfix(LibreSsl3Rsa* rsa, const unsigned char* messageHash, const LibreSsl3::DigestMethod* digest, const unsigned char* encoded, int saltLength) {
+    if (auto* parent = ParentRsa(rsa, __func__)) return LibreSslRsaVerifyPkcs1Pss_nid_no_patch(parent, messageHash, reinterpret_cast<const EvpMd*>(digest), encoded, saltLength);
+    return LibreSsl3::RsaVerifyPkcs1PssMgf1_nid_no_patch(rsa, messageHash, digest, nullptr, encoded, saltLength);
 }
 
 int APS5_VABI RSA_padding_add_PKCS1_PSS_mgf1_nid_postfix(LibreSsl3Rsa* rsa, unsigned char* encoded,

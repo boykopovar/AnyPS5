@@ -262,8 +262,9 @@ int APS5_VABI sceNpTusAddAndGetVariableAAsync(int reqId, std::uint64_t targetAcc
     return StartOffline(reqId);
 }
 
-int APS5_VABI sceNpTusSetThreadParam(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpTusSetThreadParam(int priority, std::uint64_t affinity) {
+    (void)priority;
+    (void)affinity;
     return 0;
 }
 
@@ -418,14 +419,17 @@ int APS5_VABI sceNpTusDeleteMultiSlotDataVUser(int reqId, const NpOnlineId* targ
     return Complete(reqId, sceNpTusDeleteMultiSlotDataVUserAsync(reqId, targetVirtualUserId, slotIds, arrayLen, option));
 }
 
-int APS5_VABI sceNpTssGetStorage(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpTssGetStorageAsync(int reqId, std::int32_t slot, void* data, std::uint64_t maxSize, std::uint64_t* contentLength, const void* option) {
+    (void)data;
+    (void)maxSize;
+    (void)contentLength;
+    if (const int error = TssOptionError(option)) return error;
+    if (slot < 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    return StartOffline(reqId);
 }
 
-int APS5_VABI sceNpTssGetStorageAsync(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpTssGetStorage(int reqId, std::int32_t slot, void* data, std::uint64_t maxSize, std::uint64_t* contentLength, const void* option) {
+    return Complete(reqId, sceNpTssGetStorageAsync(reqId, slot, data, maxSize, contentLength, option));
 }
 
 int APS5_VABI sceNpTusGetDataForCrossSaveVUserAsync(int reqId, const NpOnlineId* targetVirtualUserId, std::int32_t slotId, void* dataStatus, std::uint64_t dataStatusSize, void* data, std::uint64_t recvSize, void* option) {

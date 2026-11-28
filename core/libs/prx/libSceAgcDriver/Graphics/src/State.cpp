@@ -7,6 +7,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -326,7 +327,14 @@ bool vertexControlSupported(std::uint32_t word) {
 }
 // Bits 26/27 (ZCLIP_NEAR/FAR_DISABLE) become depth clamping; bit 19 selects the [0, 1] clip space;
 // bit 16 disables clipping.
+constexpr std::uint32_t UcpCullOnlyEnable = 0x20000u;
 constexpr std::uint32_t ClipControlMask = ~(0x10000u | 0x80000u | 0x01000000u | 0x0c000000u);
+
+std::uint32_t clipControlMask(const Registers& cx) {
+    const auto exports = find(cx, 0x207);
+    const bool hasClipDistances = exports != cx.end() && (exports->second & 0xffu) != 0u;
+    return hasClipDistances ? ClipControlMask : (ClipControlMask & ~UcpCullOnlyEnable);
+}
 
 bool zFormatSupported(std::uint32_t format) {
     return format == 0u || format == 1u || format == 2u || format == 3u || format == 9u;
@@ -1289,8 +1297,13 @@ bool SampleMaskFollowsOrder(const State& state, const SampleOrder& order) {
     return std::ranges::any_of(order, [&](std::uint32_t word) { return (HostSampleBits(mask, word) & full) != mask; });
 }
 
-std::array<std::uint16_t, 4> QuadSampleMasks(const State& state, const SampleOrder& order) {
-    if (!SampleMaskFollowsOrder(state, order)) return QuadSampleMasks(state);
+bool SampleMaskInShader(const State& state, const SampleOrder& order, bool staticMaskStopsShading) {
+    if (SampleMaskFollowsOrder(state, order)) return true;
+    return !staticMaskStopsShading && state.perSampleShading && PartialSampleMask(state) && UniformSampleMask(state);
+}
+
+std::array<std::uint16_t, 4> QuadSampleMasks(const State& state, const SampleOrder& order, bool staticMaskStopsShading) {
+    if (!SampleMaskInShader(state, order, staticMaskStopsShading)) return QuadSampleMasks(state);
     const auto mask = static_cast<std::uint16_t>(state.quadSampleMask[0] & ((1u << state.samples) - 1u));
     return {mask, mask, mask, mask};
 }
@@ -1861,7 +1874,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     if (auto reason = sampleMaskRejection(queue, read(cx, 0x2f8), read(cx, 0x30e), read(cx, 0x30f)); !reason.empty()) throw std::runtime_error(reason);
     const auto viewportControl = read(cx, 0x206);
     if (viewportControl != 0x43fu && viewportControl != 0u) throw std::runtime_error(vteMessage(viewportControl));
-    zero(cx, 0x204, ClipControlMask, "a PA_CL_CLIP_CNTL flag");
+    zero(cx, 0x204, clipControlMask(cx), "a PA_CL_CLIP_CNTL flag");
     result.depthClamp = (read(cx, 0x204) & 0x0c000000u) != 0;
     result.negativeOneToOne = (read(cx, 0x204) & 0x80000u) == 0;
     const auto raster = read(cx, 0x205);
@@ -2446,7 +2459,7 @@ GuestTextureResource SurfaceForTarget(const ColorTarget& color) {
     surface.dstSelY = 5;
     surface.dstSelZ = 6;
     surface.dstSelW = 7;
-    surface.dccAddress = color.dccAddress != 0 ? color.dccAddress : color.chainDccAddress;
+    surface.dccAddress = color.chainDccAddress != 0 ? color.chainDccAddress : color.dccAddress;
     surface.dccAlphaOnMsb = color.dccAlphaOnMsb;
     surface.dccPipeAligned = color.dccPipeAligned;
     if (ColorTileModeIsGcn(color.tileMode)) surface.gcnPitch = surface.width;
@@ -2736,6 +2749,9 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
             color.chainDccAddress = dccBase;
             color.dccAlphaOnMsb = DccAlphaOnMsb(color.format, swap);
             color.dccPipeAligned = ((attrib3 >> 30u) & 1u) != 0;
+            if (color.dccPipeAligned && ColorTextureTileMode(color.tileMode) == TextureTileMode::kR64KBX && !RuntimeSwitches::Set(RuntimeSwitch::NoDccMipFastClear)) {
+                if (const auto offset = DccMipKeyOffset(color.surfaceExtent.width, color.surfaceExtent.height, color.elementBytes, color.mipCount, std::min(firstTailLevel, color.mipCount), color.mip)) color.dccAddress = dccBase + *offset;
+            }
         } else {
             static bool reported = false;
             if (!reported) {
@@ -2998,7 +3014,7 @@ std::string DrawRejection(const QueueState& queue, bool indexed) {
         if (auto reason = sampleMaskRejection(queue, config, word, other); !reason.empty()) return reason;
     }
     if (value(cx, 0x206, word) && word != 0x43fu && word != 0u) return vteMessage(word);
-    if (auto reason = nonzero(cx, 0x204, ClipControlMask, "a PA_CL_CLIP_CNTL flag"); !reason.empty()) return reason;
+    if (auto reason = nonzero(cx, 0x204, clipControlMask(cx), "a PA_CL_CLIP_CNTL flag"); !reason.empty()) return reason;
     std::uint32_t targetMask = 0, shaderMask = 0;
     if (value(cx, 0x8e, targetMask) && value(cx, 0x8f, shaderMask) && value(cx, 0x202, word)) {
         const auto slots = ColorExportSlots(shaderMask);

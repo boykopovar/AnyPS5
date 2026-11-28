@@ -26,6 +26,7 @@ struct ContainerNode : Node {
 };
 
 constexpr std::uint32_t NodeFlagIsContainerNode = 1u << 2;
+constexpr std::uint32_t NodeFlagIsElementNode = 1u << 3;
 
 static_assert(sizeof(Node) == 0x50);
 static_assert(offsetof(Node, refCountAndParentBit) == 0x18);

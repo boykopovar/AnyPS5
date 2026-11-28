@@ -211,11 +211,9 @@ std::uint32_t DefineBdaSpanReadFunction(SpirvEmitterState& state, bool coherent,
         state.module.AddFunction(spv::OpCompositeConstruct, values, value, parts[0], parts[1], parts[2], parts[3]);
         return value;
     };
-    const auto read = EmitValueIfElse(state, wide, values, [&] {
-        const auto loaded = state.module.AllocateId();
-        state.module.AddFunction(spv::OpFunctionCall, values, loaded, loader, physical, firstBytes, used);
-        return loaded;
-    }, [&] {
+    const auto loaded = state.module.AllocateId();
+    state.module.AddFunction(spv::OpFunctionCall, values, loaded, loader, physical, firstBytes, Select(state, u32, wide, used, zero));
+    const auto read = EmitValueIfElse(state, wide, values, [&] { return loaded; }, [&] {
         const auto entry = state.currentLabel;
         const auto header = state.module.AllocateId();
         const auto body = state.module.AllocateId();
