@@ -46,6 +46,45 @@ static void CheckGetInfoGuestOutput() {
     Require(info.maxConnectCount == PAD_MAX_CONTROLLERS);
 }
 
+static void CheckInputCommandReplacement() {
+    const auto path = std::filesystem::temp_directory_path() / ("anyps5-pad-replace-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    struct Cleanup {
+        std::filesystem::path path;
+        ~Cleanup() { std::error_code error; std::filesystem::remove(path, error); }
+    } cleanup{path};
+    const auto write = [&](const char* command) { std::ofstream(path) << command; };
+    write("1 8192 1\n");
+    Pad::InputCommandFile commands(path);
+    write("APS5_PAD_TIMELINE 1 2 1\n0 300 8192\n");
+    Require(commands.Buttons(1000000) == 0x2000);
+    Require(commands.TakeTransitions(1000000).empty());
+    write("APS5_PAD_TIMELINE 1 3 1\n200 40 8192\n");
+    Require(commands.Buttons(1100000) == 0);
+    const auto released = commands.TakeTransitions(1500000);
+    Require(released.size() == 3);
+    Require(released[0].first == 1100000 && released[0].second.buttons == 0);
+    Require(released[1].first == 1300000 && released[1].second.buttons == 0x2000);
+    Require(released[2].first == 1340000 && released[2].second.buttons == 0);
+    write("APS5_PAD_TIMELINE 1 4 1\n0 300 8192\n");
+    Require(commands.Buttons(1600000) == 0x2000);
+    const auto pressed = commands.TakeTransitions(1650000);
+    Require(pressed.size() == 1 && pressed[0].first == 1600000 && pressed[0].second.buttons == 0x2000);
+    write("5 8192 100\n");
+    Require(commands.Buttons(1700000) == 0x2000);
+    const auto held = commands.TakeTransitions(1900000);
+    Require(held.size() == 1 && held[0].first == 1800000 && held[0].second.buttons == 0);
+    write("APS5_PAD_TIMELINE 1 6 1\n0 300 8192\n");
+    Require(commands.Buttons(2000000) == 0x2000);
+    Require(commands.TakeTransitions(2000000).empty());
+    write("APS5_PAD_TIMELINE 1 7 1\n100 40 8192\n");
+    Require(commands.Buttons(2300000) == 0);
+    const auto boundary = commands.TakeTransitions(2500000);
+    Require(boundary.size() == 3);
+    Require(boundary[0].first == 2300000 && boundary[0].second.buttons == 0);
+    Require(boundary[1].first == 2400000 && boundary[1].second.buttons == 0x2000);
+    Require(boundary[2].first == 2440000 && boundary[2].second.buttons == 0);
+}
+
 static void CheckInputCommands() {
     const auto path = std::filesystem::temp_directory_path() / ("anyps5-pad-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     struct Cleanup {
@@ -1599,25 +1638,180 @@ static void CheckInjectedQueueTimes(const std::filesystem::path& path) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     } while (std::chrono::steady_clock::now() < deadline);
     Require(pressed.buttons == 0x6000 && pressed.timestamp > before.timestamp);
-    PadData queued{};
-    Require(Pad::Read(&queued, 1) == 1);
-    Require(queued.buttons == pressed.buttons);
-    if (queued.timestamp < pressed.timestamp) {
-        std::fputs("queued input predates its injected button press\n", stderr);
-        std::abort();
-    }
+    PadData queued[64]{};
+    Require(Pad::Read(queued, 64) == 2);
+    Require(queued[0].buttons == 0x2000 && queued[0].timestamp <= before.timestamp);
+    Require(queued[1].buttons == pressed.buttons && queued[1].timestamp > queued[0].timestamp && queued[1].timestamp <= pressed.timestamp);
     physical.sticks[0] = 130;
     PadPublishInput_nid_postfix(physical);
+    const auto moved = Pad::ReadState();
     std::this_thread::sleep_for(std::chrono::milliseconds(310));
     const auto released = Pad::ReadState();
     Require(released.buttons == 0x2000 && released.timestamp > pressed.timestamp);
-    Require(Pad::Read(&queued, 1) == 1);
-    Require(queued.buttons == released.buttons && queued.left_stick_x == 130);
-    if (queued.timestamp < released.timestamp) {
-        std::fputs("queued input predates its injected button release\n", stderr);
-        std::abort();
-    }
+    Require(Pad::Read(queued, 64) == 2);
+    Require(queued[0].buttons == 0x6000 && queued[0].left_stick_x == 130 && queued[0].timestamp <= moved.timestamp);
+    Require(queued[1].buttons == released.buttons && queued[1].left_stick_x == 130);
+    Require(queued[1].timestamp > queued[0].timestamp && queued[1].timestamp <= released.timestamp);
     PadPublishInput_nid_postfix(PadInputState{});
+}
+
+static void CheckInjectedTimelineBetweenReads(const std::filesystem::path& path) {
+    PadData samples[64]{};
+    Pad::Read(samples, 64);
+    std::ofstream(path) << "APS5_PAD_TIMELINE 1 11 3\n0 40 8192\n80 40 8192\n160 40 8192\n";
+    PadData first{};
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    do {
+        first = Pad::ReadState();
+        if ((first.buttons & 0x2000) != 0) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    } while (std::chrono::steady_clock::now() < deadline);
+    Require((first.buttons & 0x2000) != 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    const int count = Pad::Read(samples, 64);
+    int presses = 0;
+    std::uint32_t previous = 0;
+    for (int index = 0; index < count; ++index) {
+        if ((samples[index].buttons & 0x2000) != 0 && (previous & 0x2000) == 0) ++presses;
+        previous = samples[index].buttons;
+        if (index > 0) Require(samples[index].timestamp >= samples[index - 1].timestamp);
+    }
+    Require(presses == 3);
+    Require((samples[count - 1].buttons & 0x2000) == 0);
+    Require(Pad::Read(samples, 64) == 1 && (samples[0].buttons & 0x2000) == 0);
+}
+
+static PadData WaitForInjectedButton(std::uint32_t button) {
+    PadData state{};
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    do {
+        state = Pad::ReadState();
+        if ((state.buttons & button) != 0) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    } while (std::chrono::steady_clock::now() < deadline);
+    Require((state.buttons & button) != 0);
+    return state;
+}
+
+static int CountPresses(const PadData* samples, int count, std::uint32_t button) {
+    int presses = 0;
+    std::uint32_t previous = 0;
+    for (int index = 0; index < count; ++index) {
+        if ((samples[index].buttons & button) != 0 && (previous & button) == 0) ++presses;
+        previous = samples[index].buttons;
+    }
+    return presses;
+}
+
+static void CheckInjectedTimelineReplacedBetweenReads(const std::filesystem::path& path) {
+    PadData samples[64]{};
+    Pad::Read(samples, 64);
+    std::ofstream(path) << "APS5_PAD_TIMELINE 1 12 2\n0 40 8192\n80 40 8192\n";
+    WaitForInjectedButton(0x2000);
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    std::ofstream(path) << "13 32768 300\n";
+    WaitForInjectedButton(0x8000);
+    const int count = Pad::Read(samples, 64);
+    Require(CountPresses(samples, count, 0x2000) == 2);
+    Require((samples[count - 1].buttons & 0x8000) != 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(310));
+    Pad::Read(samples, 64);
+}
+
+static void CheckInjectedTimelineSkipsUnchangedBoundaries(const std::filesystem::path& path) {
+    PadData samples[64]{};
+    Pad::Read(samples, 64);
+    std::ofstream(path) << "APS5_PAD_TIMELINE 1 14 3\n0 40 8192\n80 40 0\n160 40 0\n";
+    WaitForInjectedButton(0x2000);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    const int count = Pad::Read(samples, 4);
+    Require(count == 3);
+    Require(CountPresses(samples, count, 0x2000) == 1 && (samples[count - 1].buttons & 0x2000) == 0);
+}
+
+static void CheckInjectedTimelineWithQueuedPhysicalInput(const std::filesystem::path& path) {
+    PadData samples[64]{};
+    Pad::Read(samples, 64);
+    PadInputState physical;
+    physical.sticks[0] = 200;
+    PadPublishInput_nid_postfix(physical);
+    std::ofstream(path) << "APS5_PAD_TIMELINE 1 16 2\n0 40 8192\n80 40 8192\n";
+    WaitForInjectedButton(0x2000);
+    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    physical.sticks[0] = 60;
+    PadPublishInput_nid_postfix(physical);
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    Require((Pad::ReadState().buttons & 0x2000) == 0);
+    Require(Pad::Read(samples, 1) == 1);
+    Require(samples[0].left_stick_x == 200 && (samples[0].buttons & 0x2000) == 0);
+    const int count = Pad::Read(samples + 1, 63) + 1;
+    Require(CountPresses(samples, count, 0x2000) == 2);
+    bool moved = false;
+    for (int index = 1; index < count; ++index) {
+        Require(samples[index].timestamp >= samples[index - 1].timestamp);
+        if (samples[index].left_stick_x == 60) moved = true;
+        else Require(!moved && samples[index].left_stick_x == 200);
+    }
+    Require(moved && (samples[count - 1].buttons & 0x2000) == 0);
+    Require(Pad::Read(samples, 64) == 1 && (samples[0].buttons & 0x2000) == 0 && samples[0].left_stick_x == 60);
+    PadPublishInput_nid_postfix(PadInputState{});
+    Pad::Read(samples, 64);
+}
+
+static void CheckCaptureHidesEarlierInjectedInput(const std::filesystem::path& path) {
+    constexpr std::uint32_t intercepted = 0x80000000u;
+    PadData samples[64]{};
+    PadInputState pressed;
+    pressed.buttons = static_cast<std::uint32_t>(Pad::PadButton::Cross);
+    PadInputState captured;
+    captured.intercepted = true;
+    PadPublishInput_nid_postfix(PadInputState{});
+    Pad::Read(samples, 64);
+    PadPublishInput_nid_postfix(pressed);
+    std::ofstream(path) << "17 8192 40\n";
+    WaitForInjectedButton(0x2000);
+    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    PadPublishInput_nid_postfix(captured);
+    const int count = Pad::Read(samples, 64);
+    Require(count >= 1);
+    for (int index = 0; index < count; ++index) Require(samples[index].buttons == intercepted);
+    PadPublishInput_nid_postfix(PadInputState{});
+    Pad::Read(samples, 64);
+}
+
+static std::vector<std::pair<std::uint64_t, std::uint32_t>> RecordedButtons(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    std::vector<std::pair<std::uint64_t, std::uint32_t>> samples;
+    std::string line;
+    std::getline(file, line);
+    while (std::getline(file, line)) {
+        const auto space = line.find(' ');
+        Require(space != std::string::npos);
+        samples.emplace_back(std::stoull(line.substr(0, space)), static_cast<std::uint32_t>(std::stoul(line.substr(space + 1), nullptr, 16)));
+    }
+    return samples;
+}
+
+static void CheckInjectedRecordingKeepsChangeTimes(const std::filesystem::path& path, const std::filesystem::path& recording) {
+    PadData samples[64]{};
+    Pad::Read(samples, 64);
+    const std::size_t before = RecordedButtons(recording).size();
+    std::ofstream(path) << "APS5_PAD_TIMELINE 1 15 3\n0 40 8192\n80 40 8192\n160 40 8192\n";
+    WaitForInjectedButton(0x2000);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    Require((Pad::ReadState().buttons & 0x2000) == 0);
+    const int count = Pad::Read(samples, 64);
+    Require(CountPresses(samples, count, 0x2000) == 3);
+    const auto recorded = RecordedButtons(recording);
+    Require(recorded.size() > before);
+    int presses = 0;
+    std::uint32_t previous = before > 0 ? recorded[before - 1].second : 0;
+    for (std::size_t index = before; index < recorded.size(); ++index) {
+        if (index > 0) Require(recorded[index].first > recorded[index - 1].first);
+        if ((recorded[index].second & 0x2000) != 0 && (previous & 0x2000) == 0) ++presses;
+        previous = recorded[index].second;
+    }
+    Require(presses == 3 && (previous & 0x2000) == 0);
 }
 
 void CheckConcurrentSpecialOpens() {
@@ -1720,6 +1914,7 @@ static void CheckSecondPortConnection(int user) {
 int main() {
     CheckConcurrentSpecialOpens();
     CheckInputCommands();
+    CheckInputCommandReplacement();
     std::uint32_t accessibilityState = 7;
     Require(scePadGetAccessibilityControllerState(PAD_HANDLE, nullptr) == PAD_ERROR_NOT_INITIALIZED);
     Require(scePadGetAccessibilityControllerState(PAD_HANDLE, &accessibilityState) == PAD_ERROR_NOT_INITIALIZED);
@@ -1758,10 +1953,15 @@ int main() {
     auto commandPath = path;
     commandPath += std::filesystem::path(u8"-žluťoučký-漢字");
     Cleanup cleanup{commandPath};
+    auto recordingPath = path;
+    recordingPath += ".aps5pad";
+    Cleanup recordingCleanup{recordingPath};
 #ifdef _WIN32
     Require(_wputenv_s(L"APS5_PAD_INPUT_FILE", commandPath.c_str()) == 0);
+    Require(_wputenv_s(L"APS5_PAD_RECORD", recordingPath.c_str()) == 0);
 #else
     Require(setenv("APS5_PAD_INPUT_FILE", commandPath.string().c_str(), 1) == 0);
+    Require(setenv("APS5_PAD_RECORD", recordingPath.string().c_str(), 1) == 0);
 #endif
     {
         std::uint32_t sequence = 0;
@@ -1877,6 +2077,12 @@ int main() {
     CheckControllerQueries(handle);
     CheckInjectedState(commandPath);
     CheckInjectedQueueTimes(commandPath);
+    CheckInjectedTimelineBetweenReads(commandPath);
+    CheckInjectedTimelineReplacedBetweenReads(commandPath);
+    CheckInjectedTimelineSkipsUnchangedBoundaries(commandPath);
+    CheckInjectedRecordingKeepsChangeTimes(commandPath, recordingPath);
+    CheckInjectedTimelineWithQueuedPhysicalInput(commandPath);
+    CheckCaptureHidesEarlierInjectedInput(commandPath);
     PadLightBarParam lightBar{255, 128, 64};
     Require(scePadSetLightBar(handle, &lightBar) == PAD_OK);
     Require(scePadSetLightBar(handle, nullptr) == PAD_ERROR_INVALID_ARG);

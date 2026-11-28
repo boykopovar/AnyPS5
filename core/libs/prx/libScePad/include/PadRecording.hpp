@@ -132,7 +132,7 @@ public:
             started = true;
             startUs = nowUs;
         }
-        const auto elapsed = (nowUs - startUs) / 1000u;
+        const auto elapsed = nowUs > startUs ? (nowUs - startUs) / 1000u : 0u;
         const auto next = std::upper_bound(samples.begin(), samples.end(), elapsed,
             [](std::uint64_t time, const RecordedSample& sample) { return time < sample.ms; });
         if (next == samples.begin()) return RecordedState{};

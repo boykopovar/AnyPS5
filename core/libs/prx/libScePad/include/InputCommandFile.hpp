@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
@@ -75,18 +76,42 @@ public:
             auto command = read();
             if (command.sequence > lastSequence) {
                 lastSequence = command.sequence;
+                const Input replaced = events.empty() || now < started ? Input{} : now == started ? inherited : InputAt(now - started - 1);
+                appendTransitions(history, reportedAt, now);
+                if (history.size() > HistoryLimit) history.erase(history.begin(), history.end() - HistoryLimit);
                 events = std::move(command.events);
                 started = now;
+                inherited = replaced;
             }
         }
         if (events.empty() || now < started) return {};
-        const auto elapsed = now - started;
-        const auto next = std::upper_bound(events.begin(), events.end(), elapsed,
-            [](std::uint64_t time, const Event& event) { return time < event.start; });
-        if (next == events.begin()) return {};
-        const auto& event = *std::prev(next);
-        return elapsed < event.end ? event.input : Input{};
+        return InputAt(now - started);
     }
+
+    std::vector<std::pair<std::uint64_t, Input>> PendingTransitions(std::uint64_t now) const {
+        auto changes = history;
+        appendTransitions(changes, reportedAt, now);
+        return changes;
+    }
+
+    std::vector<std::pair<std::uint64_t, Input>> TakeTransitions(std::uint64_t now) {
+        auto changes = PendingTransitions(now);
+        history.clear();
+        reportedAt = std::max(reportedAt, now);
+        reported = events.empty() || now < started ? Input{} : InputAt(now - started);
+        return changes;
+    }
+
+    void TakeTransitions(std::uint64_t now, std::size_t count) {
+        auto changes = PendingTransitions(now == std::numeric_limits<std::uint64_t>::max() ? now : now + 1);
+        count = std::min(count, changes.size());
+        if (count > 0) reported = changes[count - 1].second;
+        history.assign(changes.begin() + static_cast<std::ptrdiff_t>(count), changes.end());
+        if (history.size() > HistoryLimit) history.erase(history.begin(), history.end() - HistoryLimit);
+        reportedAt = std::max(reportedAt, now);
+    }
+
+    const Input& Reported() const { return reported; }
 
     std::uint32_t Buttons(std::uint64_t now) { return Poll(now).buttons; }
 
@@ -119,6 +144,38 @@ private:
         std::uint64_t sequence = 0;
         std::vector<Event> events;
     };
+
+    void appendTransitions(std::vector<std::pair<std::uint64_t, Input>>& changes, std::uint64_t since, std::uint64_t now) const {
+        if (events.empty() || now <= since) return;
+        const std::size_t first = changes.size();
+        const auto add = [&](std::uint64_t edge) {
+            const std::uint64_t at = started + edge;
+            if (at <= since || at >= now) return;
+            const Input input = InputAt(edge);
+            if (changes.size() > first && changes.back().first == at) changes.back().second = input;
+            else changes.emplace_back(at, input);
+        };
+        add(0);
+        for (const auto& event : events) {
+            add(event.start);
+            add(event.end);
+        }
+        std::size_t kept = first;
+        for (std::size_t index = first; index < changes.size(); ++index) {
+            const auto& [at, input] = changes[index];
+            const Input before = kept > first ? changes[kept - 1].second : at == started ? inherited : InputAt(at - started - 1);
+            if (input != before) changes[kept++] = changes[index];
+        }
+        changes.resize(kept);
+    }
+
+    Input InputAt(std::uint64_t elapsed) const {
+        const auto next = std::upper_bound(events.begin(), events.end(), elapsed,
+            [](std::uint64_t time, const Event& event) { return time < event.start; });
+        if (next == events.begin()) return {};
+        const auto& event = *std::prev(next);
+        return elapsed < event.end ? event.input : Input{};
+    }
 
     Command read() const {
         std::FILE* file = Detail::OpenInputCommandFile(path);
@@ -285,6 +342,11 @@ private:
     std::uint64_t nextPoll = 0;
     std::uint64_t started = 0;
     std::vector<Event> events;
+    Input inherited;
+    std::vector<std::pair<std::uint64_t, Input>> history;
+    std::uint64_t reportedAt = 0;
+    Input reported;
+    static constexpr std::size_t HistoryLimit = 64;
 };
 }
 
