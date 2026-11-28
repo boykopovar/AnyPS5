@@ -1,0 +1,5 @@
+# libfontconfig
+
+## change [Font sets and object sets]
+
+- [Font sets and object sets](../../../core/libs/prx/libfontconfig/Sets.cpp) come from firmware 13.42 disassembly `libfontconfig.sprx` (SHA-256 `74d7414445f8687c1d22a92fa3c994d2e5fa304e6699dc84dcc5459af7da8472`), not the stock desktop layout; console version, opaque layouts and allocation-failure behavior are unverified. Sets and element pointers are read through `GuestCopyIn_nid_no_patch`, written through `GuestCopyOut_nid_no_patch`, so unmapped or unwritable inputs report through `NotImplemented_nid_no_patch` with errno kept instead of faulting, and null destroy or null add return where firmware touches pointers. A destroy that cannot read a later element has destroyed the earlier ones; an add that cannot read the existing entries leaves the caller's record as it was and frees any buffer it grew, and one that cannot write the set back releases the duplicate. Capacity is stored in bytes, grows by sixteen pointers, stops at 1024 entries, and every insertion duplicates the pattern.
