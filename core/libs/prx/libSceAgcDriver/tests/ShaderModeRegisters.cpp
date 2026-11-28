@@ -95,6 +95,7 @@ constexpr std::uint32_t getregMode = 0xb9141801;
 constexpr std::uint32_t vAddF32 = 0x06000300;
 constexpr std::uint32_t vCvtF32I32 = 0x7e000b00;
 constexpr std::uint32_t vCvtF32U32 = 0x7e000d00;
+constexpr std::uint32_t vCvtF32F64 = 0x7e001f00;
 constexpr std::uint32_t vCvtF16F32 = 0x7e001500;
 constexpr std::uint32_t vAddF16 = 0x64000300;
 
@@ -144,11 +145,13 @@ void verifyDynamicWrites() {
         const std::array<std::uint32_t, 3> used{instruction, vAddF32, endProgram};
         expectRejected(used, ShaderFloatMode{0xc0}, "reads MODE bits", 4);
     }
-    for (const auto instruction : {0xb980f801u, 0xb9800201u}) {
+    for (const auto instruction : {0xb980f801u, 0xb9800201u, 0xb9800241u, 0xb98005c1u}) {
         const std::array<std::uint32_t, 2> code{instruction, endProgram};
         expectRejected(code, std::nullopt, "s_setreg_b32");
         expectRejected(code, ShaderFloatMode{0xc0}, "s_setreg_b32");
     }
+    const std::array<std::uint32_t, 2> nonModeSetreg{0xb9800004u, endProgram};
+    static_cast<void>(translate(nonModeSetreg, ShaderFloatMode{0xc0}));
 }
 
 void verifyDynamicWriteSurvivesPartialOverwrite() {
@@ -181,6 +184,11 @@ void verifyImmediateWrites() {
     expectRejected(nonzero, std::nullopt, "s_setreg_imm32_b32");
     constexpr std::array<std::uint32_t, 3> otherRegister{0xba801802, 0, endProgram};
     expectRejected(otherRegister, ShaderFloatMode{0xc0}, "s_setreg_imm32_b32");
+    for (const auto instruction : {0xba800201u, 0xba800241u, 0xba8005c1u, 0xba80f801u}) {
+        const std::array<std::uint32_t, 3> statusWrite{instruction, 1u, endProgram};
+        expectRejected(statusWrite, std::nullopt, "s_setreg_imm32_b32");
+        expectRejected(statusWrite, ShaderFloatMode{0xc0}, "s_setreg_imm32_b32");
+    }
 }
 
 void verifyDenormalImmediateWrites() {
@@ -221,9 +229,45 @@ void verifyRoundInstruction() {
 }
 
 void verifyUnsupportedReads() {
-    for (const auto instruction : {0xb9140002u, 0xb9140201u, 0xb91409c1u, 0xb9140a01u, 0xb914f801u}) {
+    for (const auto instruction : {0xb9140002u, 0xb9140003u, 0xb9140004u, 0xb9140281u, 0xb91403c1u, 0xb9140401u, 0xb9140581u, 0xb9140dc1u, 0xb9143a01u, 0xb9147801u, 0xb914f801u}) {
         const std::array<std::uint32_t, 2> code{instruction, endProgram};
         expectRejected(code, ShaderFloatMode{0xc0}, "s_getreg_b32");
+    }
+}
+
+void verifyStatusBitfieldReads() {
+    constexpr std::array<std::uint32_t, 8> code{
+        0xb9140201, 0xb9150241, 0xb9160a01, 0xb91705c1,
+        0xb91809c1, 0xb9194801, 0xb91a11c1, 0xbf810000
+    };
+    for (const auto waveSize : {32u, 64u}) {
+        for (const bool dx10Clamp : {false, true}) {
+            for (const bool ieeeMode : {false, true}) {
+                for (const bool fp16Overflow : {false, true}) {
+                    for (const std::uint32_t mode : {0x00u, 0x55u, 0xc0u, 0xffu}) {
+                        const ShaderFloatMode shaderMode{mode, dx10Clamp, ieeeMode, fp16Overflow};
+                        const auto program = translate(code, shaderMode, waveSize);
+                        const std::uint32_t fullMode = mode | (dx10Clamp ? (1u << 8) : 0u) | (ieeeMode ? (1u << 9) : 0u) | (fp16Overflow ? (1u << 23) : 0u);
+                        expectRegister(program, 20, dx10Clamp ? 1u : 0u);
+                        expectRegister(program, 21, ieeeMode ? 1u : 0u);
+                        expectRegister(program, 22, (fullMode >> 8u) & 3u);
+                        expectRegister(program, 23, fp16Overflow ? 1u : 0u);
+                        expectRegister(program, 24, (fullMode >> 7u) & 3u);
+                        expectRegister(program, 25, fullMode & 0x3ffu);
+                        expectRegister(program, 26, (fullMode >> 7u) & 7u);
+                    }
+                }
+            }
+        }
+        const auto legacy = translate(code, std::nullopt, waveSize);
+        constexpr std::uint32_t legacyFullMode = 0xc0u | (1u << 8);
+        expectRegister(legacy, 20, 1u);
+        expectRegister(legacy, 21, 0u);
+        expectRegister(legacy, 22, 1u);
+        expectRegister(legacy, 23, 0u);
+        expectRegister(legacy, 24, 3u);
+        expectRegister(legacy, 25, legacyFullMode);
+        expectRegister(legacy, 26, 3u);
     }
 }
 
@@ -274,7 +318,7 @@ void verifyDiamond() {
 }
 
 void verifyRoundingBeforeDirected32Use() {
-    for (const auto instruction : {vCvtF32I32, vCvtF32U32}) {
+    for (const auto instruction : {vCvtF32I32, vCvtF32U32, vCvtF32F64}) {
         for (std::uint32_t rounding = 1; rounding < 4; ++rounding) {
             const std::array<std::uint32_t, 3> runtime{roundMode(rounding), instruction, endProgram};
             const std::array<std::uint32_t, 2> declared{instruction, endProgram};
@@ -370,6 +414,43 @@ void verifyRoundingInLoop() {
     expectRejected(carried, ShaderFloatMode{0xc0}, "reads MODE bits", 0);
 }
 
+void verifyOutputModifierRounding() {
+    struct Form {
+        std::uint32_t opcode;
+        RdnaOpcode op;
+        std::uint32_t sources;
+    };
+    constexpr std::uint32_t unary = 0x00000101;
+    constexpr std::uint32_t binary = 0x00020501;
+    constexpr std::uint32_t ternary = 0x040c0501;
+    constexpr std::array<Form, 9> tracked{{
+        {0x13a, RdnaOpcode::VMinF16, binary}, {0x139, RdnaOpcode::VMaxF16, binary}, {0x351, RdnaOpcode::VMin3F16, ternary},
+        {0x354, RdnaOpcode::VMax3F16, ternary}, {0x357, RdnaOpcode::VMed3F16, ternary}, {0x1db, RdnaOpcode::VFloorF16, unary},
+        {0x1dc, RdnaOpcode::VCeilF16, unary}, {0x1dd, RdnaOpcode::VTruncF16, unary}, {0x1de, RdnaOpcode::VRndneF16, unary},
+    }};
+    constexpr std::array<Form, 8> untracked{{
+        {0x1d4, RdnaOpcode::VRcpF16, unary}, {0x1d5, RdnaOpcode::VSqrtF16, unary}, {0x1d6, RdnaOpcode::VRsqF16, unary},
+        {0x1d7, RdnaOpcode::VLogF16, unary}, {0x1d8, RdnaOpcode::VExpF16, unary}, {0x1e0, RdnaOpcode::VSinF16, unary},
+        {0x1e1, RdnaOpcode::VCosF16, unary}, {0x1d9, RdnaOpcode::VFrexpMantF16, unary},
+    }};
+    const auto diamond = [](std::uint32_t first, std::uint32_t second, const Form& form, std::uint32_t omod) {
+        return std::array<std::uint32_t, 8>{0xbf840002, roundMode(first), 0xbf820001, roundMode(second), 0xd4000000u | (form.opcode << 16u), (omod << 27u) | form.sources, endProgram, endProgram};
+    };
+    const ShaderFloatMode flushed{0x40u, true, false, false};
+    for (const auto& form : tracked) {
+        requireOpcode(0xd4000000u | (form.opcode << 16u), form.op);
+        expectRejected(diamond(12, 0, form, 1), flushed, "reads MODE bits", 16);
+        static_cast<void>(translate(diamond(12, 12, form, 1), flushed));
+        static_cast<void>(translate(diamond(12, 0, form, 0), flushed));
+        static_cast<void>(translate(diamond(12, 0, form, 1), ShaderFloatMode{0x40u, true, true, false}));
+        static_cast<void>(translate(diamond(12, 0, form, 1), ShaderFloatMode{0xc0u, true, false, false}));
+    }
+    for (const auto& form : untracked) {
+        requireOpcode(0xd4000000u | (form.opcode << 16u), form.op);
+        static_cast<void>(translate(diamond(12, 0, form, 1), flushed));
+    }
+}
+
 void verifyRecompilePropagation() {
     constexpr std::array<std::uint32_t, 2> code{0xbfa40005, 0xbf810000};
     constexpr std::array<std::uint32_t, 2> capabilities{1, 61};
@@ -405,7 +486,7 @@ int main() {
         const char* name;
         void (*run)();
     };
-    constexpr std::array<Check, 21> checks{{
+    constexpr std::array<Check, 23> checks{{
         {"encodings", verifyEncodings}, {"reads", verifyReads}, {"dynamicWrites", verifyDynamicWrites},
         {"partialOverwrite", verifyDynamicWriteSurvivesPartialOverwrite}, {"immediateWrites", verifyImmediateWrites},
         {"denormalImmediateWrites", verifyDenormalImmediateWrites}, {"roundInstruction", verifyRoundInstruction},
@@ -414,6 +495,8 @@ int main() {
         {"untouchedFields", verifyUntouchedFieldsStayAccepted}, {"unmodelled", verifyUnmodelledDirectedRounding},
         {"directedF16", verifyDirectedF16Conversion}, {"denormBeforeUse", verifyDenormBeforeUse}, {"denormDiamond", verifyDenormDiamond},
         {"loop", verifyRoundingInLoop}, {"propagation", verifyRecompilePropagation}, {"denormalAfterRounding", verifyDenormalReadsAfterRoundingWrites},
+        {"outputModifierRounding", verifyOutputModifierRounding},
+        {"statusBitfields", verifyStatusBitfieldReads},
     }};
     int failures = 0;
     for (const auto& check : checks) {

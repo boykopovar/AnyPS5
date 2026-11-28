@@ -4,6 +4,7 @@
 #include "prx/libSceFont/include/FontDriver.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -197,6 +198,23 @@ static void CheckErrors(Render render, FontHandle font) {
     CheckLayout(render, font, 80, 64, 0, 1, false, 0);
 }
 
+static void CheckGuestSurfaces() {
+    unsigned char buffer[64] = {};
+    FontRenderSurface surface{};
+    surface.reserved_q[5] = 0x1234;
+    sceFontRenderSurfaceInit(&surface, buffer, 16, 1, 16, 4);
+    Require(surface.buffer == buffer && surface.width == 16 && surface.height == 4 && surface.sc_x1 == 16 && surface.sc_y1 == 4);
+    Require(surface.reserved_q[5] == 0x1234);
+    auto* const unmapped = reinterpret_cast<FontRenderSurface*>(0x10);
+    errno = 71;
+    sceFontRenderSurfaceInit(unmapped, buffer, 16, 1, 16, 4);
+    sceFontRenderSurfaceSetScissor(unmapped, 0, 0, 8, 2);
+    Require(sceFontRenderSurfaceSetStyleFrame(unmapped, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontRenderSurfaceSetStyleFrame(&surface, reinterpret_cast<FontStyleFrame*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
+    Require((surface.styleFlag & 1) == 0 && surface.reserved_q[0] == 0);
+}
+
 static void CheckStyleError(FontLibrary library, FontHandle font) {
     FontStyleFrame frame{};
     Require(sceFontStyleFrameInit(&frame) == SCE_FONT_OK);
@@ -225,6 +243,7 @@ static void CheckStyleError(FontLibrary library, FontHandle font) {
 }
 
 int main() {
+    CheckGuestSurfaces();
     const FontMemoryInterface iface{Allocate, Release, nullptr, nullptr, nullptr, nullptr};
     FontMemory memory{};
     Require(sceFontMemoryInit(&memory, nullptr, 0, &iface, nullptr, nullptr, nullptr) == SCE_FONT_OK);

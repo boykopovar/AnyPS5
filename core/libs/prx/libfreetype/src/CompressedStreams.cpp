@@ -8,7 +8,6 @@
 #include FT_LZW_H
 #include FT_SYSTEM_H
 
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -81,18 +80,14 @@ void* Reallocate(FT_Memory memory, long current, long size, void* block) {
 
 void WriteSourcePos(GuestStreamRec* source, unsigned long pos) {
     const std::uint64_t value = pos;
-    const int savedErrno = errno;
     GuestCopyOut_nid_no_patch(&source->pos, &value, sizeof(source->pos));
-    errno = savedErrno;
 }
 
 unsigned long SourceRead(FT_Stream stream, unsigned long offset, unsigned char* buffer, unsigned long count) {
     auto* state = static_cast<State*>(stream->descriptor.pointer);
     WriteSourcePos(state->source, stream->pos);
     GuestStreamRec sourceRec{};
-    const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(&sourceRec, state->source, sizeof(sourceRec));
-    errno = savedErrno;
     if (!copied || !sourceRec.read) {
         state->fault = true;
         return 0;
@@ -141,7 +136,6 @@ void APS5_VABI OutputClose(GuestStreamRec* stream) {
     if (state->output.close) state->output.close(&state->output);
     if (state->fault) NotImplemented_nid_no_patch(__func__);
     GuestStreamRec cleared{};
-    const int savedErrno = errno;
     if (GuestCopyIn_nid_no_patch(&cleared, stream, sizeof(cleared))) {
         cleared.read = nullptr;
         cleared.close = nullptr;
@@ -149,7 +143,6 @@ void APS5_VABI OutputClose(GuestStreamRec* stream) {
         cleared.descriptor.pointer = nullptr;
         GuestCopyOut_nid_no_patch(stream, &cleared, sizeof(cleared));
     }
-    errno = savedErrno;
 }
 
 bool Overlaps(const GuestStreamRec* stream, const GuestStreamRec* source) {
@@ -167,25 +160,19 @@ void Publish(GuestStreamRec* stream, const State& state) {
     localStream.memory = state.guestMemory;
     localStream.read = state.output.read ? OutputRead : nullptr;
     localStream.close = state.output.close ? OutputClose : nullptr;
-    const int savedErrno = errno;
     GuestCopyOut_nid_no_patch(stream, &localStream, sizeof(localStream));
-    errno = savedErrno;
 }
 
 template <typename TOpen>
 int Open(GuestStreamRec* stream, GuestStreamRec* source, TOpen open, const char* function) {
     if (!stream || !source) return FT_Err_Invalid_Stream_Handle;
-    const int savedErrno = errno;
     const bool streamOk = GuestWritable_nid_no_patch(stream, sizeof(*stream));
     const bool sourceOk = GuestWritable_nid_no_patch(source, sizeof(*source));
-    errno = savedErrno;
     if (!streamOk || !sourceOk) return FT_Err_Invalid_Stream_Handle;
     GuestStreamRec sourceRec{};
     if (!GuestCopyIn_nid_no_patch(&sourceRec, source, sizeof(sourceRec))) {
-        errno = savedErrno;
         return FT_Err_Invalid_Stream_Handle;
     }
-    errno = savedErrno;
     if (sourceRec.size > std::numeric_limits<unsigned long>::max() || sourceRec.pos > std::numeric_limits<unsigned long>::max())
         NotImplemented_nid_no_patch(function);
     auto state = std::make_shared<State>();

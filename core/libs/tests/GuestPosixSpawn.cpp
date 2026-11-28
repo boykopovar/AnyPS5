@@ -3,6 +3,7 @@
 #include "prx/libSceLibcInternal/include/Spawn.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <array>
 #include <chrono>
 #include <csignal>
 #include <cstdint>
@@ -19,6 +20,7 @@
 #include <utility>
 #include <vector>
 #ifdef _WIN32
+#include "prx/libc/include/WindowsVerbatimPath.hpp"
 #include <windows.h>
 #else
 extern "C" int kill(int, int);
@@ -255,20 +257,13 @@ static std::filesystem::path OwnExecutablePath() {
 #endif
 }
 
-static std::int32_t SpawnChildExplicit(const char* role, std::int32_t* processId, bool usePath = false,
-    PosixSpawnFileActions** actions = nullptr, int expectedResult = 0) {
-    const auto own = OwnExecutablePath();
-    const auto target = own.parent_path() / std::filesystem::path(reinterpret_cast<const char8_t*>(("child.bin" + own.extension().string()).c_str()));
-    std::error_code error;
-    std::filesystem::copy_file(own, target, std::filesystem::copy_options::overwrite_existing, error);
-    Check(!error);
-    const auto app0 = std::filesystem::current_path() / "app0";
-    Check(std::filesystem::create_directories(app0) || std::filesystem::exists(app0));
-    { std::ofstream file(app0 / "child.bin"); file << "child"; }
+struct ChildEnvironment {
+    std::vector<std::string> storage;
+    std::vector<char*> pointers;
+};
 
-    char program[] = "/app0/child.bin";
-    char* arguments[] = {program, nullptr};
-    std::vector<std::string> entries;
+static ChildEnvironment BuildRoleEnvironment(const char* role) {
+    ChildEnvironment result;
 #ifdef _WIN32
     const LPWCH block = GetEnvironmentStringsW();
     Check(block != nullptr);
@@ -278,22 +273,45 @@ static std::int32_t SpawnChildExplicit(const char* role, std::int32_t* processId
         std::string narrow(static_cast<std::size_t>(size), '\0');
         Check(WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, entry, -1, narrow.data(), size, nullptr, nullptr) == size);
         narrow.pop_back();
-        entries.push_back(std::move(narrow));
+        if (narrow.rfind("ANYPS5_POSIX_SPAWN_ROLE=", 0) != 0)
+            result.storage.push_back(std::move(narrow));
     }
     FreeEnvironmentStringsW(block);
 #else
-    for (char** entry = environ; entry != nullptr && *entry != nullptr; ++entry)
-        entries.push_back(*entry);
+    for (char** entry = environ; entry != nullptr && *entry != nullptr; ++entry) {
+        if (std::strncmp(*entry, "ANYPS5_POSIX_SPAWN_ROLE=", 24) != 0)
+            result.storage.push_back(*entry);
+    }
 #endif
-    entries.push_back(std::string("ANYPS5_POSIX_SPAWN_ROLE=") + role);
-    std::vector<char*> environment;
-    for (auto& entry : entries)
-        environment.push_back(entry.data());
-    environment.push_back(nullptr);
+    result.storage.push_back(std::string("ANYPS5_POSIX_SPAWN_ROLE=") + role);
+    result.pointers.reserve(result.storage.size() + 1);
+    for (auto& entry : result.storage)
+        result.pointers.push_back(entry.data());
+    result.pointers.push_back(nullptr);
+    return result;
+}
+
+static void PrepareChildBinary() {
+    const auto own = OwnExecutablePath();
+    const auto target = own.parent_path() / std::filesystem::path(reinterpret_cast<const char8_t*>(("child.bin" + own.extension().string()).c_str()));
+    std::error_code error;
+    std::filesystem::copy_file(own, target, std::filesystem::copy_options::overwrite_existing, error);
+    Check(!error);
+    const auto app0 = std::filesystem::current_path() / "app0";
+    Check(std::filesystem::create_directories(app0) || std::filesystem::exists(app0));
+    { std::ofstream file(app0 / "child.bin"); file << "child"; Check(file.good()); }
+}
+
+static std::int32_t SpawnChildExplicit(const char* role, std::int32_t* processId, bool usePath = false,
+    PosixSpawnFileActions** actions = nullptr, int expectedResult = 0) {
+    PrepareChildBinary();
+    char program[] = "/app0/child.bin";
+    char* arguments[] = {program, nullptr};
+    auto environment = BuildRoleEnvironment(role);
     if (usePath) {
-        Check(posix_spawnp_nid_postfix(processId, program, actions, nullptr, arguments, environment.data()) == expectedResult);
+        Check(posix_spawnp_nid_postfix(processId, program, actions, nullptr, arguments, environment.pointers.data()) == expectedResult);
     } else {
-        Check(posix_spawn_nid_postfix(processId, program, actions, nullptr, arguments, environment.data()) == expectedResult);
+        Check(posix_spawn_nid_postfix(processId, program, actions, nullptr, arguments, environment.pointers.data()) == expectedResult);
     }
     return processId != nullptr ? *processId : 0;
 }
@@ -363,6 +381,163 @@ static void CheckOrderedFileActions(const std::string& order) {
         const std::string originalOutput((std::istreambuf_iterator<char>(parent)), std::istreambuf_iterator<char>());
         Check((originalOutput.find("spawn-stdout") != std::string::npos) == (chain || untouched));
         Check((originalOutput.find("spawn-stderr") != std::string::npos) == (reverse || chain || untouched));
+    }
+    CleanupChild();
+}
+
+static void RemoveDirectoryTree(const std::filesystem::path& path) {
+#ifdef _WIN32
+    std::error_code error;
+    const auto verbatim = NativeVerbatimPath_nid_no_patch(path, error);
+    const auto& target = error ? path : verbatim;
+    const DWORD attributes = GetFileAttributesW(target.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES) return;
+    if ((attributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+        Check(DeleteFileW(target.c_str()) != 0);
+        return;
+    }
+    WIN32_FIND_DATAW entry{};
+    const std::wstring pattern = target.native() + L"\\*";
+    const HANDLE find = FindFirstFileW(pattern.c_str(), &entry);
+    if (find != INVALID_HANDLE_VALUE) {
+        do {
+            if (std::wcscmp(entry.cFileName, L".") == 0 || std::wcscmp(entry.cFileName, L"..") == 0) continue;
+            RemoveDirectoryTree(path / entry.cFileName);
+        } while (FindNextFileW(find, &entry) != 0);
+        FindClose(find);
+    }
+    Check(RemoveDirectoryW(target.c_str()) != 0);
+#else
+    std::error_code removeError;
+    std::filesystem::remove_all(path, removeError);
+    Check(!removeError);
+#endif
+}
+
+static void CheckOpenActionContract() {
+    PrepareChildBinary();
+    const auto app0 = std::filesystem::current_path() / "app0";
+    RemoveDirectoryTree(app0 / "spawn-open");
+    Check(mkdir_nid_postfix("/app0/spawn-open", 0755) == 0);
+    Check(mkdir_nid_postfix("/app0/spawn-open/dir", 0755) == 0);
+    { std::ofstream file(app0 / "spawn-open" / "regular.txt"); file << "regular"; Check(file.good()); }
+
+    char program[] = "/app0/child.bin";
+    char* args[] = {program, nullptr};
+
+    auto spawnOpen = [&](const char* path, int flags, int expected, const char* role = "child-exit-42") {
+        auto env = BuildRoleEnvironment(role);
+        for (auto spawn : std::array{&posix_spawn_nid_postfix, &posix_spawnp_nid_postfix}) {
+            PosixSpawnFileActions* actions = nullptr;
+            Check(posix_spawn_file_actions_init_nid_postfix(&actions) == 0);
+            Check(posix_spawn_file_actions_addopen_nid_postfix(&actions, 1, path, flags, 0600) == 0);
+            if (std::strcmp(role, "child-streams") == 0)
+                Check(posix_spawn_file_actions_adddup2_nid_postfix(&actions, 1, 2) == 0);
+            constexpr std::int32_t Sentinel = -12345;
+            std::int32_t pid = Sentinel;
+            *__error_nid_postfix() = 71;
+            const int result = spawn(&pid, program, &actions, nullptr, args, env.pointers.data());
+            if (result != expected)
+                std::fprintf(stderr, "Open action path=%s flags=0x%x: expected %d, observed %d\n", path, flags, expected, result);
+            Check(result == expected);
+            Check(*__error_nid_postfix() == 71);
+            Check(posix_spawn_file_actions_destroy_nid_postfix(&actions) == 0);
+            if (expected == 0) {
+                Check(pid > 0);
+                int status = -1;
+                Check(waitpid_nid_postfix(pid, &status, 0) == pid);
+                Check((status & 0x7f) == 0 && ((status >> 8) & 0xff) == (std::strcmp(role, "child-exit-42") == 0 ? 42 : 0));
+            } else {
+                Check(pid == Sentinel);
+            }
+        }
+    };
+
+    spawnOpen("/app0/spawn-open/dir", 0x601, 21);
+    spawnOpen("/app0/spawn-open/dir", 0x001, 21);
+    spawnOpen("/app0/spawn-open/dir", 0, 0);
+    spawnOpen("/app0/spawn-open/regular.txt", 0x20000, 20);
+    spawnOpen("/app0/spawn-open/regular.txt/child.txt", 0, 20);
+    spawnOpen("/app0/spawn-open/regular.txt", 0x3, 22);
+    spawnOpen("/app0/spawn-open/dir", 0x20A00, 22);
+
+    std::vector<std::string> deepDirs;
+    std::string deepGuest = "/app0/spawn-open";
+    for (int i = 0; i < 6; ++i) {
+        deepGuest += "/" + std::string(45, static_cast<char>('a' + i));
+        Check(mkdir_nid_postfix(deepGuest.c_str(), 0755) == 0);
+        deepDirs.push_back(deepGuest);
+    }
+    const std::string deepFile = deepGuest + "/out.txt";
+    spawnOpen(deepFile.c_str(), 0x601, 0, "child-streams");
+    {
+        const int readFd = open_nid_postfix(deepFile.c_str(), 0, 0);
+        Check(readFd >= 0);
+        std::string output;
+        char chunk[256];
+        while (true) {
+            const auto n = read_nid_postfix(readFd, chunk, sizeof(chunk));
+            if (n <= 0) {
+                Check(n == 0);
+                break;
+            }
+            output.append(chunk, static_cast<std::size_t>(n));
+        }
+        Check(close_nid_postfix(readFd) == 0);
+        Check(output.find("spawn-stdout") != std::string::npos && output.find("spawn-stderr") != std::string::npos);
+    }
+
+    Check(unlink_nid_postfix(deepFile.c_str()) == 0);
+    for (auto it = deepDirs.rbegin(); it != deepDirs.rend(); ++it)
+        Check(rmdir_nid_postfix(it->c_str()) == 0);
+    Check(unlink_nid_postfix("/app0/spawn-open/regular.txt") == 0);
+    Check(rmdir_nid_postfix("/app0/spawn-open/dir") == 0);
+    Check(rmdir_nid_postfix("/app0/spawn-open") == 0);
+    CleanupChild();
+}
+
+static void CheckClosedStandardStreams() {
+    PrepareChildBinary();
+    const auto app0 = std::filesystem::current_path() / "app0";
+    { std::ofstream input(app0 / "closed-stdin.txt", std::ios::binary); input << "secret"; Check(input.good()); }
+    const int savedInput = dup_nid_postfix(0);
+    const int savedOutput = dup_nid_postfix(1);
+    const int savedError = dup_nid_postfix(2);
+    Check(savedInput >= 0 && savedOutput >= 0 && savedError >= 0);
+    const int redirectedInput = open_nid_postfix("/app0/closed-stdin.txt", 0, 0);
+    const int redirectedOutput = open_nid_postfix("/app0/closed-parent.txt", 0x601, 0600);
+    Check(redirectedInput >= 0 && redirectedOutput >= 0);
+    Check(dup2_nid_postfix(redirectedInput, 0) == 0);
+    Check(dup2_nid_postfix(redirectedOutput, 1) == 1);
+    Check(dup2_nid_postfix(redirectedOutput, 2) == 2);
+    Check(close_nid_postfix(redirectedInput) == 0);
+    Check(close_nid_postfix(redirectedOutput) == 0);
+
+    PosixSpawnFileActions* actions = nullptr;
+    Check(posix_spawn_file_actions_init_nid_postfix(&actions) == 0);
+    Check(posix_spawn_file_actions_addclose_nid_postfix(&actions, 0) == 0);
+    Check(posix_spawn_file_actions_addclose_nid_postfix(&actions, 1) == 0);
+    Check(posix_spawn_file_actions_addclose_nid_postfix(&actions, 2) == 0);
+    char program[] = "/app0/child.bin";
+    char* args[] = {program, nullptr};
+    auto env = BuildRoleEnvironment("child-closed-std");
+    std::int32_t pid = 0;
+    const int spawned = posix_spawn_nid_postfix(&pid, program, &actions, nullptr, args, env.pointers.data());
+    Check(dup2_nid_postfix(savedInput, 0) == 0);
+    Check(dup2_nid_postfix(savedOutput, 1) == 1);
+    Check(dup2_nid_postfix(savedError, 2) == 2);
+    Check(close_nid_postfix(savedInput) == 0);
+    Check(close_nid_postfix(savedOutput) == 0);
+    Check(close_nid_postfix(savedError) == 0);
+    Check(posix_spawn_file_actions_destroy_nid_postfix(&actions) == 0);
+    Check(spawned == 0);
+    int status = -1;
+    Check(waitpid_nid_postfix(pid, &status, 0) == pid);
+    Check((status & 0x7f) == 0 && ((status >> 8) & 0xff) == 0);
+    {
+        std::ifstream parent(app0 / "closed-parent.txt", std::ios::binary);
+        const std::string leaked((std::istreambuf_iterator<char>(parent)), std::istreambuf_iterator<char>());
+        Check(leaked.empty());
     }
     CleanupChild();
 }
@@ -481,11 +656,20 @@ int main() {
             std::this_thread::sleep_for(std::chrono::seconds(30));
             std::_Exit(47);
         }
+        if (std::strcmp(role, "child-closed-std") == 0) {
+            char byte = 0;
+            const bool isolatedIn = read_nid_postfix(0, &byte, 1) == 0;
+            const bool isolatedOut = write_nid_postfix(1, "leak", 4) == 4;
+            const bool isolatedErr = write_nid_postfix(2, "leak", 4) == 4;
+            std::_Exit(isolatedIn && isolatedOut && isolatedErr ? 0 : 12);
+        }
         std::_Exit(99);
     }
     CheckAttributes();
     CheckFileActions();
     CheckSpawn();
+    CheckOpenActionContract();
+    CheckClosedStandardStreams();
     for (const char* order : {"open-dup", "close-dup", "dup-open", "open-self-dup", "close-self-dup", "dup-replace-dup", "untouched-self-dup"})
         CheckOrderedFileActions(order);
     CheckSpawnNullProcessId(false);

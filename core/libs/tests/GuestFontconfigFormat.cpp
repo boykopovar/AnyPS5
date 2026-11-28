@@ -4,11 +4,20 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 
 #include <array>
-
+#include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 #include <string>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static const FcChar8* Text(const char* text) {
     return reinterpret_cast<const FcChar8*>(text);
@@ -152,6 +161,50 @@ int main() {
     CHECK(FcPatternAddString(escaped, "style", Text("s=t_u:v,w\\x")));
     Expect(escaped, "%{=unparse}", "a\\-b\\:c\\,d\\\\e:style=s\\=t\\_u\\:v\\,w\\\\x");
     FcPatternDestroy_nid_postfix(escaped);
+
+    const auto expectRejected = [](auto&& fn, int line) {
+        errno = 73;
+        bool threw = false;
+        try {
+            fn();
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        Check(threw && errno == 73, line);
+    };
+    void* guardedPages = nullptr;
+    std::size_t pageSize = 0;
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    pageSize = info.dwPageSize;
+    guardedPages = VirtualAlloc(nullptr, pageSize * 2, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    CHECK(guardedPages != nullptr);
+    DWORD previous = 0;
+    CHECK(VirtualProtect(static_cast<char*>(guardedPages) + pageSize, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+    const long size = sysconf(_SC_PAGESIZE);
+    CHECK(size > 0);
+    pageSize = static_cast<std::size_t>(size);
+    guardedPages = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(guardedPages != MAP_FAILED);
+    CHECK(mprotect(static_cast<char*>(guardedPages) + pageSize, pageSize, PROT_NONE) == 0);
+#endif
+    auto* noAccessPage = static_cast<char*>(guardedPages) + pageSize;
+    char* validBoundary = noAccessPage - 9;
+    std::memcpy(validBoundary, "%{style}", 9);
+    Expect(pattern, validBoundary, "Book");
+    char* unterminated = noAccessPage - 4;
+    std::memcpy(unterminated, "%{st", 4);
+    expectRejected([&] { FcPatternFormat(pattern, reinterpret_cast<const FcChar8*>(std::uintptr_t{0x10})); }, __LINE__);
+    expectRejected([&] { FcPatternFormat(pattern, reinterpret_cast<const FcChar8*>(noAccessPage)); }, __LINE__);
+    expectRejected([&] { FcPatternFormat(pattern, reinterpret_cast<const FcChar8*>(unterminated)); }, __LINE__);
+#ifdef _WIN32
+    VirtualFree(guardedPages, 0, MEM_RELEASE);
+#else
+    munmap(guardedPages, pageSize * 2);
+#endif
+
     FcPatternDestroy_nid_postfix(pattern);
     std::puts("Fontconfig format checks passed");
 }

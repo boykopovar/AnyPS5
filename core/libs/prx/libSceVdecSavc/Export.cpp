@@ -1,4 +1,5 @@
 #include "prx/libSceVdecSavc/include/Api.hpp"
+#include "prx/libSceVdecSavc/include/SdecShared.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -23,44 +24,16 @@ constexpr std::uint64_t HandleHeaderSize = 0x18;
 constexpr std::uint64_t MinimumDecoderSize = 0x1f;
 constexpr std::uint64_t FirstBlockSlack = 0x20;
 
-struct LevelLimits {
-    std::uint32_t level;
-    std::uint32_t maxDpbMbs;
-    std::uint32_t maxFrameMbs;
-};
-
 constexpr std::array<LevelLimits, 15> Levels{{
     {10, 396, 99}, {11, 900, 396}, {12, 2376, 396}, {13, 2376, 396}, {20, 2376, 396},
     {21, 4752, 792}, {22, 8100, 1620}, {30, 8100, 1620}, {31, 18000, 3600}, {32, 20480, 5120},
     {40, 32768, 8192}, {41, 32768, 8192}, {42, 34816, 8704}, {50, 110400, 22080}, {51, 184320, 36864},
 }};
 
-struct SdecSizes {
-    std::uint64_t first;
-    std::uint64_t second;
-    std::uint64_t third;
-};
-
-const LevelLimits* FindLevel(std::uint32_t level) {
-    const auto found = std::find_if(Levels.begin(), Levels.end(), [level](const LevelLimits& limits) { return limits.level == level; });
-    return found == Levels.end() ? nullptr : &*found;
-}
-
-std::uint64_t Up(std::uint64_t value, std::uint64_t multiple) {
-    return (value + multiple - 1) / multiple * multiple;
-}
-
-std::uint64_t Surface(std::uint64_t elementSize, std::uint64_t width, std::uint64_t height) {
-    const std::uint64_t granule = std::max<std::uint64_t>(256, 64 * elementSize);
-    std::uint64_t pitchAlignment = 64;
-    while (pitchAlignment * height % granule != 0) pitchAlignment *= 2;
-    return Up(width * elementSize, pitchAlignment) * height;
-}
-
 std::uint32_t DpbFrames(const SdecConfig& config) {
     if (config.frameCount >= 0) return std::min(static_cast<std::uint32_t>(config.frameCount), MaxDpbFrames);
     if (config.widthInMbs < 0 || config.heightInMbs < 0) return MaxDpbFrames;
-    const LevelLimits* limits = FindLevel(config.level);
+    const LevelLimits* limits = FindLevel(Levels, config.level);
     const std::uint64_t maxDpbMbs = limits != nullptr ? limits->maxDpbMbs : DefaultMaxDpbMbs;
     const std::uint64_t pictureMbs = static_cast<std::uint64_t>(config.widthInMbs) * static_cast<std::uint64_t>(config.heightInMbs);
     return static_cast<std::uint32_t>(std::min<std::uint64_t>(maxDpbMbs / pictureMbs, MaxDpbFrames));
@@ -68,7 +41,7 @@ std::uint32_t DpbFrames(const SdecConfig& config) {
 
 int CheckShape(const SdecConfig& config) {
     if (config.reserved0 != 0 || config.widthInMbs == 0 || config.heightInMbs == 0) return SdecInvalid;
-    const LevelLimits* limits = FindLevel(config.level);
+    const LevelLimits* limits = FindLevel(Levels, config.level);
     if (limits == nullptr && config.level != Level1b) return SdecInvalid;
     if (config.widthInMbs < 0 || config.heightInMbs < 0) NotImplemented_nid_no_patch("sceSdec memory sizes for a negative width or height");
     const std::uint64_t maxFrameMbs = limits != nullptr ? limits->maxFrameMbs : Level1bMaxFrameMbs;
@@ -103,21 +76,6 @@ int CheckCreate(const SdecConfig& config, const SdecRecord& record, const SdecMe
     if (memory.blocks[0].alignment != 0 || memory.blocks[1].alignment != PictureAlignment || memory.blocks[2].alignment != PictureAlignment) return SdecMemoryMismatch;
     if (memory.blocks[0].size + FirstBlockSlack < sizes.first || memory.blocks[1].size < sizes.second || memory.blocks[2].size < sizes.third) return SdecMemoryMismatch;
     return 0;
-}
-
-bool DestroyedWithoutCodec(void* decoder) {
-    const int savedErrno = errno;
-    std::uint64_t codec = 0;
-    std::uint64_t field = 0;
-    bool done = GuestCopyIn_nid_no_patch(&codec, static_cast<unsigned char*>(decoder) + 0x10, sizeof(codec)) &&
-                codec == 0 &&
-                GuestCopyIn_nid_no_patch(&field, static_cast<unsigned char*>(decoder) + 0x8, sizeof(field));
-    if (done && field != 0) {
-        const std::uint64_t zero = 0;
-        done = GuestCopyOut_nid_no_patch(static_cast<unsigned char*>(decoder) + 0x8, &zero, sizeof(zero));
-    }
-    errno = savedErrno;
-    return done;
 }
 
 } // namespace

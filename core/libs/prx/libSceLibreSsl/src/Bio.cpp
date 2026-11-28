@@ -62,27 +62,13 @@ int queueError(int library, int reason, int result) {
     return result;
 }
 
-bool CopyGuestInPreservingErrno(void* destination, const void* source, std::size_t size) {
-    const int savedErrno = errno;
-    const bool ok = GuestCopyIn_nid_no_patch(destination, source, size);
-    errno = savedErrno;
-    return ok;
-}
-
-bool CopyGuestOutPreservingErrno(void* destination, const void* source, std::size_t size) {
-    const int savedErrno = errno;
-    const bool ok = GuestCopyOut_nid_no_patch(destination, source, size);
-    errno = savedErrno;
-    return ok;
-}
-
 bool CopyGuestStringPreservingErrno(const char* source, std::string& destination) {
     constexpr std::uintptr_t Chunk = 4096;
     char bytes[Chunk];
     destination.clear();
     for (auto address = reinterpret_cast<std::uintptr_t>(source);;) {
         const std::size_t count = Chunk - address % Chunk;
-        if (!CopyGuestInPreservingErrno(bytes, reinterpret_cast<const void*>(address), count)) return false;
+        if (!GuestCopyIn_nid_no_patch(bytes, reinterpret_cast<const void*>(address), count)) return false;
         const auto* end = static_cast<const char*>(std::memchr(bytes, 0, count));
         destination.append(bytes, end ? static_cast<std::size_t>(end - bytes) : count);
         if (end) return true;
@@ -159,7 +145,7 @@ std::int64_t APS5_VABI controlSsl(Bio* bio, int command, std::int64_t argument, 
         return 0;
     case SslBioGetSsl:
         if (!pointer) return 0;
-        if (!CopyGuestOutPreservingErrno(pointer, &state.ssl, sizeof(state.ssl))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        if (!GuestCopyOut_nid_no_patch(pointer, &state.ssl, sizeof(state.ssl))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
         return 1;
     case SslBioGetClose:
         return bio->shutdown;
@@ -228,8 +214,8 @@ int APS5_VABI readMemory(Bio* bio, char* destination, int size) {
     const int count = size >= 0 ? static_cast<int>(std::min<std::size_t>(size, buffer.length)) : size;
     if (destination && count > 0) {
         std::vector<char> bytes(static_cast<std::size_t>(count));
-        if (!CopyGuestInPreservingErrno(bytes.data(), buffer.data, bytes.size())) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-        if (!CopyGuestOutPreservingErrno(destination, bytes.data(), bytes.size())) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        if (!GuestCopyIn_nid_no_patch(bytes.data(), buffer.data, bytes.size())) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        if (!GuestCopyOut_nid_no_patch(destination, bytes.data(), bytes.size())) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
         consumeMemory(bio, buffer, static_cast<std::size_t>(count));
         return count;
     }
@@ -252,7 +238,7 @@ int APS5_VABI writeMemory(Bio* bio, const char* source, int size) {
         const std::size_t capacity = (length + 3) / 3 * 4;
         auto* data = static_cast<char*>(calloc_nid_postfix(capacity, 1));
         if (!data) return queueError(BufferLibrary, AllocationFailure, -1);
-        if (count != 0 && !CopyGuestInPreservingErrno(data + buffer.length, source, count)) {
+        if (count != 0 && !GuestCopyIn_nid_no_patch(data + buffer.length, source, count)) {
             BioBuffer rejected{0, data, capacity};
             clearBuffer(rejected);
             free_nid_postfix(data);
@@ -268,7 +254,7 @@ int APS5_VABI writeMemory(Bio* bio, const char* source, int size) {
         const auto begin = reinterpret_cast<std::uintptr_t>(buffer.data);
         if (start >= begin && start - begin <= buffer.capacity && count <= buffer.capacity - (start - begin))
             std::memmove(buffer.data + buffer.length, buffer.data + (start - begin), count);
-        else if (!CopyGuestInPreservingErrno(buffer.data + buffer.length, source, count))
+        else if (!GuestCopyIn_nid_no_patch(buffer.data + buffer.length, source, count))
             NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     }
     buffer.length = length;
@@ -289,16 +275,16 @@ int APS5_VABI getsMemory(Bio* bio, char* destination, int size) {
     bio->flags &= ~RetryFlags;
     constexpr char Terminator = '\0';
     if (size <= 1 || buffer.length == 0) {
-        if (!CopyGuestOutPreservingErrno(destination, &Terminator, 1)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        if (!GuestCopyOut_nid_no_patch(destination, &Terminator, 1)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
         return 0;
     }
     const auto limit = std::min<std::size_t>(size - 1, buffer.length);
     std::vector<char> line(limit + 1);
-    if (!CopyGuestInPreservingErrno(line.data(), buffer.data, limit)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (!GuestCopyIn_nid_no_patch(line.data(), buffer.data, limit)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     const void* newline = std::memchr(line.data(), '\n', limit);
     const std::size_t count = newline ? static_cast<const char*>(newline) - line.data() + 1 : limit;
     line[count] = Terminator;
-    if (!CopyGuestOutPreservingErrno(destination, line.data(), count + 1)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (!GuestCopyOut_nid_no_patch(destination, line.data(), count + 1)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     consumeMemory(bio, buffer, count);
     return static_cast<int>(count);
 }
@@ -323,7 +309,7 @@ std::int64_t APS5_VABI controlMemory(Bio* bio, int command, std::int64_t argumen
     case 2:
         return memoryBuffer(bio).length == 0;
     case 3:
-        if (pointer && !CopyGuestOutPreservingErrno(pointer, &memoryBuffer(bio).data, sizeof(char*))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        if (pointer && !GuestCopyOut_nid_no_patch(pointer, &memoryBuffer(bio).data, sizeof(char*))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
         return static_cast<std::int64_t>(memoryBuffer(bio).length);
     case 8:
         return bio->shutdown;
@@ -343,7 +329,7 @@ std::int64_t APS5_VABI controlMemory(Bio* bio, int command, std::int64_t argumen
         bio->shutdown = static_cast<int>(argument);
         return 1;
     case 115:
-        if (pointer && !CopyGuestOutPreservingErrno(pointer, &bio->data, sizeof(bio->data))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        if (pointer && !GuestCopyOut_nid_no_patch(pointer, &bio->data, sizeof(bio->data))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
         return 1;
     case 130:
         bio->number = static_cast<int>(argument);

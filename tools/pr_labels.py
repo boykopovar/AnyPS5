@@ -18,6 +18,7 @@ PERF = re.compile(r"perf(\(|!?:)")
 PERF_SCOPE = re.compile(r"perf\(([^)]*)\)")
 UNCAPTURED_SCOPES = {"build", "ci", "tools"}
 FENCE = re.compile(r"(?:```|~~~)[^\r\n]*\r?\n(.*?)(?:```|~~~)", re.S)
+BLOCK_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})([^\r\n]*)")
 MARKER = "<!-- pr-labels-perf -->"
 UNBLOCKS_LABEL = "unblocks title"
 PERF_LABEL = "perf"
@@ -37,7 +38,7 @@ def gh(*args, attempts=3, delay=0.5):
             raise ValueError("GitHub CLI 'gh' is required on PATH") from error
         if result.returncode == 0:
             return result.stdout
-        transient = any(code in result.stderr for code in ("500", "502", "503", "504", "server error", "connection reset", "Connection reset", "timed out", "TLS handshake", "stream error:", "unexpected EOF",
+        transient = any(code in result.stderr for code in ("500", "502", "503", "504", "server error", "connection reset", "Connection reset", "timed out", "i/o timeout", "TLS handshake", "stream error:", "unexpected EOF",
                                                           "A connection attempt failed because the connected party did not properly respond"))
         if attempt + 1 == attempts or not transient:
             raise subprocess.CalledProcessError(result.returncode, ["gh", *args], output=result.stdout, stderr=result.stderr)
@@ -52,8 +53,25 @@ def strip_comments(body):
     return re.sub(r"<!--.*?-->", "", body or "", flags=re.S)
 
 
+def strip_fenced_blocks(body):
+    outside = []
+    fence = ""
+    for line in body.split("\n"):
+        marker = BLOCK_FENCE.match(line)
+        if fence:
+            if marker and marker[1].startswith(fence) and not marker[2].strip(" \t"):
+                fence = ""
+            outside.append("")
+        elif marker and (marker[1].startswith("~") or "`" not in marker[2]):
+            fence = marker[1]
+            outside.append("")
+        else:
+            outside.append(line)
+    return "\n".join(outside)
+
+
 def title_ids(body):
-    body = strip_comments(body)
+    body = strip_fenced_blocks(strip_comments(body))
     checklist = CHECKLIST_UNBLOCKS.search(body)
     match = checklist if checklist and checklist.group(1).strip() else UNBLOCKS.search(body)
     return set(TITLE_ID.findall(match.group(1))) if match and not NONE.match(match.group(1)) else set()
@@ -64,8 +82,13 @@ def is_perf(title):
 
 
 def needs_capture(title):
+    if not is_perf(title):
+        return False
     scope = PERF_SCOPE.match(title or "")
-    return is_perf(title) and not (scope and scope.group(1).strip().lower() in UNCAPTURED_SCOPES)
+    if not scope:
+        return True
+    parts = [part.strip().lower() for part in scope.group(1).split(",")]
+    return not (parts and all(part in UNCAPTURED_SCOPES for part in parts))
 
 
 def has_numbers(body):

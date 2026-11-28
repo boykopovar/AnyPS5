@@ -18,7 +18,8 @@ PsnDialogNoticeMode Mode() {
 }
 
 std::uint64_t NowMilliseconds() {
-    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    return ms > 0 ? static_cast<std::uint64_t>(ms) : 0;
 }
 
 }
@@ -35,7 +36,7 @@ void PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode mode) {
 bool PsnDialogNoticeOfferAt_nid_postfix(PsnDialogNoticeKind kind, std::uint64_t nowMilliseconds) {
     std::lock_guard lock(g_mutex);
     if (Mode() != PsnDialogNoticeMode::Show) return false;
-    if (g_shown && nowMilliseconds >= g_lastShown && nowMilliseconds - g_lastShown < PsnDialogNoticeIntervalMilliseconds) return false;
+    if (g_shown && (nowMilliseconds < g_lastShown || nowMilliseconds - g_lastShown < PsnDialogNoticeIntervalMilliseconds)) return false;
     if (!ModalDialogOpen_nid_postfix(PsnDialogNoticeRequest(kind))) return false;
     g_shown = true;
     g_lastShown = nowMilliseconds;

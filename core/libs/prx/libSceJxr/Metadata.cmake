@@ -1,9 +1,7 @@
 add_library(jxr_metadata_native STATIC
-    ${JXR_SOURCE_DIR}/jxrgluelib/JXRGlueJxr.c
+    src/MetadataGlue.c
     src/NativeMetadata.c)
 configure_jxr_native(jxr_metadata_native)
-set_source_files_properties(${JXR_SOURCE_DIR}/jxrgluelib/JXRGlueJxr.c TARGET_DIRECTORY jxr_metadata_native
-    PROPERTIES COMPILE_DEFINITIONS "PKFree=JxrMetadataFree_nid_no_patch;FreeDescMetadata=JxrMetadataRelease_nid_no_patch")
 target_link_libraries(jxr_metadata_native PRIVATE jxr)
 target_sources(libSceJxr PRIVATE src/Metadata.cpp)
 target_link_libraries(libSceJxr PRIVATE jxr_metadata_native)

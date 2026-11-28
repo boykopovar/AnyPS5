@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/InventoryExports.hpp"
 #include "prx/libSceLibcInternal/include/RecoveredInventory.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libc/include/Api.hpp"
@@ -13,6 +14,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 
 struct TypeRecord { const void* vtable; const char* name; const TypeRecord* base; };
 
@@ -129,6 +131,27 @@ void CheckBadException() {
     lastReleased = nullptr;
     _ZNSt13bad_exceptionD0Ev_nid_postfix(allocated);
     Require(releases == 1 && lastReleased == allocated, "bad_exception D0 releases the object through operator delete");
+}
+
+void CheckFacetDeletingDestructors() {
+    using Destructor = void (APS5_VABI *)(void*);
+    const std::array<std::pair<Destructor, const char*>, 8> destructors{{
+        {libSceLibcInternalInventory_110_nid_no_patch, "collate<wchar_t> D0 releases the facet through operator delete"},
+        {libSceLibcInternalInventory_116_nid_no_patch, "num_get<char> D0 releases the facet through operator delete"},
+        {libSceLibcInternalInventory_124_nid_no_patch, "num_get<wchar_t> D0 releases the facet through operator delete"},
+        {libSceLibcInternalInventory_131_nid_no_patch, "num_put<char> D0 releases the facet through operator delete"},
+        {libSceLibcInternalInventory_136_nid_no_patch, "num_put<wchar_t> D0 releases the facet through operator delete"},
+        {libSceLibcInternalInventory_208_nid_no_patch, "money_get<char> D0 releases the facet through operator delete"},
+        {libSceLibcInternalInventory_212_nid_no_patch, "money_get<wchar_t> D0 releases the facet through operator delete"},
+        {libSceLibcInternalInventory_223_nid_no_patch, "money_put<char> D0 releases the facet through operator delete"},
+    }};
+    for (const auto& [destructor, label] : destructors) {
+        void* allocated = _Znwm_nid_postfix(16);
+        releases = 0;
+        lastReleased = nullptr;
+        destructor(allocated);
+        Require(releases == 1 && lastReleased == allocated, label);
+    }
 }
 
 TypeRecord Named(const char* name) {
@@ -286,6 +309,7 @@ int main() {
     CheckCategories();
     CheckBadVariantAccess();
     CheckBadException();
+    CheckFacetDeletingDestructors();
     CheckOverflow();
     CheckMutex();
     CheckErrno();

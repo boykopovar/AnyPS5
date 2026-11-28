@@ -1,6 +1,9 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libc/include/General.hpp"
+#ifdef _WIN32
+#include "prx/libc/include/WindowsVerbatimPath.hpp"
+#endif
 #include <cerrno>
 #include <cstdint>
 #include <fcntl.h>
@@ -87,13 +90,20 @@ struct Descriptor {
 
 int OpenMetadata(const std::filesystem::path& path, bool directory) {
 #ifdef _WIN32
-    const HANDLE handle = CreateFileW(path.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+    const auto verbatimPath = [](const std::filesystem::path& candidate) {
+        std::error_code verbatimError;
+        const auto verbatim = NativeVerbatimPath_nid_no_patch(candidate, verbatimError);
+        return verbatimError ? candidate : verbatim;
+    };
+    const auto openPath = verbatimPath(path);
+    const HANDLE handle = CreateFileW(openPath.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
         nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
     if (handle == INVALID_HANDLE_VALUE) {
         const DWORD error = GetLastError();
         if (error == ERROR_PATH_NOT_FOUND || error == ERROR_INVALID_NAME || error == ERROR_DIRECTORY) {
             for (auto prefix = path.parent_path(); !prefix.empty();) {
-                const DWORD attributes = GetFileAttributesW(prefix.c_str());
+                const auto attributePath = verbatimPath(prefix);
+                const DWORD attributes = GetFileAttributesW(attributePath.c_str());
                 if (attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY)) return Fail(20);
                 const auto parent = prefix.parent_path();
                 if (parent == prefix) break;

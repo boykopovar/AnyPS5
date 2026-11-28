@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestSamplerResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
+#include <algorithm>
 #include <array>
 #include <stdexcept>
 #include <string>
@@ -22,7 +23,8 @@ bool isAnisoFilter(std::uint32_t raw) {
 
 VkSamplerReductionMode toVkReductionMode(std::uint32_t raw) {
     switch (raw) {
-        case 0: return VK_SAMPLER_REDUCTION_MODE_WEIGHTED_AVERAGE_EXT;
+        case 0:
+        case 3: return VK_SAMPLER_REDUCTION_MODE_WEIGHTED_AVERAGE_EXT;
         case 1: return VK_SAMPLER_REDUCTION_MODE_MIN_EXT;
         case 2: return VK_SAMPLER_REDUCTION_MODE_MAX_EXT;
         default: throw std::runtime_error("AGC graphics: guest sampler descriptor uses an unknown reduction filter mode " + std::to_string(raw));
@@ -126,6 +128,9 @@ GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words,
         Require(minLodRaw <= maxLodRaw, "guest sampler descriptor has a minimum LOD past its maximum LOD");
         minLod = static_cast<float>(minLodRaw) / 256.0f;
         maxLod = static_cast<float>(maxLodRaw) / 256.0f;
+    } else if (minLodRaw <= maxLodRaw) {
+        minLod = static_cast<float>(std::min(minLodRaw, 1u)) / 256.0f;
+        maxLod = static_cast<float>(std::min(maxLodRaw, 1u)) / 256.0f;
     }
 
     VkBorderColor border;

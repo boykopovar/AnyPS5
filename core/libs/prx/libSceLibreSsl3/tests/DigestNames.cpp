@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <source_location>
 #include <stdexcept>
 #include <string>
@@ -256,12 +257,33 @@ char* MapPageBeforeGuard() {
     return pages;
 }
 
+void ProtectPageReadOnly(void* page) {
+#ifdef _WIN32
+    DWORD previous = 0;
+    Require(VirtualProtect(page, 4096, PAGE_READONLY, &previous) != 0);
+#else
+    Require(mprotect(page, 4096, PROT_READ) == 0);
+#endif
+}
+
 void UnmapPages(char* pages) {
 #ifdef _WIN32
     Require(VirtualFree(pages, 0, MEM_RELEASE) != 0);
 #else
     Require(munmap(pages, 8192) == 0);
 #endif
+}
+
+template <typename ExceptionType, typename Callable>
+void RequireThrowsPreservingErrno(int expectedErrno, Callable&& call) {
+    errno = expectedErrno;
+    bool threw = false;
+    try {
+        call();
+    } catch (const ExceptionType&) {
+        threw = true;
+    }
+    Require(threw && errno == expectedErrno);
 }
 
 void CheckGuestName() {
@@ -283,6 +305,153 @@ void CheckGuestName() {
     UnmapPages(pages);
 }
 
+void CheckPkeyGet1Rsa() {
+    LibreSsl3Rsa rsa{};
+    rsa.references = 1;
+    LibreSsl3EvpPkey rsaKey{};
+    rsaKey.type = 6;
+    rsaKey.references = 1;
+    rsaKey.key = &rsa;
+    ERR_clear_error_nid_postfix();
+    errno = 71;
+    Require(EVP_PKEY_get1_RSA_nid_disambig1_nid_postfix(&rsaKey) == &rsa);
+    Require(rsa.references == 2 && ERR_peek_last_error_nid_postfix() == 0 && errno == 71);
+
+    LibreSsl3Rsa rsaPss{};
+    rsaPss.references = 1;
+    LibreSsl3EvpPkey pssKey{};
+    pssKey.type = 912;
+    pssKey.references = 1;
+    pssKey.key = &rsaPss;
+    ERR_clear_error_nid_postfix();
+    errno = 71;
+    Require(EVP_PKEY_get1_RSA_nid_disambig1_nid_postfix(&pssKey) == &rsaPss);
+    Require(rsaPss.references == 2 && ERR_peek_last_error_nid_postfix() == 0 && errno == 71);
+
+    LibreSsl3EvpPkey wrongKey{};
+    wrongKey.type = 408;
+    wrongKey.references = 1;
+    wrongKey.key = &rsa;
+    ERR_clear_error_nid_postfix();
+    Require(EVP_PKEY_get1_RSA_nid_disambig1_nid_postfix(&wrongKey) == nullptr);
+    Require(rsa.references == 2 && ERR_peek_last_error_nid_postfix() != 0);
+    ERR_clear_error_nid_postfix();
+
+    RequireThrowsPreservingErrno<std::invalid_argument>(71, [] {
+        EVP_PKEY_get1_RSA_nid_disambig1_nid_postfix(nullptr);
+    });
+    LibreSsl3EvpPkey emptyRsa{};
+    emptyRsa.type = 912;
+    emptyRsa.references = 1;
+    RequireThrowsPreservingErrno<std::invalid_argument>(71, [&] {
+        EVP_PKEY_get1_RSA_nid_disambig1_nid_postfix(&emptyRsa);
+    });
+}
+
+void CheckPkeySet1EcKeyAtomic() {
+    LibreSsl3EvpPkey pkey{};
+    pkey.references = 1;
+    Require(EVP_PKEY_set1_EC_KEY_nid_postfix(&pkey, nullptr) == 0);
+    Require(pkey.type == 0 && pkey.key == nullptr);
+
+    LibreSsl3EcKey overflowEc{};
+    overflowEc.references = std::numeric_limits<std::int32_t>::max();
+    RequireThrowsPreservingErrno<std::overflow_error>(71, [&] {
+        EVP_PKEY_set1_EC_KEY_nid_postfix(&pkey, &overflowEc);
+    });
+    Require(pkey.type == 0 && pkey.key == nullptr);
+    Require(overflowEc.references == std::numeric_limits<std::int32_t>::max());
+
+    auto* badEc = reinterpret_cast<LibreSsl3EcKey*>(std::uintptr_t{0x10});
+    RequireThrowsPreservingErrno<std::runtime_error>(71, [&] {
+        EVP_PKEY_set1_EC_KEY_nid_postfix(&pkey, badEc);
+    });
+    Require(pkey.type == 0 && pkey.key == nullptr);
+
+    LibreSsl3EcKey validEc{};
+    validEc.references = 1;
+    errno = 71;
+    Require(EVP_PKEY_set1_EC_KEY_nid_postfix(&pkey, &validEc) == 1);
+    Require(pkey.type == 408 && pkey.key == &validEc && validEc.references == 2 && errno == 71);
+}
+
+void CheckPkeyGuestPointers() {
+    LibreSsl3Rsa rsa{};
+    rsa.references = 1;
+    LibreSsl3EcKey ec{};
+    ec.references = 1;
+    auto* unmappedKey = reinterpret_cast<LibreSsl3EvpPkey*>(std::uintptr_t{0x10});
+
+    RequireThrowsPreservingErrno<std::invalid_argument>(71, [&] {
+        EVP_PKEY_get1_RSA_nid_disambig1_nid_postfix(unmappedKey);
+    });
+    RequireThrowsPreservingErrno<std::invalid_argument>(71, [&] {
+        EVP_PKEY_set1_EC_KEY_nid_postfix(unmappedKey, &ec);
+    });
+    Require(ec.references == 1);
+    RequireThrowsPreservingErrno<std::invalid_argument>(71, [&] {
+        EVP_PKEY_assign_nid_postfix(unmappedKey, 6, &rsa);
+    });
+    RequireThrowsPreservingErrno<std::invalid_argument>(71, [&] {
+        EVP_PKEY_get0_RSA_nid_postfix(unmappedKey);
+    });
+    RequireThrowsPreservingErrno<std::invalid_argument>(71, [&] {
+        EVP_PKEY_get0_DSA_nid_postfix(unmappedKey);
+    });
+    RequireThrowsPreservingErrno<std::invalid_argument>(71, [&] {
+        EVP_PKEY_get0_DH_nid_postfix(unmappedKey);
+    });
+
+    char* pages = MapPageBeforeGuard();
+    auto* roEmpty = reinterpret_cast<LibreSsl3EvpPkey*>(pages);
+    auto* roRsa = reinterpret_cast<LibreSsl3EvpPkey*>(pages + sizeof(LibreSsl3EvpPkey));
+    auto* roDsa = reinterpret_cast<LibreSsl3EvpPkey*>(pages + sizeof(LibreSsl3EvpPkey) * 2);
+    auto* roDh = reinterpret_cast<LibreSsl3EvpPkey*>(pages + sizeof(LibreSsl3EvpPkey) * 3);
+    LibreSsl3EvpPkey emptyInit{};
+    emptyInit.references = 1;
+    LibreSsl3EvpPkey rsaInit{};
+    rsaInit.type = 912;
+    rsaInit.references = 1;
+    rsaInit.key = &rsa;
+    int dsaDummy = 1;
+    LibreSsl3EvpPkey dsaInit{};
+    dsaInit.type = 116;
+    dsaInit.references = 1;
+    dsaInit.key = &dsaDummy;
+    int dhDummy = 2;
+    LibreSsl3EvpPkey dhInit{};
+    dhInit.type = 28;
+    dhInit.references = 1;
+    dhInit.key = &dhDummy;
+    std::memcpy(roEmpty, &emptyInit, sizeof(emptyInit));
+    std::memcpy(roRsa, &rsaInit, sizeof(rsaInit));
+    std::memcpy(roDsa, &dsaInit, sizeof(dsaInit));
+    std::memcpy(roDh, &dhInit, sizeof(dhInit));
+    ProtectPageReadOnly(pages);
+
+    RequireThrowsPreservingErrno<std::invalid_argument>(71, [&] {
+        EVP_PKEY_set1_EC_KEY_nid_postfix(roEmpty, &ec);
+    });
+    Require(ec.references == 1);
+    RequireThrowsPreservingErrno<std::invalid_argument>(71, [&] {
+        EVP_PKEY_assign_nid_postfix(roEmpty, 6, &rsa);
+    });
+
+    ERR_clear_error_nid_postfix();
+    errno = 71;
+    Require(EVP_PKEY_get1_RSA_nid_disambig1_nid_postfix(roRsa) == &rsa);
+    Require(rsa.references == 2 && ERR_peek_last_error_nid_postfix() == 0 && errno == 71);
+    Require(EVP_PKEY_get0_RSA_nid_postfix(roRsa) == &rsa && errno == 71);
+    Require(EVP_PKEY_get0_DSA_nid_postfix(roDsa) == &dsaDummy && errno == 71);
+    Require(EVP_PKEY_get0_DH_nid_postfix(roDh) == &dhDummy && errno == 71);
+    Require(EVP_PKEY_get0_DSA_nid_postfix(roRsa) == nullptr && ERR_peek_last_error_nid_postfix() != 0);
+    ERR_clear_error_nid_postfix();
+    Require(EVP_PKEY_get0_DH_nid_postfix(roRsa) == nullptr && ERR_peek_last_error_nid_postfix() != 0);
+    ERR_clear_error_nid_postfix();
+
+    UnmapPages(pages);
+}
+
 } // namespace
 
 int main() {
@@ -295,6 +464,9 @@ int main() {
     CheckLongName();
     CheckRepeatable();
     CheckGuestName();
+    CheckPkeyGet1Rsa();
+    CheckPkeySet1EcKeyAtomic();
+    CheckPkeyGuestPointers();
     std::puts("LibreSSL3 digest names: ok");
     return 0;
 }

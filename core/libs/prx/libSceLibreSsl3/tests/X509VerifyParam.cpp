@@ -36,15 +36,19 @@ struct GuardedParam {
     std::array<std::uint64_t, 2> after;
 };
 
-void CheckSetFlags(std::uint64_t initial, std::uint64_t flags) {
+void CheckSetFlagsResult(std::uint64_t initial, std::uint64_t flags, std::uint64_t result) {
     GuardedParam guarded;
     std::memset(&guarded, 0x5A, sizeof(guarded));
     guarded.param.flags = initial;
     GuardedParam expected;
     std::memcpy(&expected, &guarded, sizeof(guarded));
-    expected.param.flags = initial | flags;
+    expected.param.flags = result;
     Require(X509_VERIFY_PARAM_set_flags_nid_postfix(&guarded.param, flags) == 1);
     Require(std::memcmp(&guarded, &expected, sizeof(guarded)) == 0);
+}
+
+void CheckSetFlags(std::uint64_t initial, std::uint64_t flags) {
+    CheckSetFlagsResult(initial, flags, initial | flags);
 }
 
 void TestSetFlags() {
@@ -58,6 +62,11 @@ void TestSetFlags() {
     CheckSetFlags(0, PolicyCheck | ExplicitPolicy);
     CheckSetFlags(PolicyCheck, ExplicitPolicy);
     CheckSetFlags(PolicyCheck | PartialChain, InhibitAny | InhibitMap);
+    CheckSetFlags(0, 0x1);
+    CheckSetFlagsResult(0, ExplicitPolicy, ExplicitPolicy | PolicyCheck);
+    CheckSetFlagsResult(0, InhibitAny, InhibitAny | PolicyCheck);
+    CheckSetFlagsResult(0, InhibitMap, InhibitMap | PolicyCheck);
+    CheckSetFlagsResult(ExplicitPolicy | PolicyCheck, 0x1, ExplicitPolicy | PolicyCheck | 0x1);
     bool thrown = false;
     try {
         X509_VERIFY_PARAM_set_flags_nid_postfix(nullptr, PartialChain);

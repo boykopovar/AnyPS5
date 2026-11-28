@@ -4,8 +4,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "BatchHold.hpp"
 #include "VulkanTestDevice.hpp"
-#include <SDL_loadso.h>
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -13,7 +13,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
-#include <memory>
 #include <mutex>
 #include <stop_token>
 #include <string>
@@ -122,19 +121,17 @@ void Submit(const std::vector<std::uint32_t>& data, std::uint32_t groups) {
 
 class FillHold {
 public:
-    FillHold() = default;
+    FillHold() : hold(ActiveDevice()) {}
     FillHold(const FillHold&) = delete;
     FillHold& operator=(const FillHold&) = delete;
 
     ~FillHold() {
         watchdog = {};
-        if (semaphore == VK_NULL_HANDLE) return;
-        static_cast<void>(signal(armed));
+        static_cast<void>(hold.Release());
         try {
             AgcDriverWaitIdle_nid_postfix();
         } catch (...) {
         }
-        destroySemaphore(device, semaphore, nullptr);
     }
 
     void Arm() {
@@ -142,74 +139,31 @@ public:
         std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
         auto* recorder = AgcDriver::Graphics::Recorder::Active();
         Require(recorder != nullptr, "no active recorder holds the fill on the GPU");
-        if (semaphore == VK_NULL_HANDLE) create(recorder->Device());
-        Require(recorder->Device() == device, "the recorder changed device between held fills");
-        recorder->HoldNextSubmit(semaphore, ++armed);
-        watchdog = std::jthread([this, value = armed](std::stop_token stop) {
+        Require(recorder->Device() == hold.Device(), "the recorder changed device between held fills");
+        hold.Arm(*recorder);
+        watchdog = std::jthread([this](std::stop_token stop) {
             std::mutex mutex;
             std::unique_lock lock(mutex);
             std::condition_variable_any().wait_for(lock, stop, std::chrono::seconds(5), [] { return false; });
-            if (!stop.stop_requested()) expired = signal(value) == VK_SUCCESS;
+            if (!stop.stop_requested()) expired = hold.Release() == VK_SUCCESS;
         });
     }
 
     void Release() {
         watchdog = {};
         Require(!std::exchange(expired, false), "the held fill was waited for before its keys were read");
-        Require(signal(armed) == VK_SUCCESS, "cannot release the held fill");
+        Require(hold.Release() == VK_SUCCESS, "cannot release the held fill");
     }
 
 private:
-    template <typename TFunction>
-    TFunction function(const char* name) const {
-        const auto found = reinterpret_cast<TFunction>(resolve(device, name));
-        Require(found != nullptr, std::string("cannot resolve ") + name + " to hold the fill");
-        return found;
+    static VkDevice ActiveDevice() {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        const auto* recorder = AgcDriver::Graphics::Recorder::Active();
+        Require(recorder != nullptr, "no active recorder holds the fill on the GPU");
+        return recorder->Device();
     }
 
-    void create(VkDevice recorderDevice) {
-#ifdef _WIN32
-        constexpr const char* libraryName = "vulkan-1.dll";
-#elif defined(__APPLE__)
-        constexpr const char* libraryName = "libvulkan.1.dylib";
-#else
-        constexpr const char* libraryName = "libvulkan.so.1";
-#endif
-        library.reset(SDL_LoadObject(libraryName));
-        Require(library != nullptr, "cannot load Vulkan to hold the fill");
-        resolve = reinterpret_cast<PFN_vkGetDeviceProcAddr>(SDL_LoadFunction(library.get(), "vkGetDeviceProcAddr"));
-        Require(resolve != nullptr, "cannot resolve vkGetDeviceProcAddr to hold the fill");
-        device = recorderDevice;
-        const auto createSemaphore = function<PFN_vkCreateSemaphore>("vkCreateSemaphore");
-        destroySemaphore = function<PFN_vkDestroySemaphore>("vkDestroySemaphore");
-        signalSemaphore = reinterpret_cast<PFN_vkSignalSemaphore>(resolve(device, "vkSignalSemaphoreKHR"));
-        if (signalSemaphore == nullptr) signalSemaphore = function<PFN_vkSignalSemaphore>("vkSignalSemaphore");
-        VkSemaphoreTypeCreateInfo type{VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
-        type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
-        VkSemaphoreCreateInfo info{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &type};
-        Require(createSemaphore(device, &info, nullptr, &semaphore) == VK_SUCCESS, "cannot create the semaphore that holds the fill");
-    }
-
-    VkResult signal(std::uint64_t value) {
-        std::lock_guard lock(signalMutex);
-        if (value <= signaled) return VK_SUCCESS;
-        VkSemaphoreSignalInfo info{VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO};
-        info.semaphore = semaphore;
-        info.value = value;
-        const auto result = signalSemaphore(device, &info);
-        if (result == VK_SUCCESS) signaled = value;
-        return result;
-    }
-
-    std::unique_ptr<void, decltype(&SDL_UnloadObject)> library{nullptr, &SDL_UnloadObject};
-    PFN_vkGetDeviceProcAddr resolve = nullptr;
-    PFN_vkDestroySemaphore destroySemaphore = nullptr;
-    PFN_vkSignalSemaphore signalSemaphore = nullptr;
-    VkDevice device = VK_NULL_HANDLE;
-    VkSemaphore semaphore = VK_NULL_HANDLE;
-    std::uint64_t armed = 0;
-    std::uint64_t signaled = 0;
-    std::mutex signalMutex;
+    BatchHold hold;
     bool expired = false;
     std::jthread watchdog;
 };

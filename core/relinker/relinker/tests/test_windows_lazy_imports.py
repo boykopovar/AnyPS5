@@ -5,6 +5,7 @@ whether the relocation is JUMP_SLOT, GLOB_DAT or R_X86_64_64, with or without an
 An unresolved data import must fail at startup before the ELF entry, as without --lazy-binding.
 """
 
+import ctypes
 import os
 from pathlib import Path
 import struct
@@ -52,6 +53,8 @@ def run(work, output):
 
 
 def main():
+    if os.name == "nt":
+        ctypes.windll.kernel32.SetErrorMode(0x8003)
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix="anyps5-windows-lazy-imports-") as directory:
         work = Path(directory)

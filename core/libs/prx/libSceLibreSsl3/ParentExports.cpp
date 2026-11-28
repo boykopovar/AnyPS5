@@ -129,9 +129,6 @@ APS5_EXPORT("74vuH9BYkF0", BN_mul_nid_no_patch);
 __asm__(APS5_ASM_FUNCTION("SSLv23_client_method_nid_no_patch") "jmp *__imp_SSLv23_client_method_nid_postfix(%rip)\n");
 APS5_EXPORT("766RqC9GMsw", SSLv23_client_method_nid_no_patch);
 
-__asm__(APS5_ASM_FUNCTION("RSA_flags_nid_no_patch") "jmp *__imp_RSA_flags_nid_postfix(%rip)\n");
-APS5_EXPORT("7Qe-v+V94Ic", RSA_flags_nid_no_patch);
-
 __asm__(APS5_ASM_FUNCTION("SSLv23_server_method_nid_no_patch") "jmp *__imp_SSLv23_server_method_nid_postfix(%rip)\n");
 APS5_EXPORT("7Xaz7BxcERA", SSLv23_server_method_nid_no_patch);
 
@@ -294,9 +291,6 @@ APS5_EXPORT("HQyBEpH4h+E", d2i_OCSP_RESPONSE_nid_no_patch);
 __asm__(APS5_ASM_FUNCTION("HMAC_nid_no_patch") "jmp *__imp_HMAC_nid_postfix(%rip)\n");
 APS5_EXPORT("HYgtW9iS5Fk", HMAC_nid_no_patch);
 
-__asm__(APS5_ASM_FUNCTION("RSA_sign_nid_no_patch") "jmp *__imp_RSA_sign_nid_postfix(%rip)\n");
-APS5_EXPORT("HohNCzDzBW0", RSA_sign_nid_no_patch);
-
 __asm__(APS5_ASM_FUNCTION("ENGINE_cleanup_nid_no_patch") "jmp *__imp_ENGINE_cleanup_nid_postfix(%rip)\n");
 APS5_EXPORT("Htr6CcbIOGQ", ENGINE_cleanup_nid_no_patch);
 
@@ -417,9 +411,6 @@ APS5_EXPORT("PGsWNnS7CE8", SSL_get_ex_new_index_nid_no_patch);
 __asm__(APS5_ASM_FUNCTION("EC_KEY_get0_private_key_nid_no_patch") "jmp *__imp_EC_KEY_get0_private_key_nid_postfix(%rip)\n");
 APS5_EXPORT("PZSrBx2jITw", EC_KEY_get0_private_key_nid_no_patch);
 
-__asm__(APS5_ASM_FUNCTION("RSA_verify_PKCS1_PSS_nid_no_patch") "jmp *__imp_RSA_verify_PKCS1_PSS_nid_postfix(%rip)\n");
-APS5_EXPORT("PjgFQh4K4ic", RSA_verify_PKCS1_PSS_nid_no_patch);
-
 __asm__(APS5_ASM_FUNCTION("SSL_check_private_key_nid_no_patch") "jmp *__imp_SSL_check_private_key_nid_postfix(%rip)\n");
 APS5_EXPORT("PkCPXmop-Eo", SSL_check_private_key_nid_no_patch);
 
@@ -513,17 +504,11 @@ APS5_EXPORT("UdP5qTZTQzw", SHA512_Update_nid_no_patch);
 __asm__(APS5_ASM_FUNCTION("ASN1_STRING_length_nid_no_patch") "jmp *__imp_ASN1_STRING_length_nid_postfix(%rip)\n");
 APS5_EXPORT("UeeYJN-SzZ8", ASN1_STRING_length_nid_no_patch);
 
-__asm__(APS5_ASM_FUNCTION("RSA_size_nid_no_patch") "jmp *__imp_RSA_size_nid_postfix(%rip)\n");
-APS5_EXPORT("UukOy6kz+VM", RSA_size_nid_no_patch);
-
 __asm__(APS5_ASM_FUNCTION("d2i_PKCS12_bio_nid_no_patch") "jmp *__imp_d2i_PKCS12_bio_nid_postfix(%rip)\n");
 APS5_EXPORT("V7q2nQQj-Ow", d2i_PKCS12_bio_nid_no_patch);
 
 __asm__(APS5_ASM_FUNCTION("SSL_set_fd_nid_no_patch") "jmp *__imp_SSL_set_fd_nid_postfix(%rip)\n");
 APS5_EXPORT("VLvKI1JQntk", SSL_set_fd_nid_no_patch);
-
-__asm__(APS5_ASM_FUNCTION("RSA_public_encrypt_nid_no_patch") "jmp *__imp_RSA_public_encrypt_nid_postfix(%rip)\n");
-APS5_EXPORT("VcKj43HAQDk", RSA_public_encrypt_nid_no_patch);
 
 __asm__(APS5_ASM_FUNCTION("BN_num_bits_nid_no_patch") "jmp *__imp_BN_num_bits_nid_postfix(%rip)\n");
 APS5_EXPORT("VpW3ZH9ZKxY", BN_num_bits_nid_no_patch);
@@ -551,9 +536,6 @@ APS5_EXPORT("WvdR33NV7tA", EC_KEY_get0_public_key_nid_no_patch);
 
 __asm__(APS5_ASM_FUNCTION("X509_VERIFY_PARAM_set_hostflags_nid_no_patch") "jmp *__imp_X509_VERIFY_PARAM_set_hostflags_nid_postfix(%rip)\n");
 APS5_EXPORT("WwU55zoaAME", X509_VERIFY_PARAM_set_hostflags_nid_no_patch);
-
-__asm__(APS5_ASM_FUNCTION("RSA_public_decrypt_nid_no_patch") "jmp *__imp_RSA_public_decrypt_nid_postfix(%rip)\n");
-APS5_EXPORT("X-ncAvI14sg", RSA_public_decrypt_nid_no_patch);
 
 __asm__(APS5_ASM_FUNCTION("i2t_ASN1_OBJECT_nid_no_patch") "jmp *__imp_i2t_ASN1_OBJECT_nid_postfix(%rip)\n");
 APS5_EXPORT("X4-OCWkADJg", i2t_ASN1_OBJECT_nid_no_patch);
@@ -638,9 +620,6 @@ APS5_EXPORT("b1Xi5gOUvJA", SSL_CTX_set_ex_data_nid_no_patch);
 
 __asm__(APS5_ASM_FUNCTION("HMAC_Update_nid_no_patch") "jmp *__imp_HMAC_Update_nid_postfix(%rip)\n");
 APS5_EXPORT("bKolEm5dHJs", HMAC_Update_nid_no_patch);
-
-__asm__(APS5_ASM_FUNCTION("RSA_private_encrypt_nid_no_patch") "jmp *__imp_RSA_private_encrypt_nid_postfix(%rip)\n");
-APS5_EXPORT("bR0UooC+SX8", RSA_private_encrypt_nid_no_patch);
 
 __asm__(APS5_ASM_FUNCTION("SHA384_Update_nid_no_patch") "jmp *__imp_SHA384_Update_nid_postfix(%rip)\n");
 APS5_EXPORT("bRD04jjEhv0", SHA384_Update_nid_no_patch);
@@ -834,9 +813,6 @@ APS5_EXPORT("k+zHwjrbxsI", UI_method_get_reader_nid_no_patch);
 __asm__(APS5_ASM_FUNCTION("GENERAL_NAMES_free_nid_no_patch") "jmp *__imp_GENERAL_NAMES_free_nid_postfix(%rip)\n");
 APS5_EXPORT("kKlQ4e-mbjc", GENERAL_NAMES_free_nid_no_patch);
 
-__asm__(APS5_ASM_FUNCTION("RSA_verify_nid_no_patch") "jmp *__imp_RSA_verify_nid_postfix(%rip)\n");
-APS5_EXPORT("kPVQ5FK0f24", RSA_verify_nid_no_patch);
-
 __asm__(APS5_ASM_FUNCTION("X509_STORE_add_crl_nid_no_patch") "jmp *__imp_X509_STORE_add_crl_nid_postfix(%rip)\n");
 APS5_EXPORT("lN+8Q-cBYXQ", X509_STORE_add_crl_nid_no_patch);
 
@@ -848,9 +824,6 @@ APS5_EXPORT("lg5Z+eVXA-A", SSL_read_nid_no_patch);
 
 __asm__(APS5_ASM_FUNCTION("OCSP_basic_verify_nid_no_patch") "jmp *__imp_OCSP_basic_verify_nid_postfix(%rip)\n");
 APS5_EXPORT("lgmXPGgPjUY", OCSP_basic_verify_nid_no_patch);
-
-__asm__(APS5_ASM_FUNCTION("SSL_CTX_new_nid_no_patch") "jmp *__imp_SSL_CTX_new_nid_postfix(%rip)\n");
-APS5_EXPORT("lhgt7StD7RM", SSL_CTX_new_nid_no_patch);
 
 __asm__(APS5_ASM_FUNCTION("X509_EXTENSION_get_data_nid_no_patch") "jmp *__imp_X509_EXTENSION_get_data_nid_postfix(%rip)\n");
 APS5_EXPORT("li4G2knb-vI", X509_EXTENSION_get_data_nid_no_patch);
@@ -1026,9 +999,6 @@ APS5_EXPORT("s0PXkgZgBYI", OCSP_crl_reason_str_nid_no_patch);
 __asm__(APS5_ASM_FUNCTION("ENGINE_get_id_nid_no_patch") "jmp *__imp_ENGINE_get_id_nid_postfix(%rip)\n");
 APS5_EXPORT("s6NIjUCdhnM", ENGINE_get_id_nid_no_patch);
 
-__asm__(APS5_ASM_FUNCTION("RSA_padding_add_PKCS1_PSS_nid_no_patch") "jmp *__imp_RSA_padding_add_PKCS1_PSS_nid_postfix(%rip)\n");
-APS5_EXPORT("sZmUzrbtoz8", RSA_padding_add_PKCS1_PSS_nid_no_patch);
-
 __asm__(APS5_ASM_FUNCTION("ERR_clear_error_nid_no_patch") "jmp *__imp_ERR_clear_error_nid_postfix(%rip)\n");
 APS5_EXPORT("sieQ--PINWg", ERR_clear_error_nid_no_patch);
 
@@ -1142,9 +1112,6 @@ APS5_EXPORT("z0tS2-PZwoE", SSL_CTX_use_certificate_file_nid_no_patch);
 
 __asm__(APS5_ASM_FUNCTION("PEM_X509_INFO_read_bio_nid_no_patch") "jmp *__imp_PEM_X509_INFO_read_bio_nid_postfix(%rip)\n");
 APS5_EXPORT("z2Sl4DL-zCc", PEM_X509_INFO_read_bio_nid_no_patch);
-
-__asm__(APS5_ASM_FUNCTION("RSA_private_decrypt_nid_no_patch") "jmp *__imp_RSA_private_decrypt_nid_postfix(%rip)\n");
-APS5_EXPORT("zYLz0S-xya0", RSA_private_decrypt_nid_no_patch);
 
 __asm__(APS5_ASM_FUNCTION("DTLSv1_server_method_nid_no_patch") "jmp *__imp_DTLSv1_server_method_nid_postfix(%rip)\n");
 APS5_EXPORT("znTrJH9b2h8", DTLSv1_server_method_nid_no_patch);

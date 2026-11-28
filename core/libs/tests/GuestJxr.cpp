@@ -1075,7 +1075,7 @@ void TestDecodeInitialize() {
     JxrGuestGuid format{};
     JxrDecodeFixtureGetImage_nid_no_patch(decoder, &frames, &resolutionX, &resolutionY, &format);
     Require(frames == 1 && resolutionX == 96.0f && resolutionY == 96.0f);
-    Require(GuidEquals(format, JxrGuest_GUID_PKPixelFormatDontCare_nid_no_patch));
+    Require(GuidEquals(format, GUID_PKPixelFormatDontCare_nid_no_patch));
     Require(AllBytes(misc, miscSize, 0));
 
     void* failing = NewDecoder();
@@ -1096,7 +1096,7 @@ void TestDecodeInitialize() {
 
 void TestDecodeQueries() {
     void* decoder = NewDecoder();
-    JxrGuestGuid custom = JxrGuest_GUID_PKPixelFormat8bppGray_nid_no_patch;
+    JxrGuestGuid custom = GUID_PKPixelFormat8bppGray_nid_no_patch;
     JxrDecodeFixtureSetImage_nid_no_patch(decoder, 0x80000001u, 7, 3, 300.5f, 72.25f, &custom);
 
     JxrGuestGuid queried{};
@@ -1149,6 +1149,9 @@ void TestDecodeRelease() {
     RequireThrows([&] { PKImageDecode_Release_nid_postfix(nullptr); });
     void* nullDecoder = nullptr;
     RequireThrows([&] { PKImageDecode_Release_nid_postfix(&nullDecoder); });
+    errno = 71;
+    RequireThrows([&] { PKImageDecode_Release_nid_postfix(reinterpret_cast<void**>(0x10)); });
+    Require(errno == 71);
 
     Jxr::Stream closable{};
     closable.close = &MockClose;

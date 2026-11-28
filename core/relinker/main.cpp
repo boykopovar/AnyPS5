@@ -14,9 +14,15 @@
 #include <relinker/patching/GamePatch.hpp>
 #include <algorithm>
 #include <filesystem>
+#include <locale>
+#include <map>
 #include <iostream>
+#include <iterator>
 #include <random>
+#include <sstream>
+#include <streambuf>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -50,6 +56,52 @@ struct RegistryContents {
     std::string Registry;
     std::string Needed;
 };
+
+class ConversionOutput {
+public:
+    explicit ConversionOutput(const bool json)
+        : standardOutput(json ? std::cout.rdbuf(std::cerr.rdbuf()) : nullptr) {}
+
+    ConversionOutput(const ConversionOutput&) = delete;
+    ConversionOutput& operator=(const ConversionOutput&) = delete;
+
+    ~ConversionOutput() {
+        if (standardOutput) std::cout.rdbuf(standardOutput);
+    }
+
+    void WriteJson(std::string_view document) const {
+        std::ostream output(standardOutput);
+        output << document << std::flush;
+        if (!output) throw Domain::RelinkerException("Could not write dry-run JSON to stdout");
+    }
+
+private:
+    std::streambuf* standardOutput;
+};
+
+using OutputKinds = std::map<std::filesystem::path, std::string_view>;
+
+std::string DryRunJson(const Cli::Args& args, const std::vector<ConvertedExecutable>& executables, const std::vector<std::filesystem::path>& paths, const OutputKinds& kinds) {
+    const auto& main = executables.front();
+    const auto platform = args.toWindows ? "windows" : args.toMacos ? "macos" : "linux";
+    std::ostringstream json;
+    json.imbue(std::locale::classic());
+    json << "{\n  \"schemaVersion\": 1,\n"
+         << "  \"target\": \"" << platform << "\",\n"
+         << "  \"convertedExecutables\": " << executables.size() << ",\n"
+         << "  \"convertedModules\": " << main.GuestArtifacts.size() << ",\n"
+         << "  \"externalPrxReferences\": " << main.Result.RegistryEntries.size() << ",\n"
+         << "  \"outputs\": [\n";
+    for (std::size_t index = 0; index < paths.size(); ++index) {
+        const auto& path = paths[index];
+        const auto kind = kinds.find(path);
+        if (index != 0) json << ",\n";
+        json << "    {\"kind\": \"" << (kind == kinds.end() ? "other" : kind->second) << "\", \"path\": "
+             << Relinker::EncodeJsonString(Io::Utf8Path(path), "dry run output path") << '}';
+    }
+    json << "\n  ]\n}\n";
+    return json.str();
+}
 
 ConvertedExecutable Convert(const Cli::Args& args, const std::string& inputPath, const std::string& absPath, const bool mainExecutable, const std::string& targetName, const std::vector<Relinker::GamePatch::PatchEntry>& patches, Cli::ConsoleProgress& progress) {
     Io::FileReader fileReader;
@@ -142,9 +194,7 @@ bool SameOutputFile(const std::filesystem::path& first, const std::filesystem::p
 }
 
 bool SameOutputDestination(const std::filesystem::path& first, const std::filesystem::path& second,
-                           std::filesystem::path& firstPath, std::filesystem::path& secondPath, const bool probeAliases) {
-    if (firstPath.empty()) firstPath = std::filesystem::weakly_canonical(first);
-    if (secondPath.empty()) secondPath = std::filesystem::weakly_canonical(second);
+                           const std::filesystem::path& firstPath, const std::filesystem::path& secondPath, const bool probeAliases) {
     if (firstPath == secondPath) return true;
     if (std::filesystem::exists(first) && std::filesystem::exists(second)) return SameOutputFile(first, second);
     if (!probeAliases) return false;
@@ -178,6 +228,22 @@ bool SameOutputDestination(const std::filesystem::path& first, const std::filesy
     }
 #endif
     return false;
+}
+
+bool OutputPathsCollide(const std::filesystem::path& first, const std::filesystem::path& second,
+                        const std::filesystem::path& firstPath, const std::filesystem::path& secondPath, const bool probeAliases) {
+    if (SameOutputDestination(first, second, firstPath, secondPath, probeAliases))
+        return true;
+
+    const auto firstDepth = std::distance(firstPath.begin(), firstPath.end());
+    const auto secondDepth = std::distance(secondPath.begin(), secondPath.end());
+    if (firstDepth == secondDepth)
+        return false;
+    const auto& possibleDirectory = firstDepth < secondDepth ? firstPath : secondPath;
+    auto ancestor = firstDepth < secondDepth ? secondPath : firstPath;
+    for (auto depth = std::max(firstDepth, secondDepth); depth > std::min(firstDepth, secondDepth); --depth)
+        ancestor = ancestor.parent_path();
+    return SameOutputDestination(possibleDirectory, ancestor, possibleDirectory, ancestor, probeAliases);
 }
 
 std::string ReadText(const std::string& path) {
@@ -286,6 +352,7 @@ int Run(const int argc, char* argv[]) {
         return 0;
     }
 
+    const ConversionOutput conversionOutput(args.dryRunJson);
     Cli::ConsoleProgress progress(std::cout);
     try {
         if (!args.verifyPatchesPath.empty()) return RunVerifyPatches(args);
@@ -450,16 +517,32 @@ int Run(const int argc, char* argv[]) {
         for (std::size_t index = 0; index < outputPaths.size(); ++index) {
             if (!args.dryRun && std::filesystem::is_fifo(outputPaths[index]))
                 throw Domain::RelinkerException("Output is a FIFO: " + Io::Utf8Path(outputPaths[index]));
+            canonicalOutputPaths[index] = std::filesystem::weakly_canonical(outputPaths[index]);
             for (std::size_t previous = 0; previous < index; ++previous) {
                 const auto& first = outputPaths[index];
                 const auto& second = outputPaths[previous];
-                if (SameOutputDestination(first, second, canonicalOutputPaths[index], canonicalOutputPaths[previous], !args.dryRun))
+                if (OutputPathsCollide(first, second, canonicalOutputPaths[index], canonicalOutputPaths[previous], !args.dryRun))
                     throw Domain::RelinkerException("Output paths collide: " + Io::Utf8Path(first) + " and " + Io::Utf8Path(second));
             }
         }
 
         if (args.dryRun) {
             progress.Finish();
+            if (args.dryRunJson) {
+                OutputKinds kinds;
+                for (const auto& executable : executables) kinds.emplace(Io::NativePath(executable.OutputPath), "executable");
+                for (const auto& artifact : guestArtifacts) kinds.emplace(artifact.Path, "module");
+                for (const auto& path : registryPaths) kinds.emplace(path, "registry");
+                for (const auto& path : neededPaths) kinds.emplace(path, "needed-libraries");
+                if (!manifestPath.empty()) kinds.emplace(manifestPath, "patch-manifest");
+                if (desktopEntry) {
+                    kinds.emplace(desktopEntry->IconPath, "desktop-icon");
+                    kinds.emplace(desktopEntry->EntryPath, "desktop-entry");
+                }
+                if (args.windowsDiagnostics) kinds.emplace(windowsDiagnosticsPath, "windows-diagnostics");
+                conversionOutput.WriteJson(DryRunJson(args, executables, outputPaths, kinds));
+                return 0;
+            }
             std::cout << "\nDry run complete\n"
                       << "Converted executables: " << executables.size() << '\n'
                       << "Converted modules: " << guestArtifacts.size() << '\n'
@@ -469,7 +552,10 @@ int Run(const int argc, char* argv[]) {
             return 0;
         }
 
-        if (args.windowsDiagnostics) fileWriter.Write(Io::Utf8Path(windowsDiagnosticsPath), executables.front().Diagnostics);
+        if (args.windowsDiagnostics) {
+            if (!guestArtifacts.empty()) std::filesystem::create_directories(outputDirectory);
+            fileWriter.Write(Io::Utf8Path(windowsDiagnosticsPath), executables.front().Diagnostics);
+        }
         const auto outputCount = guestArtifacts.size() + executables.size();
         progress.Report({Domain::ProgressStage::Write, absPath, 0, outputCount});
         std::size_t written = 0;
@@ -510,7 +596,8 @@ int Run(const int argc, char* argv[]) {
             std::replace(relative.begin(), relative.end(), '\\', '/');
             modulePaths.push_back(std::move(relative));
         }
-        Cli::RuntimeLayout::Print(std::cout, Io::Utf8Path(Io::NativePath(absPath).filename()), modulePaths, extraPaths);
+        const bool includeBundledLibraries = Cli::RuntimeLayout::IncludesBundledLibraries(args.runPath, args.toWindows);
+        Cli::RuntimeLayout::Print(std::cout, Io::Utf8Path(Io::NativePath(absPath).filename()), modulePaths, extraPaths, includeBundledLibraries);
         if (args.runPath != "$ORIGIN/libs") std::cout << "Custom library search path (--rpath): " << args.runPath << '\n';
 
         if (args.autorun) return Cli::Autorun(absPath, args.toWindows);
@@ -518,7 +605,7 @@ int Run(const int argc, char* argv[]) {
     } catch (const Domain::RelinkerException& e) {
         progress.Finish();
         std::cerr << "FAIL: " << e.what();
-        if (e.FailureOffset != 0) std::cerr << " (offset 0x" << std::hex << e.FailureOffset << ")";
+        if (e.HasFailureOffset) std::cerr << " (offset 0x" << std::hex << e.FailureOffset << ")";
         std::cerr << "\n";
         if (!e.InputPath.empty()) std::cerr << "Input: " << e.InputPath << '\n';
         return 2;
