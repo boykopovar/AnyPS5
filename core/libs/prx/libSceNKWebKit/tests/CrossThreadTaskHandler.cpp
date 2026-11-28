@@ -15,6 +15,15 @@
 #include <thread>
 #include <vector>
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 using NKWebKit::WtfAbi::CrossThreadTaskHandler;
 using NKWebKit::WtfAbi::VoidCallableWrapper;
 using NKWebKit::WtfAbi::VoidCallableWrapperVtable;
@@ -415,6 +424,170 @@ static void TestNullArguments() {
     Require(liveCallables.load() == 0);
 }
 
+struct GuardedPages {
+    unsigned char* base{nullptr};
+    std::size_t pageSize{0};
+
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(base + pageSize, pageSize, PAGE_READONLY, &previous) != 0);
+        Require(VirtualProtect(base + pageSize * 2, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0);
+        pageSize = static_cast<std::size_t>(size);
+        void* mapped = mmap(nullptr, pageSize * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        base = static_cast<unsigned char*>(mapped);
+        Require(mprotect(base + pageSize, pageSize, PROT_READ) == 0);
+        Require(mprotect(base + pageSize * 2, pageSize, PROT_NONE) == 0);
+#endif
+    }
+
+    ~GuardedPages() {
+        if (!base) return;
+#ifdef _WIN32
+        Require(VirtualFree(base, 0, MEM_RELEASE) != 0);
+#else
+        Require(munmap(base, pageSize * 3) == 0);
+#endif
+    }
+
+    unsigned char* ReadOnly() const { return base + pageSize; }
+    unsigned char* Guard() const { return base + pageSize * 2; }
+};
+
+template<typename TFunction>
+static bool ThrowsNotImplemented(TFunction&& function, const char* symbol) {
+    try {
+        function();
+    } catch (const std::runtime_error& error) {
+        return std::string(error.what()) == std::string(symbol) + " not implemented";
+    }
+    return false;
+}
+
+static void TestGuestPointers() {
+    GuardedPages pages;
+    auto* readOnly = reinterpret_cast<CrossThreadTaskHandler*>(pages.ReadOnly());
+    auto* guard = reinterpret_cast<CrossThreadTaskHandler*>(pages.Guard());
+    auto* dangling = reinterpret_cast<CrossThreadTaskHandler*>(0x10);
+    unsigned char* splitWritable = pages.ReadOnly() - 16;
+    std::memset(splitWritable, 0x5A, 16);
+
+    Require(ThrowsNotImplemented([&] { construct(readOnly, "name", 0); }, "_ZN3WTF22CrossThreadTaskHandlerC1EPKcNS0_25AutodrainedPoolForRunLoopE"));
+    Require(ThrowsNotImplemented([&] { _ZN3WTF22CrossThreadTaskHandlerC2EPKcNS0_25AutodrainedPoolForRunLoopE(guard, "name", 0); }, "_ZN3WTF22CrossThreadTaskHandlerC2EPKcNS0_25AutodrainedPoolForRunLoopE"));
+    Require(ThrowsNotImplemented([&] { construct(dangling, "name", 0); }, "_ZN3WTF22CrossThreadTaskHandlerC1EPKcNS0_25AutodrainedPoolForRunLoopE"));
+    Require(ThrowsNotImplemented([&] { construct(reinterpret_cast<CrossThreadTaskHandler*>(splitWritable), "name", 0); }, "_ZN3WTF22CrossThreadTaskHandlerC1EPKcNS0_25AutodrainedPoolForRunLoopE"));
+    for (std::size_t i = 0; i < 16; ++i) Require(splitWritable[i] == 0x5A);
+
+    Require(ThrowsNotImplemented([&] { destroy(readOnly); }, "_ZN3WTF22CrossThreadTaskHandlerD1Ev"));
+    Require(ThrowsNotImplemented([&] { _ZN3WTF22CrossThreadTaskHandlerD2Ev(guard); }, "_ZN3WTF22CrossThreadTaskHandlerD2Ev"));
+    Require(ThrowsNotImplemented([&] { _ZN3WTF22CrossThreadTaskHandlerD0Ev(dangling); }, "_ZN3WTF22CrossThreadTaskHandlerD0Ev"));
+    Require(ThrowsNotImplemented([&] { killHandler(guard); }, "_ZN3WTF22CrossThreadTaskHandler4killEv"));
+    Require(ThrowsNotImplemented([&] { killHandler(dangling); }, "_ZN3WTF22CrossThreadTaskHandler4killEv"));
+
+    CrossThreadTaskHandler forged{};
+    forged.state = reinterpret_cast<NKWebKit::WtfAbi::CrossThreadTaskHandlerState*>(pages.Guard());
+    forged.completionCallback = nullptr;
+    VoidFunction emptyTask{nullptr};
+    Require(ThrowsNotImplemented([&] { destroy(&forged); }, "_ZN3WTF22CrossThreadTaskHandlerD1Ev"));
+    Require(ThrowsNotImplemented([&] { killHandler(&forged); }, "_ZN3WTF22CrossThreadTaskHandler4killEv"));
+    Require(ThrowsNotImplemented([&] { postTask(&forged, &emptyTask); }, "_ZN3WTF22CrossThreadTaskHandler8postTaskEONS_15CrossThreadTaskE"));
+    Require(ThrowsNotImplemented([&] { postTaskReply(&forged, &emptyTask); }, "_ZN3WTF22CrossThreadTaskHandler13postTaskReplyEONS_15CrossThreadTaskE"));
+
+    Handler handler;
+    auto* readOnlyTask = reinterpret_cast<VoidFunction*>(pages.ReadOnly());
+    auto* guardTask = reinterpret_cast<VoidFunction*>(pages.Guard());
+    Require(ThrowsNotImplemented([&] { postTask(guard, &emptyTask); }, "_ZN3WTF22CrossThreadTaskHandler8postTaskEONS_15CrossThreadTaskE"));
+    Require(ThrowsNotImplemented([&] { postTaskReply(guard, &emptyTask); }, "_ZN3WTF22CrossThreadTaskHandler13postTaskReplyEONS_15CrossThreadTaskE"));
+    Require(ThrowsNotImplemented([&] { postTask(handler.get(), readOnlyTask); }, "_ZN3WTF22CrossThreadTaskHandler8postTaskEONS_15CrossThreadTaskE"));
+    Require(ThrowsNotImplemented([&] { postTask(handler.get(), guardTask); }, "_ZN3WTF22CrossThreadTaskHandler8postTaskEONS_15CrossThreadTaskE"));
+    Require(ThrowsNotImplemented([&] { postTaskReply(handler.get(), readOnlyTask); }, "_ZN3WTF22CrossThreadTaskHandler13postTaskReplyEONS_15CrossThreadTaskE"));
+    Require(ThrowsNotImplemented([&] { postTaskReply(handler.get(), guardTask); }, "_ZN3WTF22CrossThreadTaskHandler13postTaskReplyEONS_15CrossThreadTaskE"));
+
+    VoidFunction badCallableTask{reinterpret_cast<VoidCallableWrapper*>(pages.Guard())};
+    Require(ThrowsNotImplemented([&] { postTask(handler.get(), &badCallableTask); }, "_ZN3WTF22CrossThreadTaskHandler8postTaskEONS_15CrossThreadTaskE"));
+    Require(badCallableTask.callableWrapper == reinterpret_cast<VoidCallableWrapper*>(pages.Guard()));
+    Require(ThrowsNotImplemented([&] { postTaskReply(handler.get(), &badCallableTask); }, "_ZN3WTF22CrossThreadTaskHandler13postTaskReplyEONS_15CrossThreadTaskE"));
+    Require(badCallableTask.callableWrapper == reinterpret_cast<VoidCallableWrapper*>(pages.Guard()));
+
+    VoidCallableWrapper badVtableWrapper{reinterpret_cast<const VoidCallableWrapperVtable*>(pages.Guard())};
+    VoidFunction badVtableTask{&badVtableWrapper};
+    Require(ThrowsNotImplemented([&] { postTask(handler.get(), &badVtableTask); }, "_ZN3WTF22CrossThreadTaskHandler8postTaskEONS_15CrossThreadTaskE"));
+    Require(badVtableTask.callableWrapper == &badVtableWrapper);
+    Require(ThrowsNotImplemented([&] { postTaskReply(handler.get(), &badVtableTask); }, "_ZN3WTF22CrossThreadTaskHandler13postTaskReplyEONS_15CrossThreadTaskE"));
+    Require(badVtableTask.callableWrapper == &badVtableWrapper);
+
+    handler.get()->completionCallback = reinterpret_cast<VoidCallableWrapper*>(pages.Guard());
+    Require(ThrowsNotImplemented([&] { destroy(handler.get()); }, "_ZN3WTF22CrossThreadTaskHandlerD1Ev"));
+    Require(handler.get()->state != nullptr);
+    handler.get()->completionCallback = nullptr;
+
+    CrossThreadTaskHandler mismatchedOwner{};
+    mismatchedOwner.state = handler.get()->state;
+    mismatchedOwner.completionCallback = nullptr;
+    Require(ThrowsNotImplemented([&] { killHandler(&mismatchedOwner); }, "_ZN3WTF22CrossThreadTaskHandler4killEv"));
+    Require(ThrowsNotImplemented([&] { destroy(&mismatchedOwner); }, "_ZN3WTF22CrossThreadTaskHandlerD1Ev"));
+    Require(ThrowsNotImplemented([&] { postTask(&mismatchedOwner, &emptyTask); }, "_ZN3WTF22CrossThreadTaskHandler8postTaskEONS_15CrossThreadTaskE"));
+    Require(ThrowsNotImplemented([&] { postTaskReply(&mismatchedOwner, &emptyTask); }, "_ZN3WTF22CrossThreadTaskHandler13postTaskReplyEONS_15CrossThreadTaskE"));
+
+    handler.Sync();
+    DrainMain();
+    Require(TakeLog().empty());
+    Require(liveCallables.load() == 0);
+
+    for (int round = 0; round < 16; ++round) {
+        Handler racing;
+        std::atomic<bool> go{false};
+        std::atomic<int> destroySucceeded{0};
+        std::atomic<int> destroyRejected{0};
+        std::thread tDestroy([&] {
+            while (!go) std::this_thread::yield();
+            try {
+                destroy(racing.get());
+                ++destroySucceeded;
+            } catch (const std::invalid_argument&) {
+                ++destroyRejected;
+            } catch (const std::runtime_error&) {
+                ++destroyRejected;
+            }
+        });
+        std::thread tPost([&] {
+            while (!go) std::this_thread::yield();
+            VoidFunction job = Make("race", {}, true);
+            try {
+                postTask(racing.get(), &job);
+            } catch (const std::invalid_argument&) {
+            } catch (const std::runtime_error&) {
+            }
+            if (job.callableWrapper) job.callableWrapper->vtable->deletingDestructor(job.callableWrapper);
+        });
+        go = true;
+        try {
+            destroy(racing.get());
+            ++destroySucceeded;
+        } catch (const std::invalid_argument&) {
+            ++destroyRejected;
+        } catch (const std::runtime_error&) {
+            ++destroyRejected;
+        }
+        tDestroy.join();
+        tPost.join();
+        Require(destroySucceeded.load() == 1 && destroyRejected.load() == 1);
+    }
+    Settle();
+    DrainMain();
+    TakeLog();
+    Require(liveCallables.load() == 0);
+}
+
 int main() {
     std::thread([] {
         std::this_thread::sleep_for(std::chrono::seconds(20));
@@ -437,6 +610,7 @@ int main() {
     TestDestruction();
     TestTheDeletingDestructor();
     TestNullArguments();
+    TestGuestPointers();
     std::puts("libSceNKWebKit cross thread task handler tests passed");
     return 0;
 }
