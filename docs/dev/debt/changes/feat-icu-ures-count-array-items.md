@@ -1,0 +1,5 @@
+# libSceIcu
+
+## add Functional
+
+- [`ures_countArrayItems`](../../../core/libs/prx/libSceIcu/ResourceCount.cpp) follows ICU 68.2's [uresbund.cpp](https://github.com/unicode-org/icu/blob/84e1f26ea77152936e70d53178a816dbfbf69989/icu4c/source/common/uresbund.cpp#L2382-L2411) and [uresdata.cpp](https://github.com/unicode-org/icu/blob/84e1f26ea77152936e70d53178a816dbfbf69989/icu4c/source/common/uresdata.cpp#L476-L500) over its 200-byte `UResourceBundle`, 120-byte `UResourceDataEntry` and 64-byte `ResourceData` layouts. Direct and parent table lookup, status propagation and counts for scalar, array and table resources are implemented. Alias results throw `NotImplemented_nid_no_patch` because their cross-bundle resolution requires resource opening that is not implemented. Unreadable guest structures, keys or resource data throw instead of reproducing native invalid memory access. The ABI and behavior are unverified on a console. Closes when: alias opening is implemented and the function is compared with the console.

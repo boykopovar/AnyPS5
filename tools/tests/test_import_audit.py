@@ -4323,5 +4323,79 @@ class MachoImportsTests(unittest.TestCase):
         self.assertEqual(import_audit.macho_imports("m", self.image([])), set())
 
 
+class FastScanTests(unittest.TestCase):
+    def test_is_qualified_matches_member_and_scope_prefixes_only(self):
+        cases = [
+            ("obj.call()", 4, True),
+            ("ptr-> call()", 6, True),
+            ("ns::call()", 4, True),
+            ("Box<int> :: call()", 12, True),
+            ("::call()", 2, False),
+            ("return ::call()", 9, False),
+            ("else ::call()", 7, False),
+            ("co_await ::call()", 11, False),
+            ("call()", 0, False),
+        ]
+        for text, pos, expected in cases:
+            with self.subTest(text=text):
+                self.assertEqual(import_audit._is_qualified(text, pos), expected)
+
+    def test_iter_stub_wrappers_matches_progress_regex_on_multiline_signatures(self):
+        text = (
+            "if (flag) {\n    NotImplemented_nid_no_patch();\n}\n"
+            "int x = 1; static int same_line() {\n    return 0;\n}\n"
+            "static\n[[noreturn]] void multi_line(\n    int a,\n    int b\n) noexcept -> void {\n"
+            "    NotImplemented_nid_no_patch();\n}\n"
+            "int plain_helper(int v) const {\n    return v;\n}\n"
+        )
+        expected = [(m.group(1), m.start(), m.end()) for m in import_audit.progress.STUB_WRAPPER.finditer(text)]
+        actual = [(m.group(1), m.start(), m.end()) for m in import_audit._iter_stub_wrappers(text)]
+        self.assertEqual(actual, expected)
+        self.assertEqual([name for name, _, _ in actual], ["multi_line", "plain_helper"])
+
+    def test_calls_any_unconditionally_respects_blocks_exits_and_lambdas(self):
+        calls = {"stub"}
+        self.assertTrue(import_audit._calls_any_unconditionally("{ auto f = []() { return 1; }; stub(); }", calls))
+        self.assertTrue(import_audit._calls_any_unconditionally("{ { stub(); } }", calls))
+        self.assertFalse(import_audit._calls_any_unconditionally("{ return 0; stub(); }", calls))
+        self.assertFalse(import_audit._calls_any_unconditionally("{ ns::stub(); }", calls))
+        self.assertFalse(import_audit._calls_any_unconditionally("{ if (ok) { stub(); } }", calls))
+
+    def test_library_scan_preserves_test_dir_rules_and_unbalanced_helper_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            lib = root / "libSceSample"
+            (lib / "tests").mkdir(parents=True)
+            (lib / "test").mkdir(parents=True)
+            (lib / "src" / "Tests").mkdir(parents=True)
+            (lib / ".cpp").write_text(
+                'APS5_EXPORT("AAAAAAAAAAA", sceDotFile)\n' + STUB_SOURCE.format(name="sceDotFile"),
+                encoding="utf-8",
+            )
+            (lib / "tests" / "ignored.cpp").write_text(
+                'APS5_EXPORT("BBBBBBBBBBB", sceInTests)\n' + DONE_SOURCE.format(name="sceInTests"),
+                encoding="utf-8",
+            )
+            (lib / "test" / "alias_skip.cpp").write_text(
+                'APS5_EXPORT("CCCCCCCCCCC", sceInLowerTest)\n' + DONE_SOURCE.format(name="sceInLowerTest"),
+                encoding="utf-8",
+            )
+            (lib / "src" / "Tests" / "upper_skip.cpp").write_text(
+                'APS5_EXPORT("DDDDDDDDDDD", sceInUpperTests)\n' + DONE_SOURCE.format(name="sceInUpperTests"),
+                encoding="utf-8",
+            )
+            self.assertEqual(import_audit.conditional_stubs(lib), {"sceInLowerTest", "sceInUpperTests"})
+            stubs, partial = import_audit.source_stub_classes(root)
+            self.assertIn(("libSceSample.prx", "AAAAAAAAAAA"), stubs)
+            self.assertEqual(partial, set())
+
+            (lib / "broken_helper.cpp").write_text(
+                "static void helper() {\n#ifdef BROKEN\n    NotImplemented_nid_no_patch();\n}\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(import_audit.AuditError, "without a matching #endif"):
+                import_audit.conditional_stubs(lib)
+
+
 if __name__ == "__main__":
     unittest.main()

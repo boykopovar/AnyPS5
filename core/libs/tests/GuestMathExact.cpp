@@ -465,6 +465,32 @@ static void CheckClassification() {
     Require(_LDsign_nid_postfix(-2.0L) == -32768 && _LDsign_nid_postfix(2.0L) == 0);
 }
 
+static void CheckPowSpecialValues() {
+    Require(pow_nid_postfix(2.0, 10.0) == 1024.0 && pow_nid_postfix(-2.0, 3.0) == -8.0 && pow_nid_postfix(-2.0, 2.0) == 4.0 && pow_nid_postfix(2.0, -1.0) == 0.5);
+    Require(pow_nid_postfix(5.0, 0.0) == 1.0 && pow_nid_postfix(-5.0, -0.0) == 1.0 && pow_nid_postfix(NAN, 0.0) == 1.0 && pow_nid_postfix(INFINITY, 0.0) == 1.0);
+    Require(std::isnan(pow_nid_postfix(NAN, 1.0)) && std::isnan(pow_nid_postfix(2.0, NAN)));
+
+    Require(pow_nid_postfix(0.0, -3.0) == INFINITY && pow_nid_postfix(-0.0, -3.0) == -INFINITY);
+    Require(pow_nid_postfix(0.0, -2.0) == INFINITY && pow_nid_postfix(-0.0, -2.0) == INFINITY);
+    Require(pow_nid_postfix(0.0, -INFINITY) == INFINITY && pow_nid_postfix(-0.0, -INFINITY) == INFINITY);
+    Require(pow_nid_postfix(0.0, 3.0) == 0.0 && !std::signbit(pow_nid_postfix(0.0, 3.0)));
+    Require(pow_nid_postfix(-0.0, 3.0) == 0.0 && std::signbit(pow_nid_postfix(-0.0, 3.0)));
+    Require(pow_nid_postfix(0.0, 2.0) == 0.0 && !std::signbit(pow_nid_postfix(0.0, 2.0)));
+    Require(pow_nid_postfix(-0.0, 2.0) == 0.0 && !std::signbit(pow_nid_postfix(-0.0, 2.0)));
+    Require(pow_nid_postfix(-0.0, 0.5) == 0.0 && !std::signbit(pow_nid_postfix(-0.0, 0.5)));
+
+    Require(pow_nid_postfix(0.5, INFINITY) == 0.0 && pow_nid_postfix(-0.5, INFINITY) == 0.0 && pow_nid_postfix(2.0, INFINITY) == INFINITY && pow_nid_postfix(-2.0, INFINITY) == INFINITY);
+    Require(pow_nid_postfix(0.5, -INFINITY) == INFINITY && pow_nid_postfix(-0.5, -INFINITY) == INFINITY && pow_nid_postfix(2.0, -INFINITY) == 0.0 && pow_nid_postfix(-2.0, -INFINITY) == 0.0);
+
+    Require(pow_nid_postfix(INFINITY, -1.0) == 0.0 && !std::signbit(pow_nid_postfix(INFINITY, -1.0)) && pow_nid_postfix(INFINITY, 1.0) == INFINITY);
+    Require(pow_nid_postfix(-INFINITY, -3.0) == 0.0 && std::signbit(pow_nid_postfix(-INFINITY, -3.0)));
+    Require(pow_nid_postfix(-INFINITY, -2.0) == 0.0 && !std::signbit(pow_nid_postfix(-INFINITY, -2.0)));
+    Require(pow_nid_postfix(-INFINITY, 3.0) == -INFINITY && pow_nid_postfix(-INFINITY, 2.0) == INFINITY);
+
+    Require(std::isnan(pow_nid_postfix(-8.0, 0.5)) && std::isnan(pow_nid_postfix(-2.0, -1.5)));
+    Require(pow_nid_postfix(10.0, 400.0) == INFINITY && pow_nid_postfix(10.0, -400.0) == 0.0);
+}
+
 static void CheckLongDoubleExp() {
     const long double e = std::exp(1.0L);
     const int saved = std::fegetround();
@@ -1056,6 +1082,7 @@ int main(int argc, char** argv) {
     CheckIntegralRoundingInexact();
     CheckRoundlAndFdimlFlags();
     CheckClassification();
+    CheckPowSpecialValues();
     CheckLongDoubleExp();
     CheckRoundHalfwayAwayFromZero();
     CheckFmalSpecials();

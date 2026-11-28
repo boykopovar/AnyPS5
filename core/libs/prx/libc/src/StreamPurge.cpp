@@ -42,7 +42,8 @@ void SeekDescriptor(std::FILE* native, std::int64_t position) {
 }
 
 extern "C" int APS5_VABI fpurge_nid_postfix(FileStream* stream) {
-    if (stream && !stream->IsOpen()) { errno = 9; return -1; }
+    const FileStreamOperation_nid_no_patch operation(stream);
+    if (stream && !operation.Open()) { errno = 9; return -1; }
     auto* native = GetStreamHandle(stream);
     const LockedStream lock(stream);
     std::string kept;

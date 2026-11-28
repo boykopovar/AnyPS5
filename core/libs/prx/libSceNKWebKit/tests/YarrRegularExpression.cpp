@@ -23,6 +23,7 @@ const auto Match = &_ZNK3JSC4Yarr17RegularExpression5matchERKN3WTF6StringEiPi;
 const auto Destroy = &_ZN3JSC4Yarr17RegularExpressionD1Ev;
 const auto DestroyBase = &_ZN3JSC4Yarr17RegularExpressionD2Ev;
 const auto Assign = &_ZN3JSC4Yarr17RegularExpressionaSERKS1_;
+const auto MatchedLength = &_ZNK3JSC4Yarr17RegularExpression13matchedLengthEv;
 
 std::set<void*> live;
 
@@ -137,6 +138,24 @@ void TestAssignment() {
     Require(live.empty());
 }
 
+void TestMatchedLength() {
+    RegularExpression expression = Make("a+");
+    Require(MatchedLength(&expression) == -1);
+    Require(MatchIn(expression, "xaa") == 1);
+    Require(MatchedLength(&expression) == 2);
+    Require(MatchIn(expression, "zzz") == -1);
+    Require(MatchedLength(&expression) == -1);
+    Require(MatchIn(expression, "aa") == 0);
+    Require(MatchedLength(&expression) == 2);
+    Require(MatchIn(expression, "a") == 0);
+    Require(MatchedLength(&expression) == 1);
+    Destroy(&expression);
+
+    RegularExpression empty{};
+    Require(ThrowsInvalid([&] { MatchedLength(nullptr); }));
+    Require(ThrowsInvalid([&] { MatchedLength(&empty); }));
+}
+
 }
 
 int main() {
@@ -148,6 +167,7 @@ int main() {
     ApplicationHeapRegister_nid_no_patch(api.data());
     TestDestructors();
     TestAssignment();
+    TestMatchedLength();
     Require(live.empty());
     return 0;
 }

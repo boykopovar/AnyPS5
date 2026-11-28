@@ -141,6 +141,14 @@ void JxrWmpReferenceConfigureDecoder(void* value) {
     decoder->WMP.wmiI.cPostProcStrength = 0;
 }
 
+void JxrWmpReferenceRegion(void* value, uint32_t left, uint32_t top, uint32_t width, uint32_t height) {
+    PKImageDecode* decoder = (PKImageDecode*)value;
+    decoder->WMP.wmiI.cROILeftX = left;
+    decoder->WMP.wmiI.cROITopY = top;
+    decoder->WMP.wmiI.cROIWidth = width;
+    decoder->WMP.wmiI.cROIHeight = height;
+}
+
 int64_t JxrWmpReferenceDecode(const uint8_t* data, size_t size, uint8_t* pixels, uint32_t stride, int32_t* width,
                               int32_t* height) {
     ERR err = WMP_errSuccess;

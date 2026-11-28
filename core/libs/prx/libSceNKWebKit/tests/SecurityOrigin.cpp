@@ -155,8 +155,8 @@ static bool IsOpaque(const OriginRef& origin) {
 struct Data {
     SecurityOriginData data{};
 
-    Data(std::string_view protocol, std::string_view host, std::optional<std::uint16_t> port) {
-        new (&data.storage.tuple) SecurityOriginTuple{Make(protocol), Make(host), {port.value_or(0), port.has_value()}};
+    Data(std::string_view protocol, std::string_view host, std::optional<std::uint16_t> port, bool wide = false) {
+        new (&data.storage.tuple) SecurityOriginTuple{Make(protocol, wide), Make(host, wide), {port.value_or(0), port.has_value()}};
         data.index = NKWebKit::WebCoreAbi::kSecurityOriginTupleIndex;
     }
     explicit Data(OpaqueOriginIdentifier identifier) {
@@ -546,6 +546,68 @@ static void TestOriginData() {
     Require(Throws([] { _ZNK7WebCore14SecurityOrigin11toRawStringEv(nullptr); }));
 }
 
+static void TestOriginDataFromFrame() {
+    auto result = _ZN7WebCore18SecurityOriginData9fromFrameEPNS_5FrameE(nullptr);
+    Require(result.index == NKWebKit::WebCoreAbi::kSecurityOriginTupleIndex);
+    Require(!result.storage.tuple.protocol.impl);
+    Require(!result.storage.tuple.host.impl);
+    Require(!result.storage.tuple.port.hasValue);
+    result.storage.tuple.~SecurityOriginTuple();
+    Require(ThrowsNotImplemented([] { _ZN7WebCore18SecurityOriginData9fromFrameEPNS_5FrameE(reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x1234))); }));
+}
+
+static void TestOriginDataIsolatedCopy() {
+    Data https("https", "example.com", std::uint16_t{8443});
+    auto copy = _ZNK7WebCore18SecurityOriginData12isolatedCopyEv(&https.data);
+    Require(copy.index == NKWebKit::WebCoreAbi::kSecurityOriginTupleIndex);
+    Require(copy.storage.tuple.protocol.impl && copy.storage.tuple.protocol.impl != https.data.storage.tuple.protocol.impl);
+    Require(copy.storage.tuple.host.impl && copy.storage.tuple.host.impl != https.data.storage.tuple.host.impl);
+    Require(Is(copy.storage.tuple.protocol, "https"));
+    Require(Is(copy.storage.tuple.host, "example.com"));
+    Require(copy.storage.tuple.protocol.impl->refCount == 2);
+    Require(copy.storage.tuple.host.impl->refCount == 2);
+    Require(https.data.storage.tuple.protocol.impl->refCount == 2);
+    Require(https.data.storage.tuple.host.impl->refCount == 2);
+    Require(copy.storage.tuple.port.hasValue && copy.storage.tuple.port.value == 8443);
+    copy.storage.tuple.~SecurityOriginTuple();
+
+    Data wide("http", "wide.example", std::nullopt, true);
+    auto wideCopy = _ZNK7WebCore18SecurityOriginData12isolatedCopyEv(&wide.data);
+    Require(wideCopy.index == NKWebKit::WebCoreAbi::kSecurityOriginTupleIndex);
+    Require(wideCopy.storage.tuple.protocol.impl && !(wideCopy.storage.tuple.protocol.impl->hashAndFlags & 4));
+    Require(wideCopy.storage.tuple.host.impl && !(wideCopy.storage.tuple.host.impl->hashAndFlags & 4));
+    Require(Is(wideCopy.storage.tuple.protocol, "http"));
+    Require(Is(wideCopy.storage.tuple.host, "wide.example"));
+    Require(!wideCopy.storage.tuple.port.hasValue);
+    wideCopy.storage.tuple.~SecurityOriginTuple();
+
+    Data opaque(OpaqueOriginIdentifier{0xAABBCCDDEEFF0011ULL, 0x1234567890ABCDEFULL});
+    auto opaqueCopy = _ZNK7WebCore18SecurityOriginData12isolatedCopyEv(&opaque.data);
+    Require(opaqueCopy.index == NKWebKit::WebCoreAbi::kSecurityOriginOpaqueIndex);
+    Require(opaqueCopy.storage.opaque.object == 0xAABBCCDDEEFF0011ULL);
+    Require(opaqueCopy.storage.opaque.processIdentifier == 0x1234567890ABCDEFULL);
+
+    Data invalid("https", "example.com", std::nullopt);
+    invalid.data.index = 2;
+    bool threw = false;
+    try {
+        _ZNK7WebCore18SecurityOriginData12isolatedCopyEv(&invalid.data);
+    } catch (const std::logic_error&) {
+        threw = true;
+    }
+    Require(threw);
+    invalid.data.index = std::numeric_limits<std::uint32_t>::max();
+    threw = false;
+    try {
+        _ZNK7WebCore18SecurityOriginData12isolatedCopyEv(&invalid.data);
+    } catch (const std::logic_error&) {
+        threw = true;
+    }
+    Require(threw);
+
+    Require(Throws([] { _ZNK7WebCore18SecurityOriginData12isolatedCopyEv(nullptr); }));
+}
+
 int main() {
     TestLoopback();
     TestTupleOrigins();
@@ -557,5 +619,7 @@ int main() {
     TestCachePartition();
     TestRegistrableDomainSuffix();
     TestOriginData();
+    TestOriginDataFromFrame();
+    TestOriginDataIsolatedCopy();
     return 0;
 }
