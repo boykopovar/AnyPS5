@@ -1984,6 +1984,27 @@ public:
         }
         unitGeneration.assign(unitGeneration.size(), generation);
         const auto mirror = mirrorPlane.storage;
+        static const bool fromAlias = std::getenv("APS5_NO_DEPTH_FROM_ALIAS") == nullptr;
+        if (fromAlias && StoresUnits(*mirror)) {
+            if (const auto writers = StorageTexture::DepthPlaneWriters(*mirror, changed); !writers.empty()) {
+                auto rest = changed;
+                for (const auto& [writer, units] : writers) {
+                    for (std::size_t unit = 0; unit < units.size(); ++unit) {
+                        if (units[unit]) rest[unit] = false;
+                    }
+                }
+                if (anyUnit(rest)) {
+                    const auto rects = mirror->UnitRects(rest);
+                    copyPlane(mirrorPlane, mirror, false, false, true, &rects);
+                }
+                for (const auto& [writer, units] : writers) {
+                    const auto rects = writer->UnitRects(units);
+                    copyPlane(mirrorPlane, writer, false, false, true, &rects);
+                }
+                written = ++depthWrites;
+                return;
+            }
+        }
         if (StoresUnits(*mirror)) {
             const auto rects = mirror->UnitRects(changed);
             copyPlane(mirrorPlane, mirror, false, false, true, &rects);
