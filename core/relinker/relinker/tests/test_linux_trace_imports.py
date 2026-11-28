@@ -11,7 +11,7 @@ import tempfile
 from guest_import_fixtures import executable
 
 
-PROVIDER = "#include <unistd.h>\nint shared(void) { _exit(11); }\n"
+PROVIDER = "#include <unistd.h>\nint shared(void) { _exit(11); }\nvoid weakexit(void) { _exit(33); }\n"
 HOOK = ("#include <string.h>\n"
         "#include <unistd.h>\n"
         "static int replacement(void) { _exit(77); }\n"
@@ -19,7 +19,7 @@ HOOK = ("#include <string.h>\n"
         "    return strcmp(name, \"shared\") == 0 && strcmp(library, \"a.prx\") == 0 ? (void*)replacement : target;\n"
         "}\n")
 WEAK_CALL = (b"\x48\x8b\x05" + struct.pack("<i", 0x4a20 - 0x4007)
-             + b"\x48\x85\xc0\x74\x02\xff\xe0\xb8\x21\x00\x00\x00\xc3")
+             + b"\x48\x85\xc0\x74\x02\xff\xe0\xff\x25" + struct.pack("<i", 0x4a28 - 0x4014))
 ALIGNED_PROVIDER = r"""
 __asm__(
 ".text\n"
@@ -223,11 +223,13 @@ def main():
                 ("unsupported", ("--trace-imports",), "plain", 0x12, "shared#A#B", 6, None, 0)):
             case = work / name
             case.mkdir()
-            image = executable("a.prx", symbol=symbol, extra_dependencies=("libc.prx",))
+            image = executable("a.prx", symbol=symbol, extra_dependencies=("libc.prx",),
+                               extra_symbols=("weakexit#A#B",) if symbol != "shared#A#B" else ())
             image[0x4898 + 4] = symbol_info
             struct.pack_into("<Q", image, 0x4908, (1 << 32) | relocation)
             if symbol != "shared#A#B":
                 image[0x4000:0x4000 + len(WEAK_CALL)] = WEAK_CALL
+                image[0x4898 + 24 + 4] = 0x11
             source = case / "input.elf"
             source.write_bytes(image)
             output = case / "output.elf"
