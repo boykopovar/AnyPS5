@@ -434,7 +434,7 @@ static bool DecodeRdna2Bc1(std::uint32_t guestFormat) {
 
 static std::uint32_t UnmappedLevelsBelowMinLod(const GuestTextureResource& descriptor, const SurfaceGeometry& geometry) {
     if (descriptor.baseLevel != 0 || (descriptor.dimension != TextureDimension::k2D && descriptor.dimension != TextureDimension::k2DArray) || geometry.thick) return 0;
-    const auto lastViewLevel = std::min(descriptor.lastLevel, descriptor.mipCount - 1u);
+    const auto lastViewLevel = std::min({descriptor.lastLevel, descriptor.mipCount - 1u, geometry.imageLevels - 1u});
     const auto clamped = std::min(static_cast<std::uint32_t>(EffectiveMinLod(descriptor)), lastViewLevel);
     std::uint32_t levels = 0;
     for (; levels < clamped && levels < geometry.mips.size() && !geometry.mips[levels].tail; ++levels) {
@@ -3657,8 +3657,8 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
             ++Profile().storageRecordedClears;
             Recorder::CountBarriers(Recorder::CommandClass::DccClear, 2);
             if (Recorder::BarrierValidate()) {
-                const std::pair<VkImage, bool> cleared{image, true};
-                recorder->NoteAccess(Recorder::CommandClass::DccClear, Recorder::Access{{}, {}, std::span(&cleared, 1), VK_PIPELINE_STAGE_TRANSFER_BIT});
+                const auto cleared = imageAccesses(true);
+                recorder->NoteAccess(Recorder::CommandClass::DccClear, Recorder::Access{{}, {}, cleared, VK_PIPELINE_STAGE_TRANSFER_BIT});
             }
         } else {
             batch = std::make_unique<CommandBatch>(context);
@@ -3759,8 +3759,8 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
             Recorder::CountBarriers(Recorder::CommandClass::StorageUpload, direct ? 2 : 3);
             if (Recorder::BarrierValidate()) {
                 const std::pair<std::uint64_t, std::uint64_t> read{descriptor.baseAddress, descriptor.baseAddress + guestBytes};
-                const std::pair<VkImage, bool> written{image, true};
-                recorder->NoteAccess(Recorder::CommandClass::StorageUpload, Recorder::Access{std::span(&read, 1), {}, std::span(&written, 1), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT});
+                const auto written = imageAccesses(true);
+                recorder->NoteAccess(Recorder::CommandClass::StorageUpload, Recorder::Access{std::span(&read, 1), {}, written, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT});
             }
         } else {
             batch = std::make_unique<CommandBatch>(context);
@@ -4319,8 +4319,8 @@ std::uint64_t StorageTexture::uploadWindows(std::span<const ImportSegment> segme
         if (!reads.empty()) recorder->NotePendingReads(reads, Recorder::ReadKind::StorageUpload);
         Recorder::CountBarriers(Recorder::CommandClass::StorageUpload, (direct ? 2 : 3) + (gather ? 2 : 0));
         if (Recorder::BarrierValidate()) {
-            const std::pair<VkImage, bool> written{image, true};
-            recorder->NoteAccess(Recorder::CommandClass::StorageUpload, Recorder::Access{reads, {}, std::span(&written, 1), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT});
+            const auto written = imageAccesses(true);
+            recorder->NoteAccess(Recorder::CommandClass::StorageUpload, Recorder::Access{reads, {}, written, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT});
         }
     } else {
         batch = std::make_unique<CommandBatch>(context);
@@ -4648,11 +4648,11 @@ std::uint64_t StorageTexture::writeBackWindows(std::span<const ImportSegment> se
         if (auto self = weak_from_this().lock()) keepStorageTexture(*recorder, std::move(self));
         Recorder::CountBarriers(Recorder::CommandClass::StorageWriteBack, (direct ? 3 : 4) - (tiledScratch ? 0 : 1));
         if (Recorder::BarrierValidate()) {
-            const std::pair<VkImage, bool> read{image, false};
+            const auto read = imageAccesses(false);
             std::vector<std::pair<std::uint64_t, std::uint64_t>> seedReads;
             for (const auto& seed : seeds) seedReads.emplace_back(seed.begin, seed.end);
             seedReads.insert(seedReads.end(), padding.importReads.begin(), padding.importReads.end());
-            recorder->NoteAccess(Recorder::CommandClass::StorageWriteBack, Recorder::Access{seedReads, imported, std::span(&read, 1), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT});
+            recorder->NoteAccess(Recorder::CommandClass::StorageWriteBack, Recorder::Access{seedReads, imported, read, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT});
         }
     } else {
         batch = std::make_unique<CommandBatch>(context);
@@ -5251,8 +5251,8 @@ std::uint64_t StorageTexture::storeDrawnRect(const DrawnArea& area, std::span<co
         if (auto self = weak_from_this().lock()) keepStorageTexture(*recorder, std::move(self));
         Recorder::CountBarriers(Recorder::CommandClass::StorageWriteBack, 3);
         if (Recorder::BarrierValidate()) {
-            const std::pair<VkImage, bool> read{image, false};
-            recorder->NoteAccess(Recorder::CommandClass::StorageWriteBack, Recorder::Access{{}, stores, std::span(&read, 1), VK_PIPELINE_STAGE_TRANSFER_BIT});
+            const auto read = imageAccesses(false);
+            recorder->NoteAccess(Recorder::CommandClass::StorageWriteBack, Recorder::Access{{}, stores, read, VK_PIPELINE_STAGE_TRANSFER_BIT});
         }
     } else {
         batch = std::make_unique<CommandBatch>(context);
@@ -7325,8 +7325,8 @@ bool StorageTexture::clearByKeysFill(DccKeys keys, std::uint8_t key) {
     if (auto self = weak_from_this().lock()) keepStorageTexture(*recorder, std::move(self));
     Recorder::CountBarriers(Recorder::CommandClass::DccClear, 2);
     if (Recorder::BarrierValidate()) {
-        const std::pair<VkImage, bool> clearedImage{image, true};
-        recorder->NoteAccess(Recorder::CommandClass::DccClear, Recorder::Access{{}, {}, std::span(&clearedImage, 1), VK_PIPELINE_STAGE_TRANSFER_BIT});
+        const auto clearedImage = imageAccesses(true);
+        recorder->NoteAccess(Recorder::CommandClass::DccClear, Recorder::Access{{}, {}, clearedImage, VK_PIPELINE_STAGE_TRANSFER_BIT});
     }
     VkImageMemoryBarrier toClear{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     toClear.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
@@ -7466,8 +7466,8 @@ bool StorageTexture::FillClear(std::span<const std::uint32_t, 4> pattern, std::u
     Recorder::CountBarriers(Recorder::CommandClass::FillClear, 2);
     if (auto self = weak_from_this().lock()) keepStorageTexture(*recorder, std::move(self));
     if (Recorder::BarrierValidate()) {
-        const std::pair<VkImage, bool> cleared{image, true};
-        recorder->NoteAccess(Recorder::CommandClass::FillClear, Recorder::Access{{}, {}, std::span(&cleared, 1), VK_PIPELINE_STAGE_TRANSFER_BIT});
+        const auto cleared = imageAccesses(true);
+        recorder->NoteAccess(Recorder::CommandClass::FillClear, Recorder::Access{{}, {}, cleared, VK_PIPELINE_STAGE_TRANSFER_BIT});
     }
     VkImageMemoryBarrier toClear{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     toClear.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
@@ -8593,8 +8593,8 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             if (auto self = weak_from_this().lock()) keepStorageTexture(*recorder, std::move(self));
             Recorder::CountBarriers(Recorder::CommandClass::StorageWriteBack, (padding.copies.empty() ? 4 : 5) - (directImport != nullptr ? 1 : 0));
             if (Recorder::BarrierValidate()) {
-                const std::pair<VkImage, bool> read{image, false};
-                recorder->NoteAccess(Recorder::CommandClass::StorageWriteBack, Recorder::Access{padding.importReads, importStores, std::span(&read, 1), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT});
+                const auto read = imageAccesses(false);
+                recorder->NoteAccess(Recorder::CommandClass::StorageWriteBack, Recorder::Access{padding.importReads, importStores, read, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT});
             }
         } else {
             batch = std::make_unique<CommandBatch>(context);

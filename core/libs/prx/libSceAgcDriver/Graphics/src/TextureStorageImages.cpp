@@ -31,6 +31,14 @@ void StorageTexture::allocateExtraMipImages(VkImageCreateInfo info) {
     }
 }
 
+std::vector<std::pair<VkImage, bool>> StorageTexture::imageAccesses(bool written) const {
+    std::vector<std::pair<VkImage, bool>> accesses;
+    accesses.reserve(extraMipImages.size() + 1u);
+    accesses.emplace_back(image, written);
+    for (const auto& extra : extraMipImages) accesses.emplace_back(extra->image, written);
+    return accesses;
+}
+
 void StorageTexture::imageBarrier(VkCommandBuffer commands, VkPipelineStageFlags source, VkPipelineStageFlags destination, VkDependencyFlags flags, std::uint32_t memoryCount, const VkMemoryBarrier* memoryBarriers, std::uint32_t bufferCount, const VkBufferMemoryBarrier* bufferBarriers, std::uint32_t imageCount, const VkImageMemoryBarrier* imageBarriers) const {
     if (extraMipImages.empty()) {
         context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, source, destination, flags, memoryCount, memoryBarriers, bufferCount, bufferBarriers, imageCount, imageBarriers);
