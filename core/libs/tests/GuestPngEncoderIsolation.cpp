@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <span>
 #include <vector>
+#include <barrier>
+#include <thread>
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
@@ -51,6 +53,19 @@ int main() {
     for (unsigned round = 0; round < 8; ++round) {
         Encode(one, 5, 3, static_cast<std::uint8_t>(10 + round), 0);
         Encode(two, 19, 7, static_cast<std::uint8_t>(40 + round), 15);
+    }
+    {
+        std::barrier start(2);
+        std::jthread secondary([&] {
+            start.arrive_and_wait();
+            for (unsigned round = 0; round < 8; ++round) {
+                Encode(two, 19, 7, static_cast<std::uint8_t>(80 + round), 15);
+            }
+        });
+        start.arrive_and_wait();
+        for (unsigned round = 0; round < 8; ++round) {
+            Encode(one, 5, 3, static_cast<std::uint8_t>(20 + round), 0);
+        }
     }
     one.Close();
     Encode(two, 23, 2, 72, 3);

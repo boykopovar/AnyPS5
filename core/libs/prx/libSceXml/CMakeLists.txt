@@ -7,6 +7,8 @@ add_library(libSceXml SHARED EXCLUDE_FROM_ALL
     ${CMAKE_CURRENT_SOURCE_DIR}/src/DomParser.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Node.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/NodeList.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/SaxParser.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/WritableTree.cpp
 )
 target_include_directories(libSceXml PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceXml)
@@ -68,6 +70,16 @@ if(BUILD_TESTING)
     set_tests_properties(guest_xml_node_list PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_xml_node_list PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceXml>")
+    endif()
+    add_test_executable(guest_xml_sax_parser_tests ${LIBS_INCLUDE_DIR}/tests/GuestXmlSaxParser.cpp)
+    target_include_directories(guest_xml_sax_parser_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_xml_sax_parser_tests PRIVATE libSceXml libkernel libc)
+    configure_windows_unwind(guest_xml_sax_parser_tests)
+    add_test(NAME guest_xml_sax_parser COMMAND guest_xml_sax_parser_tests)
+    set_tests_properties(guest_xml_sax_parser PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_xml_sax_parser PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceXml>")
     endif()
 endif()

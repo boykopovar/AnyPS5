@@ -1,3 +1,5 @@
+include(${CMAKE_SOURCE_DIR}/cmake/Zlib.cmake)
+
 function(add_png_decoder target runtimeTarget)
     if(NOT TARGET "${runtimeTarget}")
         message(FATAL_ERROR "PNG decoder requires an existing runtime target: ${runtimeTarget}")

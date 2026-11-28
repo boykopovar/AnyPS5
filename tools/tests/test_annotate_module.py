@@ -120,6 +120,18 @@ def append_dynamic_tags(image, entries):
     return bytes(image)
 
 
+def unwind_image(addresses, encoding=b"\x01\x1b\x03\x3b", **options):
+    image = bytearray(build_module(**options))
+    base = DATA_ADDRESS + 0x500
+    size = 12 + 8 * len(addresses)
+    struct.pack_into("<H", image, 56, 4)
+    struct.pack_into("<IIQQQQQQ", image, 64 + 3 * 56, 0x6474e550, 4, 0x2500, base, base, size, size, 4)
+    struct.pack_into("<4siI", image, 0x2500, encoding, 0xfc, len(addresses))
+    for index, address in enumerate(addresses):
+        struct.pack_into("<ii", image, 0x250c + 8 * index, address - base, 0x110 + index * 16)
+    return image
+
+
 class ImportRelocationTests(unittest.TestCase):
     def test_conflicting_load_mappings_cannot_supply_symbol_tables(self):
         for address in (DATA_ADDRESS + 4, DATA_ADDRESS + 0x58, DATA_ADDRESS + 0x110, DATA_ADDRESS + 0x288):
@@ -265,6 +277,18 @@ class ImportRelocationTests(unittest.TestCase):
                 else:
                     self.assertEqual(annotate_module.Module(bytes(data)).imports(), {SLOT: symbol_name(IMPORT_NAME)})
 
+    def test_defined_symbols_bound_to_this_module_are_not_imports(self):
+        for binding, visibility, section, kind, expected in (
+                (1, 3, 1, 16, False), (1, 3, 1, 17, False), (1, 2, 1, 6, False),
+                (1, 1, 1, 1, False), (0, 0, 1, 1, False), (1, 0, 1, 6, True),
+                (2, 0, 0, 6, True), (1, 3, 1, 5, True)):
+            with self.subTest(binding=binding, visibility=visibility, section=section, kind=kind):
+                symbol_type = 6 if kind in (16, 17) else 1
+                image = bytearray(build_module(symbols=[(IMPORT_NAME, section, binding << 4 | symbol_type, 0)]))
+                image[0x2040 + 24 + 5] = visibility
+                image = with_relocation(image, 0x2280, 0, SLOT, 1, kind)
+                self.assertEqual(annotate_module.Module(image).imports(), {SLOT: symbol_name(IMPORT_NAME)} if expected else {})
+
     def test_none_relocations_do_not_read_the_symbol_or_add_a_slot(self):
         for table in (0x2200, 0x2280):
             for symbol_index in (0, 1, 0xFFFFFFFF):
@@ -312,6 +336,45 @@ class ImportRelocationTests(unittest.TestCase):
         module = annotate_module.Module(build_module(tags=(GNU_HASH, 5, 6, 10, 11, 23, 2, 20), symbols=[], relocations=(), kind="gnu", bloom_count=1))
         self.assertEqual(module.symbol_count, 1)
 
+    def test_empty_gnu_hash_keeps_imports_from_both_relocation_tables(self):
+        symbols = [(IMPORT_NAME, 0, 0x12, 0), (SECOND_IMPORT_NAME, 0, 0x12, 0)]
+        image = bytearray(build_module(tags=(GNU_HASH, 5, 6, 10, 11, 7, 8, 23, 2, 20), symbols=symbols,
+                                      glob_dats=((SLOT + 8, 2),), kind="gnu"))
+        struct.pack_into("<I", image, 0x2018, 0)
+        module = annotate_module.Module(image)
+        self.assertEqual(module.symbol_count, 3)
+        self.assertEqual(module.imports(), {SLOT: symbol_name(IMPORT_NAME), SLOT + 8: symbol_name(SECOND_IMPORT_NAME)})
+        self.assertEqual(module.exports(), ({}, {}))
+        names = annotate_module.Namer({nid(IMPORT_NAME): IMPORT_NAME, nid(SECOND_IMPORT_NAME): SECOND_IMPORT_NAME})
+        self.assertEqual(annotate_module.ghidra_symbols(module, names),
+                         ["imp_%s %#x l" % (IMPORT_NAME, SLOT), "imp_%s %#x l" % (SECOND_IMPORT_NAME, SLOT + 8)])
+
+    def test_empty_gnu_hash_ignores_unused_relocation_symbol_indices(self):
+        image = build_module(tags=(GNU_HASH, 5, 6, 10, 11, 23, 2, 20), symbols=[], kind="gnu")
+        image = with_relocation(image, 0x2280, 0, SLOT, 0xFFFFFFFF, 0)
+        module = annotate_module.Module(image)
+        self.assertEqual(module.symbol_count, 1)
+        self.assertEqual(module.imports(), {})
+
+    def test_empty_gnu_hash_still_validates_relocations_and_symbol_ranges(self):
+        for values, index, message in (({2: 25}, 1, "multiple"), ({23: DATA_ADDRESS + 0x800}, 1, "PT_LOAD"),
+                                       ({}, 0xFFFFFFFF, "PT_LOAD|symbol index .* is outside")):
+            with self.subTest(values=values, index=index):
+                image = bytearray(build_module(tags=(GNU_HASH, 5, 6, 10, 11, 23, 2, 20), values=values,
+                                              symbols=[(IMPORT_NAME, 0, 0x12, 0)], kind="gnu"))
+                struct.pack_into("<I", image, 0x2018, 0)
+                image = with_relocation(image, 0x2280, 0, SLOT, index, 7)
+                with self.assertRaisesRegex(annotate_module.ModuleError, message):
+                    annotate_module.Module(image).imports()
+
+    def test_nonempty_gnu_hash_keeps_its_symbol_count_limit(self):
+        image = build_module(tags=(GNU_HASH, 5, 6, 10, 11, 23, 2, 20),
+                             symbols=[(IMPORT_NAME, 0, 0x12, 0)], relocations=((SLOT, 3),), kind="gnu")
+        module = annotate_module.Module(image)
+        self.assertEqual(module.symbol_count, 2)
+        with self.assertRaisesRegex(annotate_module.ModuleError, "symbol index 3 is outside"):
+            module.imports()
+
     def test_dt_hash_precedence_preserves_unused_invalid_gnu_hash(self):
         tags = (4, GNU_HASH, 5, 6, 10, 11, 23, 2, 20)
         module = build_module(tags=tags, values={GNU_HASH: DATA_ADDRESS + 0x400}, kind="sysv", bloom_count=3)
@@ -319,12 +382,18 @@ class ImportRelocationTests(unittest.TestCase):
 
 
 class ObjdumpDiscoveryTests(unittest.TestCase):
-    def discover(self, versions):
+    def discover(self, versions, unsupported=(), false_success=()):
         def which(name):
             return "/bin/" + name if name in versions else None
 
         def run(command, **kwargs):
-            return subprocess.CompletedProcess(command, 0, versions[Path(command[0]).name], "")
+            name = Path(command[0]).name
+            if command[1] == "--version":
+                return subprocess.CompletedProcess(command, 0, versions[name], "")
+            self.assertIn("i386:x86-64", command)
+            instruction = "64-bit address is disabled" if name in false_success else "ret"
+            output = f"   0:\t{instruction}\n"
+            return subprocess.CompletedProcess(command, int(name in unsupported), output, "")
 
         annotate_module.gnu_objdump.cache_clear()
         self.addCleanup(annotate_module.gnu_objdump.cache_clear)
@@ -335,10 +404,21 @@ class ObjdumpDiscoveryTests(unittest.TestCase):
         found = self.discover({"objdump": "Apple LLVM version 21.0.0\n", "gobjdump": "GNU objdump (GNU Binutils) 2.45\n"})
         self.assertEqual(found, "/bin/gobjdump")
 
+    def test_arm_gnu_objdump_is_passed_over_for_x86_64_cross_objdump(self):
+        version = "GNU objdump (GNU Binutils) 2.42\n"
+        found = self.discover({"objdump": version, "x86_64-linux-gnu-objdump": version}, unsupported=("objdump",))
+        self.assertEqual(found, "/bin/x86_64-linux-gnu-objdump")
+        self.assertIsNone(self.discover({"objdump": version}, unsupported=("objdump",)))
+
+    def test_32_bit_objdump_that_exits_successfully_is_skipped(self):
+        version = "GNU objdump (GNU Binutils) 2.28\n"
+        found = self.discover({"objdump": version, "gobjdump": version}, false_success=("objdump",))
+        self.assertEqual(found, "/bin/gobjdump")
+
     def test_only_llvm_objdump_is_refused_by_name(self):
         self.assertIsNone(self.discover({"objdump": "Apple LLVM version 21.0.0\n"}))
         with mock.patch.object(annotate_module, "gnu_objdump", lambda: None):
-            with self.assertRaisesRegex(annotate_module.ModuleError, "GNU binutils objdump was not found as any of objdump, gobjdump"):
+            with self.assertRaisesRegex(annotate_module.ModuleError, "GNU binutils objdump with x86-64 support is required"):
                 annotate_module.disassemble(b"\xc3", 0x1000)
 
 
@@ -385,6 +465,143 @@ class AnnotateModuleTests(unittest.TestCase):
         self.assertEqual(instruction(listing, "ret"), listing[header + 1])
         self.assertEqual([], [path.name for path in self.root.iterdir() if path.suffix == ".bin"])
 
+    def test_direct_calls_and_tail_jumps_name_exported_functions(self):
+        code = b"\xe8\x06\x00\x00\x00\xe9\x01\x00\x00\x00\x90\xc3"
+        symbols = [(EXPORT_NAME, 1, 0x12, EXPORT_ADDRESS), (SECOND_IMPORT_NAME, 1, 0x12, EXPORT_ADDRESS)]
+        self.annotate(build_module(code=code, symbols=symbols, relocations=()))
+        listing = self.read(".asm").splitlines()
+        names = ", ".join(sorted((EXPORT_NAME, SECOND_IMPORT_NAME)))
+        for mnemonic in ("call", "jmp"):
+            self.assertTrue(instruction(listing, mnemonic).endswith("; -> " + names), listing)
+
+    def test_lea_names_exported_callback_and_zero_filled_data_aliases(self):
+        data = DATA_ADDRESS + 0x910
+        symbols = [(EXPORT_NAME, 1, 0x12, CODE_ADDRESS), (SECOND_IMPORT_NAME, 2, 0x11, data),
+                   (IMPORT_NAME, 2, 0x21, data), (TLS_NAME, 2, 0x16, data)]
+        code = bytearray()
+        for opcode, target in ((b"\x48\x8d\x05", CODE_ADDRESS), (b"\x48\x8d\x0d", data),
+                               (b"\x48\x8b\x05", data), (b"\x66\x8d\x05", data), (b"\x48\x8d\x05", data + 1)):
+            code += opcode
+            code += struct.pack("<i", target - (CODE_ADDRESS + len(code) + 4))
+        image = bytearray(build_module(code=code + b"\xc3", symbols=symbols, relocations=()))
+        struct.pack_into("<Q", image, 64 + 56 + 40, 0x920)
+        self.annotate(image)
+        notes = [line.split("; address of ")[1] for line in self.read(".asm").splitlines() if "; address of " in line]
+        self.assertEqual(notes, [EXPORT_NAME, ", ".join(sorted((IMPORT_NAME, SECOND_IMPORT_NAME)))])
+
+    def test_lea_ignores_non_address_exports_and_preserves_import_slots(self):
+        for section, kind, target in ((0xfff1, 0x11, DATA_ADDRESS), (0xfff2, 0x11, DATA_ADDRESS),
+                                      (1, 0x16, DATA_ADDRESS), (0, 0x11, DATA_ADDRESS), (1, 0x11, 0x9000),
+                                      (1, 0x12, DATA_ADDRESS), (1, 0x11, SLOT)):
+            with self.subTest(section=section, kind=kind, target=target):
+                code = b"\x48\x8d\x05" + struct.pack("<i", target - CODE_ADDRESS - 7) + b"\xc3"
+                symbols = [(IMPORT_NAME, 0, 0x12, 0), (EXPORT_NAME, section, kind, target)]
+                self.annotate(build_module(code=code, symbols=symbols))
+                line = instruction(self.read(".asm").splitlines(), "lea")
+                self.assertNotIn("; address of", line)
+                self.assertEqual("; GOT " + IMPORT_NAME in line, target == SLOT)
+
+    def test_direct_branch_target_requires_a_defined_function_in_executable_code(self):
+        for section, kind, target in ((1, 0x11, EXPORT_ADDRESS), (1, 0x16, EXPORT_ADDRESS),
+                                      (0, 0x12, EXPORT_ADDRESS), (0xfff2, 0x12, EXPORT_ADDRESS),
+                                      (1, 0x12, DATA_ADDRESS)):
+            with self.subTest(section=section, kind=kind, target=target):
+                code = b"\xe8" + struct.pack("<i", target - CODE_ADDRESS - 5) + bytes(6) + b"\xc3"
+                self.annotate(build_module(code=code, symbols=[(EXPORT_NAME, section, kind, target)], relocations=()))
+                self.assertNotIn("; ->", instruction(self.read(".asm").splitlines(), "call"))
+
+    def test_listing_names_calls_and_jumps_to_unnamed_unwind_ranges(self):
+        private = CODE_ADDRESS + 10
+        code = b"\xe8\x05\x00\x00\x00\xe9\x00\x00\x00\x00\x90\xc3"
+        self.annotate(unwind_image([private, private, EXPORT_ADDRESS, DATA_ADDRESS], code=code, relocations=()))
+        listing = self.read(".asm").splitlines()
+        self.assertEqual([line for line in listing if line.startswith("; ===== unwind")], ["; ===== unwind range unwind_100a"])
+        for mnemonic in ("call", "jmp"):
+            self.assertTrue(instruction(listing, mnemonic).endswith("; -> unwind_100a"), listing)
+        self.assertEqual(listing[listing.index("; ===== unwind range unwind_100a") + 1], instruction(listing, "nop"))
+        self.assertIn("; ===== export " + EXPORT_NAME, listing)
+        self.assertNotIn("unwind_", self.read(".exports.txt"))
+
+    def test_unwind_range_at_import_stub_keeps_import_name(self):
+        self.annotate(unwind_image([CODE_ADDRESS]))
+        listing = self.read(".asm").splitlines()
+        self.assertFalse(any("unwind_" in line for line in listing))
+        self.assertTrue(instruction(listing, "call").endswith("; -> " + IMPORT_NAME))
+
+    def test_linker_values_cannot_name_a_branch_or_hide_an_unwind_range(self):
+        symbols = [(IMPORT_NAME, 0xfff1, 0x12, EXPORT_ADDRESS), (SECOND_IMPORT_NAME, 0xfff2, 0x11, EXPORT_ADDRESS),
+                   (EXPORT_NAME, 1, 0x12, CODE_ADDRESS)]
+        code = b"\xe8\x06\x00\x00\x00" + b"\x90" * 6 + b"\xc3"
+        self.annotate(unwind_image([EXPORT_ADDRESS], code=code, symbols=symbols, relocations=()))
+        listing = self.read(".asm").splitlines()
+        self.assertEqual([line for line in listing if line.startswith("; ===== export")], ["; ===== export " + EXPORT_NAME])
+        self.assertIn("; ===== unwind range unwind_100b", listing)
+        self.assertTrue(instruction(listing, "call").endswith("; -> unwind_100b"))
+        inventory = self.read(".exports.txt")
+        for name in (IMPORT_NAME, SECOND_IMPORT_NAME):
+            self.assertIn(f"{EXPORT_ADDRESS:#x} {symbol_name(name)} {name}\n", inventory)
+
+    def test_branch_annotation_requires_a_listed_unwind_target_instruction(self):
+        code = b"\xe8\x01\x00\x00\x00\xb8\x90\x90\x90\x90\xc3"
+        self.annotate(unwind_image([CODE_ADDRESS + 6], code=code, symbols=(), relocations=()))
+        self.assertNotIn("unwind_", self.read(".asm"))
+
+    def test_bad_unwind_entry_omits_partial_labels_but_keeps_the_listing(self):
+        image = unwind_image([CODE_ADDRESS, CODE_ADDRESS + 6], relocations=())
+        struct.pack_into("<i", image, 0x2518, -1)
+        warning = io.StringIO()
+        with contextlib.redirect_stderr(warning):
+            self.annotate(image)
+        self.assertIn("skipping unwind labels", warning.getvalue())
+        self.assertNotIn("unwind_", self.read(".asm"))
+        self.assertIn("; ===== export " + EXPORT_NAME, self.read(".asm"))
+
+    def test_endbr64_stubs_name_branches_to_both_entry_addresses(self):
+        for address in (0, CODE_ADDRESS, 0x100001000):
+            for prefix in (b"", b"\xf2", b"\x67", b"\xf2\x67"):
+                if address > 0xFFFFFFFF and b"\x67" not in prefix:
+                    continue
+                with self.subTest(address=address, prefix=prefix):
+                    code = b"\xf3\x0f\x1e\xfa" + prefix + b"\xff\x25"
+                    code += struct.pack("<I", (SLOT - address - len(code) - 4) & 0xFFFFFFFF)
+                    branches = []
+                    for opcode in (b"\xe8", b"\xe9"):
+                        for target in (address, address + 4):
+                            location = address + len(code)
+                            branches.append(location)
+                            code += opcode + struct.pack("<i", target - location - 5)
+                    image = bytearray(build_module(code=code + b"\xc3", symbols=[(IMPORT_NAME, 0, 0x12, 0)]))
+                    struct.pack_into("<Q", image, 64 + 16, address)
+                    self.annotate(image)
+                    listing = self.read(".asm").splitlines()
+                    lines = {int(match.group(1), 16): line for line in listing
+                             if (match := annotate_module.LINE_ADDRESS.match(line))}
+                    for location in branches:
+                        self.assertTrue(lines[location].endswith("; -> " + IMPORT_NAME), lines[location])
+                    self.assertTrue(lines[address + 4].endswith("; GOT " + IMPORT_NAME))
+
+    def test_endbr64_followed_by_other_instructions_is_not_a_stub_alias(self):
+        namer = annotate_module.Namer({nid(IMPORT_NAME): IMPORT_NAME})
+        for middle in (b"\x90", b"\x50", b"\xcc"):
+            with self.subTest(middle=middle):
+                code = b"\xf3\x0f\x1e\xfa" + middle + b"\xff\x25"
+                code += struct.pack("<i", SLOT - CODE_ADDRESS - len(code) - 4)
+                listing = annotate_module.disassemble(code, CODE_ADDRESS)
+                self.assertEqual(annotate_module.find_stubs(listing, {SLOT: symbol_name(IMPORT_NAME)}, namer),
+                                 {CODE_ADDRESS + 4 + len(middle): IMPORT_NAME})
+
+    def test_endbr64_stub_alias_requires_a_contiguous_listing(self):
+        namer = annotate_module.Namer({nid(IMPORT_NAME): IMPORT_NAME})
+        for preceding, address in ((["1000: endbr64"], 0x1008), (["1000: endbr64", ""], 0x1004),
+                                   (["1000: endbr64", "; ===== segment 0x1004"], 0x1004),
+                                   (["1000: data16 endbr64"], 0x1004), (["1000: endbr32"], 0x1004)):
+            with self.subTest(preceding=preceding, address=address):
+                listing = preceding + ["%x: jmp *0x17f6(%%rip) # 0x2800" % address]
+                self.assertEqual(annotate_module.find_stubs(listing, {SLOT: symbol_name(IMPORT_NAME)}, namer),
+                                 {address: IMPORT_NAME})
+        listing = ["1000: endbr64", "1004: jmp *%rax"]
+        self.assertEqual(annotate_module.find_stubs(listing, {SLOT: symbol_name(IMPORT_NAME)}, namer), {})
+
     def test_unknown_nid_prints_the_nid(self):
         db = self.root / "db.csv"
         db.write_text("AAAAAAAAAAA some_other_name\n", encoding="utf-8")
@@ -395,6 +612,14 @@ class AnnotateModuleTests(unittest.TestCase):
     def test_no_names_skips_the_database(self):
         self.run_tool(build_module(), "--no-names")
         self.assertIn("; -> " + nid(IMPORT_NAME), self.read(".asm"))
+
+    def test_database_without_nid_records_is_reported(self):
+        db = self.root / "empty.csv"
+        db.write_text("# comment only\n", encoding="utf-8")
+        with self.assertRaises(SystemExit) as raised:
+            self.run_tool(build_module(), "--db", str(db))
+        self.assertEqual(raised.exception.code, "%s: %s: database contains no valid NID records" % (self.root / "module.prx", db))
+        self.assertEqual([], list(self.root.glob("out*")))
 
     def test_a_temporary_directory_outside_the_ansi_code_page_is_disassembled(self):
         temporary = self.root / "тест 界 \U0001f3ae"
@@ -415,6 +640,17 @@ class AnnotateModuleTests(unittest.TestCase):
             self.assertFalse(Path(annotate_module.gnu_objdump()).is_absolute())
             summary = self.annotate(build_module())
         self.assertIn("1 imports, 1 exports, 0 tls, 1 stubs", summary)
+
+    def test_listing_marks_the_elf_entry_instruction(self):
+        image = bytearray(build_module(code=b"\xe8\x90\x90\x90\x90\xc3"))
+        entry = CODE_ADDRESS + 1
+        struct.pack_into("<Q", image, 24, entry)
+        self.annotate(image)
+        lines = self.read(".asm").splitlines()
+        self.assertEqual(lines.count("; ===== ELF entry point"), 1)
+        line = lines[lines.index("; ===== ELF entry point") + 1]
+        self.assertEqual(int(line.split(":")[0], 16), entry)
+        self.assertIn("nop", line)
 
     def test_mismatching_database_name_is_not_used(self):
         wrong = self.root / "wrong.csv"
@@ -1008,6 +1244,84 @@ class PathResolutionTests(unittest.TestCase):
             self.assertEqual(report.read_bytes(), b"previous report")
             self.assertFalse((root / "report.exports.txt").exists())
             self.assertTrue(loop.is_symlink())
+
+
+class ReferencedAddressTests(unittest.TestCase):
+    def test_referenced_address_is_none_without_a_reference(self):
+        import annotate_module
+        self.assertIsNone(annotate_module.referenced_address("    nop"))
+        self.assertIsNone(annotate_module.referenced_address("    mov %fs:0x28, %rax"))
+
+
+class LineNoteTests(unittest.TestCase):
+    def test_line_note_is_empty_for_plain_instructions(self):
+        import annotate_module
+        class Namer:
+            def resolve(self, value):
+                raise AssertionError("not expected for a plain instruction")
+        self.assertEqual(annotate_module.line_note("    nop", {}, {}, Namer()), "")
+
+    def test_line_note_names_a_branch_to_a_stub_and_a_got_reference(self):
+        import annotate_module
+        class Namer:
+            def resolve(self, value):
+                return value.upper()
+        self.assertEqual(annotate_module.line_note("  10:\tcallq  0x30", {}, {0x30: "TBL"}, Namer()), "   ; -> TBL")
+        self.assertEqual(annotate_module.line_note("  10:\tcallq  0x31", {}, {0x30: "TBL"}, Namer()), "")
+        self.assertEqual(annotate_module.line_note("  10:\tmov    0x2(%rip),%rax        # 0x20", {0x20: "tbl"}, {}, Namer()),
+                         "   ; GOT TBL")
+class FakeNamer:
+    def resolve(self, name):
+        return name.upper()
+
+
+class ListingHelperTests(unittest.TestCase):
+    def test_export_lines_lists_exports_then_thread_local_offsets(self):
+        self.assertEqual(annotate_module.export_lines({0x10: ["a"]}, {0x4: ["tl"]}, FakeNamer()),
+                         ["0x10 a A", "tls+0x4 tl TL"])
+
+    def test_write_lines_terminates_each_line_with_lf(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "out.txt"
+            annotate_module.write_lines(path, ["a", "b"])
+            self.assertEqual(path.read_bytes(), b"a\nb\n")
+
+    def test_annotate_listing_adds_a_header_before_each_export(self):
+        listing = ["  10:\tnop", "  14:\tnop"]
+        self.assertEqual(annotate_module.annotate_listing(listing, {}, {0x10: ["a"]}, {}, FakeNamer()),
+                         ["", "; ===== export A", "  10:\tnop", "  14:\tnop"])
+
+    def test_find_stubs_maps_a_jump_through_a_known_slot_to_its_name(self):
+        listing = ["  30:\tjmpq   *0x2(%rip)        # 0x20", "  34:\tnop"]
+        self.assertEqual(annotate_module.find_stubs(listing, {0x20: "tbl"}, FakeNamer()), {0x30: "TBL"})
+        self.assertEqual(annotate_module.find_stubs(listing, {}, FakeNamer()), {})
+class ArgumentAndPathTests(unittest.TestCase):
+    def test_parse_arguments_defaults_to_the_disassembly_outputs(self):
+        args = annotate_module.parse_arguments(["lib.prx"])
+        self.assertEqual(args.module, "lib.prx")
+        self.assertIsNone(args.out)
+        self.assertIsNone(args.db)
+        self.assertFalse(args.no_names)
+        self.assertFalse(args.symbols_json)
+
+    def test_parse_arguments_refuses_an_offline_mode_with_out(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            annotate_module.parse_arguments(["lib.prx", "--symbols-json", "--out", "x"])
+
+    def test_resolved_path_follows_a_link_and_accepts_a_missing_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "real.prx"
+            target.write_bytes(b"x")
+            self.assertEqual(annotate_module.resolved_path(target), target.resolve())
+            link = root / "link.prx"
+            try:
+                os.symlink(target, link)
+            except OSError:
+                self.skipTest("symbolic links are not available")
+            self.assertEqual(annotate_module.resolved_path(link), target.resolve())
+            missing = root / "missing.prx"
+            self.assertEqual(annotate_module.resolved_path(missing), missing.resolve())
 
 
 if __name__ == "__main__":

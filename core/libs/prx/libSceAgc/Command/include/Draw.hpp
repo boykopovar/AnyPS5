@@ -5,8 +5,8 @@
 
 namespace Agc::Command {
 
-std::uint32_t DrawInitiator(std::uint64_t modifier, bool indexed, const char* function);
-std::uint64_t DrawPatchOffsets(std::uint64_t modifier, const char* function);
+std::uint32_t DrawInitiator(std::uint64_t modifier, bool indexed);
+std::uint64_t DrawPatchOffsets(std::uint64_t modifier);
 std::uint32_t DrawIndexLocation(std::uint64_t modifier);
 
 }

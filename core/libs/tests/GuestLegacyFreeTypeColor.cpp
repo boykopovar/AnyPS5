@@ -4,9 +4,11 @@
 #include FT_FREETYPE_H
 #include FT_COLOR_H
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <utility>
 
 namespace {
 
@@ -103,6 +105,10 @@ int main() {
     Require(FT_Palette_Select_nid_postfix(guest, 0, &palette) == 0);
     Require(palette[0].red == 0xff && palette[0].green == 0 && palette[0].blue == 0 && palette[0].alpha == 0xff);
     Require(FT_Palette_Select_nid_postfix(nullptr, 0, &palette) == FT_Err_Invalid_Face_Handle);
+    errno = 71;
+    Require(FT_Palette_Data_Get_nid_postfix(guest, reinterpret_cast<LegacyFreeType::GuestPaletteData*>(0x10)) == FT_Err_Invalid_Argument);
+    Require(FT_Palette_Select_nid_postfix(guest, 0, reinterpret_cast<LegacyFreeType::GuestColor**>(0x10)) == FT_Err_Invalid_Argument);
+    Require(errno == 71);
 
     for (const std::uint32_t baseGlyph : {0u, 1u, 2u, 4u}) CheckLayers(guest, native, baseGlyph);
     LegacyFreeType::GuestLayerIterator iterator{};
@@ -115,8 +121,31 @@ int main() {
     Require(FT_Get_Color_Glyph_Layer_nid_postfix(guest, 1, &glyph, &color, nullptr) == 0);
     Require(FT_Get_Color_Glyph_Layer_nid_postfix(guest, 1, nullptr, &color, &iterator) == 0 && !iterator.p);
     Require(FT_Get_Color_Glyph_Layer_nid_postfix(nullptr, 1, &glyph, &color, &iterator) == 0);
+    errno = 71;
+    Require(FT_Get_Color_Glyph_Layer_nid_postfix(guest, 1, reinterpret_cast<std::uint32_t*>(0x10), &color, &iterator) == 0);
+    Require(FT_Get_Color_Glyph_Layer_nid_postfix(guest, 1, &glyph, reinterpret_cast<std::uint32_t*>(0x10), &iterator) == 0);
+    Require(FT_Get_Color_Glyph_Layer_nid_postfix(guest, 1, &glyph, &color, reinterpret_cast<LegacyFreeType::GuestLayerIterator*>(0x10)) == 0);
+    Require(errno == 71);
 
     Require(FT_Done_Face_nid_postfix(guest) == 0 && FT_Done_Face(native) == 0);
+
+    constexpr std::size_t secondLayer = 524;
+    for (const auto [glyphId, paletteIndex] : {std::pair<std::uint8_t, std::uint8_t>{4, 1}, {3, 2}}) {
+        auto invalid = ColorFont;
+        invalid[secondLayer + 1] = glyphId;
+        invalid[secondLayer + 3] = paletteIndex;
+        Require(FT_New_Memory_Face_nid_postfix(guestLibrary, invalid.data(), static_cast<std::int64_t>(invalid.size()), 0, &guest) == 0);
+        Require(FT_New_Memory_Face(nativeLibrary, invalid.data(), static_cast<FT_Long>(invalid.size()), 0, &native) == 0);
+        CheckLayers(guest, native, 1);
+        LegacyFreeType::GuestLayerIterator layers{};
+        std::uint32_t layerGlyph = 0x1234;
+        std::uint32_t layerColor = 0x5678;
+        Require(FT_Get_Color_Glyph_Layer_nid_postfix(guest, 1, &layerGlyph, &layerColor, &layers) == 1);
+        Require(FT_Get_Color_Glyph_Layer_nid_postfix(guest, 1, &layerGlyph, &layerColor, &layers) == 0);
+        Require(layerGlyph == glyphId && layerColor == paletteIndex && layers.layer == 1);
+        Require(FT_Done_Face_nid_postfix(guest) == 0 && FT_Done_Face(native) == 0);
+    }
+
     Require(FT_Done_FreeType_nid_postfix(guestLibrary) == 0 && FT_Done_FreeType(nativeLibrary) == 0);
     return 0;
 }

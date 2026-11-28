@@ -60,6 +60,22 @@ void LightBarAnimationIsPaced() {
     Require(pacer.Due(color, end + LightBarPacer::Interval), "the last colour of the animation is sent when the interval allows");
 }
 
+void LightBarHandlesPreEpochAndReset() {
+    LightBarPacer pacer;
+    const auto start = LightBarPacer::Clock::time_point{} - 1s;
+    const LightBarPacer::Color blue{0, 64, 255};
+    Require(pacer.Due(blue, start), "pre-epoch timestamp is immediately due on first send");
+    pacer.Result(blue, start, false);
+    Require(!pacer.Due(blue, start + 10ms), "pre-epoch failure waits for the pacing interval");
+    Require(pacer.Due(blue, start + LightBarPacer::Interval), "pre-epoch retry is due after the interval");
+    pacer.Reset();
+    Require(pacer.Due(blue, start + 10ms), "reset clears the deadline even at pre-epoch timestamps");
+    const auto max_time = LightBarPacer::Clock::time_point::max();
+    pacer.Result(blue, max_time - 10ms, false);
+    Require(!pacer.Due(blue, max_time - 1ms), "near-max pacing still throttles before max timestamp");
+    Require(pacer.Due(blue, max_time), "saturated deadline allows send at max timestamp");
+}
+
 void TriggerEffectRetriesFailures() {
     TriggerEffectCache cache;
     TriggerEffectCache::Effect effect{};
@@ -83,6 +99,7 @@ int main() {
     LightBarSendsChangesOnly();
     LightBarRetriesFailures();
     LightBarAnimationIsPaced();
+    LightBarHandlesPreEpochAndReset();
     TriggerEffectRetriesFailures();
     std::puts("pad_output_pacing: ok");
     return 0;

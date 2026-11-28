@@ -20,9 +20,11 @@
 #include "prx/libc/include/SonyCrt.hpp"
 
 #ifdef _WIN32
+#include <windows.h>
 #define APS5_VA_BEGIN(last) __builtin_sysv_va_list args; __builtin_sysv_va_start(args, last)
 #define APS5_VA_END() __builtin_sysv_va_end(args)
 #else
+#include <unistd.h>
 #define APS5_VA_BEGIN(last) std::va_list args; va_start(args, last)
 #define APS5_VA_END() va_end(args)
 #endif
@@ -41,7 +43,8 @@ public:
     bool invalidSequence;
 };
 
-bool AppendUtf16(std::u16string& out, const char* text, std::size_t limit) {
+template <typename Text>
+bool AppendUtf16(std::u16string& out, const Text& text, std::size_t limit) {
     std::size_t index = 0;
     for (std::size_t count = 0; count == 0 || count < limit; ++count) {
         const unsigned char lead = static_cast<unsigned char>(text[index]);
@@ -123,7 +126,79 @@ public:
     using std::invalid_argument::invalid_argument;
 };
 
-void FormatWideInto(std::u16string& out, const char16_t* format, VaList* source, bool secure) {
+bool CopyInPreservingErrno(void* destination, const void* source, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return ok;
+}
+
+std::size_t GuestPageSize() {
+    static const std::size_t size = [] {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        return info.dwPageSize > 0 ? static_cast<std::size_t>(info.dwPageSize) : std::size_t{4096};
+#else
+        const long value = sysconf(_SC_PAGESIZE);
+        return value > 0 ? static_cast<std::size_t>(value) : std::size_t{4096};
+#endif
+    }();
+    return size;
+}
+
+bool CopyGuestWideString(const char16_t* source, std::u16string& out, std::size_t limit = SIZE_MAX) {
+    if (source == nullptr) return false;
+    out.clear();
+    if (limit == 0) return true;
+    const std::size_t pageSize = GuestPageSize();
+    const auto base = reinterpret_cast<std::uintptr_t>(source);
+    std::size_t offset = 0;
+    while (out.size() < limit) {
+        if (offset > UINTPTR_MAX - base) return false;
+        const auto current = base + offset;
+        const std::size_t toPageEnd = pageSize - (current % pageSize);
+        const std::size_t maxUnits = std::min<std::size_t>(limit - out.size(), 128);
+        const std::size_t units = toPageEnd >= sizeof(char16_t) ? std::min<std::size_t>(toPageEnd / sizeof(char16_t), maxUnits) : 1;
+        char16_t buffer[128];
+        if (!CopyInPreservingErrno(buffer, reinterpret_cast<const void*>(current), units * sizeof(char16_t))) {
+            return false;
+        }
+        for (std::size_t i = 0; i < units; ++i) {
+            if (buffer[i] == 0) {
+                out.append(buffer, i);
+                return true;
+            }
+        }
+        out.append(buffer, units);
+        offset += units * sizeof(char16_t);
+    }
+    return true;
+}
+
+struct GuestNarrowReader {
+    const char* source;
+    mutable std::string loaded;
+
+    char operator[](std::size_t index) const {
+        const std::size_t pageSize = GuestPageSize();
+        const auto base = reinterpret_cast<std::uintptr_t>(source);
+        while (loaded.size() <= index) {
+            if (loaded.size() > UINTPTR_MAX - base) throw std::invalid_argument("Unreadable string argument");
+            const auto current = base + loaded.size();
+            const std::size_t toPageEnd = pageSize - (current % pageSize);
+            const std::size_t chunk = toPageEnd < 256 ? toPageEnd : 256;
+            char buffer[256];
+            if (!CopyInPreservingErrno(buffer, reinterpret_cast<const void*>(current), chunk)) {
+                throw std::invalid_argument("Unreadable string argument");
+            }
+            loaded.append(buffer, chunk);
+        }
+        return loaded[index];
+    }
+};
+
+void FormatWideHostInto(std::u16string& out, const char16_t* format, VaList* source, bool secure) {
     if (format == nullptr || source == nullptr) throw std::invalid_argument("Null formatting argument");
     LibcDetail::FormatArguments args(source);
     const char16_t* const start = format;
@@ -253,12 +328,20 @@ void FormatWideInto(std::u16string& out, const char16_t* format, VaList* source,
             if (length == "l") {
                 const char16_t* value = args.Next<const char16_t*>();
                 if (value == nullptr && secure) throw WideFormatViolation("wprintf_s: bad %ls argument");
-                if (value == nullptr) value = u"(null)";
-                for (std::size_t index = 0; index < limit && value[index] != 0; ++index) text.push_back(value[index]);
+                if (value == nullptr) {
+                    text.assign(u"(null)", std::min<std::size_t>(limit, 6));
+                } else if (!CopyGuestWideString(value, text, limit)) {
+                    throw std::invalid_argument("Unreadable wide string argument");
+                }
             } else {
                 const char* value = args.Next<const char*>();
                 if (value == nullptr && secure) throw WideFormatViolation("wprintf_s: bad %s argument");
-                if (!AppendUtf16(text, value != nullptr ? value : "(null)", limit)) throw WideEncodingError(out);
+                if (value == nullptr) {
+                    if (!AppendUtf16(text, "(null)", limit)) throw WideEncodingError(out);
+                } else {
+                    const GuestNarrowReader reader{value, {}};
+                    if (!AppendUtf16(text, reader, limit)) throw WideEncodingError(out);
+                }
                 if (text.empty()) width = 0;
             }
             AppendPadded(out, text, left, width);
@@ -272,7 +355,7 @@ void FormatWideInto(std::u16string& out, const char16_t* format, VaList* source,
             else if (length == "h") *static_cast<short*>(pointer) = static_cast<short>(count);
             else if (length.empty()) *static_cast<int*>(pointer) = count;
             else *static_cast<long long*>(pointer) = count;
-        } else if (conversion == u'S' || (conversion < 0x80 && !std::strchr(LibcDetail::KnownConversions, static_cast<char>(conversion))) || (conversion >= 0xd800 && conversion < 0xdc00)) {
+        } else if (conversion == u'S' || conversion >= 0x80 || !std::strchr(LibcDetail::KnownConversions, static_cast<char>(conversion))) {
             std::u16string text = u"%";
             if (conversion != u'%') text.push_back(conversion);
             if (conversion >= 0xd800 && conversion < 0xdc00 && *format >= 0xdc00 && *format < 0xe000) text.push_back(*format++);
@@ -283,9 +366,22 @@ void FormatWideInto(std::u16string& out, const char16_t* format, VaList* source,
     }
 }
 
+void FormatWideInto(std::u16string& out, const char16_t* format, VaList* source, bool secure) {
+    if (format == nullptr || source == nullptr) throw std::invalid_argument("Null formatting argument");
+    std::u16string hostFormat;
+    if (!CopyGuestWideString(format, hostFormat)) throw std::invalid_argument("Unreadable format argument");
+    FormatWideHostInto(out, hostFormat.c_str(), source, secure);
+}
+
 std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = false) {
     std::u16string out;
     FormatWideInto(out, format, source, secure);
+    return out;
+}
+
+std::u16string FormatWideHost(const char16_t* format, VaList* source, bool secure = false) {
+    std::u16string out;
+    FormatWideHostInto(out, format, source, secure);
     return out;
 }
 
@@ -341,21 +437,23 @@ extern "C" {
 extern FileStream* __stdoutp_nid_postfix;
 
 int APS5_VABI vswprintf_nid_postfix(char16_t* buffer, std::size_t size, const char16_t* format, VaList* args) {
-    if (buffer == nullptr || size == 0) { errno = 22; return -1; }
+    if (buffer == nullptr && size != 0) { errno = 22; return -1; }
+    const auto store = [buffer, size](const std::u16string& text) {
+        if (size == 0) return true;
+        const std::size_t copied = text.size() < size - 1 ? text.size() : size - 1;
+        const std::u16string stored = text.substr(0, copied);
+        return GuestCopyOut_nid_no_patch(buffer, stored.c_str(), (copied + 1) * sizeof(char16_t));
+    };
     try {
         const std::u16string text = FormatWide(format, args);
-        const std::size_t copied = text.size() < size - 1 ? text.size() : size - 1;
-        std::memcpy(buffer, text.data(), copied * sizeof(char16_t));
-        buffer[copied] = 0;
-        return copied == text.size() ? static_cast<int>(copied) : -1;
+        if (!store(text)) { errno = 22; return -1; }
+        return text.size() < size || text.empty() ? static_cast<int>(text.size()) : -1;
     } catch (const WideEncodingError& error) {
-        const std::size_t copied = error.partial.size() < size - 1 ? error.partial.size() : size - 1;
-        std::memcpy(buffer, error.partial.data(), copied * sizeof(char16_t));
-        buffer[copied] = 0;
+        if (!store(error.partial)) { errno = 22; return -1; }
         if (error.invalidSequence) errno = 86;
         return -1;
     } catch (const std::exception&) {
-        buffer[0] = 0;
+        if (size != 0) GuestCopyOut_nid_no_patch(buffer, u"", sizeof(char16_t));
         errno = 22;
         return -1;
     }
@@ -410,13 +508,14 @@ int APS5_VABI wprintf_nid_postfix(const char16_t* format, ...) {
 }
 
 int APS5_VABI vfwprintf_nid_postfix(FileStream* stream, const char16_t* format, VaList* args) {
-    if (stream == nullptr || format == nullptr) { errno = 22; return -1; }
+    std::u16string hostFormat;
+    if (stream == nullptr || !CopyGuestWideString(format, hostFormat)) { errno = 22; return -1; }
     if (!stream->IsOpen()) { errno = 9; return -1; }
     stream->Orientation(1);
     if (!stream->SwitchToWriting()) return -1;
     int result = -1;
     try {
-        const std::u16string text = FormatWide(format, args);
+        const std::u16string text = FormatWideHost(hostFormat.c_str(), args);
         const std::string bytes = ToUtf8(text);
         if (std::fwrite(bytes.data(), 1, bytes.size(), GetNativeStream(stream)) == bytes.size()) result = static_cast<int>(text.size());
     } catch (const WideEncodingError& error) {
@@ -440,13 +539,14 @@ int APS5_VABI vwprintf_nid_postfix(const char16_t* format, VaList* args) {
 }
 
 int APS5_VABI vfwprintf_s_nid_postfix(FileStream* stream, const char16_t* format, VaList* args) {
-    if (stream == nullptr || format == nullptr || args == nullptr) return -1;
+    std::u16string hostFormat;
+    if (stream == nullptr || args == nullptr || !CopyGuestWideString(format, hostFormat)) return -1;
     if (!stream->IsOpen()) { errno = 9; return -1; }
     stream->Orientation(1);
     if (!stream->SwitchToWriting()) return -1;
     int result = -1;
     try {
-        const std::u16string text = FormatWide(format, args, true);
+        const std::u16string text = FormatWideHost(hostFormat.c_str(), args, true);
         const std::string bytes = ToUtf8(text);
         if (text.size() <= static_cast<std::size_t>(INT_MAX) &&
             std::fwrite(bytes.data(), 1, bytes.size(), GetNativeStream(stream)) == bytes.size()) result = static_cast<int>(text.size());
@@ -497,11 +597,11 @@ int APS5_VABI fputwc_nid_postfix(char16_t value, FileStream* stream) {
 }
 
 int APS5_VABI fputws_nid_postfix(const char16_t* str, FileStream* stream) {
-    if (str == nullptr || stream == nullptr) { errno = 22; return -1; }
+    std::u16string text;
+    if (stream == nullptr || !CopyGuestWideString(str, text)) { errno = 22; return -1; }
     if (!stream->IsOpen()) { errno = 9; return -1; }
     stream->Orientation(1);
     try {
-        const std::u16string text(str);
         const std::string bytes = ToUtf8(text);
         auto* native = GetNativeStream(stream);
         if (!stream->SwitchToWriting()) return -1;
@@ -528,8 +628,8 @@ int APS5_VABI putwchar_nid_postfix(char16_t value) {
 }
 
 char16_t* APS5_VABI fgetws_nid_postfix(char16_t* buffer, int size, FileStream* stream) {
-    if (stream != nullptr) stream->Orientation(1);
     if (size < 2) return nullptr;
+    if (stream != nullptr) stream->Orientation(1);
     if (buffer == nullptr || stream == nullptr) {
         if (stream != nullptr) stream->SetError();
         errno = 22;

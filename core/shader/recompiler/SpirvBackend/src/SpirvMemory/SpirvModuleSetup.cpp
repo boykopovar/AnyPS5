@@ -370,14 +370,14 @@ void DefineModule(SpirvEmitterState& state) {
         DefineTessellationExecutionModes(state);
     }
     state.entryLabel = state.module.AllocateId();
-    EmitBaseHeader(state.module, state.program);
+    EmitBaseHeader(state.module, state.program, state.stencilReplayLateStore || state.requirements.imageAtomicLocks || state.requirements.bufferAtomicLocks);
     for (const auto capability : state.requirements.capabilities) {
         state.module.EmitCapability(capability);
     }
     for (const auto& extension : state.requirements.extensions) {
         state.module.EmitExtension(extension);
     }
-    if (state.requirements.bufferInt64Atomics) {
+    if (state.requirements.bufferInt64Atomics && !state.requirements.bufferAtomicLocks) {
         if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityInt64Atomics)) == state.supportedCapabilities.end()) {
             FailEmit("64-bit buffer atomics need shaderBufferInt64Atomics");
         }
@@ -400,10 +400,9 @@ void DefineModule(SpirvEmitterState& state) {
         state.module.EmitCapability(spv::CapabilityInt64);
         state.module.EmitCapability(spv::CapabilityInt64Atomics);
     }
-    if (state.requirements.imageInt64Atomics) {
-        if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityInt64ImageEXT)) == state.supportedCapabilities.end()) {
-            FailEmit("64-bit image atomics need VK_EXT_shader_image_atomic_int64");
-        }
+    if (state.requirements.imageAtomicLocks) {
+        state.module.EmitCapability(spv::CapabilityStorageImageExtendedFormats);
+    } else if (state.requirements.imageInt64Atomics) {
         state.module.EmitCapability(spv::CapabilityInt64);
         state.module.EmitCapability(spv::CapabilityInt64Atomics);
         state.module.EmitCapability(spv::CapabilityInt64ImageEXT);
@@ -434,9 +433,15 @@ void DefineModule(SpirvEmitterState& state) {
             state.module.EmitCapability(spv::CapabilityShaderViewportIndexLayerEXT);
         }
     }
-    if (state.viewportIndexVariable != 0) {
+    if (state.viewportIndexVariable != 0 && layerExtension) {
+        state.module.EmitCapability(spv::CapabilityShaderViewportIndexLayerEXT);
+        state.module.EmitExtension("SPV_EXT_shader_viewport_index_layer");
+    } else if (state.viewportIndexVariable != 0) {
         state.module.RequireVersion(0x00010500u);
         state.module.EmitCapability(spv::CapabilityShaderViewportIndex);
+    }
+    if (StageOf(state) == IrShaderStage::Mesh && std::ranges::any_of(state.outputs, [](const SpirvOutputBinding& output) { return output.kind == StageOutputKind::ViewportIndex; })) {
+        state.module.EmitCapability(spv::CapabilityMultiViewport);
     }
     if (InputVariableForKind(state, StageInputKind::SampleId) != 0) {
         state.module.EmitCapability(spv::CapabilitySampleRateShading);

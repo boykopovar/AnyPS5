@@ -18,17 +18,16 @@ namespace Font {
 constexpr float ONE_OVER_64 = 1.0f / 64.0f;
 
 inline std::int32_t TruncateFloatToInt(float value) {
-    if (!std::isfinite(value) || value > 2147483647.0f || value < -2147483648.0f) return std::numeric_limits<std::int32_t>::min();
+    if (!std::isfinite(value) || value >= 2147483648.0f || value < -2147483648.0f) return std::numeric_limits<std::int32_t>::min();
     return static_cast<std::int32_t>(value);
 }
 
 inline std::int32_t RoundMulFixed(std::int64_t value, std::int64_t fixed16) {
-    const std::int64_t product = value * fixed16;
-    const std::int64_t signAdjust = ((~value) >> 63) * -0x10000LL;
-    const std::int64_t base = signAdjust + product;
-    std::int64_t rounded = base - 0x8000LL;
-    if (rounded < 0) rounded = base + 0x7FFFLL;
-    return static_cast<std::int32_t>(static_cast<std::uint64_t>(rounded) >> 16);
+    const std::uint64_t product = static_cast<std::uint64_t>(value) * static_cast<std::uint64_t>(fixed16);
+    const std::uint64_t base = value >= 0 ? product + 0x10000ULL : product;
+    std::uint64_t rounded = base - 0x8000ULL;
+    if ((rounded & (1ULL << 63)) != 0) rounded = base + 0x7FFFULL;
+    return static_cast<std::int32_t>(rounded >> 16);
 }
 
 inline std::int32_t TruncFixed(std::int64_t fixed16) {
@@ -68,7 +67,7 @@ inline FT_UInt ResolveGlyphIndexWithFallback(FT_Face face, std::uint32_t codepoi
     const auto code = static_cast<FT_ULong>(codepoint);
     const FT_CharMap original = face->charmap;
     FT_UInt glyphIndex = FT_Get_Char_Index(face, code);
-    if (glyphIndex != 0 || !face->charmaps || face->num_charmaps <= 1) return glyphIndex;
+    if (glyphIndex != 0 || !face->charmaps) return glyphIndex;
     for (int i = 0; i < face->num_charmaps; ++i) {
         const FT_CharMap charmap = face->charmaps[i];
         if (!charmap || charmap == original) continue;
@@ -76,7 +75,8 @@ inline FT_UInt ResolveGlyphIndexWithFallback(FT_Face face, std::uint32_t codepoi
         glyphIndex = FT_Get_Char_Index(face, code);
         if (glyphIndex != 0) break;
     }
-    if (original && face->charmap != original) FT_Set_Charmap(face, original);
+    if (!original) face->charmap = nullptr;
+    else if (face->charmap != original) FT_Set_Charmap(face, original);
     return glyphIndex;
 }
 

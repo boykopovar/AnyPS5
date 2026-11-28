@@ -47,7 +47,7 @@ static_assert(sizeof(VkStencilOpState) == 28, "VkStencilOpState changed: update 
 static_assert(sizeof(VkVertexInputBindingDescription) == 12, "VkVertexInputBindingDescription changed: update the recipe codec");
 static_assert(sizeof(VkVertexInputAttributeDescription) == 16, "VkVertexInputAttributeDescription changed: update the recipe codec");
 #if defined(__linux__) && defined(__x86_64__) && defined(__GLIBCXX__)
-static_assert(sizeof(State) == 952, "State changed: update CanonicalPipelineState and the recipe codec");
+static_assert(sizeof(State) == 1008, "State changed: update CanonicalPipelineState and the recipe codec");
 static_assert(sizeof(ShaderStages) == 164, "ShaderStages changed: update the recipe codec");
 static_assert(sizeof(ShaderRecompiler::MeshConfiguration) == 40, "MeshConfiguration changed: update the recipe codec");
 static_assert(sizeof(ShaderRecompiler::TessellationConfiguration) == 40, "TessellationConfiguration changed: update the recipe codec");
@@ -56,7 +56,7 @@ static_assert(sizeof(ShaderRecompiler::TessellationConfiguration) == 40, "Tessel
 constexpr std::uint32_t FileMagic = 0x4c4a5041u;
 // Bumped when the recipe codec, CanonicalPipelineState or the store key change in a way the
 // layout guards above do not catch (a field renumbered or reinterpreted at the same size).
-constexpr std::uint32_t FileFormat = 18u;
+constexpr std::uint32_t FileFormat = 19u;
 constexpr std::uint32_t ModuleRecord = 1u;
 constexpr std::uint32_t GraphicsRecord = 2u;
 constexpr std::uint32_t ComputeRecord = 3u;
@@ -247,6 +247,7 @@ void encodeState(Writer& writer, const State& state) {
     writer.Raw(state.pointSizeMin);
     writer.Raw(state.pointSizeMax);
     writer.Bool(state.rasterizerDiscard);
+    writer.U32(static_cast<std::uint32_t>(state.extraViewports.size()));
 }
 
 void decodeState(Reader& reader, State& state) {
@@ -322,6 +323,13 @@ void decodeState(Reader& reader, State& state) {
     state.pointSizeMin = reader.Raw<float>();
     state.pointSizeMax = reader.Raw<float>();
     state.rasterizerDiscard = reader.Bool();
+    const auto extraViewports = reader.U32();
+    if (!reader.Ok() || extraViewports >= MaxViewports) {
+        reader.Fail();
+        state = State{};
+        return;
+    }
+    state.extraViewports.assign(extraViewports, VkViewport{0, 0, 1, 1, 0, 1});
 }
 
 void encodeRecipe(Writer& writer, const GraphicsPipelineRecipe& recipe) {
@@ -380,12 +388,16 @@ bool profiling() {
 
 thread_local bool replayingHere = false;
 
-std::uint64_t configured(const char* name, std::uint64_t fallback) {
+std::uint64_t configured(const char* name, std::uint64_t fallback, std::uint64_t maximum = std::numeric_limits<std::uint64_t>::max()) {
     const char* text = std::getenv(name);
     if (text == nullptr || *text == '\0') return fallback;
     char* end = nullptr;
+    errno = 0;
     const auto value = std::strtoull(text, &end, 10);
     if (end == text || *end != '\0') throw std::runtime_error(std::string("AGC graphics: ") + name + " must be a decimal integer");
+    if (std::strchr(text, '-') != nullptr || errno == ERANGE || value > maximum) {
+        throw std::runtime_error(std::string("AGC graphics: ") + name + " must be between 0 and " + std::to_string(maximum));
+    }
     return value;
 }
 
@@ -907,7 +919,7 @@ private:
 #endif
         path = directory / "pipelines.journal";
         lockPath = directory / "pipelines.journal.lock";
-        maxBytes = configured("APS5_PIPELINE_JOURNAL_MAX_MIB", 1024u) << 20u;
+        maxBytes = configured("APS5_PIPELINE_JOURNAL_MAX_MIB", 1024u, std::numeric_limits<std::uint64_t>::max() >> 20u) << 20u;
         Libc::StartHostThread([this] { run(); }).detach();
     }
 
@@ -1616,6 +1628,7 @@ State CanonicalPipelineState(const State& state) {
     canonical.pointSizeMin = state.pointSizeMin;
     canonical.pointSizeMax = state.pointSizeMax;
     canonical.rasterizerDiscard = state.rasterizerDiscard;
+    canonical.extraViewports.assign(state.extraViewports.size(), VkViewport{0, 0, 1, 1, 0, 1});
     return canonical;
 }
 
@@ -1713,7 +1726,7 @@ std::uint64_t PipelineJournalDeviceFingerprint(const VkPhysicalDeviceProperties&
 
 std::shared_ptr<PipelineJournalReplay> StartPipelineJournalReplay(const Context& context, std::uint64_t deviceFingerprint, PipelineJournalHooks hooks) {
     if (!Journal::Instance().Enabled() || !Journal::Instance().Bind(deviceFingerprint)) return nullptr;
-    const auto threads = static_cast<unsigned>(configured("APS5_PIPELINE_JOURNAL_THREADS", std::max(1u, std::thread::hardware_concurrency() / 2u)));
+    const auto threads = static_cast<unsigned>(configured("APS5_PIPELINE_JOURNAL_THREADS", std::max(1u, std::thread::hardware_concurrency() / 2u), std::numeric_limits<unsigned>::max()));
     if (threads == 0) return nullptr;
     return std::make_shared<Replay>(context, std::move(hooks), threads);
 }

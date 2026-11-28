@@ -3,6 +3,12 @@
 #include "prx/libc/include/General.hpp"
 #include <cstdint>
 
+namespace {
+
+constexpr std::int32_t AttributeCount = 5;
+
+}
+
 extern "C" {
 
 UCalendar* APS5_VABI ucal_clone_nid_postfix(const UCalendar*, std::int32_t* status) {
@@ -19,6 +25,11 @@ void APS5_VABI ucal_close_nid_postfix(UCalendar* cal) {
 
 std::int32_t APS5_VABI ucal_get_nid_postfix(const UCalendar*, UCalendarDateFields, std::int32_t* status) {
     if (Icu::Failure(status)) return -1;
+    NotImplemented_nid_no_patch(__func__);
+}
+
+std::int32_t APS5_VABI ucal_getAttribute_nid_postfix(const UCalendar*, std::int32_t attr) {
+    if (attr < 0 || attr >= AttributeCount) return -1;
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -42,6 +53,11 @@ std::int32_t APS5_VABI ucal_getCanonicalTimeZoneID_nid_postfix(
     NotImplemented_nid_no_patch(__func__);
 }
 
+std::int32_t APS5_VABI ucal_getDayOfWeekType_nid_postfix(const UCalendar*, std::int32_t, std::int32_t* status) {
+    if (Icu::Failure(status)) return 0;
+    NotImplemented_nid_no_patch(__func__);
+}
+
 std::int32_t APS5_VABI ucal_getDefaultTimeZone_nid_postfix(char16_t*, std::int32_t, std::int32_t* ec) {
     if (!ec || *ec > 0) return 0;
     NotImplemented_nid_no_patch(__func__);
@@ -60,6 +76,16 @@ std::int32_t APS5_VABI ucal_getTimeZoneDisplayName_nid_postfix(const void*, std:
 
 UCalendar* APS5_VABI ucal_open_nid_postfix(const char16_t*, std::int32_t, const char*, std::int32_t, std::int32_t* status) {
     if (Icu::Failure(status)) return nullptr;
+    NotImplemented_nid_no_patch(__func__);
+}
+
+UEnumeration* APS5_VABI ucal_openTimeZoneIDEnumeration_nid_postfix(std::int32_t, const char*, const std::int32_t*, std::int32_t* ec) {
+    if (Icu::Failure(ec)) return nullptr;
+    NotImplemented_nid_no_patch(__func__);
+}
+
+UEnumeration* APS5_VABI ucal_openTimeZones_nid_postfix(std::int32_t* ec) {
+    if (Icu::Failure(ec)) return nullptr;
     NotImplemented_nid_no_patch(__func__);
 }
 

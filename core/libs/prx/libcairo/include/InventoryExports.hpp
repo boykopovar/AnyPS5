@@ -1,16 +1,13 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include "prx/libcairo/include/FontPipeline.hpp"
 #include <cstdint>
 
 struct cairo_font_options_t;
 struct CairoContext;
 
-struct cairo_glyph_t {
-    std::uint64_t index;
-    double x;
-    double y;
-};
+using cairo_glyph_t = CairoGlyph;
 
 enum cairo_antialias_t : int {
     CAIRO_ANTIALIAS_DEFAULT,
@@ -46,34 +43,21 @@ enum cairo_hint_metrics_t : int {
 
 extern "C" {
 
-int APS5_VABI cairo_scaled_font_get_font_face();
-int APS5_VABI cairo_font_face_set_user_data();
 int APS5_VABI cairo_arc_negative();
-int APS5_VABI cairo_ft_scaled_font_lock_face();
 int APS5_VABI cairo_pattern_reference();
-int APS5_VABI cairo_scaled_font_get_font_options();
 int APS5_VABI cairo_pattern_set_extend();
-int APS5_VABI cairo_ft_font_face_create_for_pattern();
-int APS5_VABI cairo_font_face_destroy();
 int APS5_VABI cairo_pattern_create_linear();
-int APS5_VABI cairo_set_scaled_font();
 int APS5_VABI cairo_arc();
-int APS5_VABI cairo_ft_scaled_font_unlock_face();
 int APS5_VABI cairo_in_fill();
-int APS5_VABI cairo_font_face_get_user_data();
-int APS5_VABI cairo_ft_font_face_create_for_ft_face();
 int APS5_VABI cairo_pattern_destroy();
 int APS5_VABI cairo_pattern_set_matrix();
 int APS5_VABI cairo_pattern_set_filter();
-int APS5_VABI cairo_ft_font_options_substitute();
-int APS5_VABI cairo_font_face_reference();
-int APS5_VABI cairo_scaled_font_text_to_glyphs();
-int APS5_VABI cairo_scaled_font_glyph_extents();
-int APS5_VABI cairo_set_font_face();
-int APS5_VABI cairo_scaled_font_create();
 int APS5_VABI cairo_pattern_create_radial();
-int APS5_VABI cairo_device_destroy();
 int APS5_VABI cairo_pattern_add_color_stop_rgba();
+
+CairoScaledFont* APS5_VABI cairo_scaled_font_create(CairoFontFace* face, const CairoMatrix* fontMatrix,
+    const CairoMatrix* ctm, const cairo_font_options_t* options);
+void APS5_VABI cairo_scaled_font_get_font_options(CairoScaledFont* scaledFont, cairo_font_options_t* options);
 
 void APS5_VABI cairo_glyph_free(cairo_glyph_t* glyphs);
 

@@ -16,20 +16,13 @@ namespace {
 int g_status = COMMON_DIALOG_STATUS_NONE;
 std::uint64_t g_userData = 0;
 
-std::uint32_t compiledSdkVersion() {
- const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
- std::uint32_t version;
- std::memcpy(&version, process + 16, sizeof(version));
- return version;
-}
-
 bool isLoggedIn(std::int32_t userId) {
  UserServiceLoginUserIdList users{};
  return sceUserServiceGetLoginUserIdList(&users) == 0 && userId != -1 && std::find(std::begin(users.user_id), std::end(users.user_id), userId) != std::end(users.user_id);
 }
 
 bool validateParam(const NpCommerceDialogParam& param) {
- const auto sdkVersion = compiledSdkVersion();
+ const auto sdkVersion = ApplicationCompiledSdkVersion();
  if (sdkVersion >= 0x01700000 && (param.size != sizeof(param) || !std::all_of(std::begin(param.reserved), std::end(param.reserved), [](std::uint8_t value) { return value == 0; }) || !isLoggedIn(param.userId) || param.option > 7)) return false;
  switch (param.mode) {
  case 0:
@@ -130,7 +123,7 @@ int APS5_VABI sceNpCommerceDialogGetResult(NpCommerceDialogResult* result) {
   errno = savedErrno;
   return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
  }
- const auto sdkVersion = compiledSdkVersion();
+ const auto sdkVersion = ApplicationCompiledSdkVersion();
  if (sdkVersion >= 0x01700000) {
   const std::uint8_t zeroReserved[sizeof(result->reserved)] = {0};
   if (!GuestCopyOut_nid_no_patch(result->reserved, zeroReserved, sizeof(zeroReserved))) {

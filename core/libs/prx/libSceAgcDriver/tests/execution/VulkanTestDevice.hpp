@@ -9,6 +9,10 @@
 #include <cstdlib>
 #include <exception>
 #include <memory>
+#ifndef _WIN32
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 constexpr int VulkanTestSkipped = 77;
 
@@ -25,6 +29,29 @@ inline std::unique_ptr<AgcDriver::VulkanDevice> OpenVulkanTestDevice() {
         std::printf("skipped, no usable Vulkan device: %s\n", error.what());
         return nullptr;
     }
+}
+
+inline bool SharedMemoryReachableByGpuStores() {
+#ifdef _WIN32
+    return true;
+#else
+    const int fd = open("/dev/udmabuf", O_RDWR | O_CLOEXEC);
+    if (fd < 0) return false;
+    close(fd);
+    return true;
+#endif
+}
+
+inline bool SkipWithoutSharedMemoryStores() {
+    if (SharedMemoryReachableByGpuStores()) return false;
+    std::puts("skipped, host imports are unavailable: /dev/udmabuf cannot be opened");
+    return true;
+}
+
+inline bool SkipOnLlvmpipe(const AgcDriver::VulkanDevice& device, const char* what) {
+    if (device.DriverId() != VK_DRIVER_ID_MESA_LLVMPIPE) return false;
+    std::printf("skipped, unproven on CPU Vulkan (llvmpipe): %s\n", what);
+    return true;
 }
 
 inline std::uint32_t PixelPushOffset(std::uint32_t vertexPush, const ShaderRecompiler::SpirvTarget& target) {

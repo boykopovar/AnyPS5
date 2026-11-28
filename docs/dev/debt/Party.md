@@ -2,33 +2,33 @@
 
 ### Unknown function info
 
-- [Party](../../../core/libs/prx/Party/Export.cpp) (Party) - 26 functions that titles import from the `Party` module, taken from the imports of PPSA02632 (01.000.000). Their names, parameters and behaviour are unknown: no `sceParty` or `sceNpParty` name tried hashes to any of them. Each is a literal NID alias that throws through `NotImplemented_nid_no_patch`, and the parameterless `int` declarations are placeholders, not verified signatures. 16 of them are also exported by libkernel as `sceKernelUnknown03` to `sceKernelUnknown19` (without `sceKernelUnknown16`); a Windows import is bound to the library it names, so those copies do not resolve imports from `Party`
+- [Party](../../../core/libs/prx/Party/Export.cpp) (Party) - 26 functions that titles import from the `Party` module, taken from the imports of PPSA02632 (01.000.000). Each name is the PlayFab Party flat C function whose name hashes to the NID; all 26 are declared in the pinned [Party_c.h](https://github.com/PlayFab/PlayFabParty/blob/dcf63eb9daf691bf6e0094652b0bb50c0a3b0535/include/Party_c.h). Which Party release a title bundles is not known, so the parameterless `int` declarations stay placeholders, not verified signatures, and each function throws through `NotImplemented_nid_no_patch`; how the library behaves without the PlayFab service is not documented or measured
 
 | Name | NID |
 | --- | --- |
-| `Unknown` | `0iEKNAvT600` |
-| `Unknown` | `2cELEBPdYQ0` |
-| `Unknown` | `5xYxiOtOccA` |
-| `Unknown` | `6W+shIH315Q` |
-| `Unknown` | `7ilObq815O4` |
-| `Unknown` | `7iq7Hfs8HBk` |
-| `Unknown` | `7kwSdZNDyP0` |
-| `Unknown` | `AC1FtjqMCL0` |
-| `Unknown` | `AJ3I035AjIM` |
-| `Unknown` | `AMJZhpC+siY` |
-| `Unknown` | `aq13EdrGdVw` |
-| `Unknown` | `BOW-t-9qJNI` |
-| `Unknown` | `E9XkHowt+dY` |
-| `Unknown` | `f3d6tchKw94` |
-| `Unknown` | `GADjreszOgM` |
-| `Unknown` | `Giyg2xGrXDU` |
-| `Unknown` | `JrVwjbBmqLQ` |
-| `Unknown` | `KC3y21wrqzc` |
-| `Unknown` | `nVzRzo3Yr+s` |
-| `Unknown` | `pnz21I6VjDs` |
-| `Unknown` | `Qb8wS4GZUsw` |
-| `Unknown` | `qk043QPsrZU` |
-| `Unknown` | `QVQ-lvlaJZw` |
-| `Unknown` | `SjQdzD78RpM` |
-| `Unknown` | `uDGXwUKqi8s` |
-| `Unknown` | `YdBvG5Myxzg` |
+| `PartySetMemoryCallbacks` | `0iEKNAvT600` |
+| `PartyFinishProcessingStateChanges` | `2cELEBPdYQ0` |
+| `PartyNetworkGetNetworkDescriptor` | `5xYxiOtOccA` |
+| `PartyCleanup` | `6W+shIH315Q` |
+| `PartyCreateLocalUser` | `7ilObq815O4` |
+| `PartySerializeNetworkDescriptor` | `7iq7Hfs8HBk` |
+| `PartyGetNetworks` | `7kwSdZNDyP0` |
+| `PartyNetworkCreateEndpoint` | `AC1FtjqMCL0` |
+| `PartyLocalUserGetEntityId` | `AJ3I035AjIM` |
+| `PartyDeserializeNetworkDescriptor` | `AMJZhpC+siY` |
+| `PartyEndpointGetDevice` | `aq13EdrGdVw` |
+| `PartyEndpointSetCustomContext` | `BOW-t-9qJNI` |
+| `PartyStartProcessingStateChanges` | `E9XkHowt+dY` |
+| `PartyNetworkGetDeviceConnectionType` | `f3d6tchKw94` |
+| `PartyNetworkAuthenticateLocalUser` | `GADjreszOgM` |
+| `PartyInitialize` | `Giyg2xGrXDU` |
+| `PartyEndpointIsLocal` | `JrVwjbBmqLQ` |
+| `PartyNetworkLeaveNetwork` | `KC3y21wrqzc` |
+| `PartyLocalUserUpdateEntityToken` | `nVzRzo3Yr+s` |
+| `PartyConnectToNetwork` | `pnz21I6VjDs` |
+| `PartyCreateNewNetwork` | `Qb8wS4GZUsw` |
+| `PartyEndpointSendMessage` | `qk043QPsrZU` |
+| `PartyNetworkGetEndpoints` | `QVQ-lvlaJZw` |
+| `PartyGetLocalUsers` | `SjQdzD78RpM` |
+| `PartyEndpointGetEntityId` | `uDGXwUKqi8s` |
+| `PartyEndpointGetCustomContext` | `YdBvG5Myxzg` |

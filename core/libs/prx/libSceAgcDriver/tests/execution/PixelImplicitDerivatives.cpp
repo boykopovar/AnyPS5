@@ -27,9 +27,12 @@ alignas(256) constexpr std::array<std::uint32_t, 8> VertexCode{
     0xe0382000, 0x80000005, 0xbf8c3f70, 0xf800020f, 0x03020100, 0xf80008cf, 0x03020100, 0xbf810000,
 };
 
-alignas(256) constexpr std::array<std::uint32_t, 18> PixelCode{
-    0xbefe0a7e, 0xbe80047e, 0xbefe0400, 0xc8080000, 0xc8090001, 0xc80c0100, 0xc80d0101, 0x101000ff, 0x358637bd, 0x06041102, 0x10040410, 0x10060611,
-    0xf0800f08, 0x00610402, 0xbf8c3f70, 0xf800180f, 0x07060504, 0xbf810000,
+alignas(256) constexpr std::array<std::uint32_t, 35> PixelCode{
+    0xf4200480, 0xfa000000, 0xbf8cc07f, 0xbefe0a7e, 0xbe80047e, 0xbefe0400, 0xc8080000, 0xc8090001,
+    0xc80c0100, 0xc80d0101, 0x101000ff, 0x358637bd, 0x06041102, 0x10040410, 0x10060611, 0xf0800f08,
+    0x00610402, 0x101004f4, 0x101206f4, 0xf0800f08, 0x00610a08, 0xbf8c3f70, 0xd40d0014, 0x00002480,
+    0xd5010004, 0x00521504, 0xd5010005, 0x00521705, 0xd5010006, 0x00521906, 0xd5010007, 0x00521b07,
+    0xf800180f, 0x07060504, 0xbf810000,
 };
 
 std::vector<std::array<float, 4>> Triangles() {
@@ -72,7 +75,7 @@ void FillTexture() {
     }
 }
 
-void Draw(AgcDriver::VulkanDevice& device, std::uint32_t wave, std::uint32_t level, bool emulate) {
+void Draw(AgcDriver::VulkanDevice& device, std::uint32_t wave, std::uint32_t level, bool emulate, std::uint32_t flag) {
     auto target = device.Target();
     if (emulate) target.fragmentShaderBarycentricEnabled = false;
     static const auto triangles = Triangles();
@@ -95,7 +98,10 @@ void Draw(AgcDriver::VulkanDevice& device, std::uint32_t wave, std::uint32_t lev
     pixel.hasPerspectiveCenterVgpr = true;
     pixel.targetOutputMode[0] = 9;
     pixel.targetExportMapping.fill(0xe4u);
+    const std::array<std::uint32_t, 4> flagWords{flag, 0u, 0u, 0u};
+    const auto flagBuffer = BufferDescriptor(flagWords.data(), 1u);
     std::vector<std::uint32_t> pixelUserData(18);
+    std::copy(flagBuffer.begin(), flagBuffer.end(), pixelUserData.begin());
     const auto texture = TextureDescriptor();
     std::copy(texture.begin(), texture.end(), pixelUserData.begin() + 4);
     const std::array<std::uint32_t, 4> sampler{0u, 0xfffu << 12, 1u << 26, 0u};
@@ -132,14 +138,15 @@ void Draw(AgcDriver::VulkanDevice& device, std::uint32_t wave, std::uint32_t lev
     state.blends = {state.blend};
     device.Draw(state, {0, static_cast<std::uint32_t>(triangles.size()), 0, 1, 0, false}, shaders);
     device.WaitIdle();
+    const auto expectedLevel = level + ((flag & 0x7fffffffu) >= 0x00800000u ? 1u : 0u);
     std::uint32_t covered = 0;
     std::uint32_t bad = 0;
     for (std::uint32_t index = 0; index < Width * Height; ++index) {
         if (Pixels[index * 4 + 3] == std::byte{0}) continue;
         ++covered;
-        bad += std::to_integer<unsigned>(Pixels[index * 4]) != 10u + 40u * level;
+        bad += std::to_integer<unsigned>(Pixels[index * 4]) != 10u + 40u * expectedLevel;
     }
-    std::printf("emulate%u wave%u mip%u covered=%u incorrect=%u\n", emulate, wave, level, covered, bad);
+    std::printf("emulate%u wave%u mip%u flag%08x covered=%u incorrect=%u\n", emulate, wave, expectedLevel, flag, covered, bad);
     Require(covered > 1000, "implicit derivative triangles covered too few pixels");
     Require(bad == 0, "implicit derivatives selected the wrong mip at " + std::to_string(bad) + " pixels");
 }
@@ -155,7 +162,8 @@ int main() {
             return VulkanTestSkipped;
         }
         FillTexture();
-        for (const auto emulate : {false, true}) for (const auto wave : {64u, 32u}) for (const auto level : {0u, 1u, 2u}) Draw(*device, wave, level, emulate);
+        for (const auto emulate : {false, true}) for (const auto wave : {64u, 32u}) for (const auto level : {0u, 1u, 2u}) for (const auto flag : {0u, 0x3f800000u}) Draw(*device, wave, level, emulate, flag);
+        for (const auto flag : {0x80000000u, 0x00000001u, 0x7fc00001u}) Draw(*device, 64u, 1u, false, flag);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

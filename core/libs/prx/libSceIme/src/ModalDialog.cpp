@@ -90,6 +90,7 @@ bool ModalDialogOpen_nid_postfix(const ModalDialogRequest& request) {
     if (request.focus >= request.buttons.size()) return false;
     if (request.cancel != ModalDialogNoButton && request.cancel >= request.buttons.size()) return false;
     std::lock_guard lock(g_mutex);
+    Expire(g_session);
     if (g_session.state == ModalDialogState::Showing) return false;
     g_session = Session{};
     g_session.owner = request.owner;
@@ -150,8 +151,12 @@ void ModalDialogPublishInput_nid_postfix(ModalDialogInputKind kind) {
 }
 
 void ModalDialogPublishPad_nid_postfix(const ImeHostPad& pad) {
-    if (InputOwnedByIme()) return;
     std::lock_guard lock(g_mutex);
+    if (InputOwnedByIme()) {
+        g_session.held = 0;
+        g_session.armed = false;
+        return;
+    }
     Session& session = g_session;
     Expire(session);
     if (session.state != ModalDialogState::Showing) return;

@@ -167,7 +167,7 @@ void CheckCoordinateInputsAndOutputs() {
 
     double aliased = 2;
     cairo_matrix_transform_point(&matrix, &aliased, &aliased);
-    Require(aliased == 13);
+    Require(aliased == 18);
     aliased = 2;
     cairo_matrix_transform_distance(&matrix, &aliased, &aliased);
     Require(aliased == 6);

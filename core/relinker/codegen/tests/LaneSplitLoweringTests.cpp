@@ -56,12 +56,14 @@ const std::vector<Form>& forms() {
         {LaneSplitShape::UnaryImmediate, 1, 1, 0x70, 0},
         {LaneSplitShape::UnaryImmediate, 1, 2, 0x70, 0},
         {LaneSplitShape::UnaryImmediate, 1, 3, 0x70, 0},
+        {LaneSplitShape::LaneImmediate, 3, 1, 0x42, 0},
+        {LaneSplitShape::Blend, 3, 1, 0x4C, 0},
     };
     return list;
 }
 
 bool immediate(LaneSplitShape shape) {
-    return shape == LaneSplitShape::BinaryImmediate || shape == LaneSplitShape::ShiftImmediate || shape == LaneSplitShape::UnaryImmediate;
+    return shape == LaneSplitShape::BinaryImmediate || shape == LaneSplitShape::ShiftImmediate || shape == LaneSplitShape::UnaryImmediate || shape == LaneSplitShape::LaneImmediate || shape == LaneSplitShape::Blend;
 }
 
 Bytes site(const Form& form, bool wide256, std::uint8_t dst, std::uint8_t first, std::uint8_t second, int imm) {
@@ -93,9 +95,20 @@ void decoding() {
     const Bytes memory{0x64, 0xC4, 0x41, 0x75, 0xFE, 0x44, 0x24, 0x10};
     const auto loaded = Codegen::DecodeLaneSplit(memory.data(), memory.size());
     require(loaded && loaded->Memory && loaded->Memory->Prefixes == Bytes{0x64} && loaded->Destination == 8, "a memory VPADDD lost its prefix or operand");
-    for (const Bytes bytes : {Bytes{0xC5, 0xFD, 0x6F, 0xC1}, Bytes{0xC4, 0xE2, 0x7D, 0x36, 0xC1}, Bytes{0xC4, 0xE2, 0x7D, 0x47, 0xC1}, Bytes{0xC5, 0xFC, 0x58, 0xC1}, Bytes{0xC5, 0xFD, 0xD7, 0xC1}, Bytes{0xC4, 0xE2, 0x7D, 0x30, 0xC1}, Bytes{0x90}})
+    for (const Bytes bytes : {Bytes{0xC5, 0xFD, 0x6F, 0xC1}, Bytes{0xC4, 0xE2, 0x7D, 0x36, 0xC1}, Bytes{0xC4, 0xE2, 0x7D, 0x47, 0xC1}, Bytes{0xC5, 0xFC, 0x58, 0xC1}, Bytes{0xC4, 0xE2, 0x7D, 0x30, 0xC1}, Bytes{0x90}})
         require(!Codegen::DecodeLaneSplit(bytes.data(), bytes.size()), "an instruction that is not lane-local integer AVX2 was split");
-    for (const Bytes bytes : {Bytes{0xC5, 0xF5, 0x72, 0x30, 0x01}, Bytes{0xC5, 0xF5, 0xFE, 0xC2, 0x90}, Bytes{0xC4, 0xE3, 0x75, 0x0E, 0xC2}}) {
+    const Bytes mask{0xC5, 0xFD, 0xD7, 0xC1};
+    const auto low = Codegen::DecodeLaneSplit(mask.data(), mask.size());
+    require(low && low->Shape == LaneSplitShape::MoveMask && low->Destination == 0 && low->Second == 1, "a VPMOVMSKB was not decoded");
+    const Bytes extendedMask{0xC4, 0x41, 0x7D, 0xD7, 0xEF};
+    const auto extended = Codegen::DecodeLaneSplit(extendedMask.data(), extendedMask.size());
+    require(extended && extended->Shape == LaneSplitShape::MoveMask && extended->Destination == 13 && extended->Second == 15, "a VPMOVMSKB lost an extended register");
+    const Bytes blend{0xC4, 0xE3, 0x75, 0x4C, 0xC2, 0x3A};
+    const auto blended = Codegen::DecodeLaneSplit(blend.data(), blend.size());
+    require(blended && blended->Shape == LaneSplitShape::Blend && blended->First == 1 && blended->Second == 2 && blended->Immediate == 0x3A, "a VPBLENDVB lost its mask register");
+    for (const Bytes bytes : {Bytes{0xC5, 0xFD, 0xD7, 0x00}, Bytes{0xC5, 0xF5, 0xD7, 0xC1}, Bytes{0xC5, 0xF9, 0xD7, 0xC1}, Bytes{0xC4, 0xE3, 0xF5, 0x4C, 0xC2, 0x30}})
+        require(!Codegen::DecodeLaneSplit(bytes.data(), bytes.size()), "an encoding the processor rejects was split");
+    for (const Bytes bytes : {Bytes{0xC5, 0xF5, 0x72, 0x30, 0x01}, Bytes{0xC5, 0xF5, 0xFE, 0xC2, 0x90}, Bytes{0xC4, 0xE3, 0x75, 0x0E, 0xC2}, Bytes{0xC4, 0xE3, 0x75, 0x42, 0xC2}, Bytes{0xC4, 0xE3, 0x75, 0x4C, 0xC2}, Bytes{0xC5, 0xFD, 0xD7, 0xC1, 0x90}}) {
         bool rejected = false;
         try { (void)Codegen::DecodeLaneSplit(bytes.data(), bytes.size()); }
         catch (const Codegen::CodegenException&) { rejected = true; }
@@ -111,6 +124,11 @@ void matching() {
     require(!intel->Match(bytes.data(), bytes.size()) && !rosetta->Match(bytes.data(), bytes.size()), "Intel or Rosetta mode split a 256-bit integer instruction");
     const auto match = avx->Match(bytes.data(), bytes.size());
     require(match && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline && match->RelocatableWindow && match->InstructionName == "256-bit integer", "AVX mode did not lower a 256-bit integer instruction through a movable stub");
+    for (const Bytes added : {Bytes{0xC5, 0xFD, 0xD7, 0xC1}, Bytes{0xC4, 0xE3, 0x75, 0x4C, 0xC2, 0x30}, Bytes{0xC4, 0xE3, 0x75, 0x42, 0xC2, 0x2A}}) {
+        require(!intel->Match(added.data(), added.size()) && !rosetta->Match(added.data(), added.size()), "Intel or Rosetta mode lowered a byte mask, byte blend or block difference");
+        const auto lowered = avx->Match(added.data(), added.size());
+        require(lowered && lowered->Lowering == Codegen::Amd64OnlyLowering::Trampoline && lowered->InstructionName == "256-bit integer", "AVX mode did not lower a byte mask, byte blend or block difference");
+    }
 }
 
 #if LOWERING_EXECUTION_AVAILABLE
@@ -143,6 +161,118 @@ std::array<std::uint64_t, 4> perHalf(const Form& form, const Machine& start, std
     return result;
 }
 
+using Value = std::array<std::uint64_t, 4>;
+using Octets = std::array<std::uint8_t, 32>;
+
+Octets octets(const Value& value) {
+    Octets bytes{};
+    std::memcpy(bytes.data(), value.data(), bytes.size());
+    return bytes;
+}
+
+Value value(const Octets& bytes) {
+    Value result{};
+    std::memcpy(result.data(), bytes.data(), bytes.size());
+    return result;
+}
+
+Value blendResult(const Value& first, const Value& second, const Value& mask) {
+    const auto a = octets(first);
+    const auto b = octets(second);
+    const auto m = octets(mask);
+    Octets out{};
+    for (std::size_t index = 0; index < out.size(); ++index) out[index] = (m[index] & 0x80) != 0 ? b[index] : a[index];
+    return value(out);
+}
+
+Value differenceResult(const Value& first, const Value& second, int imm) {
+    const auto a = octets(first);
+    const auto b = octets(second);
+    Octets out{};
+    for (std::size_t lane = 0; lane < 2; ++lane) {
+        const auto control = static_cast<std::size_t>(lane == 0 ? imm & 7 : (imm >> 3) & 7);
+        const auto firstBlock = lane * 16 + ((control >> 2) & 1) * 4;
+        const auto secondBlock = lane * 16 + (control & 3) * 4;
+        for (std::size_t word = 0; word < 8; ++word) {
+            unsigned sum = 0;
+            for (std::size_t byte = 0; byte < 4; ++byte) {
+                const int difference = static_cast<int>(a[firstBlock + word + byte]) - static_cast<int>(b[secondBlock + byte]);
+                sum += static_cast<unsigned>(difference < 0 ? -difference : difference);
+            }
+            out[lane * 16 + word * 2] = static_cast<std::uint8_t>(sum);
+            out[lane * 16 + word * 2 + 1] = static_cast<std::uint8_t>(sum >> 8);
+        }
+    }
+    return value(out);
+}
+
+Value wantedResult(const Form& form, const Machine& start, std::uint8_t first, const Value& second, int imm) {
+    if (form.Shape == LaneSplitShape::Blend) return blendResult(start.Ymm[first], second, start.Ymm[static_cast<std::uint8_t>(imm) >> 4]);
+    return differenceResult(start.Ymm[first], second, imm);
+}
+
+bool described(LaneSplitShape shape) {
+    return shape == LaneSplitShape::Blend || shape == LaneSplitShape::LaneImmediate;
+}
+
+void checkStackSource(const Form& form, std::uint8_t dst, std::uint8_t first, int imm) {
+    Bytes instruction{0xC4, static_cast<std::uint8_t>(((dst & 8) ? 0 : 0x80) | 0x60 | form.Map),
+        static_cast<std::uint8_t>(((~first & 15) << 3) | 4 | form.Prefix), form.Opcode,
+        static_cast<std::uint8_t>(0x44 | ((dst & 7) << 3)), 0x24, 0xC0, static_cast<std::uint8_t>(imm)};
+    const Runner runner(lowered(instruction));
+    auto machine = VectorExecution::Initial();
+    const auto start = machine;
+    runner.Run(machine);
+    Value source{};
+    source.fill(LoweringExecution::kSentinel);
+    const auto wanted = wantedResult(form, start, first, source, imm);
+    for (std::uint8_t reg = 0; reg < 16; ++reg)
+        require(machine.Ymm[reg] == (reg == dst ? wanted : start.Ymm[reg]), "a lane split with a source in the red zone left ymm" + std::to_string(reg) + " wrong");
+    for (const auto slot : machine.RedZone) require(slot == LoweringExecution::kSentinel, "a lane split with a source in the red zone overwrote it");
+}
+
+void machineSlot(Bytes& code, std::uint8_t opcode, std::uint8_t reg, int index) {
+    code.insert(code.end(), {static_cast<std::uint8_t>(0x48 | ((reg & 8) >> 1)), opcode, static_cast<std::uint8_t>(0x87 | ((reg & 7) << 3))});
+    const auto displacement = static_cast<std::uint32_t>(512 + index * 8);
+    for (unsigned shift = 0; shift < 32; shift += 8) code.push_back(static_cast<std::uint8_t>(displacement >> shift));
+}
+
+void checkMask(std::uint8_t dst, std::uint8_t source, const Value& input, std::uint32_t flags) {
+    const Bytes below{0x48, 0x8D, 0x64, 0x24, 0x80};
+    const Bytes above{0x48, 0x8D, 0xA4, 0x24, 0x80, 0x00, 0x00, 0x00};
+    const auto instruction = vex(1, 1, true, 0xD7, dst, 0, source);
+    const auto stub = lowered(instruction);
+    Bytes code;
+    machineSlot(code, 0x89, dst, 1);
+    code.insert(code.end(), below.begin(), below.end());
+    code.push_back(0x68);
+    for (unsigned shift = 0; shift < 32; shift += 8) code.push_back(static_cast<std::uint8_t>(flags >> shift));
+    code.push_back(0x9D);
+    code.insert(code.end(), above.begin(), above.end());
+    code.insert(code.end(), stub.begin(), stub.end());
+    machineSlot(code, 0x89, dst, 0);
+    machineSlot(code, 0x89, 0, 3);
+    machineSlot(code, 0x8B, dst, 1);
+    code.insert(code.end(), below.begin(), below.end());
+    code.push_back(0x9C);
+    machineSlot(code, 0x8F, 0, 2);
+    code.insert(code.end(), above.begin(), above.end());
+    const Runner runner(code);
+    auto machine = VectorExecution::Initial();
+    machine.Ymm[source] = input;
+    const auto start = machine;
+    runner.Run(machine);
+    std::uint64_t wanted = 0;
+    const auto bytes = octets(input);
+    for (std::size_t index = 0; index < bytes.size(); ++index) wanted |= static_cast<std::uint64_t>(bytes[index] >> 7) << index;
+    const std::string where = "byte mask dst " + std::to_string(dst) + " source " + std::to_string(source);
+    require(machine.Memory[0] == wanted, where + ": the mask is wrong");
+    require((machine.Memory[2] & LoweringExecution::kFlagMask) == (flags & LoweringExecution::kFlagMask), where + ": RFLAGS changed");
+    require(machine.Memory[3] == (dst == 0 ? wanted : reinterpret_cast<std::uint64_t>(machine.Memory.data())), where + ": rax was not restored");
+    for (std::uint8_t reg = 0; reg < 16; ++reg) require(machine.Ymm[reg] == start.Ymm[reg], where + ": ymm" + std::to_string(reg) + " changed");
+    for (const auto entry : machine.RedZone) require(entry == LoweringExecution::kSentinel, where + ": the red zone was overwritten");
+}
+
 void check(const Form& form, std::uint8_t dst, std::uint8_t first, std::uint8_t second, int imm) {
     const auto instruction = site(form, true, dst, first, second, imm);
     const Runner runner(lowered(instruction));
@@ -150,7 +280,7 @@ void check(const Form& form, std::uint8_t dst, std::uint8_t first, std::uint8_t 
     const auto start = machine;
     runner.Run(machine);
     const bool unary = form.Shape == LaneSplitShape::Unary || form.Shape == LaneSplitShape::UnaryImmediate;
-    const auto wanted = perHalf(form, start, unary ? second : first, second, imm, false);
+    const auto wanted = described(form.Shape) ? wantedResult(form, start, first, start.Ymm[second], imm) : perHalf(form, start, unary ? second : first, second, imm, false);
     for (std::uint8_t reg = 0; reg < 16; ++reg) {
         const auto expected = reg == dst ? wanted : start.Ymm[reg];
         if (machine.Ymm[reg] != expected)
@@ -168,11 +298,32 @@ void execution() {
             }
         }
     }
+    const Form difference{LaneSplitShape::LaneImmediate, 3, 1, 0x42, 0};
+    const Form blend{LaneSplitShape::Blend, 3, 1, 0x4C, 0};
+    for (int imm = 0; imm < 256; ++imm) {
+        check(difference, 0, 1, 2, imm);
+        check(difference, 9, 9, 12, imm);
+        check(difference, 15, 3, 15, imm);
+    }
+    for (const auto& registers : std::array<std::array<std::uint8_t, 3>, 5>{{{0, 1, 2}, {3, 3, 4}, {5, 6, 5}, {7, 7, 7}, {15, 14, 13}}})
+        for (std::uint8_t mask = 0; mask < 16; ++mask)
+            check(blend, registers[0], registers[1], registers[2], (mask << 4) | (mask & 5));
+    for (const int imm : {0x00, 0x2A, 0x15, 0x3F}) checkStackSource(difference, 2, 5, imm);
+    for (const int mask : {0x10, 0x20, 0x50, 0xF0}) checkStackSource(blend, 1, 2, mask);
+    const auto initial = VectorExecution::Initial();
+    const std::array<Value, 6> inputs{{initial.Ymm[3], initial.Ymm[11],
+        {0x8080808080808080ull, 0x8080808080808080ull, 0, 0}, {0, 0, 0x8080808080808080ull, 0x8080808080808080ull},
+        {0x7F7F7F7F7F7F7F7Full, 0x7F7F7F7F7F7F7F7Full, 0x7F7F7F7F7F7F7F7Full, 0x7F7F7F7F7F7F7F7Full}, {0x80ull, 0, 0, 0x8000000000000000ull}}};
+    for (const int dst : {0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15})
+        for (const int source : {0, 7, 14, 15})
+            for (const auto& input : inputs)
+                for (const std::uint32_t flags : {0x202u, 0xAD7u})
+                    checkMask(static_cast<std::uint8_t>(dst), static_cast<std::uint8_t>(source), input, flags);
 }
 
 #else
 
-void execution() { std::cout << "lane split execution checks require a Linux/macOS x86-64 build\n"; }
+void execution() { std::cout << "lane split execution checks require an x86-64 Linux, macOS or Windows build\n"; }
 
 #endif
 

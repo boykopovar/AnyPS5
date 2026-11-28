@@ -18,6 +18,8 @@ namespace {
 
 constexpr int Ok = 0;
 constexpr int Null = -2139029503;
+constexpr int Alignment = -2139029502;
+constexpr int Range = -2139029501;
 constexpr int Invalid = -2139029500;
 constexpr int Permission = -2139029499;
 constexpr int Again = -2139029496;
@@ -98,6 +100,26 @@ void MutexAndRuntimeOptParams() {
     for (std::size_t i = sizeof(console); i < sizeof(runtimeOptions.bytes); i++) CHECK(runtimeOptions.bytes[i] == 0);
 }
 
+void UnreadableOptParams() {
+    const auto* unreadable = reinterpret_cast<const UltMutexOptParam*>(0x10);
+    Object mutex{};
+    Object pool{};
+    Object object{};
+    alignas(8) std::uint8_t runtime[4096]{};
+    std::uint8_t workArea[2048];
+    errno = 71;
+    CHECK(sceUltUlthreadRuntimeOptParamInitialize(reinterpret_cast<UltUlthreadRuntimeOptParam*>(0x10), 0) == Null);
+    CHECK(sceUltMutexCreate(&mutex, "unreadable", nullptr, unreadable, 0) == Null);
+    CHECK(_sceUltMutexCreate(&mutex, "unreadable", &pool, unreadable) == Null);
+    CHECK(sceUltUlthreadRuntimeCreate(runtime, "unreadable", 2, 1, nullptr, unreadable, 0) == Null);
+    CHECK(_sceUltWaitingQueueResourcePoolCreate(&pool, "unreadable", 2, 2, workArea, unreadable) == Null);
+    CHECK(_sceUltSemaphoreCreate(&object, "unreadable", 1, nullptr, unreadable) == Null);
+    CHECK(_sceUltQueueDataResourcePoolCreate(&object, "unreadable", 8, 64, 2, nullptr, workArea, unreadable) == Null);
+    CHECK(errno == 71);
+    CHECK(sceUltMutexCreate(&mutex, "plain", nullptr, nullptr, 0) == Ok);
+    CHECK(sceUltMutexDestroy(&mutex) == Ok);
+}
+
 void OptParams() {
     using Initializer = decltype(&sceUltSemaphoreOptParamInitialize);
     for (const Initializer initialize : {sceUltSemaphoreOptParamInitialize, sceUltQueueOptParamInitialize, sceUltQueueDataResourcePoolOptParamInitialize,
@@ -108,6 +130,9 @@ void OptParams() {
         alignas(UltOptParam) std::uint8_t bytes[136];
         std::memset(bytes, 0xa5, sizeof(bytes));
         CHECK(initialize(nullptr, 0) == Null);
+        errno = 71;
+        CHECK(initialize(reinterpret_cast<UltOptParam*>(0x10), 0) == Null);
+        CHECK(errno == 71);
         CHECK(initialize(reinterpret_cast<UltOptParam*>(bytes), 0) == Ok);
         for (std::size_t index = 0; index < 128; ++index) CHECK(bytes[index] == 0);
         for (std::size_t index = 128; index < sizeof(bytes); ++index) CHECK(bytes[index] == 0xa5);
@@ -362,6 +387,63 @@ void Ulthreads() {
     CHECK(sceUltUlthreadRuntimeDestroy(&runtime) == Ok);
 }
 
+std::atomic<bool> gOwnerStage{false};
+std::atomic<bool> gOwnerRelease{false};
+void* gOwnerMutex = nullptr;
+void* gOwnerLock = nullptr;
+
+std::int32_t APS5_VABI OwningEntry(std::uint64_t) {
+    if (sceUltMutexLock(gOwnerMutex) != Ok) return 1;
+    if (sceUltReaderWriterLockLockWrite(gOwnerLock) != Ok) return 2;
+    gOwnerStage = true;
+    WaitUntil(gOwnerRelease);
+    if (sceUltReaderWriterLockUnlockWrite(gOwnerLock) != Ok) return 3;
+    if (sceUltMutexUnlock(gOwnerMutex) != Ok) return 4;
+    return 0;
+}
+
+void LockOwners() {
+    Object mutex{};
+    Object rwlock{};
+    CHECK(sceUltMutexCreate(&mutex, "owned-mutex", nullptr, nullptr, 0) == Ok);
+    CHECK(sceUltReaderWriterLockCreate(&rwlock, "owned-rwlock", nullptr, nullptr, 0) == Ok);
+    gOwnerMutex = &mutex;
+    gOwnerLock = &rwlock;
+    std::vector<std::uint8_t> workArea(sceUltUlthreadRuntimeGetWorkAreaSize(2, 1));
+    UlthreadRuntimeObject runtime{};
+    CHECK(sceUltUlthreadRuntimeCreate(&runtime, "owner-runtime", 2, 1, workArea.data(), nullptr, 0) == Ok);
+    UlthreadObject thread{};
+    std::uint8_t context[4096];
+    CHECK(sceUltUlthreadCreate(&thread, "owner-ulthread", OwningEntry, 0, context, sizeof(context), &runtime, nullptr, 0) == Ok);
+    WaitUntil(gOwnerStage);
+    void* nameWord = nullptr;
+    std::memcpy(&nameWord, "owner-ul", sizeof(nameWord));
+    UltMutexInfo mutexInfo{};
+    CHECK(sceUltGetMutexInfo(&mutex, &mutexInfo, nullptr, 0) == Ok);
+    CHECK(mutexInfo.ownerType == 2 && mutexInfo.owner == nameWord && mutexInfo.lockCount == 0);
+    UltReaderWriterLockInfo lockInfo{};
+    CHECK(sceUltGetReaderWriterLockInfo(&rwlock, &lockInfo, nullptr, 0) == Ok);
+    CHECK(lockInfo.lockType == 2 && lockInfo.ownerType == 2 && lockInfo.owner == nameWord);
+    gOwnerRelease = true;
+    std::int32_t status = -1;
+    CHECK(sceUltUlthreadJoin(&thread, &status) == Ok && status == 0);
+    CHECK(sceUltGetMutexInfo(&mutex, &mutexInfo, nullptr, 0) == Ok && mutexInfo.ownerType == 0 && mutexInfo.owner == nullptr);
+
+    UlthreadObject shortName{};
+    gOwnerStage = false;
+    gOwnerRelease = false;
+    CHECK(sceUltUlthreadCreate(&shortName, "ab", OwningEntry, 0, context, sizeof(context), &runtime, nullptr, 0) == Ok);
+    WaitUntil(gOwnerStage);
+    const char padded[8] = {'a', 'b'};
+    std::memcpy(&nameWord, padded, sizeof(nameWord));
+    CHECK(sceUltGetMutexInfo(&mutex, &mutexInfo, nullptr, 0) == Ok && mutexInfo.ownerType == 2 && mutexInfo.owner == nameWord);
+    gOwnerRelease = true;
+    CHECK(sceUltUlthreadJoin(&shortName, &status) == Ok && status == 0);
+    CHECK(sceUltUlthreadRuntimeDestroy(&runtime) == Ok);
+    CHECK(sceUltReaderWriterLockDestroy(&rwlock) == Ok);
+    CHECK(sceUltMutexDestroy(&mutex) == Ok);
+}
+
 void* CurrentThreadId() {
     std::uintptr_t id;
     const auto self = scePthreadSelf();
@@ -524,9 +606,28 @@ void GetInfoTests() {
     recursiveOptions.attribute = 1;
     CHECK(sceUltMutexCreate(&recursiveMutex, "recursive-info", poolObj, &recursiveOptions, 0) == Ok);
     CHECK(sceUltMutexLock(&recursiveMutex) == Ok);
-    CheckUnsupportedInfo<UltMutexInfo>(sceUltGetMutexInfo, &recursiveMutex, 0);
+    UltMutexInfo recursiveInfo{};
+    CHECK(sceUltGetMutexInfo(&recursiveMutex, &recursiveInfo, nullptr, 0) == Ok);
+    CHECK(recursiveInfo.lockCount == 1 && recursiveInfo.attributes == 1 && recursiveInfo.owner == owner && recursiveInfo.ownerType == 1);
+    CHECK(sceUltMutexLock(&recursiveMutex) == Ok && sceUltMutexTryLock(&recursiveMutex) == Ok);
+    CHECK(sceUltGetMutexInfo(&recursiveMutex, &recursiveInfo, nullptr, 0) == Ok && recursiveInfo.lockCount == 3);
+    CHECK(sceUltMutexUnlock(&recursiveMutex) == Ok && sceUltMutexUnlock(&recursiveMutex) == Ok);
+    CHECK(sceUltGetMutexInfo(&recursiveMutex, &recursiveInfo, nullptr, 0) == Ok && recursiveInfo.lockCount == 1);
     CHECK(sceUltMutexUnlock(&recursiveMutex) == Ok);
+    CHECK(sceUltGetMutexInfo(&recursiveMutex, &recursiveInfo, nullptr, 0) == Ok);
+    CHECK(recursiveInfo.lockCount == 0 && recursiveInfo.owner == nullptr && recursiveInfo.ownerType == 0);
     CHECK(sceUltMutexDestroy(&recursiveMutex) == Ok);
+
+    Object highBitMutex{};
+    UltMutexOptParam highBitOptions{};
+    highBitOptions.attribute = 2;
+    CHECK(sceUltMutexCreate(&highBitMutex, "high-bit", poolObj, &highBitOptions, 0) == Ok);
+    CHECK(sceUltMutexLock(&highBitMutex) == Ok);
+    CHECK(sceUltMutexLock(&highBitMutex) == State && sceUltMutexTryLock(&highBitMutex) == State);
+    CHECK(sceUltGetMutexInfo(&highBitMutex, &recursiveInfo, nullptr, 0) == Ok);
+    CHECK(recursiveInfo.lockCount == 0 && recursiveInfo.attributes == 2 && recursiveInfo.ownerType == 1);
+    CHECK(sceUltMutexUnlock(&highBitMutex) == Ok && sceUltMutexUnlock(&highBitMutex) == Permission);
+    CHECK(sceUltMutexDestroy(&highBitMutex) == Ok);
 
     CHECK(sceUltConditionVariableCreate(condObj, "test-cnd", mutexObj, nullptr, 0) == Ok);
     CHECK(sceUltGetConditionVariableInfo(condObj, &condInfo, waitThreads, 4) == Ok);
@@ -739,6 +840,26 @@ void WaitForInfoWaiters(TQuery query, void* object) {
     CHECK(false);
 }
 
+void SemaphoreValidation() {
+    Object pool{};
+    Object semaphore{};
+    Object unknown{};
+    CHECK(sceUltWaitingQueueResourcePoolCreate(&pool, "validation-pool", 4, 4, nullptr, nullptr, 0) == Ok);
+    CHECK(sceUltSemaphoreCreate(&semaphore, "validation-semaphore", 1, &pool, nullptr, 0) == Ok);
+    using Call = decltype(&sceUltSemaphoreAcquire);
+    for (const Call call : {sceUltSemaphoreAcquire, sceUltSemaphoreTryAcquire, sceUltSemaphoreRelease}) {
+        CHECK(call(nullptr, 0) == Null);
+        CHECK(call(semaphore.bytes + 1, 0) == Alignment);
+        CHECK(call(&semaphore, 0) == Range);
+        CHECK(call(&semaphore, -1) == Range);
+        CHECK(call(&unknown, 1) == State);
+    }
+    CHECK(sceUltSemaphoreTryAcquire(&semaphore, 1) == Ok);
+    CHECK(sceUltSemaphoreRelease(&semaphore, 1) == Ok);
+    CHECK(sceUltSemaphoreDestroy(&semaphore) == Ok);
+    CHECK(sceUltWaitingQueueResourcePoolDestroy(&pool) == Ok);
+}
+
 void InfoWaiters() {
     Object pool{};
     Object mutex{};
@@ -904,6 +1025,7 @@ int main(int argc, char** argv) {
     else if (std::strcmp(argv[1], "opt-params") == 0) {
         OptParams();
         MutexAndRuntimeOptParams();
+        UnreadableOptParams();
     }
     else if (std::strcmp(argv[1], "rwlock-validation") == 0) ReaderWriterValidation();
     else if (std::strcmp(argv[1], "rwlock-readers") == 0) ReaderWriterReaders();
@@ -913,8 +1035,10 @@ int main(int argc, char** argv) {
     else if (std::strcmp(argv[1], "rwlock-underscored") == 0) ReaderWriterUnderscored();
     else if (std::strcmp(argv[1], "ulthreads") == 0) Ulthreads();
     else if (std::strcmp(argv[1], "get-info") == 0) GetInfoTests();
+    else if (std::strcmp(argv[1], "lock-owners") == 0) LockOwners();
     else if (std::strcmp(argv[1], "queue-waiters") == 0) QueueWaiters();
     else if (std::strcmp(argv[1], "info-waiters") == 0) InfoWaiters();
+    else if (std::strcmp(argv[1], "semaphore-validation") == 0) SemaphoreValidation();
     else if (std::strcmp(argv[1], "guest-pointers") == 0) UnreadableNamesAndObjects();
     else return 2;
     CHECK(sceUltFinalize() == Ok);

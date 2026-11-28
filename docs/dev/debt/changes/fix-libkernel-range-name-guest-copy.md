@@ -1,0 +1,9 @@
+# libkernel
+
+## change [sceKernelSetVirtualRangeName]
+
+- [sceKernelSetVirtualRangeName](../../../core/libs/prx/libkernel/DirectMemory/Export.cpp) (libkernel) - a null name returns `EFAULT`, as in KytyPS5 and shadPS4. A null address and a range past the end of the address space return `EINVAL` here, and `sceKernelClearVirtualRangeName` does the same, with a length of 0 too; no console measurement or reference covers these. A name of 32 or more bytes returns `ENAMETOOLONG` and keeps the earlier name, and a length of 0 returns 0 and changes nothing, as a PS5 payload process (firmware 11.60) did on 2026-11-07; a title process was not measured. An unreadable name returns `EFAULT` too, as a null one does. The named-mapping calls still cut a longer name to 31 characters, and map with an unreadable name unnamed, unmeasured.
+
+## change [sceKernelMapNamedSystemFlexibleMemory]
+
+- [sceKernelMapNamedSystemFlexibleMemory](../../../core/libs/prx/libkernel/DirectMemory/Export.cpp) (libkernel) - the PS5 system budget and the `sceKernelVirtualQuery` record of a system map are unmeasured. It is not charged to the game flexible budget, as in shadPS4, which charges only its flexible type; fpPS4 ignores `MAP_SYSTEM` and charges it. It reports as flexible, as in fpPS4; shadPS4 reports it as not flexible. Checks, alignment and placement are `sceKernelMapNamedFlexibleMemory`'s, so flag 0x8000 and protection 0x800 throw, where a payload process on a PS5 (firmware 11.60, 2026-11-08) answered 0 with the name set for the flag and `EINVAL` for the protection. A null name returns `EFAULT` and one of 32 bytes or more `ENAMETOOLONG`, mapped and unnamed, as that process did; a title process was not measured. An unreadable name throws, unmeasured. shadPS4 returns the errors before mapping, fpPS4 maps it unnamed. Closes when: measured on a PS5

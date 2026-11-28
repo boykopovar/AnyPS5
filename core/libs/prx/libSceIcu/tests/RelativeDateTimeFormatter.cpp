@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <initializer_list>
 #include <source_location>
 #include <stdexcept>
 #include <type_traits>
@@ -213,9 +214,59 @@ void Run() {
 
 }
 
+namespace UreldatefmtFormatNumeric {
+
+using IcuRecoveredTest::Filler;
+using IcuRecoveredTest::Require;
+using IcuRecoveredTest::RequireThrows;
+using IcuRecoveredTest::Unchanged;
+
+static_assert(std::is_same_v<decltype(&ureldatefmt_formatNumeric_nid_postfix),
+                             std::int32_t (APS5_VABI*)(const URelativeDateTimeFormatter*, double, std::int32_t, char16_t*, std::int32_t, std::int32_t*)>);
+
+namespace {
+
+constexpr std::int32_t IllegalArgument = 1;
+constexpr std::array<std::int32_t, 7> Failing{1, 2, 7, 15, 16, 27, 0x7fffffff};
+constexpr std::array<std::int32_t, 4> Passing{0, -128, -124, -1};
+
+} // namespace
+
+void Run() {
+    const auto storage = Filler();
+    const auto formatter = reinterpret_cast<const URelativeDateTimeFormatter*>(storage.data());
+    char16_t buffer[8]{};
+    for (const auto* target : {formatter, static_cast<const URelativeDateTimeFormatter*>(nullptr)}) {
+        for (const auto incoming : Failing) {
+            std::int32_t status = incoming;
+            Require(ureldatefmt_formatNumeric_nid_postfix(target, 2.0, 7, buffer, 8, &status) == 0);
+            Require(ureldatefmt_formatNumeric_nid_postfix(target, 2.0, 7, nullptr, -1, &status) == 0);
+            Require(status == incoming);
+        }
+        for (const auto incoming : Passing) {
+            std::int32_t status = incoming;
+            Require(ureldatefmt_formatNumeric_nid_postfix(target, 2.0, 7, nullptr, 1, &status) == 0);
+            Require(status == IllegalArgument);
+            status = incoming;
+            Require(ureldatefmt_formatNumeric_nid_postfix(target, 2.0, 7, buffer, -1, &status) == 0);
+            Require(status == IllegalArgument);
+            status = incoming;
+            RequireThrows([&] { ureldatefmt_formatNumeric_nid_postfix(target, 2.0, 7, buffer, 8, &status); });
+            RequireThrows([&] { ureldatefmt_formatNumeric_nid_postfix(target, 2.0, 7, nullptr, 0, &status); });
+            Require(status == incoming);
+        }
+        RequireThrows([&] { ureldatefmt_formatNumeric_nid_postfix(target, 2.0, 7, buffer, 8, nullptr); });
+    }
+    for (const auto unit : buffer) Require(unit == 0);
+    Require(Unchanged(storage));
+}
+
+} // namespace UreldatefmtFormatNumeric
+
 void CheckIcuRelativeDateTimeFormatter() {
     UreldatefmtClose::Run();
     UreldatefmtFormat::Run();
+    UreldatefmtFormatNumeric::Run();
     UreldatefmtOpen::Run();
     RelativeDateTimeFormatterGuestPointers::Run();
 }

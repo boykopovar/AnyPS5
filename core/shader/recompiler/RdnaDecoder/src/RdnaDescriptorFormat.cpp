@@ -14,7 +14,7 @@ struct FormatInfo {
     bool sint32;
 };
 
-constexpr std::array<FormatInfo, 102> kFormatInfoTable {{
+constexpr std::array<FormatInfo, 103> kFormatInfoTable {{
     {IrBufferFormat::Format8UNorm, true, false, false},
     {IrBufferFormat::Format8SNorm, true, false, false},
     {IrBufferFormat::Format8UScaled, true, false, false},
@@ -57,6 +57,7 @@ constexpr std::array<FormatInfo, 102> kFormatInfoTable {{
     {IrBufferFormat::Format10_10_10_2UScaled, true, false, false},
     {IrBufferFormat::Format10_10_10_2SScaled, true, false, false},
     {IrBufferFormat::Format10_10_10_2UInt, true, true, false},
+    {IrBufferFormat::Format6E4Float, true, true, false},
     {IrBufferFormat::Format10_10_10_2SInt, true, false, true},
     {IrBufferFormat::Format8_8_8_8UNorm, true, false, false},
     {IrBufferFormat::Format8_8_8_8SNorm, true, false, false},
@@ -146,8 +147,12 @@ std::optional<FmaskLayout> FmaskLayoutOf(IrBufferFormat format) {
         case IrBufferFormat::Fmask8_S4_F2: return FmaskLayout{4u, 2u, 2u, 8u};
         case IrBufferFormat::Fmask8_S4_F4: return FmaskLayout{4u, 4u, 2u, 8u};
         case IrBufferFormat::Fmask16_S8_F2: return FmaskLayout{8u, 2u, 2u, 16u};
+        case IrBufferFormat::Fmask16_S16_F1: return FmaskLayout{16u, 1u, 1u, 16u};
+        case IrBufferFormat::Fmask32_S16_F2: return FmaskLayout{16u, 2u, 2u, 32u};
         case IrBufferFormat::Fmask32_S8_F4: return FmaskLayout{8u, 4u, 4u, 32u};
         case IrBufferFormat::Fmask32_S8_F8: return FmaskLayout{8u, 8u, 4u, 32u};
+        case IrBufferFormat::Fmask64_S16_F4: return FmaskLayout{16u, 4u, 4u, 64u};
+        case IrBufferFormat::Fmask64_S16_F8: return FmaskLayout{16u, 8u, 4u, 64u};
         default: return std::nullopt;
     }
 }
@@ -168,7 +173,7 @@ bool IsConvertedUnormTextureFormat(IrBufferFormat format) {
 }
 
 IrBufferFormat RemapTextureFormat(IrBufferFormat format) {
-    return IsConvertedUnormTextureFormat(format) || format == IrBufferFormat::Format10_11_11UInt || format == IrBufferFormat::Format2_10_10_10UInt || format == IrBufferFormat::Format11_11_10UInt || format == IrBufferFormat::Format11_11_10Float || format == IrBufferFormat::Format10_11_11Float ? IrBufferFormat::Format32UInt : format;
+    return IsConvertedUnormTextureFormat(format) || format == IrBufferFormat::Format10_11_11UInt || format == IrBufferFormat::Format2_10_10_10UInt || format == IrBufferFormat::Format11_11_10UInt || format == IrBufferFormat::Format11_11_10Float || format == IrBufferFormat::Format10_11_11Float || format == IrBufferFormat::Format6E4Float ? IrBufferFormat::Format32UInt : format;
 }
 
 IrBufferFormat RemapStorageTextureFormat(IrBufferFormat format) {

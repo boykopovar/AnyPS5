@@ -68,6 +68,7 @@ void Check(AgcDriver::VulkanDevice& device) {
     using namespace AgcDriver::DriverDetail;
     using namespace ShaderRecompiler;
     AgcDriver::QueueState queue{};
+    queue.context[0x31c] = 10u << 2u;
     queue.context[0x8e] = 0xfu;
     queue.context[0x8f] = 0xfu;
     Bind(queue, VertexCode.data(), 0xc8u, 0x8bu);

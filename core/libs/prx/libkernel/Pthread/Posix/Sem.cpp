@@ -250,11 +250,9 @@ void* APS5_VABI sem_open_nid_postfix(const char* name, int flags, ...) {
             Fail(GUEST_ENOENT);
             return nullptr;
         }
-        if (value > GUEST_SEM_VALUE_MAX)
-            throw std::runtime_error("sem_open: initial value " + std::to_string(value) + " is above SEM_VALUE_MAX, which FreeBSD stores unchecked");
         object = std::make_shared<NamedSemaphore>();
         object->semaphore = std::make_unique<PosixSemaphore>();
-        object->semaphore->count = value;
+        object->semaphore->count = value & GUEST_SEM_VALUE_MAX;
         named.linked.emplace(file, object);
     }
     if (!object->mapping) {

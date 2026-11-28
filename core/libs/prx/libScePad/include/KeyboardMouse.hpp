@@ -10,6 +10,7 @@
 
 #include "InputMapping.hpp"
 #include "PadState.hpp"
+#include "ToggleLatch.hpp"
 
 namespace Pad {
 
@@ -55,6 +56,7 @@ private:
 
 struct InputRequests {
     bool toggleFullscreen = false;
+    bool toggleBorderless = false;
     bool togglePerformanceOverlay = false;
     bool screenshot = false;
     bool showPadStatus = false;
@@ -82,6 +84,7 @@ public:
     void SetTitleReadsMouse(bool reads);
     void Release();
     bool MouseMode() const;
+    const char* MouseModeShortcut(bool guestReadsMouse) const;
     PadInputState Compose(const PadInputState& controller) const;
     const InputConfiguration& Configuration() const;
 
@@ -94,10 +97,13 @@ private:
     StickInput stickInput() const;
     std::array<double, 2> triggerTargets() const;
     bool advanceAxes(Clock::time_point now);
+    bool isToggleBinding(const InputBinding& binding) const;
+    bool bindingHeld(std::size_t index) const;
 
     InputConfiguration configuration;
     std::vector<bool> pressed;
     std::vector<Clock::time_point> wheelReleaseTimes;
+    ToggleLatch toggles;
     MouseStick mouse;
     Clock::time_point lastAdvance{};
     Clock::time_point lastAxisAdvance{};

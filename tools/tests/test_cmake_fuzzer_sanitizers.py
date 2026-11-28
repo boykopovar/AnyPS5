@@ -1,3 +1,4 @@
+import os
 import shutil
 import subprocess
 import tempfile
@@ -13,7 +14,9 @@ def configure(build_dir, *options):
     return subprocess.run(command, capture_output=True, encoding="utf-8", errors="replace", timeout=300)
 
 
-@unittest.skipUnless(shutil.which("cmake") and shutil.which("ninja"), "requires cmake and ninja")
+@unittest.skipUnless(shutil.which("cmake") and shutil.which("ninja") and (
+    os.environ.get("CXX") or shutil.which("c++") or shutil.which("g++") or shutil.which("clang++") or shutil.which("cl")),
+    "requires cmake, ninja and a C++ compiler")
 class Tests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()

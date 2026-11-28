@@ -1,7 +1,9 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -10,6 +12,8 @@
 #include <new>
 #include <stdexcept>
 #include <source_location>
+#include <thread>
+#include <vector>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -82,6 +86,16 @@ void installProcessParameters(bool present = true) {
     require(ProcessParametersFixture::Install(process.data(), process.size()));
 #endif
 }
+
+thread_local std::uint64_t threadAllocations = 0;
+thread_local std::uint64_t threadFrees = 0;
+
+void* APS5_VABI threadAllocate(std::size_t) {
+    ++threadAllocations;
+    return storage.data();
+}
+
+void APS5_VABI threadRelease(void*) { ++threadFrees; }
 
 template<typename TAction>
 void reject(TAction action) {
@@ -218,6 +232,40 @@ int main(int argc, char** argv) {
         return 0;
     }
 #endif
+    if (argc > 1 && std::strcmp(argv[1], "threads") == 0) {
+        constexpr unsigned threadCount = 4;
+        constexpr std::uint64_t pairs = 200000;
+        write(replacement, 0x20, &threadAllocate);
+        write(replacement, 0x28, &threadRelease);
+        ApplicationHeapInitialize_nid_no_patch(process.data());
+        require(initializes == 1);
+        std::array<std::uint64_t, threadCount> allocations{};
+        std::array<std::uint64_t, threadCount> releases{};
+        std::array<bool, threadCount> failed{};
+        const auto start = std::chrono::steady_clock::now();
+        {
+            std::vector<std::thread> threads;
+            for (unsigned thread = 0; thread < threadCount; ++thread) {
+                threads.emplace_back([&, thread] {
+                    try {
+                        for (std::uint64_t pair = 0; pair < pairs; ++pair) {
+                            if (ApplicationHeapAllocate_nid_no_patch(16) != storage.data()) throw std::runtime_error("application heap test failed");
+                            ApplicationHeapFree_nid_no_patch(storage.data());
+                        }
+                    } catch (const std::exception&) {
+                        failed[thread] = true;
+                    }
+                    allocations[thread] = threadAllocations;
+                    releases[thread] = threadFrees;
+                });
+            }
+            for (auto& thread : threads) thread.join();
+        }
+        const auto nanoseconds = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count();
+        for (unsigned thread = 0; thread < threadCount; ++thread) require(!failed[thread] && allocations[thread] == pairs && releases[thread] == pairs);
+        std::printf("application heap: %u threads, %llu allocate and free pairs each, %.1f ns per pair\n", threadCount, static_cast<unsigned long long>(pairs), static_cast<double>(nanoseconds) / static_cast<double>(pairs * threadCount));
+        return 0;
+    }
     if (argc > 1 && std::strcmp(argv[1], "lazy") == 0) {
         installProcessParameters();
         require(initializes == 0);
@@ -377,6 +425,31 @@ int main(int argc, char** argv) {
         for (unsigned i = 0; i < 14000; ++i) require(shrunken[i] == 0x33);
         for (unsigned i = 14000; i < 20000; ++i) require(shrunken[i] == 0);
         ApplicationHeapFree_nid_no_patch(shrunken);
+        for (const auto bytes : std::array<std::size_t, 4>{0, 1, 63, 65537}) {
+            auto* allocation = static_cast<unsigned char*>(malloc_nid_postfix(bytes));
+            require(allocation != nullptr);
+            {
+                const auto readable = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+                const auto all = GuestAllocations::GuestAllocationsAcquireAll_nid_postfix();
+                const auto generation = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+                require(malloc_usable_size_nid_postfix(allocation) == bytes);
+                require(malloc_usable_size_nid_postfix(nullptr) == 0);
+                reject([allocation] { malloc_usable_size_nid_postfix(allocation + 1); });
+                require(GuestAllocations::GuestAllocationsGeneration_nid_postfix() == generation);
+                require(GuestAllocations::GuestAllocationsAcquire_nid_postfix().Snapshot() == readable.Snapshot());
+                require(GuestAllocations::GuestAllocationsAcquireAll_nid_postfix().Snapshot() == all.Snapshot());
+            }
+            free_nid_postfix(allocation);
+            {
+                const auto readable = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+                const auto all = GuestAllocations::GuestAllocationsAcquireAll_nid_postfix();
+                const auto generation = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+                reject([allocation] { malloc_usable_size_nid_postfix(allocation); });
+                require(GuestAllocations::GuestAllocationsGeneration_nid_postfix() == generation);
+                require(GuestAllocations::GuestAllocationsAcquire_nid_postfix().Snapshot() == readable.Snapshot());
+                require(GuestAllocations::GuestAllocationsAcquireAll_nid_postfix().Snapshot() == all.Snapshot());
+            }
+        }
         for (std::size_t alignment : {16, 64, 4096}) {
             auto* aligned = ApplicationHeapAlign_nid_no_patch(alignment, 37);
             require(reinterpret_cast<std::uintptr_t>(aligned) % alignment == 0);

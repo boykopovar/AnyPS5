@@ -1,0 +1,5 @@
+# shader
+
+## change [Integer dot clamp]
+
+- [Integer dot clamp](../../../core/shader/recompiler/Translation/src/IntegerInstructions.cpp) (`v_dot2_i32_i16`, `v_dot2_u32_u16`, `v_dot4_i32_i8`, `v_dot4_u32_u8`, `v_dot8_i32_i4`, `v_dot8_u32_u4`) (shader recompiler) - the clamp bit saturates the exact sum of the products and src2 to the result type (signed `i`, unsigned `u`), as measured on RDNA2 (gfx1036, [hardware oracle](../HW_ORACLE.md)); unclamped they wrap. No source says the PS5's gfx1013 has these instructions: LLVM's [`FeatureISAVersion10_1_3`](https://github.com/llvm/llvm-project/blob/131f7ebb08369c2837665bab7061977e37c5f3ec/llvm/lib/Target/AMDGPU/GCNFeatures.td#L2282-L2285) has no dot feature and Mesa leaves `CHIP_GFX1013` out of `has_accelerated_dot_product`, so the implementation follows the RDNA2 measurement and has not been checked on a console. LLVM wraps a dot2 sum that overflows 32 bits; the measurement and Mesa do not. Closes when: a clamped integer dot is measured on a PS5, or one is shown not to exist on it.

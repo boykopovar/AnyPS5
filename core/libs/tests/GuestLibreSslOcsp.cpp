@@ -4,7 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <exception>
+#include <stdexcept>
 #include <limits>
 #include <string>
 
@@ -110,10 +110,10 @@ void CheckValidity() {
 
     try {
         OCSP_check_validity_nid_postfix(nullptr, &future.value, 0, -1);
-    } catch (const std::exception&) {
+    } catch (const std::invalid_argument&) {
         return;
     }
-    std::fprintf(stderr, "OCSP_check_validity: a null this update must throw\n");
+    std::fprintf(stderr, "OCSP_check_validity: a null this update must throw invalid_argument\n");
     std::abort();
 }
 
