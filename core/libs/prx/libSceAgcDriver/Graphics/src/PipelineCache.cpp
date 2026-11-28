@@ -5,12 +5,14 @@
 #include "prx/libSceAgcDriver/Graphics/src/MappedCacheFile.hpp"
 #include <algorithm>
 #include <atomic>
+#include <charconv>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <functional>
+#include <limits>
 #include <map>
 #include <memory>
 #include <new>
@@ -58,23 +60,28 @@ HostMemory hostMemory() {
     return {};
 }
 
+std::optional<std::uint64_t> setting(const char* name, const char* text, unsigned shift, unsigned index) {
+    if (text == nullptr || *text == '\0') return std::nullopt;
+    const auto value = PipelineCache::ParseSetting(text, shift);
+    static std::atomic<std::uint32_t> reported{0};
+    if (!value.has_value() && (reported.fetch_or(1u << index, std::memory_order_relaxed) & (1u << index)) == 0) std::fprintf(stderr, "[pipeline-cache] ignoring %s=%s: not a whole number in range; using the default\n", name, text);
+    return value;
+}
+
 std::uint64_t saveReserveBytes(const HostMemory& memory) {
-    const char* text = std::getenv("APS5_PIPELINE_CACHE_SAVE_FREE_MB");
-    if (text == nullptr || *text == '\0') return std::min(LargestDefaultReserveBytes, memory.installed / 16u);
-    return std::strtoull(text, nullptr, 10) << 20u;
+    const auto value = setting("APS5_PIPELINE_CACHE_SAVE_FREE_MB", std::getenv("APS5_PIPELINE_CACHE_SAVE_FREE_MB"), 20u, 0u);
+    return value.has_value() ? *value : std::min(LargestDefaultReserveBytes, memory.installed / 16u);
 }
 
 #ifdef _WIN32
 std::optional<std::size_t> mappedSaveFromBytes() {
     const char* text = std::getenv("APS5_PIPELINE_CACHE_MAPPED_SAVE_MB");
-    if (text == nullptr || *text == '\0' || std::strcmp(text, "off") == 0) return std::nullopt;
-    return static_cast<std::size_t>(std::strtoull(text, nullptr, 10)) << 20u;
+    if (text != nullptr && std::strcmp(text, "off") == 0) return std::nullopt;
+    return setting("APS5_PIPELINE_CACHE_MAPPED_SAVE_MB", text, 20u, 1u);
 }
 
 std::size_t saveWindowBytes() {
-    const char* text = std::getenv("APS5_PIPELINE_CACHE_SAVE_WINDOW_KIB");
-    if (text == nullptr || *text == '\0') return std::size_t{64} << 20u;
-    return static_cast<std::size_t>(std::strtoull(text, nullptr, 10)) << 10u;
+    return setting("APS5_PIPELINE_CACHE_SAVE_WINDOW_KIB", std::getenv("APS5_PIPELINE_CACHE_SAVE_WINDOW_KIB"), 10u, 2u).value_or(std::uint64_t{64} << 20u);
 }
 #endif
 
@@ -332,7 +339,7 @@ void PipelineCache::save(bool final, bool waitForPipelines) try {
             if (final || size < CheckedSaveBytes) return true;
             const auto memory = hostMemory();
             const auto reserve = saveReserveBytes(memory);
-            if (reserve == 0 || memory.available == 0 || memory.available >= reserve + held) return true;
+            if (reserve == 0 || memory.available == 0 || (memory.available >= held && memory.available - held >= reserve)) return true;
             const auto postponed = postponedSaves.fetch_add(1, std::memory_order_relaxed) + 1;
             static std::atomic<std::int64_t> nextReport{0};
             const auto now = static_cast<std::int64_t>(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
@@ -343,7 +350,7 @@ void PipelineCache::save(bool final, bool waitForPipelines) try {
 #ifdef _WIN32
         if (const auto from = mappedSaveFromBytes(); from.has_value() && size >= *from) {
             const auto window = saveWindowBytes();
-            if (!affordable(window != 0 ? std::min<std::uint64_t>(size, 4 * static_cast<std::uint64_t>(window)) : size)) return;
+            if (!affordable(window != 0 && window < size / 4 ? 4 * static_cast<std::uint64_t>(window) : size)) return;
             std::error_code error;
             const auto native = ShaderRecompiler::NativeCachePath_nid_no_patch(path, error);
             if (!error) mapped = MappedCacheFile::Create(native, sizeof(FileHeader) + size, window, [](std::function<void()> body) { return Libc::StartHostThread(std::move(body)); });
@@ -371,6 +378,7 @@ void PipelineCache::save(bool final, bool waitForPipelines) try {
 #ifdef _WIN32
     if (mapped != nullptr) {
         mappedWindows.fetch_add(mapped->WindowsOpened(), std::memory_order_relaxed);
+        if (const auto failures = mapped->ReleaseFailures(); failures != 0) std::fprintf(stderr, "[pipeline-cache] %llu parts of the mapped file could not be written out or dropped from the working set while the driver filled it\n", static_cast<unsigned long long>(failures));
         if (!mapped->Commit(sizeof(FileHeader) + size)) {
             std::fprintf(stderr, "[pipeline-cache] cannot write %s\n", path.string().c_str());
             return;
@@ -400,6 +408,15 @@ std::uint64_t PipelineCache::MappedSaves() {
 
 std::uint64_t PipelineCache::MappedSaveWindows() {
     return mappedWindows.load(std::memory_order_relaxed);
+}
+
+std::optional<std::uint64_t> PipelineCache::ParseSetting(std::string_view text, unsigned shift) {
+    std::uint64_t value = 0;
+    const auto* end = text.data() + text.size();
+    const auto parsed = std::from_chars(text.data(), end, value);
+    if (text.empty() || parsed.ec != std::errc{} || parsed.ptr != end) return std::nullopt;
+    if (value > (std::numeric_limits<std::uint64_t>::max() >> shift)) return std::nullopt;
+    return value << shift;
 }
 
 std::uint64_t PipelineCache::PostponedSaves() {

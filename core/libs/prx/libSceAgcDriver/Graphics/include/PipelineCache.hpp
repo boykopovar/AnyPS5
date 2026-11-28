@@ -9,6 +9,7 @@
 #include <mutex>
 #include <optional>
 #include <span>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -30,6 +31,7 @@ public:
     static std::uint64_t MappedSaves();
     static std::uint64_t MappedSaveWindows();
     static std::uint64_t PostponedSaves();
+    static std::optional<std::uint64_t> ParseSetting(std::string_view text, unsigned shift);
 
     friend struct PipelineCacheTestAccess;
 

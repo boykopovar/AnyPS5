@@ -42,7 +42,7 @@ public:
         if (created->view == nullptr) return nullptr;
         created->bytes = bytes;
         created->opened.store(bytes, std::memory_order_relaxed);
-        if (window != 0) {
+        if (window != 0 && window < bytes) {
             SYSTEM_INFO system{};
             GetSystemInfo(&system);
             const std::size_t granule = std::max<std::size_t>(system.dwPageSize, 4096u);
@@ -76,6 +76,7 @@ public:
 
     std::byte* Data() const { return view; }
     std::uint64_t WindowsOpened() const { return windowsOpened.load(std::memory_order_relaxed); }
+    std::uint64_t ReleaseFailures() const { return releaseFailures.load(std::memory_order_relaxed); }
 
     bool Commit(std::size_t finalBytes) {
         if (view == nullptr || finalBytes == 0 || finalBytes > bytes) return false;
@@ -132,6 +133,7 @@ private:
         std::array<MappedCacheFile*, 4> files{};
         std::atomic<std::uint32_t> enrolled{0};
         void* handler = nullptr;
+        DWORD entered = TLS_OUT_OF_INDEXES;
     };
 
     static Registry& registry() {
@@ -142,7 +144,8 @@ private:
     static bool enroll(MappedCacheFile* file) {
         auto& shared = registry();
         AcquireSRWLockExclusive(&shared.lock);
-        if (shared.handler == nullptr) shared.handler = AddVectoredExceptionHandler(1, &MappedCacheFile::onFault);
+        if (shared.entered == TLS_OUT_OF_INDEXES) shared.entered = TlsAlloc();
+        if (shared.entered != TLS_OUT_OF_INDEXES && shared.handler == nullptr) shared.handler = AddVectoredExceptionHandler(1, &MappedCacheFile::onFault);
         bool placed = false;
         if (shared.handler != nullptr) {
             for (auto& slot : shared.files) {
@@ -173,6 +176,12 @@ private:
         const auto address = static_cast<std::uintptr_t>(info->ExceptionRecord->ExceptionInformation[1]);
         auto& shared = registry();
         if (shared.enrolled.load(std::memory_order_acquire) == 0) return EXCEPTION_CONTINUE_SEARCH;
+        const DWORD lastError = GetLastError();
+        if (TlsGetValue(shared.entered) != nullptr) {
+            SetLastError(lastError);
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
+        TlsSetValue(shared.entered, &shared);
         LONG verdict = EXCEPTION_CONTINUE_SEARCH;
         AcquireSRWLockShared(&shared.lock);
         for (auto* file : shared.files) {
@@ -183,6 +192,8 @@ private:
             break;
         }
         ReleaseSRWLockShared(&shared.lock);
+        TlsSetValue(shared.entered, nullptr);
+        SetLastError(lastError);
         return verdict;
     }
 
@@ -202,8 +213,7 @@ private:
             return true;
         }
         if (open > written) {
-            FlushViewOfFile(view + written, open - written);
-            VirtualUnlock(view + written, open - written);
+            writeOutAndLetGo(written, open - written);
             written = open;
         }
         const auto end = std::min(bytes, (offset / window + 1) * window);
@@ -212,6 +222,11 @@ private:
         opened.store(end, std::memory_order_release);
         windowsOpened.fetch_add(1, std::memory_order_relaxed);
         return true;
+    }
+
+    void writeOutAndLetGo(std::size_t at, std::size_t length) {
+        if (!FlushViewOfFile(view + at, length)) releaseFailures.fetch_add(1, std::memory_order_relaxed);
+        if (!VirtualUnlock(view + at, length) && GetLastError() != ERROR_NOT_LOCKED) releaseFailures.fetch_add(1, std::memory_order_relaxed);
     }
 
     void stopTrimmer() {
@@ -233,9 +248,7 @@ private:
         while (!stop.load(std::memory_order_acquire)) {
             const auto end = opened.load(std::memory_order_acquire);
             for (std::size_t at = 0; at < end && !stop.load(std::memory_order_acquire); at += Step) {
-                const auto length = std::min(Step, end - at);
-                FlushViewOfFile(view + at, length);
-                VirtualUnlock(view + at, length);
+                writeOutAndLetGo(at, std::min(Step, end - at));
             }
             for (int wait = 0; wait < 5 && !stop.load(std::memory_order_acquire); ++wait) Sleep(10);
         }
@@ -256,6 +269,7 @@ private:
     std::atomic<std::size_t> opened{0};
     std::atomic<bool> stop{false};
     std::atomic<std::uint64_t> windowsOpened{0};
+    std::atomic<std::uint64_t> releaseFailures{0};
     std::thread trimmer;
 };
 

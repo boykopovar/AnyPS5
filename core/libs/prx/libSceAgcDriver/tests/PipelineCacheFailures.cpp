@@ -11,12 +11,20 @@
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <new>
+#include <optional>
 #include <random>
+#include <string>
 #include <string_view>
+#include <thread>
+#include <vector>
+#ifdef _WIN32
+#include <psapi.h>
+#endif
 
 using namespace AgcDriver::Graphics;
 using namespace std::chrono_literals;
@@ -140,6 +148,92 @@ void FillLarge(VkPipelineCache cache, std::size_t large) {
     for (std::size_t index = initialBytes; index < large; ++index) bytes[index] = Filler(index);
 }
 
+constexpr std::size_t PageBytes = 4096;
+
+std::size_t ResidentPages(std::byte* start, std::size_t bytes) {
+    std::vector<PSAPI_WORKING_SET_EX_INFORMATION> pages(bytes / PageBytes);
+    for (std::size_t index = 0; index < pages.size(); ++index) pages[index].VirtualAddress = start + index * PageBytes;
+    Check(K32QueryWorkingSetEx(GetCurrentProcess(), pages.data(), static_cast<DWORD>(pages.size() * sizeof(pages[0]))) != 0, "could not query the working set");
+    std::size_t resident = 0;
+    for (const auto& page : pages) resident += page.VirtualAttributes.Valid;
+    return resident;
+}
+
+bool DropsBelowTenth(std::byte* start, std::size_t bytes) {
+    for (int attempt = 0; attempt < 250; ++attempt) {
+        if (ResidentPages(start, bytes) * 10 <= bytes / PageBytes) return true;
+        Sleep(20);
+    }
+    return false;
+}
+
+int RunWorkingSet(const std::filesystem::path& root) {
+    const std::size_t window = std::size_t{1} << 20u;
+    const std::size_t bytes = 16 * window;
+    auto windowed = MappedCacheFile::Create(root / "windowed", bytes, window, {});
+    Check(windowed != nullptr, "a windowed mapped file could not be created");
+    for (std::size_t at = 0; at < bytes; at += PageBytes) std::memset(windowed->Data() + at, 0x5a, PageBytes);
+    const auto behind = ResidentPages(windowed->Data(), bytes - window);
+    const auto last = ResidentPages(windowed->Data() + bytes - window, window);
+    Check(windowed->WindowsOpened() == 15, "a sequential writer did not open one window after another");
+    Check(windowed->ReleaseFailures() == 0, "a window could not be written out or dropped from the working set");
+    Check(last * 2 >= window / PageBytes, "the window being written is not in the working set, so the measurement shows nothing");
+    Check(behind * 10 <= (bytes - window) / PageBytes, "the windows behind the writer stayed in the working set");
+    Check(windowed->Commit(bytes) && std::filesystem::file_size(root / "windowed") == bytes, "the windowed file was not committed");
+    auto whole = MappedCacheFile::Create(root / "whole", MappedCacheFile::TrimmedFromBytes, 0, [](std::function<void()> body) { return std::thread(std::move(body)); });
+    Check(whole != nullptr, "a mapped file with a helper thread could not be created");
+    std::memset(whole->Data(), 0x3c, MappedCacheFile::TrimmedFromBytes);
+    Check(DropsBelowTenth(whole->Data(), MappedCacheFile::TrimmedFromBytes), "the helper thread did not drop the written pages from the working set");
+    unsigned sum = 0;
+    for (std::size_t at = 0; at < MappedCacheFile::TrimmedFromBytes; at += PageBytes) sum += static_cast<unsigned>(whole->Data()[at]);
+    Check(sum == 0x3cu * (MappedCacheFile::TrimmedFromBytes / PageBytes), "the pages read back hold other bytes than were written");
+    Check(DropsBelowTenth(whole->Data(), MappedCacheFile::TrimmedFromBytes), "the helper thread did not drop the pages read back from the working set");
+    const auto failures = whole->ReleaseFailures();
+    Check(whole->Commit(MappedCacheFile::TrimmedFromBytes), "the file with a helper thread was not committed");
+    std::printf("mapped-working-set: %zu of %zu pages behind the writer and %zu of %zu in its window were resident; the helper thread dropped written and re-read pages (%llu failed calls)\n", behind, (bytes - window) / PageBytes, last, window / PageBytes, static_cast<unsigned long long>(failures));
+    return 0;
+}
+
+int RunStress(const std::filesystem::path& root) {
+    const std::size_t bytes = std::size_t{8} << 20u;
+    const std::size_t pages = bytes / PageBytes;
+    std::uint64_t opened = 0;
+    std::uint64_t churned = 0;
+    for (int round = 0; round < 4; ++round) {
+        auto shared = MappedCacheFile::Create(root / "shared", bytes, std::size_t{64} << 10u, {});
+        Check(shared != nullptr, "the shared mapped file could not be created");
+        std::atomic<bool> done{false};
+        std::thread churn([&] {
+            while (!done.load()) {
+                auto small = MappedCacheFile::Create(root / "churn", 2 * PageBytes, PageBytes, {});
+                Check(small != nullptr, "a mapped file could not be created while others were being written");
+                std::memset(small->Data(), 0x11, 2 * PageBytes);
+                Check(small->WindowsOpened() == 1 && small->Commit(2 * PageBytes), "a mapped file could not be committed while others were being written");
+                ++churned;
+            }
+        });
+        std::vector<std::thread> writers;
+        for (std::size_t writer = 0; writer < 4; ++writer) {
+            writers.emplace_back([&, writer] {
+                for (std::size_t page = writer; page < pages; page += 4) std::memset(shared->Data() + page * PageBytes, static_cast<int>((page * 7u + 1u) & 0xffu), PageBytes);
+            });
+        }
+        for (auto& writer : writers) writer.join();
+        done = true;
+        churn.join();
+        Check(shared->WindowsOpened() >= 1 && shared->WindowsOpened() <= 127, "the shared file was not opened a window at a time");
+        opened += shared->WindowsOpened();
+        Check(shared->Commit(bytes), "the shared file was not committed");
+        std::vector<std::byte> saved;
+        Check(ShaderRecompiler::ReadWholeFile(root / "shared", saved) && saved.size() == bytes, "the shared file has another size than was written");
+        bool same = true;
+        for (std::size_t page = 0; same && page < pages; ++page) same = saved[page * PageBytes] == static_cast<std::byte>((page * 7u + 1u) & 0xffu) && saved[page * PageBytes + PageBytes - 1] == saved[page * PageBytes];
+        Check(same, "the shared file does not hold what its four writers wrote");
+    }
+    std::printf("mapped-stress: four writers opened %llu windows of one file while %llu other mapped files were created and committed\n", static_cast<unsigned long long>(opened), static_cast<unsigned long long>(churned));
+    return 0;
+}
+
 bool HoldsLarge(const std::filesystem::path& file, std::size_t large) {
     std::vector<std::byte> saved;
     if (!ShaderRecompiler::ReadWholeFile(file, saved) || saved.size() != 24 + large) return false;
@@ -252,9 +346,19 @@ int RunMapped(bool lowMemory, std::unique_ptr<PipelineCache> cache, const std::f
 }
 
 int main(int argc, char** argv) {
-    Check(argc == 2, "expected startup, now, busy, destructor, worker, read-retry, first-save, external-merge, mapped, mapped-low-memory, mapped-default, mapped-no-slot, mapped-no-protection or mapped-no-helper");
+    Check(argc == 2, "expected startup, now, busy, destructor, worker, read-retry, first-save, external-merge, mapped, mapped-low-memory, mapped-default, mapped-no-slot, mapped-no-protection, mapped-no-helper, mapped-working-set, mapped-stress or setting");
     const std::string_view mode(argv[1]);
-    Check(mode == "startup" || mode == "now" || mode == "busy" || mode == "destructor" || mode == "worker" || mode == "read-retry" || mode == "first-save" || mode == "external-merge" || mode == "mapped" || mode == "mapped-low-memory" || mode == "mapped-default" || mode == "mapped-no-slot" || mode == "mapped-no-protection" || mode == "mapped-no-helper", "unknown mode");
+    Check(mode == "startup" || mode == "now" || mode == "busy" || mode == "destructor" || mode == "worker" || mode == "read-retry" || mode == "first-save" || mode == "external-merge" || mode == "mapped" || mode == "mapped-low-memory" || mode == "mapped-default" || mode == "mapped-no-slot" || mode == "mapped-no-protection" || mode == "mapped-no-helper" || mode == "mapped-working-set" || mode == "mapped-stress" || mode == "setting", "unknown mode");
+    if (mode == "setting") {
+        using Value = std::optional<std::uint64_t>;
+        Check(PipelineCache::ParseSetting("256", 20) == Value(std::uint64_t{256} << 20u) && PipelineCache::ParseSetting("0", 10) == Value(0), "a whole number was not read as a setting");
+        for (const std::string_view text : {"", " 12", "12 ", "12x", "x12", "-1", "+1", "0x10", "1.5", "off", "18446744073709551616"}) Check(!PipelineCache::ParseSetting(text, 0).has_value(), "a setting that is not a whole number in range was accepted");
+        Check(PipelineCache::ParseSetting("18446744073709551615", 0) == Value(std::numeric_limits<std::uint64_t>::max()), "the largest value was not read");
+        Check(PipelineCache::ParseSetting("17592186044415", 20) == Value(std::uint64_t{17592186044415u} << 20u), "the largest size in MiB was not read");
+        Check(!PipelineCache::ParseSetting("17592186044416", 20).has_value() && !PipelineCache::ParseSetting("18014398509481984", 10).has_value(), "a size that overflows when scaled was accepted");
+        std::puts("setting: whole numbers in range are read; text, signs, spaces and sizes that overflow when scaled are refused");
+        return 0;
+    }
 #ifndef _WIN32
     if (mode == "read-retry" || mode.starts_with("mapped")) return 77;
 #endif
@@ -265,6 +369,8 @@ int main(int argc, char** argv) {
         ~Cleanup() { std::error_code error; std::filesystem::remove_all(path, error); }
     } cleanup{root};
 #ifdef _WIN32
+    if (mode == "mapped-working-set") return RunWorkingSet(root);
+    if (mode == "mapped-stress") return RunStress(root);
     if (mode == "mapped-no-helper") {
         const auto refused = MappedCacheFile::Create(root / "refused", MappedCacheFile::TrimmedFromBytes, std::size_t{16} << 20u, [](std::function<void()>) -> std::thread {
             throw std::system_error(std::make_error_code(std::errc::resource_unavailable_try_again));
