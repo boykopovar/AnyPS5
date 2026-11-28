@@ -135,7 +135,7 @@ void* MapPrivateFileCopy(void* address, std::size_t rounded, int protection, int
     if (!GetFileSizeEx(handle, &fileBytes)) return failed(GuestBadDescriptor);
     const auto size = static_cast<std::uint64_t>(fileBytes.QuadPart);
     const auto start = static_cast<std::uint64_t>(offset);
-    if (start + rounded > ((size + PS5_PAGE_SIZE - 1) & ~static_cast<std::uint64_t>(PS5_PAGE_SIZE - 1))) return failed(GuestNotSupported);
+    const auto filePages = start < size ? static_cast<std::size_t>(std::min<std::uint64_t>(rounded, (size - start + PS5_PAGE_SIZE - 1) & ~static_cast<std::uint64_t>(PS5_PAGE_SIZE - 1))) : std::size_t{0};
     void* mapped = address;
     try {
         if (DoMapAnon(&mapped, rounded, 3, placement, alignment, false) != 0) return failed(GuestNoMemory);
@@ -145,7 +145,7 @@ void* MapPrivateFileCopy(void* address, std::size_t rounded, int protection, int
     } catch (const std::exception&) {
         return failed(GuestNoMemory);
     }
-    const auto copied = std::min<std::uint64_t>(rounded, size - start);
+    const auto copied = start < size ? std::min<std::uint64_t>(rounded, size - start) : std::uint64_t{0};
     for (std::uint64_t done = 0; done < copied;) {
         const auto read = sceKernelPread(descriptor, static_cast<unsigned char*>(mapped) + done, static_cast<std::size_t>(copied - done), static_cast<std::int64_t>(start + done));
         if (read <= 0) {
@@ -154,6 +154,14 @@ void* MapPrivateFileCopy(void* address, std::size_t rounded, int protection, int
             return failed(read < 0 ? static_cast<int>(read & 0xffff) : GuestIoError);
         }
         done += static_cast<std::uint64_t>(read);
+    }
+    if (filePages != rounded) {
+        try {
+            MarkFileMappingPastEnd(static_cast<unsigned char*>(mapped) + filePages, rounded - filePages);
+        } catch (const std::exception&) {
+            munmap_nid_postfix(mapped, rounded);
+            return failed(GuestNoMemory);
+        }
     }
     if (protection != 3 && mprotect_nid_postfix(mapped, rounded, protection) != 0) {
         const int error = *__error_nid_postfix();
