@@ -1019,13 +1019,13 @@ void CheckBdaSpan(AgcDriver::VulkanDevice& device, const Block& block, std::size
     }
 }
 
-void RequireRefused(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, 8>& texture, const std::string& expected, const std::string& what) {
+void RequireRefused(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, 8>& texture, const std::string& expected, const std::string& what, std::span<const std::uint32_t> code = LoadCode, const std::array<std::uint32_t, 4>& sampler = {}) {
     std::string refusal;
     try {
         std::vector<std::uint32_t> userData;
-        const auto program = CompileLoad(device, texture, userData);
+        const auto program = CompileProgram(device, code, texture, userData, sampler);
         Buffer.fill(0u);
-        device.Dispatch(program, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(LoadCode.data()));
+        device.Dispatch(program, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
         device.WaitIdle();
     } catch (const std::exception& error) {
         refusal = error.what();
@@ -2178,7 +2178,25 @@ void TextureDccTarget(AgcDriver::VulkanDevice& device, std::uint32_t samples) {
         } else if (mode == 1u) {
             auto alpha = target;
             alpha.dccAlphaOnMsb = !alpha.dccAlphaOnMsb;
+            *static_cast<volatile std::uint8_t*>(dcc.data) = 0x40u;
+            NoteColorMetadataFill(dcc.Address(), dcc.bytes, 0x40404040u);
             refused(alpha, "layout or metadata changed", "another alpha placement on a texture DCC owner");
+            bind(target);
+            CheckUniform(LoadSamples(device, words, samples), expected, "a DCC texture whose metadata refill was noted before a refused alpha placement");
+            auto flipped = words;
+            flipped[6] ^= 1u << 22u;
+            *static_cast<volatile std::uint8_t*>(dcc.data) = 0x40u;
+            NoteColorMetadataFill(dcc.Address(), dcc.bytes, 0x40404040u);
+            RequireRefused(device, flipped, "DCC alpha placement", "sampling a resident DCC owner through a T# with the other alpha placement");
+            CheckUniform(LoadSamples(device, words, samples), expected, "a DCC texture whose metadata refill was noted before a T# with the other alpha placement was refused");
+            *static_cast<volatile std::uint8_t*>(dcc.data) = 0x40u;
+            NoteColorMetadataFill(dcc.Address(), dcc.bytes, 0x40404040u);
+            RequireRefused(device, flipped, "reading sample 0 of multisampled DCC color target", "reading sample 0 of a resident DCC owner through a T# with the other alpha placement", PlaneCode, PointMipSampler);
+            CheckUniform(LoadSamples(device, words, samples), expected, "a DCC texture whose metadata refill was noted before a sample 0 read with the other alpha placement was refused");
+            *static_cast<volatile std::uint8_t*>(dcc.data) = 0x40u;
+            NoteColorMetadataFill(dcc.Address(), dcc.bytes, 0x40404040u);
+            RequireRefused(device, flipped, "storage image access to multisampled DCC color target", "a storage image store to a resident DCC owner through a T# with the other alpha placement", StoreCode);
+            CheckUniform(LoadSamples(device, words, samples), expected, "a DCC texture whose metadata refill was noted before a storage store with the other alpha placement was refused");
         } else if (mode == 2u) {
             *static_cast<volatile std::uint8_t*>(color.data) = 1u;
             refused(target, "writes to a resident multisampled DCC", "a color store before a texture DCC owner took register state");

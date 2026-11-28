@@ -50,6 +50,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -477,6 +478,43 @@ SampledKeyProofEntry& sampledKeyProofSlot(std::uint64_t dccAddress, std::uint64_
     return (*proofs)[(hash ^ (hash >> 29u)) % SampledKeyProofSlots];
 }
 
+DccKeys provedSampledKeys(const GuestTextureResource& resource, std::uint64_t guestBytes) {
+    auto& memo = sampledKeyProofSlot(resource.dccAddress, guestBytes, resource.format, resource.dccAlphaOnMsb);
+    if (memo.dccAddress != resource.dccAddress || memo.guestBytes != guestBytes || memo.format != resource.format || memo.dccAlphaOnMsb != resource.dccAlphaOnMsb) {
+        memo.dccAddress = resource.dccAddress;
+        memo.guestBytes = guestBytes;
+        memo.format = resource.format;
+        memo.dccAlphaOnMsb = resource.dccAlphaOnMsb;
+        memo.proof = {};
+    }
+    return ProvedClearKeys(resource, guestBytes, memo.proof);
+}
+
+struct VariantKeyProofTag {};
+
+DccKeys provedVariantKeys(std::uint64_t dccAddress, std::uint64_t guestBytes) {
+    auto& proofs = HostThreadLocal<std::unique_ptr<std::array<DccRangeProof, SampledKeyProofSlots>>, VariantKeyProofTag>();
+    if (proofs == nullptr) proofs = std::make_unique<std::array<DccRangeProof, SampledKeyProofSlots>>();
+    const auto hash = dccAddress ^ (guestBytes * 0x9e3779b97f4a7c15ull);
+    return ProvedCurrentDccKeys(dccAddress, guestBytes, (*proofs)[(hash ^ (hash >> 29u)) % SampledKeyProofSlots]);
+}
+
+void noteVariantKeySpan(std::vector<VariantKeySpan>& spans, const VariantKeySpan& span) {
+    if (span.bytes == 0) return;
+    const auto held = std::find_if(spans.begin(), spans.end(), [&](const VariantKeySpan& entry) { return entry.dccAddress == span.dccAddress && entry.keys == span.keys; });
+    if (held == spans.end()) spans.push_back(span);
+    else held->bytes = std::max(held->bytes, span.bytes);
+}
+
+void noteVariantWrite(std::vector<VariantWrite>& writes, std::uint64_t base) {
+    if (std::none_of(writes.begin(), writes.end(), [&](const VariantWrite& write) { return write.base == base; })) writes.push_back({base, StorageTexture::LastWrite(base)});
+}
+
+bool sameWriteExtent(const std::optional<StorageTexture::WriteRecord>& left, const std::optional<StorageTexture::WriteRecord>& right) {
+    if (!left || !right) return left.has_value() == right.has_value();
+    return left->width == right->width && left->height == right->height && left->tileMode == right->tileMode && left->dimension == right->dimension && BytesPerElement(left->format) == BytesPerElement(right->format);
+}
+
 const ImageMemoEntry& decodedImage(VkDevice device, std::span<const std::uint32_t> words) {
     auto& slot = imageMemoSlot(words);
     const auto allocation = ImageAllocationIdentity(words);
@@ -641,6 +679,21 @@ std::uint64_t heldBytes(const StorageTexture& image) {
 
 bool MetadataMoved(const StorageTexture& image, const GuestTextureResource& resource) {
     return resource.dccAddress != 0 && image.Descriptor().dccAddress != resource.dccAddress && !image.ServesKeysAt(resource.dccAddress);
+}
+
+bool AlphaPlacementDiffers(const GuestTextureResource& image, const GuestTextureResource& resource, DccKeys keys) {
+    return resource.dccAddress != 0 && image.dccAddress == resource.dccAddress && image.dccAlphaOnMsb != resource.dccAlphaOnMsb && (keys == DccKeys::Clear0001 || keys == DccKeys::Clear1110);
+}
+
+bool AlphaPlacementConflicts(const StorageTexture& image, const GuestTextureResource& resource, std::optional<DccKeys> proved = std::nullopt) {
+    const auto differs = [&](DccKeys keys) { return AlphaPlacementDiffers(image.Descriptor(), resource, keys); };
+    if (!differs(DccKeys::Clear0001)) return false;
+    if (differs(image.UploadedKeys())) return true;
+    if (!GuestMemory::GpuMutex().HeldByThisThread()) {
+        DccKeyProof unlocked;
+        return differs(ProvedClearKeys(image.Descriptor(), image.GuestBytes(), unlocked));
+    }
+    return differs(proved ? *proved : image.ProvedKeys()) || differs(image.FilledKeys());
 }
 
 // Whether a sampled texture over `resource` can be a view of the surface's cached storage image
@@ -1006,7 +1059,7 @@ PendingLookup pendingLookupSource(const Context& context, const GuestTextureReso
     lookup.blockCopy = source != nullptr && !depthCompare && !lookup.srgbExpand && Texture::CanBlockCopyFrom(*source, resource);
     lookup.repackCopy = source != nullptr && !depthCompare && Texture::CanRepackCopyFrom(*source, resource);
     if (source != nullptr && !lookup.blockCopy && !lookup.repackCopy && (depthCompare ? !lookup.depthCopy || !Texture::CanDepthCopyFrom(*source, resource) : lookup.srgbExpand ? !Texture::CanSrgbExpandFrom(context, *source, resource) : !Texture::CanCopyFrom(*source, resource))) source.reset();
-    if (source != nullptr && MetadataMoved(*source, resource)) source.reset();
+    if (source != nullptr && (MetadataMoved(*source, resource) || AlphaPlacementConflicts(*source, resource))) source.reset();
     return lookup;
 }
 
@@ -1092,17 +1145,9 @@ std::shared_ptr<Texture> lookupSampledTexture(const Context& context, std::span<
             return *scanned;
         }
         const auto scanStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-        auto& memo = sampledKeyProofSlot(resource.dccAddress, guestBytes, resource.format, resource.dccAlphaOnMsb);
-        if (memo.dccAddress != resource.dccAddress || memo.guestBytes != guestBytes || memo.format != resource.format || memo.dccAlphaOnMsb != resource.dccAlphaOnMsb) {
-            memo.dccAddress = resource.dccAddress;
-            memo.guestBytes = guestBytes;
-            memo.format = resource.format;
-            memo.dccAlphaOnMsb = resource.dccAlphaOnMsb;
-            memo.proof = {};
-        }
         const auto scans = KeyProofCounts().scanned;
         const auto proofs = KeyProofCounts().proved;
-        scanned = ProvedClearKeys(resource, guestBytes, memo.proof);
+        scanned = provedSampledKeys(resource, guestBytes);
         if (KeyProofCounts().scanned != scans) ++sampledLookupKeyScans;
         if (KeyProofCounts().proved != proofs) ++sampledLookupKeyProofs;
         if (profile) LookupOutcomes::Add(LookupOutcomes::DccScan, scanStart);
@@ -1152,14 +1197,14 @@ std::shared_ptr<Texture> lookupSampledTexture(const Context& context, std::span<
             source = sampledStorageSource(context, resource, guestBytes);
             if (source != nullptr && depthCompare && !Texture::CanDepthCopyFrom(*source, resource)) source.reset();
             if (source != nullptr && srgbExpand && !Texture::CanSrgbExpandFrom(context, *source, resource)) source.reset();
-        } else if (!depthCompare && ClearedViewEnabled() && StorageClearAvailable(context, resource.format, *keys)) {
+        } else if (!depthCompare && ClearedViewEnabled() && StorageClearAvailable(context, resource.format, resource.dccAlphaOnMsb, *keys)) {
             // A fast-cleared surface is viewed as well, through its image cleared on the GPU (the
             // lookup's Refresh, see StorageTexture::upload), when the image's own descriptor names
             // the same DCC metadata so the refresh sees the keys. A snapshot of the clear texels
             // (filled and uploaded on the CPU, then replaced by a view once results are pending: two
             // 4K uploads per clear at the movie stage) serves the surface otherwise, as before.
             auto candidate = sampledStorageSource(context, resource, guestBytes);
-            if (candidate != nullptr && candidate->Descriptor().dccAddress == resource.dccAddress) source = std::move(candidate);
+            if (candidate != nullptr && candidate->Descriptor().dccAddress == resource.dccAddress && !AlphaPlacementDiffers(candidate->Descriptor(), resource, *keys)) source = std::move(candidate);
         }
         scanned.reset();
         // The lookup's Refresh may have flushed another image's results over the memory (which
@@ -1257,7 +1302,7 @@ std::shared_ptr<Texture> lookupSampledTexture(const Context& context, std::span<
             // written meanwhile is taken in by refreshing the image. A fast clear the image cannot
             // see (keys, and no pending results to prefer) ends the view: a snapshot holds the clear.
             const bool aliasServed = !stagedFlushed && source != nullptr && source != it->source && *keys == DccKeys::Uncompressed && !RuntimeSwitches::Set(RuntimeSwitch::NoAliasViews) && it->source->IsPendingAlias(*source);
-            if (!stagedFlushed && (source == nullptr || source == it->source || aliasServed) && (source != nullptr || *keys == DccKeys::Uncompressed) && StorageImageServesKeys(*it->source, resource.dccAddress)) {
+            if (!stagedFlushed && (source == nullptr || source == it->source || aliasServed) && (source != nullptr || *keys == DccKeys::Uncompressed) && StorageImageServesKeys(*it->source, {resource.dccAddress, resource.dccAlphaOnMsb})) {
                 if (aliasServed || !GuestMemory::UnchangedSince(address, bytes, it->source->GenerationFor(address, bytes))) refreshForView(*it->source, resource);
                 if (aliasServed) counters.aliasViews.fetch_add(1, std::memory_order_relaxed);
                 if (it->texture->IsDepthCopy()) it->texture->RefreshDepthCopy();
@@ -1778,6 +1823,10 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
             if (const auto found = findStorage(cache, {context.device, SurfaceKey(context, allocated)}); found != cache.entries.end()) evicted.push_back(evictStorage(cache, found));
         }
         auto it = findStorage(cache, key);
+        if (it != cache.entries.end() && AlphaPlacementConflicts(*it->texture, resource)) {
+            evicted.push_back(evictStorage(cache, it));
+            it = cache.entries.end();
+        }
         std::shared_ptr<StorageTexture> detached;
         if (it != cache.entries.end() && MetadataMoved(*it->texture, resource)) {
             detached = evictStorage(cache, it, false);
@@ -2157,10 +2206,22 @@ std::shared_ptr<StorageTexture> CachedStorageLayers(const Context& context, cons
     return cachedStorageTexture(context, {}, resource, 0, 0, false, std::pair{firstLayer, layerCount});
 }
 
-bool StorageImageServesKeys(const StorageTexture& image, std::uint64_t dccAddress) {
+bool StorageImageServesKeys(const StorageTexture& image, StorageImageKeys keys) {
     GuestTextureResource resource{};
-    resource.dccAddress = dccAddress;
-    return !MetadataMoved(image, resource);
+    resource.dccAddress = keys.dccAddress;
+    resource.dccAlphaOnMsb = keys.dccAlphaOnMsb;
+    return !MetadataMoved(image, resource) && !AlphaPlacementConflicts(image, resource);
+}
+
+namespace {
+
+bool SourceServesView(const StorageTexture& source, const GuestTextureResource& resource, std::optional<DccKeys> proved = std::nullopt) {
+    if (MetadataMoved(source, resource)) return false;
+    if (source.Descriptor().dccAddress == 0) return true;
+    const auto keys = proved ? *proved : source.ProvedKeys();
+    return keys == source.UploadedKeys() && !AlphaPlacementConflicts(source, resource, keys);
+}
+
 }
 
 std::shared_ptr<StorageTexture> RepeatStorageSurface(const Context& context, const GuestTextureResource& requested, const std::shared_ptr<StorageTexture>& stored) {
@@ -2181,7 +2242,7 @@ std::shared_ptr<StorageTexture> RepeatStorageSurface(const Context& context, con
     const CacheHold held(storageCacheHeld);
     if (resource.mipCount > AllocatedLevels(resource)) return nullptr;
     const auto it = findStorageByImage(cache, context.device, stored.get());
-    if (it == cache.entries.end() || MetadataMoved(*it->texture, resource)) return nullptr;
+    if (it == cache.entries.end() || MetadataMoved(*it->texture, resource) || AlphaPlacementConflicts(*it->texture, resource)) return nullptr;
     it->texture->Refresh();
     cache.entries.splice(cache.entries.begin(), cache.entries, it);
     TextureCounts().storageHits.fetch_add(1, std::memory_order_relaxed);
@@ -2512,7 +2573,8 @@ TableState CurrentTableState() {
 
 constexpr auto NoRepresentative = std::numeric_limits<std::uint32_t>::max();
 
-std::vector<std::uint32_t> variantRepresentatives(VkDevice device, const ShaderRecompiler::DescriptorBinding& binding, std::uint64_t elementBase, std::uint64_t capacity, bool* mixedExtents = nullptr);
+std::vector<std::uint32_t> variantRepresentatives(const Context& context, const ShaderRecompiler::DescriptorBinding& binding, std::uint64_t elementBase, std::uint64_t capacity, bool* mixedExtents = nullptr);
+bool variantKeysShared(const Context& context, const ShaderRecompiler::DescriptorBinding& binding, std::uint32_t chosen, std::uint32_t member, std::uint64_t dccAddress, VariantKeySpan* span = nullptr);
 
 struct ReusedTableElement {
     TextureKey key{};
@@ -4042,6 +4104,8 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
         return false;
     };
     if (validatedTextures.size() != textures.size()) return fail(FastFail::NoRecord);
+    if (!variantKeySpansHold()) return fail(FastFail::Keys);
+    if (!variantWritesHold()) return fail(FastFail::Replaced);
     const bool unchanged = pendingSerialSeen != 0 && pendingSerialSeen == serialBefore;
     const bool keyProofs = KeyFastPath();
     struct QueriesTag {};
@@ -4097,6 +4161,7 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
         if (!keyProofs) {
             // Without proofs the keys are compared with the record's (a cleared view's identity
             // below is the record's too): the scan repeats on every call, as before.
+            if (source != nullptr && !SourceServesView(*source, surface.resource)) return fail(FastFail::Keys);
             if (surface.resource.dccAddress != 0 && TextureClearKeys(surface.resource, surface.bytes) != surface.keys) return fail(FastFail::Keys);
             scannedKeys[i] = surface.keys;
             if (!unchanged) query(address, address + bytes, source, source != nullptr && surface.keys != DccKeys::Uncompressed ? source : nullptr, {i, false, source != nullptr && surface.keys == DccKeys::Uncompressed});
@@ -4110,14 +4175,14 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
             const auto sourceKeys = source->ProvedKeys();
             if (sourceKeys != source->UploadedKeys()) return fail(FastFail::Keys);
             const auto keys = surface.resource.dccAddress == 0 ? DccKeys::Uncompressed : SameKeySurface(source, surface.resource, surface.bytes) ? sourceKeys : ProvedClearKeys(surface.resource, surface.bytes, textures[i]->KeyProof());
-            if (surface.resource.dccAddress != 0 && surface.resource.dccAddress != own.dccAddress && (keys != DccKeys::Uncompressed || !StorageImageServesKeys(*source, surface.resource.dccAddress))) return fail(FastFail::Keys);
+            if (surface.resource.dccAddress != 0 && ((surface.resource.dccAddress != own.dccAddress && keys != DccKeys::Uncompressed) || MetadataMoved(*source, surface.resource) || AlphaPlacementConflicts(*source, surface.resource, sourceKeys))) return fail(FastFail::Keys);
             scannedKeys[i] = keys;
             // A view of a fast-cleared surface stays one only while its image still has results
             // pending over it (cachedTexture's hit rule), unless the image's own descriptor names
             // the surface's metadata (the lookup views the cleared image then). The identity is
             // asked whatever the registry's serial did: the keys may have moved since the last
             // proof while the registry did not.
-            if (keys != DccKeys::Uncompressed && !(own.dccAddress == surface.resource.dccAddress && ClearedViewEnabled() && StorageClearAvailable(context, surface.resource.format, keys))) query(address, address + bytes, source, source, {i, false, false});
+            if (keys != DccKeys::Uncompressed && !(own.dccAddress == surface.resource.dccAddress && !AlphaPlacementDiffers(own, surface.resource, keys) && ClearedViewEnabled() && StorageClearAvailable(context, surface.resource.format, surface.resource.dccAlphaOnMsb, keys))) query(address, address + bytes, source, source, {i, false, false});
             else if (!unchanged) query(address, address + bytes, source, nullptr, {i, false, keys == DccKeys::Uncompressed});
             if (surface.resource.dccAddress != 0 || own.dccAddress != 0) countKeysProven(false);
         } else {
@@ -4219,8 +4284,16 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
     return true;
 }
 
+bool ShaderResources::variantKeySpansHold() const {
+    return std::all_of(variantKeySpans.begin(), variantKeySpans.end(), [](const VariantKeySpan& span) { return provedVariantKeys(span.dccAddress, span.bytes) == span.keys; });
+}
+
+bool ShaderResources::variantWritesHold() const {
+    return std::all_of(variantWrites.begin(), variantWrites.end(), [](const VariantWrite& write) { return sameWriteExtent(StorageTexture::LastWrite(write.base), write.write); });
+}
+
 bool ShaderResources::fastRevalidateEach() {
-    if (validatedTextures.size() != textures.size()) return false;
+    if (validatedTextures.size() != textures.size() || !variantKeySpansHold() || !variantWritesHold()) return false;
     for (std::size_t i = 0; i < textures.size(); ++i) {
         auto& surface = validatedTextures[i];
         if (!surface.valid) return false;
@@ -4236,6 +4309,7 @@ bool ShaderResources::fastRevalidateEach() {
         if (surface.collected == 0) return false;
         if (PendingStorageOverlaps(address, bytes, surface.source)) return false;
         if (surface.source != nullptr && surface.resource.dccAddress != 0 && surface.resource.dccAddress != surface.source->Descriptor().dccAddress) return false;
+        if (surface.source != nullptr && !SourceServesView(*surface.source, surface.resource)) return false;
         if (surface.source != nullptr) {
             // The view follows the image: it needs the image current with guest memory, as the
             // lookup's Refresh would make it.
@@ -4250,7 +4324,7 @@ bool ShaderResources::fastRevalidateEach() {
         if (surface.source != nullptr && surface.keys != DccKeys::Uncompressed && StorageTexture::FindPending(address, surface.bytes).get() != surface.source) return false;
     }
     for (std::size_t i = 0; i < storageTextures.size(); ++i) {
-        if (storageTextures[i] != nullptr && (i >= storageKeys.size() || (storageKeys[i] != 0 && storageKeys[i] != storageTextures[i]->Descriptor().dccAddress))) return false;
+        if (storageTextures[i] != nullptr && (i >= storageKeys.size() || (storageKeys[i].dccAddress != 0 && storageKeys[i].dccAddress != storageTextures[i]->Descriptor().dccAddress) || !StorageImageServesKeys(*storageTextures[i], storageKeys[i]))) return false;
         // Consecutive elements of one mip chain share the image (see addStorageImageBinding).
         if (i != 0 && storageTextures[i] == storageTextures[i - 1]) continue;
         const auto* image = storageTextures[i].get();
@@ -4298,7 +4372,7 @@ ShaderResources::OwnRefreshFallback ShaderResources::refreshOwnObjects(std::span
         const auto& source = textures[i]->SharedStorageSource();
         if (source == nullptr || source.get() != surface.source) return OwnRefreshFallback::Snapshot;
         if (!source->Cached()) return OwnRefreshFallback::Uncached;
-        if (!StorageImageServesKeys(*source, surface.resource.dccAddress)) return OwnRefreshFallback::Keys;
+        if (!StorageImageServesKeys(*source, {surface.resource.dccAddress, surface.resource.dccAlphaOnMsb})) return OwnRefreshFallback::Keys;
         const auto address = surface.resource.baseAddress;
         const auto bytes = static_cast<std::size_t>(surface.bytes);
         const bool imported = SampledFromStorageEligible(context, surface.resource, surface.bytes);
@@ -4535,6 +4609,10 @@ void ShaderResources::subscribeIndex(std::span<const CompiledShader> shaders) {
         for (std::size_t element = 0; element < table.elementTextures.size(); ++element) {
             const auto index = table.elementTextures[element];
             if (index >= indexElements.size() || (element + 1) * 8u > table.images->guestDescriptor.size()) continue;
+            if (element < table.representatives.size() && table.representatives[element] != NoRepresentative) {
+                indexElements[index].variant = true;
+                continue;
+            }
             auto& entry = indexElements[index];
             const auto words = std::span<const std::uint32_t>(table.images->guestDescriptor).subspan(element * 8u, 8u);
             std::copy(words.begin(), words.end(), entry.words.begin());
@@ -4613,7 +4691,12 @@ bool ShaderResources::reresolveElements(const std::vector<std::size_t>& elements
         const VkImageViewType multisampleViewType = element.shape == ShaderRecompiler::DescriptorImageShape::Image2DMultisampleArray ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
         auto texture = cachedTexture(context, words, resource, ViewComponents(resource), 0, element.depthCompare, multisampleViewType);
         if (texture == nullptr) return false;
-        if (texture != textures[i]) replaced.emplace_back(i, std::move(texture));
+        if (texture == textures[i]) continue;
+        if (element.variant) {
+            lookupLog().clear();
+            return false;
+        }
+        replaced.emplace_back(i, std::move(texture));
     }
     if (!replaced.empty() && (!drawBuild || usesBda)) {
         lookupLog().clear();
@@ -4660,6 +4743,7 @@ ShaderResources::IndexOutcome ShaderResources::indexRevalidate(std::span<const C
         return result;
     };
     const auto fallback = [&] { return outcome(IndexOutcome::Fallback); };
+    if (!variantKeySpansHold() || !variantWritesHold()) return fallback();
     auto& subscription = *writeSubscription;
     for (const auto& [begin, end] : GuestMemory::SubscriptionSpans(subscription)) {
         if (!FlushDepthPlanes(begin, static_cast<std::size_t>(end - begin)).empty()) return fallback();
@@ -4725,6 +4809,7 @@ ShaderResources::IndexOutcome ShaderResources::indexRevalidate(std::span<const C
         countIndex(IndexCompared, comparedTextures.size());
         if (!reresolveElements(comparedTextures, replaced)) return fallback();
     }
+    if (!variantWritesHold()) return fallback();
     if (!check.empty() || !storageTextures.empty()) {
         thread_local std::vector<PendingOverlap>* overlappingSlot = nullptr;
         auto& overlapping = ShaderRecompiler::ThreadOwned(overlappingSlot);
@@ -4816,6 +4901,10 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
         if (!cpuWriters) break;
         CompletePendingCpuWrites(context, image->Descriptor().baseAddress, static_cast<std::size_t>(image->GuestBytes()));
         if (image->Descriptor().dccAddress != 0) CompletePendingCpuWrites(context, image->Descriptor().dccAddress, DccKeyBytes(image->GuestBytes()));
+    }
+    for (const auto& span : variantKeySpans) {
+        if (!cpuWriters) break;
+        CompletePendingCpuWrites(context, span.dccAddress, DccKeyBytes(span.bytes));
     }
     // APS5_NO_FAST_REVALIDATE=1 always repeats the lookups.
     static const bool noFast = std::getenv("APS5_NO_FAST_REVALIDATE") != nullptr;
@@ -4911,7 +5000,7 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
             if (images == nullptr || images->count != table.elementTextures.size()) return miss("image table of another size at texture", textureIndex);
             std::vector<std::shared_ptr<Texture>> cached;
             if (auto* reused = partial ? nullptr : FindReusedTable(context.device, *images, CurrentTableState()); reused != nullptr && TableCurrent(*reused) && CachedTableTextures(*reused, cached)) {
-                if (!reused->representatives.empty() && reused->representatives != variantRepresentatives(context.device, *images, table.elementBase, context.imageTableCapacity)) return false;
+                if (!reused->representatives.empty() && reused->representatives != variantRepresentatives(context, *images, table.elementBase, context.imageTableCapacity)) return false;
                 logTableLookups(*reused, cached);
                 auto next = cached.begin();
                 bool same = true;
@@ -4938,7 +5027,7 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
                 TextureCounts().tablesReused.fetch_add(1, std::memory_order_relaxed);
                 continue;
             }
-            if (!table.representatives.empty() && table.representatives != variantRepresentatives(context.device, *images, table.elementBase, context.imageTableCapacity)) return miss("image table variants at texture", textureIndex);
+            if (!table.representatives.empty() && table.representatives != variantRepresentatives(context, *images, table.elementBase, context.imageTableCapacity)) return miss("image table variants at texture", textureIndex);
             for (std::uint32_t element = 0; element < images->count; ++element) {
                 if (table.elementTextures[element] == std::numeric_limits<std::size_t>::max()) continue;
                 if (!table.representatives.empty() && table.representatives[element] != NoRepresentative) continue;
@@ -4953,6 +5042,16 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
         }
         if (textureIndex != textures.size()) return miss("texture count", textureIndex);
         if (storageIndex != storageTextures.size()) return miss("storage image count", storageIndex, true);
+        if (!partial) {
+            std::vector<VariantKeySpan> provedSpans;
+            for (auto span : variantKeySpans) {
+                span.keys = provedVariantKeys(span.dccAddress, span.bytes);
+                if (span.keys == DccKeys::Mixed || span.keys == DccKeys::Unreadable) return miss("variant DCC keys at texture", textureIndex);
+                noteVariantKeySpan(provedSpans, span);
+            }
+            variantKeySpans = std::move(provedSpans);
+            for (auto& write : variantWrites) write.write = StorageTexture::LastWrite(write.base);
+        }
         // The walk proved every object current again: the records move to what it proved, or one
         // spurious stamp (a label sharing a 64 KiB block with a surface's edge) would keep this
         // object on the full walk for good.
@@ -6249,17 +6348,20 @@ std::shared_ptr<Texture> ShaderResources::fastTexture(ImageRecord& record) {
     if (GuestMemory::CollectWrites(address, bytes) == 0) return nullptr;
     if (PendingStorageOverlaps(address, bytes, record.source.get())) return nullptr;
     auto keys = record.keys;
+    std::optional<DccKeys> sourceKeys;
     if (record.resource.dccAddress != 0) {
         const auto scanStart = outcome.profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         // Through the proof of the image whose keys they are (the view's source when the surface
         // is the image's, else the texture's): a scan only when the key range was stamped.
-        keys = ProvedClearKeys(record.resource, record.guestBytes, SameKeySurface(record.source.get(), record.resource, record.guestBytes) ? record.source->KeyProof() : record.texture->KeyProof());
+        if (SameKeySurface(record.source.get(), record.resource, record.guestBytes)) sourceKeys = record.source->ProvedKeys();
+        keys = sourceKeys ? *sourceKeys : ProvedClearKeys(record.resource, record.guestBytes, record.texture->KeyProof());
         if (outcome.profile) LookupOutcomes::Add(LookupOutcomes::DccScan, scanStart);
     }
     // The keys the entry was made under (a view of a pending render target was made under its clear
     // keys and stays valid while they are unchanged); a change is the full lookup's to judge.
     if (keys != record.entryKeys) return nullptr;
     if (record.source != nullptr) {
+        if (!SourceServesView(*record.source, record.resource, sourceKeys)) return nullptr;
         if (!StorageImageCached(context, record.source.get()) || !GuestMemory::UnchangedSince(address, bytes, record.source->GenerationFor(address, bytes))) return nullptr;
         if (record.resource.dccAddress != 0 && IsDccClear(record.source->FilledKeys())) return nullptr;
         // Under fast-clear keys the view holds only while its image's results are still pending over
@@ -6423,7 +6525,7 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
             multisampleStorageViews.back() = MultisampleTargetStorageView(context, resource, uintStorage);
             multisampleSources.push_back(resource.baseAddress);
             storageMips.push_back(0);
-            storageKeys.push_back(0);
+            storageKeys.push_back({});
             storageFirstLayer.push_back(false);
             storageWritten.push_back(false);
             storageAtomic.push_back(false);
@@ -6449,7 +6551,7 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
             storageTextures.push_back(cachedStorageTexture(context, words, resource, mip, guestBytes, written));
         }
         storageMips.push_back(mip);
-        storageKeys.push_back(resource.dccAddress);
+        storageKeys.push_back({resource.dccAddress, resource.dccAlphaOnMsb});
         storageFirstLayer.push_back(firstLayer);
         storageWritten.push_back(written);
         storageAtomic.push_back(element < binding.imageAtomic.size() && binding.imageAtomic[element]);
@@ -6607,7 +6709,12 @@ void ShaderResources::addSamplerTable(const ShaderRecompiler::DescriptorBinding&
 
 namespace {
 
-void noteVariantSurface(std::uint64_t address, std::size_t members, const GuestTextureResource& chosen, const char* rule) {
+void noteVariantSurface(const GuestTextureResource& chosen, std::span<const std::uint32_t> representatives, std::span<const std::size_t> elementTextures, std::uint32_t representative) {
+    const auto address = chosen.baseAddress;
+    std::size_t members = 1;
+    for (std::size_t element = 0; element < representatives.size() && element < elementTextures.size(); ++element) {
+        if (representatives[element] == representative && elementTextures[element] == elementTextures[representative]) ++members;
+    }
     static std::mutex mutex;
     static std::unordered_set<std::uint64_t> seen;
     {
@@ -6615,16 +6722,41 @@ void noteVariantSurface(std::uint64_t address, std::size_t members, const GuestT
         if (seen.size() >= 4096u || !seen.insert(address).second) return;
     }
     TextureCounts().variantSurfaces.fetch_add(1, std::memory_order_relaxed);
-    std::fprintf(stderr, "[textures] surface 0x%llx has %zu dynamic-resolution variants in one image table; they share the %ux%u texture (chosen by %s)\n", static_cast<unsigned long long>(address), members, chosen.width, chosen.height, rule);
+    std::fprintf(stderr, "[textures] surface 0x%llx has %zu dynamic-resolution variants in one image table; they share the %ux%u texture\n", static_cast<unsigned long long>(address), members, chosen.width, chosen.height);
 }
 
-std::vector<std::uint32_t> variantRepresentatives(VkDevice device, const ShaderRecompiler::DescriptorBinding& binding, std::uint64_t elementBase, std::uint64_t capacity, bool* mixedExtents) {
+std::uint64_t sampledVariantBytes(const ShaderRecompiler::DescriptorBinding& binding, std::uint32_t element) {
+    const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u);
+    std::array<std::uint32_t, 8> narrowed{};
+    return SurfaceGuestBytes(DecodeTextureResource(firstLayerWords(words, binding.imageShapes.at(element), narrowed, false)));
+}
+
+bool variantKeysShared(const Context& context, const ShaderRecompiler::DescriptorBinding& binding, std::uint32_t chosen, std::uint32_t member, std::uint64_t dccAddress, VariantKeySpan* span) {
+    if (dccAddress == 0) return true;
+    try {
+        const auto chosenBytes = sampledVariantBytes(binding, chosen);
+        const auto memberBytes = sampledVariantBytes(binding, member);
+        const auto chosenKeys = DccKeyBytes(chosenBytes);
+        const auto memberKeys = DccKeyBytes(memberBytes);
+        if (chosenKeys == memberKeys) return true;
+        if (chosenKeys == 0 || memberKeys == 0) return false;
+        const auto wider = std::max(chosenBytes, memberBytes);
+        CompletePendingCpuWrites(context, dccAddress, DccKeyBytes(wider));
+        const auto keys = provedVariantKeys(dccAddress, wider);
+        if (keys == DccKeys::Mixed || keys == DccKeys::Unreadable) return false;
+        if (span != nullptr) *span = {dccAddress, wider, keys};
+        return true;
+    } catch (const std::runtime_error&) {
+        return false;
+    }
+}
+
+std::vector<std::uint32_t> variantRepresentatives(const Context& context, const ShaderRecompiler::DescriptorBinding& binding, std::uint64_t elementBase, std::uint64_t capacity, bool* mixedExtents) {
     struct Member {
         std::uint32_t element;
         GuestTextureResource resource;
     };
-    using FamilyKey = std::tuple<std::uint64_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t>;
-    std::map<FamilyKey, std::vector<Member>> families;
+    std::map<std::tuple<GuestTextureResource, std::uint32_t, std::uint32_t>, std::vector<Member>> families;
     for (std::uint32_t element = 0; element < binding.count && elementBase + element < capacity; ++element) {
         if (element < binding.imageWritten.size() && binding.imageWritten[element]) continue;
         const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u);
@@ -6632,8 +6764,9 @@ std::vector<std::uint32_t> variantRepresentatives(VkDevice device, const ShaderR
         const auto decoded = TryDecodeTextureResource(words);
         if (decoded.rejection) continue;
         const auto& resource = decoded.resource;
-        const FamilyKey key{resource.baseAddress, resource.pipeBankXor, resource.format, static_cast<std::uint32_t>(resource.tileMode), static_cast<std::uint32_t>(resource.dimension), resource.mipCount, resource.baseLevel, resource.lastLevel, resource.depthOrLastArray, resource.baseArray};
-        families[key].push_back({element, resource});
+        auto family = resource;
+        family.width = family.height = family.linearPitch = family.gcnPitch = 0;
+        families[{family, ShaderRecompiler::DepthBitsTextureWidth(words[1], words[3]), ShaderRecompiler::GcnGuestShaders() ? 0u : (words[6] >> 21u) & 1u}].push_back({element, resource});
     }
     std::vector<std::uint32_t> representatives;
     for (const auto& [key, members] : families) {
@@ -6645,14 +6778,11 @@ std::vector<std::uint32_t> variantRepresentatives(VkDevice device, const ShaderR
             return std::find_if(members.begin(), members.end(), [&](const Member& member) { return member.resource.width == width && member.resource.height == height; });
         };
         auto chosen = members.end();
-        const char* rule = "newest write";
         if (const auto record = StorageTexture::LastWrite(first.baseAddress); record && record->tileMode == first.tileMode && record->dimension == first.dimension && BytesPerElement(record->format) == BytesPerElement(first.format)) chosen = withExtent(record->width, record->height);
         if (chosen == members.end()) {
-            rule = "active depth surface";
-            if (const auto depth = ActiveDepthExtent(device, first.baseAddress)) chosen = withExtent(depth->width, depth->height);
+            if (const auto depth = ActiveDepthExtent(context.device, first.baseAddress)) chosen = withExtent(depth->width, depth->height);
         }
         if (chosen == members.end()) {
-            rule = "largest accessible";
             std::uint64_t chosenBytes = 0;
             std::uint64_t chosenExtent = 0;
             for (auto member = members.begin(); member != members.end(); ++member) {
@@ -6671,10 +6801,10 @@ std::vector<std::uint32_t> variantRepresentatives(VkDevice device, const ShaderR
         for (const auto& member : members) {
             if (member.resource.width == chosen->resource.width && member.resource.height == chosen->resource.height) continue;
             if (binding.imageShapes.at(member.element) != binding.imageShapes.at(chosen->element) || binding.imageDepthCompare.at(member.element) != binding.imageDepthCompare.at(chosen->element)) continue;
+            if (!variantKeysShared(context, binding, chosen->element, member.element, first.dccAddress)) continue;
             if (representatives.empty()) representatives.assign(binding.count, NoRepresentative);
             representatives[member.element] = chosen->element;
         }
-        noteVariantSurface(first.baseAddress, members.size(), chosen->resource, rule);
     }
     return representatives;
 }
@@ -6729,7 +6859,7 @@ bool sameLayout(const ImageTableLayout& entry, const ShaderRecompiler::Descripto
            entry.written == binding.imageWritten && entry.depthCompare == binding.imageDepthCompare;
 }
 
-void resolveTableLayout(VkDevice device, const ShaderRecompiler::DescriptorBinding& binding,
+void resolveTableLayout(const Context& context, const ShaderRecompiler::DescriptorBinding& binding,
                         std::uint64_t base, std::uint64_t capacity,
                         std::vector<std::uint32_t>& representatives, std::vector<std::uint32_t>& partners) {
     if (binding.count <= 1) return;
@@ -6737,7 +6867,7 @@ void resolveTableLayout(VkDevice device, const ShaderRecompiler::DescriptorBindi
     if (binding.count > maxElements || binding.guestDescriptor.size() > 8 * maxElements ||
         binding.imageShapes.size() > maxElements || binding.imageWritten.size() > maxElements ||
         binding.imageDepthCompare.size() > maxElements) {
-        representatives = variantRepresentatives(device, binding, base, capacity);
+        representatives = variantRepresentatives(context, binding, base, capacity);
         partners = arrayPartners(binding, base, capacity);
         return;
     }
@@ -6750,13 +6880,13 @@ void resolveTableLayout(VkDevice device, const ShaderRecompiler::DescriptorBindi
     });
     if (found != entries.end()) {
         entries.splice(entries.begin(), entries, found);
-        if (found->mixedExtents) representatives = variantRepresentatives(device, binding, base, capacity);
+        if (found->mixedExtents) representatives = variantRepresentatives(context, binding, base, capacity);
         else representatives.clear();
         partners = found->partners;
         return;
     }
     bool mixedExtents = false;
-    representatives = variantRepresentatives(device, binding, base, capacity, &mixedExtents);
+    representatives = variantRepresentatives(context, binding, base, capacity, &mixedExtents);
     partners = arrayPartners(binding, base, capacity);
     if (entries.size() == 8) entries.pop_back();
     entries.push_front({binding.count, visible, gcn, binding.guestDescriptor, binding.imageShapes,
@@ -6918,13 +7048,15 @@ void ShaderResources::resolveImageTables() {
             }
             if (landed && CurrentTableState() != state) reused = nullptr;
         }
-        if (reused != nullptr && !reused->representatives.empty() && reused->representatives != variantRepresentatives(context.device, binding, table.elementBase, context.imageTableCapacity)) reused = nullptr;
+        if (reused != nullptr && !reused->representatives.empty() && reused->representatives != variantRepresentatives(context, binding, table.elementBase, context.imageTableCapacity)) reused = nullptr;
         if (reused != nullptr && TableCurrent(*reused) && CachedTableTextures(*reused, cached)) {
             logTableLookups(*reused, cached);
             table.representatives = reused->representatives;
             const bool replay = TableReplay() && reused->replayable && reused->imageSamplers == binding.imageSamplers && reused->samplers == samplerKey;
             if (!replay) reused->bound.assign(binding.count, {});
             auto next = cached.begin();
+            bool resolvedAlone = false;
+            std::vector<std::pair<GuestTextureResource, std::uint32_t>> borrowed;
             for (std::uint32_t element = 0; element < binding.count; ++element) {
                 const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u);
                 const auto& entry = reused->elements[element];
@@ -6955,6 +7087,13 @@ void ShaderResources::resolveImageTables() {
                 const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u);
                 const auto representativeWords = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(entry.representative) * 8u, 8u);
                 const auto index = table.elementTextures[entry.representative];
+                VariantKeySpan span;
+                if (index != std::numeric_limits<std::size_t>::max() && !variantKeysShared(context, binding, entry.representative, element, entry.representativeResource.dccAddress, &span)) {
+                    table.representatives[element] = NoRepresentative;
+                    resolvedAlone = true;
+                    static_cast<void>(resolveLive(element, words));
+                    continue;
+                }
                 const auto message = index == std::numeric_limits<std::size_t>::max() ? std::string("the dynamic-resolution variant this entry borrows from was rejected") : refusal(element, representativeWords, textures[index], entry.representativeResource);
                 if (!message.empty()) {
                     table.map[faults + element] = rejectTableElement(table, words, message);
@@ -6964,12 +7103,19 @@ void ShaderResources::resolveImageTables() {
                 table.elementTextures[element] = index;
                 item->imageAllocations[static_cast<std::size_t>(table.elementBase) + element] = index;
                 counters.variantSubstituted.fetch_add(1, std::memory_order_relaxed);
+                noteVariantKeySpan(variantKeySpans, span);
+                borrowed.emplace_back(entry.representativeResource, entry.representative);
+            }
+            for (const auto& [resource, representative] : borrowed) {
+                noteVariantSurface(resource, table.representatives, table.elementTextures, representative);
+                noteVariantWrite(variantWrites, resource.baseAddress);
             }
             if (!replay) {
                 reused->imageSamplers = binding.imageSamplers;
                 reused->samplers = samplerKey;
                 reused->replayable = static_cast<std::uint64_t>(table.elementBase) + binding.count <= context.imageTableCapacity;
             }
+            if (resolvedAlone) reused->replayable = false;
             (replay ? counters.tablesReplayed : counters.tablesReused).fetch_add(1, std::memory_order_relaxed);
             continue;
         }
@@ -6977,7 +7123,7 @@ void ShaderResources::resolveImageTables() {
         fresh.bound.assign(binding.count, {});
         bool reusable = state.epoch != 0;
         std::vector<std::uint32_t> partners;
-        resolveTableLayout(context.device, binding, table.elementBase, context.imageTableCapacity, table.representatives, partners);
+        resolveTableLayout(context, binding, table.elementBase, context.imageTableCapacity, table.representatives, partners);
         const auto& representatives = table.representatives;
         std::vector<bool> representativeNeeded(representatives.size(), false);
         for (const auto representative : representatives) {
@@ -7072,7 +7218,7 @@ void ShaderResources::resolveImageTables() {
                     continue;
                 }
                 storageMips.push_back(mip);
-                storageKeys.push_back(resource.dccAddress);
+                storageKeys.push_back({resource.dccAddress, resource.dccAlphaOnMsb});
                 storageFirstLayer.push_back(firstLayer);
                 storageWritten.push_back(true);
                 storageAtomic.push_back(element < binding.imageAtomic.size() && binding.imageAtomic[element]);
@@ -7110,11 +7256,19 @@ void ShaderResources::resolveImageTables() {
             if (!representativeNeeded.empty() && representativeNeeded[element]) representativeSources.emplace(element, sampled.resource);
             fresh.bound[element] = bind(element, sampled.words, std::move(texture), sampled.resource, sampled.guestBytes, firstLayer);
         }
+        std::vector<std::pair<GuestTextureResource, std::uint32_t>> borrowed;
         for (const auto element : substitutes) {
             const auto representative = representatives[element];
             const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(representative) * 8u, 8u);
             const auto index = table.elementTextures[representative];
             const auto source = representativeSources.find(representative);
+            VariantKeySpan span;
+            if (index != std::numeric_limits<std::size_t>::max() && source != representativeSources.end() && !variantKeysShared(context, binding, representative, element, source->second.dccAddress, &span)) {
+                reusable = false;
+                table.representatives[element] = NoRepresentative;
+                fresh.bound[element] = resolveLive(element, std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u));
+                continue;
+            }
             const auto message = index == std::numeric_limits<std::size_t>::max() || source == representativeSources.end() ? std::string("the dynamic-resolution variant this entry borrows from was rejected") : refusal(element, words, textures[index], source->second);
             if (reusable) {
                 if (fresh.elements[representative].rejected || source == representativeSources.end()) reusable = false;
@@ -7128,6 +7282,12 @@ void ShaderResources::resolveImageTables() {
             table.elementTextures[element] = index;
             item->imageAllocations[static_cast<std::size_t>(table.elementBase) + element] = index;
             counters.variantSubstituted.fetch_add(1, std::memory_order_relaxed);
+            noteVariantKeySpan(variantKeySpans, span);
+            borrowed.emplace_back(source->second, representative);
+        }
+        for (const auto& [resource, representative] : borrowed) {
+            noteVariantSurface(resource, table.representatives, table.elementTextures, representative);
+            noteVariantWrite(variantWrites, resource.baseAddress);
         }
         counters.tablesResolved.fetch_add(1, std::memory_order_relaxed);
         const bool anyKept = std::any_of(fresh.elements.begin(), fresh.elements.end(), [](const ReusedTableElement& element) { return !element.live; });

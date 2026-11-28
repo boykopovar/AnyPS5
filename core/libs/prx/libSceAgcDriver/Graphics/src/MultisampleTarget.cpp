@@ -521,7 +521,18 @@ public:
         }
     }
 
+    void RequireDccLayout(const ColorTarget& use) const {
+        if (dccRanges.empty()) {
+            Require(use.dccAddress == 0, "adding DCC to a resident multisampled color target is not implemented");
+            return;
+        }
+        Require(metadataValid->load(std::memory_order_acquire), "multisampled DCC metadata was released while its color target remains resident");
+        static_cast<void>(MultisampledDccBytes(use));
+        Require(use.address == target.address && use.dccAddress == target.dccAddress && use.dccControl == target.dccControl && use.dccAlphaOnMsb == target.dccAlphaOnMsb && use.dccPipeAligned == target.dccPipeAligned && use.cmaskAddress == target.cmaskAddress && use.cmaskBytes == target.cmaskBytes && use.tileMode == target.tileMode && use.elementBytes == target.elementBytes && use.pipeBankXor == target.pipeBankXor, "multisampled DCC target layout or metadata changed");
+    }
+
     void ApplyFastClear(const ColorTarget& use) {
+        RequireDccLayout(use);
         VkClearColorValue clear{};
         const bool refilled = absorbDccFill(use, clear);
         checkDccCurrent(use, refilled);
@@ -660,6 +671,7 @@ public:
         ApplyFastClear(target);
         recorder.Sync();
         Require(active->load(std::memory_order_acquire), "multisampled color target was retired during sample readback");
+        RequireDccLayout(target);
         checkDccCurrent(target, false);
         const auto snapshot = allocate(readUsage, readFlags, format);
         try {
@@ -1214,13 +1226,7 @@ private:
     }
 
     void checkDccCurrent(const ColorTarget& use, bool metadataRefilled) const {
-        if (dccRanges.empty()) {
-            Require(use.dccAddress == 0, "adding DCC to a resident multisampled color target is not implemented");
-            return;
-        }
-        Require(metadataValid->load(std::memory_order_acquire), "multisampled DCC metadata was released while its color target remains resident");
-        static_cast<void>(MultisampledDccBytes(use));
-        Require(use.address == target.address && use.dccAddress == target.dccAddress && use.dccControl == target.dccControl && use.dccAlphaOnMsb == target.dccAlphaOnMsb && use.dccPipeAligned == target.dccPipeAligned && use.cmaskAddress == target.cmaskAddress && use.cmaskBytes == target.cmaskBytes && use.tileMode == target.tileMode && use.elementBytes == target.elementBytes && use.pipeBankXor == target.pipeBankXor, "multisampled DCC target layout or metadata changed");
+        if (dccRanges.empty()) return;
         checkDccWrites(metadataRefilled ? std::size_t{1} : dccRanges.size());
         if (fmaskRange) {
             Require(use.fmaskAddress == target.fmaskAddress && use.fmaskPipeBankXor == target.fmaskPipeBankXor, "native FMASK target layout changed");
@@ -1575,6 +1581,7 @@ MultisampleTarget& acquire(const Context& context, const ColorTarget& requested,
             target->ApplyFastClear(use);
             return *target;
         }
+        target->RequireDccLayout(use);
         {
             std::unique_lock lock(guardedMutex());
             if (!target->active->load(std::memory_order_acquire)) continue;
@@ -2086,6 +2093,13 @@ VkFormat sampledFormat(const Context& context, std::uint32_t guestFormat) {
     return IsRepackedTextureFormat(guestFormat) ? ResolveTextureFormat(guestFormat) : SampledTextureFormat(context, guestFormat);
 }
 
+void requireDccAlphaPlacement(const ColorTarget& rendered, const GuestTextureResource& resource, const char* access) {
+    if (rendered.dccAddress == 0 || resource.dccAddress != rendered.dccAddress || resource.dccAlphaOnMsb == rendered.dccAlphaOnMsb) return;
+    char text[320];
+    std::snprintf(text, sizeof(text), "AGC graphics: %s multisampled DCC color target 0x%llx through a T# whose DCC alpha placement (ALPHA_IS_ON_MSB %d) differs from the target's is not implemented", access, static_cast<unsigned long long>(resource.baseAddress), resource.dccAlphaOnMsb ? 1 : 0);
+    throw std::runtime_error(text);
+}
+
 }
 
 std::shared_ptr<Texture> MultisampleTargetTexture(const Context& context, const GuestTextureResource& resource, VkComponentMapping components, VkImageViewType viewType) {
@@ -2099,6 +2113,7 @@ std::shared_ptr<Texture> MultisampleTargetTexture(const Context& context, const 
         if (target->context.device != context.device || target->target.surfaceAddress != resource.baseAddress) continue;
         const auto& rendered = target->target;
         if (rendered.eqaaFragments != 0) throw std::runtime_error(eqaaReadRefusal("sampling", rendered, resource));
+        requireDccAlphaPlacement(rendered, resource, "sampling");
         const bool sameShape = rendered.extent.width == resource.width && rendered.extent.height == resource.height && rendered.samples == resource.samples && rendered.mip == 0;
         if (sameShape && rendered.format == format) return target->Sampled(components, viewType);
         if (sameShape && redBlueSwapped(rendered.format, format)) return target->Sampled(swapRedBlue(components), viewType);
@@ -2124,6 +2139,7 @@ std::shared_ptr<Texture> MultisampleTargetFirstSample(const Context& context, co
         if (!target->active->load(std::memory_order_acquire)) continue;
         if (target->context.device != context.device || target->target.surfaceAddress != resource.baseAddress) continue;
         const auto& rendered = target->target;
+        requireDccAlphaPlacement(rendered, resource, "reading sample 0 of");
         const bool sameShape = rendered.extent.width == resource.width && rendered.extent.height == resource.height && rendered.samples == resource.samples && rendered.mip == 0;
         if (sameShape && rendered.format == format) return target->FirstSample(components);
         if (sameShape && redBlueSwapped(rendered.format, format)) return target->FirstSample(swapRedBlue(components));
@@ -2166,6 +2182,7 @@ VkImageView MultisampleTargetStorageView(const Context& context, const GuestText
         if (target->context.device != context.device || target->target.surfaceAddress != resource.baseAddress) continue;
         const auto& rendered = target->target;
         if (rendered.eqaaFragments != 0) throw std::runtime_error(eqaaReadRefusal("storage image access to", rendered, resource));
+        requireDccAlphaPlacement(rendered, resource, "storage image access to");
         if (sameStorageForm(context, rendered.format, format) && rendered.extent.width == resource.width && rendered.extent.height == resource.height && rendered.samples == resource.samples && rendered.mip == 0) {
             if (!holdHostOnly(*target)) continue;
             return target->Storage(StorageFormatForGuest(context, resource.format), uintStorage);

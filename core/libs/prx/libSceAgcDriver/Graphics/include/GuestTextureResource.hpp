@@ -3,6 +3,7 @@
 
 #include "Recompiler.hpp"
 #include <array>
+#include <compare>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -115,6 +116,7 @@ struct GuestTextureResource {
     bool gcnLinearGeneral = false;
     std::uint32_t linearPitch = 0;
     std::uint64_t fmaskCmaskAddress = 0;
+    auto operator<=>(const GuestTextureResource&) const = default;
 };
 
 constexpr bool IsGcnMicroTiled(TextureTileMode mode) {

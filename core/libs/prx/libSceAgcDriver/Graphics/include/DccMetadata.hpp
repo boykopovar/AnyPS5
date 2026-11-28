@@ -55,6 +55,8 @@ void MarkDccUncompressed(std::uint64_t metaAddress, std::uint64_t surfaceBytes, 
 // APS5_CPU_DCC_KEYS=1 always stores on the CPU.
 void MarkDccUncompressed(const Context& context, std::uint64_t metaAddress, std::uint64_t surfaceBytes);
 void MarkDccUncompressed(const Context& context, std::uint64_t metaAddress, std::uint64_t surfaceBytes, std::size_t keyCount);
+void RequireConvertedDccClearEncodable(std::uint32_t guestFormat, DccKeys keys);
+void RequireDccClearEncodable(VkFormat format, DccKeys keys);
 // Fills `bytes` with the texel a 0000/0001/1110/1111 clear code stands for ("1" is 1.0 or the integer
 // maximum; the alpha channel is the last one in memory when alphaOnMsb, else the first, and 3-channel
 // formats have none). False when the format has no encoding here.

@@ -1062,7 +1062,7 @@ void copiedDirectOrderingTests(const Device& device, Recorder& recorder) {
         ClearCachedTextures(context.device);
         const auto keys = address + 65536;
         const auto keyBytes = DccKeyBytes(65536);
-        imageProgram.bindings[0].guestDescriptor[6] = (1u << 21) | (static_cast<std::uint32_t>((keys >> 8) & 0xffu) << 24);
+        imageProgram.bindings[0].guestDescriptor[6] = (1u << 21) | (1u << 22) | (static_cast<std::uint32_t>((keys >> 8) & 0xffu) << 24);
         imageProgram.bindings[0].guestDescriptor[7] = static_cast<std::uint32_t>(keys >> 16);
         auto keyProgram = program;
         keyProgram.bindings[0].guestDescriptor = {static_cast<std::uint32_t>(keys), static_cast<std::uint32_t>(keys >> 32u) & 0xffffu, static_cast<std::uint32_t>(keyBytes), 0x31000000u};
@@ -4557,7 +4557,7 @@ int hostImportCutTests(const Device& device) {
 }
 #endif
 
-void movedMetadataTests(const Device& device, Recorder& recorder) {
+void movedMetadataTests(const Device& device, Recorder& recorder, bool bindings) {
     const auto& base = device.GetContext();
     if (base.hostImportAlignment == 0) {
         std::cout << "host imports unavailable: moved DCC metadata not tested\n";
@@ -4652,6 +4652,438 @@ void movedMetadataTests(const Device& device, Recorder& recorder) {
     const auto back = CachedStorageSurface(context, withKeys(first));
     Require(back != moved && back->Descriptor().dccAddress == first, "the keys moving back did not remake the image");
     Require(holds(*back, {0x55, 0x55, 0x55, 0x55}), "the image remade under the first keys does not hold the stored texels");
+    auto onMsb = withKeys(first);
+    onMsb.dccAlphaOnMsb = true;
+    Require(CachedStorageSurface(context, onMsb) == back && RepeatStorageSurface(context, onMsb, back) == back, "an image under uncompressed keys, whose texels no DCC alpha placement changes, was evicted for another placement");
+    std::memset(firstKeys, 0x40, keyCount);
+    const auto msb = CachedStorageSurface(context, onMsb);
+    Require(msb != back && msb->Descriptor().dccAlphaOnMsb, "a 0001 clear viewed with the DCC alpha on the most significant channel kept the image made for the other placement");
+    Require(holds(*msb, {0, 0, 0, 0xff}), "a 0001 clear with the DCC alpha on the most significant channel did not set the last channel");
+    Require(RepeatStorageSurface(context, withKeys(first), msb) == nullptr, "the repeat path served a 0001 clear made for another DCC alpha placement");
+    const auto lsb = CachedStorageSurface(context, withKeys(first));
+    Require(lsb != msb && !lsb->Descriptor().dccAlphaOnMsb && holds(*lsb, {0xff, 0, 0, 0}), "a 0001 clear with the DCC alpha in the first channel was served from the image made for the other placement");
+    Require(CachedStorageSurface(context, withKeys(first)) == lsb, "a 0001 clear viewed again with the same DCC alpha placement was remade");
+    if (!bindings) return;
+    context.nullDescriptors = device.NullDescriptors();
+    if (!context.nullDescriptors) {
+        std::cout << "nullDescriptor unavailable: DCC alpha placement of bound images not tested\n";
+        return;
+    }
+    TextureCache textureCache(context);
+    context.textureCache = &textureCache;
+    auto words = EncodeTextureResource(resource);
+    words[6] |= (1u << 21u) | ((static_cast<std::uint32_t>(first >> 8u) & 0xffu) << 24u);
+    words[7] = static_cast<std::uint32_t>(first >> 16u);
+    Require(DecodeTextureResource(words).dccAddress == first && !DecodeTextureResource(words).dccAlphaOnMsb, "the test T# does not name the first keys with the DCC alpha in the first channel");
+    const auto bound = [&](ShaderRecompiler::DescriptorKind kind) {
+        ShaderRecompiler::RecompileResult program;
+        ShaderRecompiler::DescriptorBinding binding;
+        binding.kind = kind;
+        binding.role = ShaderRecompiler::DescriptorRole::GuestImages;
+        binding.descriptorSet = 0;
+        binding.binding = kind == ShaderRecompiler::DescriptorKind::StorageImage ? ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding : ShaderRecompiler::RuntimeAbi::FirstImageBinding;
+        binding.count = 1;
+        binding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
+        if (kind == ShaderRecompiler::DescriptorKind::StorageImage) binding.imageWritten = {false};
+        else binding.imageSamplers = {0};
+        binding.guestDescriptor.assign(words.begin(), words.end());
+        program.bindings.push_back(std::move(binding));
+        return program;
+    };
+    for (const auto kind : {ShaderRecompiler::DescriptorKind::StorageImage, ShaderRecompiler::DescriptorKind::SampledImage}) {
+        const std::string what = kind == ShaderRecompiler::DescriptorKind::StorageImage ? "a storage binding" : "a sampled view";
+        std::memset(texels, 0x55, surfaceBytes);
+        std::memset(firstKeys, 0xff, keyCount);
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        const auto msbImage = CachedStorageSurface(context, onMsb);
+        Require(msbImage->Descriptor().dccAlphaOnMsb && holds(*msbImage, {0x55, 0x55, 0x55, 0x55}), "the image made with the DCC alpha on the most significant channel does not hold the stored texels");
+        const auto program = bound(kind);
+        const CompiledShader compute{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+        const auto serves = [&](const ShaderResources& resources) {
+            if (kind == ShaderRecompiler::DescriptorKind::StorageImage) return resources.StorageImages().size() == 1 && resources.StorageImages().front().first == msbImage->Image();
+            return resources.SampledTextures().size() == 1 && resources.SampledTextures().front()->SharedStorageSource() == msbImage;
+        };
+        {
+            ShaderResources resources(context, compute);
+            Require(serves(resources), what + " with the DCC alpha in the first channel under uncompressed keys was not served the image made for the other placement");
+            Require(resources.Revalidate(compute) && serves(resources), what + " under unchanged uncompressed keys did not revalidate");
+            std::memset(firstKeys, 0x40, keyCount);
+            AgcDriver::GuestMemory::BumpCollectEpoch();
+            const bool kept = resources.Revalidate(compute);
+            Require(!kept || !serves(resources), what + " revalidated a 0001 clear onto the image made for the other DCC alpha placement");
+            recorder.Submit();
+            device.WaitQueue();
+            recorder.Sync();
+        }
+        const auto cleared = CachedStorageSurface(context, withKeys(first));
+        Require(cleared != msbImage && holds(*cleared, {0xff, 0, 0, 0}), what + ": the 0001 clear with the DCC alpha in the first channel did not set the first channel");
+    }
+    std::memset(firstKeys, 0xff, keyCount);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto shared = CachedStorageSurface(context, onMsb);
+    Require(StorageImageServesKeys(*shared, {first, false}) && StorageImageServesKeys(*shared, {first, true}), "an image under uncompressed keys did not serve both DCC alpha placements");
+    std::memset(firstKeys, 0x40, keyCount);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(!StorageImageServesKeys(*shared, {first, false}), "an image made with the DCC alpha on the most significant channel served a 0001 clear with the alpha in the first channel");
+    Require(StorageImageServesKeys(*shared, {first, true}), "an image did not serve a 0001 clear with its own DCC alpha placement");
+    recorder.Sync();
+    SharedResourceCache().Clear();
+}
+
+class SampleProgram {
+public:
+    SampleProgram(const Context& context, Recorder& recorder, std::span<const std::uint32_t> code = SAMPLE_LOD_SPV) : context(context), recorder(recorder), result(context, sizeof(float) * 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) {
+        VkDescriptorSetLayoutBinding bindings[2]{};
+        bindings[0] = {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
+        bindings[1] = {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
+        VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        layoutInfo.bindingCount = 2;
+        layoutInfo.pBindings = bindings;
+        Check(context.Function<PFN_vkCreateDescriptorSetLayout>("vkCreateDescriptorSetLayout")(context.device, &layoutInfo, nullptr, &setLayout), "vkCreateDescriptorSetLayout");
+        const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(float) * 4};
+        VkPipelineLayoutCreateInfo pipelineLayoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        pipelineLayoutInfo.setLayoutCount = 1;
+        pipelineLayoutInfo.pSetLayouts = &setLayout;
+        pipelineLayoutInfo.pushConstantRangeCount = 1;
+        pipelineLayoutInfo.pPushConstantRanges = &push;
+        Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &pipelineLayoutInfo, nullptr, &pipelineLayout), "vkCreatePipelineLayout");
+        module = CreateShaderModule(context, code.data(), code.size_bytes(), "vkCreateShaderModule");
+        VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+        pipelineInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, module, "main", nullptr};
+        pipelineInfo.layout = pipelineLayout;
+        Check(context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline), "vkCreateComputePipelines");
+        VkSamplerCreateInfo samplerInfo{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+        samplerInfo.magFilter = VK_FILTER_NEAREST;
+        samplerInfo.minFilter = VK_FILTER_NEAREST;
+        samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        samplerInfo.addressModeU = samplerInfo.addressModeV = samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        samplerInfo.maxLod = VK_LOD_CLAMP_NONE;
+        Check(context.Function<PFN_vkCreateSampler>("vkCreateSampler")(context.device, &samplerInfo, nullptr, &sampler), "vkCreateSampler");
+        const VkDescriptorPoolSize sizes[2]{{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1}, {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1}};
+        VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+        poolInfo.maxSets = 1;
+        poolInfo.poolSizeCount = 2;
+        poolInfo.pPoolSizes = sizes;
+        Check(context.Function<PFN_vkCreateDescriptorPool>("vkCreateDescriptorPool")(context.device, &poolInfo, nullptr, &pool), "vkCreateDescriptorPool");
+    }
+    ~SampleProgram() {
+        context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")(context.device, pool, nullptr);
+        context.Function<PFN_vkDestroySampler>("vkDestroySampler")(context.device, sampler, nullptr);
+        context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, pipeline, nullptr);
+        context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, module, nullptr);
+        context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, pipelineLayout, nullptr);
+        context.Function<PFN_vkDestroyDescriptorSetLayout>("vkDestroyDescriptorSetLayout")(context.device, setLayout, nullptr);
+    }
+    SampleProgram(const SampleProgram&) = delete;
+    SampleProgram& operator=(const SampleProgram&) = delete;
+
+    float Red(VkImageView view, VkImageLayout layout, float lod, float layer = 0) {
+        return Texel(view, layout, lod, 0.5f, 0.5f, layer)[0];
+    }
+
+    std::array<float, 4> Texel(VkImageView view, VkImageLayout layout, float lod, float u, float v, float layer = 0) {
+        VkDescriptorSetAllocateInfo allocateInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        allocateInfo.descriptorPool = pool;
+        allocateInfo.descriptorSetCount = 1;
+        allocateInfo.pSetLayouts = &setLayout;
+        VkDescriptorSet set = VK_NULL_HANDLE;
+        Check(context.Function<PFN_vkAllocateDescriptorSets>("vkAllocateDescriptorSets")(context.device, &allocateInfo, &set), "vkAllocateDescriptorSets");
+        const VkDescriptorImageInfo image{sampler, view, layout};
+        const VkDescriptorBufferInfo buffer{result.Handle(), 0, VK_WHOLE_SIZE};
+        VkWriteDescriptorSet writes[2]{{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}, {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}};
+        writes[0].dstSet = set;
+        writes[0].dstBinding = 0;
+        writes[0].descriptorCount = 1;
+        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[0].pImageInfo = &image;
+        writes[1].dstSet = set;
+        writes[1].dstBinding = 1;
+        writes[1].descriptorCount = 1;
+        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[1].pBufferInfo = &buffer;
+        context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, 2, writes, 0, nullptr);
+        const auto commands = recorder.Commands();
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+        context.BindComputePipeline(commands, pipeline);
+        context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &set, 0, nullptr);
+        const float parameters[]{lod, layer, u, v};
+        context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(parameters), parameters);
+        context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, 1, 1, 1);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        recorder.Submit();
+        recorder.Sync();
+        Check(context.Function<PFN_vkFreeDescriptorSets>("vkFreeDescriptorSets")(context.device, pool, 1, &set), "vkFreeDescriptorSets");
+        std::array<float, 4> texel{};
+        std::memcpy(texel.data(), result.Bytes().data(), sizeof(texel));
+        return texel;
+    }
+
+private:
+    const Context& context;
+    Recorder& recorder;
+    Buffer result;
+    VkDescriptorSetLayout setLayout = VK_NULL_HANDLE;
+    VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
+    VkShaderModule module = VK_NULL_HANDLE;
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    VkSampler sampler = VK_NULL_HANDLE;
+    VkDescriptorPool pool = VK_NULL_HANDLE;
+};
+
+float sampledRed(const Context& context, Recorder& recorder, const Texture& texture) {
+    SampleProgram program(context, recorder);
+    return program.Red(texture.View(), texture.Layout(), 0.0f);
+}
+
+bool restoredKeysTests(const Device& device, Recorder& recorder) {
+    const auto& base = device.GetContext();
+    if (base.hostImportAlignment == 0 || !device.NullDescriptors()) {
+        std::cout << "host imports or nullDescriptor unavailable: views over restored DCC keys not tested\n";
+        return false;
+    }
+    constexpr std::uint32_t side = 256;
+    constexpr std::size_t surfaceBytes = side * side * 4;
+    constexpr std::size_t keyCount = surfaceBytes / 256;
+    constexpr std::size_t unit = 65536;
+    constexpr std::size_t bytes = surfaceBytes + unit;
+    void* watched = AllocateWatched(bytes, unit);
+    if (watched == nullptr) {
+        std::cout << "watched memory unavailable: views over restored DCC keys not tested\n";
+        return false;
+    }
+    struct Release {
+        void* watched;
+        ~Release() { ReleaseWatched(watched, bytes); }
+    } release{watched};
+    auto* texels = static_cast<std::uint8_t*>(watched);
+    auto* keys = texels + surfaceBytes;
+    const auto address = reinterpret_cast<std::uint64_t>(watched);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(watched, bytes, true, true, true);
+    }
+    auto context = base;
+    TextureDetiler detiler(context);
+    context.detiler = &detiler;
+    context.nullDescriptors = true;
+    TextureCache textureCache(context);
+    context.textureCache = &textureCache;
+    struct Cleanup {
+        const Context& context;
+        Recorder& recorder;
+        void* block;
+        ~Cleanup() {
+            recorder.Sync();
+            SharedResourceCache().Clear();
+            ClearCachedTextures(context.device);
+            recorder.Sync();
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+            HostImportFor(context, reinterpret_cast<std::uint64_t>(block), bytes);
+        }
+    } cleanup{context, recorder, watched};
+    if (HostImportFor(context, address, bytes) == nullptr) {
+        std::cout << "host import refused: views over restored DCC keys not tested\n";
+        return false;
+    }
+    GuestTextureResource resource{};
+    resource.baseAddress = address;
+    resource.width = side;
+    resource.height = side;
+    resource.mipCount = 1;
+    resource.tileMode = TextureTileMode::kR64KBX;
+    resource.dimension = TextureDimension::k2D;
+    resource.format = 56;
+    resource.dstSelX = 4;
+    resource.dstSelY = 5;
+    resource.dstSelZ = 6;
+    resource.dstSelW = 7;
+    Require(DescribeSurface(resource).guestBytes == surfaceBytes, "the restored keys surface has an unexpected size");
+    const auto keyAddress = address + surfaceBytes;
+    auto onMsb = resource;
+    onMsb.dccAddress = keyAddress;
+    onMsb.dccAlphaOnMsb = true;
+    auto words = EncodeTextureResource(resource);
+    words[6] |= (1u << 21u) | ((static_cast<std::uint32_t>(keyAddress >> 8u) & 0xffu) << 24u);
+    words[7] = static_cast<std::uint32_t>(keyAddress >> 16u);
+    Require(DecodeTextureResource(words).dccAddress == keyAddress && !DecodeTextureResource(words).dccAlphaOnMsb, "the test T# does not name the keys with the DCC alpha in the first channel");
+    ShaderRecompiler::RecompileResult program;
+    {
+        ShaderRecompiler::DescriptorBinding binding;
+        binding.kind = ShaderRecompiler::DescriptorKind::SampledImage;
+        binding.role = ShaderRecompiler::DescriptorRole::GuestImages;
+        binding.descriptorSet = 0;
+        binding.binding = ShaderRecompiler::RuntimeAbi::FirstImageBinding;
+        binding.count = 1;
+        binding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
+        binding.imageSamplers = {0};
+        binding.guestDescriptor.assign(words.begin(), words.end());
+        program.bindings.push_back(std::move(binding));
+    }
+    const CompiledShader compute{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+    const auto holds = [&](const StorageTexture& image, std::array<std::uint8_t, 4> texel) {
+        Buffer readback(context, surfaceBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        const auto commands = recorder.Commands();
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+        VkBufferImageCopy copy{};
+        copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        copy.imageExtent = {side, side, 1};
+        context.Function<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer")(commands, image.Image(), VK_IMAGE_LAYOUT_GENERAL, readback.Handle(), 1, &copy);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+        const auto pixels = readback.Bytes();
+        for (std::size_t i = 0; i < pixels.size(); ++i) {
+            if (std::to_integer<std::uint8_t>(pixels[i]) != texel[i % 4]) return false;
+        }
+        return true;
+    };
+    for (const bool revalidated : {true, false}) {
+        const std::string what = revalidated ? "a revalidated sampled view" : "a sampled view built again";
+        recorder.Sync();
+        SharedResourceCache().Clear();
+        ClearCachedTextures(context.device);
+        std::memset(texels, 0x55, surfaceBytes);
+        std::memset(keys, 0xff, keyCount);
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        const auto source = CachedStorageSurface(context, onMsb);
+        Require(source->Descriptor().dccAlphaOnMsb && holds(*source, {0x55, 0x55, 0x55, 0x55}), what + ": the image made with the DCC alpha on the most significant channel does not hold the stored texels");
+        std::optional<ShaderResources> resources(std::in_place, context, compute);
+        Require(resources->SampledTextures().size() == 1 && resources->SampledTextures().front()->SharedStorageSource() == source, what + " with the DCC alpha in the first channel under uncompressed keys was not served the image made for the other placement");
+        if (!revalidated) resources.reset();
+        std::memset(keys, 0x40, keyCount);
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        Require(CachedStorageSurface(context, onMsb) == source && holds(*source, {0, 0, 0, 0xff}), what + ": the image with the DCC alpha on the most significant channel did not take the 0001 clear of its placement");
+        std::memset(keys, 0xff, keyCount);
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        if (revalidated) {
+            const bool kept = resources->Revalidate(compute);
+            Require(!kept || resources->SampledTextures().front()->SharedStorageSource() != source || holds(*source, {0x55, 0x55, 0x55, 0x55}), what + " kept a view of the image holding the 0001 clear after the keys returned to uncompressed");
+            if (!kept) resources.emplace(context, compute);
+        } else {
+            resources.emplace(context, compute);
+        }
+        Require(resources->SampledTextures().size() == 1, what + " after the keys returned to uncompressed has no texture");
+        const auto served = resources->SampledTextures().front()->SharedStorageSource();
+        Require(served == nullptr || holds(*served, {0x55, 0x55, 0x55, 0x55}), what + " after the keys returned to uncompressed was served an image holding the 0001 clear instead of the stored texels");
+        const auto red = sampledRed(context, recorder, *resources->SampledTextures().front());
+        Require(std::abs(red - 0x55 / 255.0f) <= 0.5f / 255.0f, what + (served == nullptr ? " (a snapshot)" : " (a view of the image)") + " after the keys returned to uncompressed sampled " + std::to_string(red) + " instead of the stored texel 0x55");
+        resources.reset();
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+    }
+    std::cout << "views over restored DCC keys passed\n";
+    return true;
+}
+
+void recipeAlphaPlacementTests(const Device& device, Recorder& recorder) {
+    if (!device.Graphics() || device.GetContext().hostImportAlignment == 0 || !DrawRecipes()) {
+        std::cout << "graphics, host imports or draw recipes unavailable: DCC alpha placement of draw recipes not tested\n";
+        return;
+    }
+    constexpr std::size_t unit = 65536;
+    constexpr std::size_t bytes = unit * 2;
+    void* watched = AllocateWatched(bytes, unit);
+    if (watched == nullptr) {
+        std::cout << "watched memory unavailable: DCC alpha placement of draw recipes not tested\n";
+        return;
+    }
+    struct Release {
+        void* watched;
+        ~Release() { ReleaseWatched(watched, bytes); }
+    } release{watched};
+    const auto address = reinterpret_cast<std::uint64_t>(watched);
+    auto context = device.GetContext();
+    context.recorder = &recorder;
+    TextureDetiler detiler(context);
+    context.detiler = &detiler;
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(watched, bytes, true, true, true);
+    }
+    struct Cleanup {
+        const Context& context;
+        Recorder& recorder;
+        void* block;
+        ~Cleanup() {
+            recorder.Sync();
+            WaitForOptimizedPipelines(context.device);
+            SharedResourceCache().Clear();
+            ClearCachedTextures(context.device);
+            recorder.Sync();
+            ClearCachedPipelines(context.device);
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+            HostImportFor(context, reinterpret_cast<std::uint64_t>(block), bytes);
+        }
+    } cleanup{context, recorder, watched};
+    if (HostImportFor(context, address, bytes) == nullptr) {
+        std::cout << "host import refused: DCC alpha placement of draw recipes not tested\n";
+        return;
+    }
+    const auto shader = [](auto& words, std::uint64_t variant) {
+        ShaderRecompiler::RecompileResult program;
+        program.spirv = std::vector<std::uint32_t>(std::begin(words), std::end(words));
+        program.variantId = variant;
+        return program;
+    };
+    auto vertex = shader(COVER_VERT_SPV, 111);
+    auto pixel = shader(COVER_FRAG_SPV, 112);
+    const std::array shaders{CompiledShader{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, CompiledShader{ShaderRecompiler::ShaderStage::Fragment, &pixel, 0}};
+    const auto stateFor = [&](bool alphaOnMsb) {
+        State state{};
+        state.stages.path = ShaderPath::Vertex;
+        state.color = {address, {64, 64}, VK_FORMAT_R8G8B8A8_UNORM, unit, 0xe4u, ColorTileMode::RenderTarget, 4};
+        state.color.dccAddress = address + unit;
+        state.color.dccAlphaOnMsb = alphaOnMsb;
+        state.colors = {state.color};
+        state.hasColorTarget = true;
+        state.renderExtent = {64, 64};
+        state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        state.viewport = {0, 64, 64, -64, 0, 1};
+        state.scissor = {{0, 0}, {32, 64}};
+        state.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+        state.blend.colorWriteMask = 15;
+        state.blends = {state.blend};
+        return state;
+    };
+    const AgcDriver::Pm4::DrawParameters triangle{0, 3, 0, 1, 0, false};
+    const auto writeKeys = [&](std::uint8_t key) { AgcDriver::GuestMemory::Write(address + unit, std::vector<std::byte>(unit / 256u, std::byte{key})); };
+    for (const bool imageOnMsb : {true, false}) {
+        const auto made = stateFor(imageOnMsb);
+        const auto bound = stateFor(!imageOnMsb);
+        AgcDriver::GuestMemory::Write(address, std::vector<std::byte>(unit, std::byte{0x55}));
+        writeKeys(0xff);
+        Draw(context, made, triangle, shaders);
+        std::shared_ptr<const AgcDriver::DrawRecipe> recipe;
+        Draw(context, bound, triangle, shaders, {}, &recipe);
+        WaitForOptimizedPipelines(context.device);
+        Require(recipe != nullptr, "a draw into a DCC target under uncompressed keys created no draw recipe");
+        Require(DrawWithRecipe(context, bound, triangle, shaders, {}, *recipe).recorded, "a draw into a DCC target under unchanged uncompressed keys did not reuse its draw recipe");
+        WaitForOptimizedPipelines(context.device);
+        writeKeys(0x40);
+        Require(!DrawWithRecipe(context, bound, triangle, shaders, {}, *recipe).recorded, "a draw recipe kept the target image made for the other DCC alpha placement after a 0001 clear");
+        Draw(context, bound, triangle, shaders);
+        WaitForOptimizedPipelines(context.device);
+        std::vector<std::byte> texels(64 * 64 * 4);
+        ReadColorTarget(bound.color, texels);
+        const std::array<std::uint8_t, 4> clear = bound.color.dccAlphaOnMsb ? std::array<std::uint8_t, 4>{0, 0, 0, 0xff} : std::array<std::uint8_t, 4>{0xff, 0, 0, 0};
+        for (std::size_t y = 0; y < 64; ++y) {
+            for (std::size_t x = 0; x < 64; ++x) {
+                for (std::size_t channel = 0; channel < 4; ++channel) Require(std::to_integer<std::uint8_t>(texels[(y * 64 + x) * 4 + channel]) == (x < 32 ? 0xffu : clear[channel]), "a draw after a 0001 clear with the DCC alpha in the " + std::string(bound.color.dccAlphaOnMsb ? "last" : "first") + " channel did not keep the clear texel of that placement outside its scissor");
+            }
+        }
+        recorder.Sync();
+        SharedResourceCache().Clear();
+        ClearCachedTextures(context.device);
+    }
 }
 
 void viewPastLastMipTests(const Device& device, Recorder& recorder) {
@@ -8137,6 +8569,7 @@ void storageRefreshTests(const Device& device, Recorder& recorder, bool watched)
     resource.dstSelZ = 6;
     resource.dstSelW = 7;
     resource.dccAddress = address + surfaceBytes;
+    resource.dccAlphaOnMsb = true;
     Require(DescribeSurface(resource).guestBytes == surfaceBytes, "the test surface has an unexpected size");
     DccKeyProof proof;
     Require(ProvedClearKeys(resource, surfaceBytes, proof) == DccKeys::Clear0000, "0x00 keys are not a 0000 clear");
@@ -16450,107 +16883,6 @@ void depthSurfaceProofTests(const Device& device, Recorder& recorder) {
 
 }
 
-class SampleProgram {
-public:
-    SampleProgram(const Context& context, Recorder& recorder, std::span<const std::uint32_t> code = SAMPLE_LOD_SPV) : context(context), recorder(recorder), result(context, sizeof(float) * 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) {
-        VkDescriptorSetLayoutBinding bindings[2]{};
-        bindings[0] = {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
-        bindings[1] = {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
-        VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-        layoutInfo.bindingCount = 2;
-        layoutInfo.pBindings = bindings;
-        Check(context.Function<PFN_vkCreateDescriptorSetLayout>("vkCreateDescriptorSetLayout")(context.device, &layoutInfo, nullptr, &setLayout), "vkCreateDescriptorSetLayout");
-        const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(float) * 4};
-        VkPipelineLayoutCreateInfo pipelineLayoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-        pipelineLayoutInfo.setLayoutCount = 1;
-        pipelineLayoutInfo.pSetLayouts = &setLayout;
-        pipelineLayoutInfo.pushConstantRangeCount = 1;
-        pipelineLayoutInfo.pPushConstantRanges = &push;
-        Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &pipelineLayoutInfo, nullptr, &pipelineLayout), "vkCreatePipelineLayout");
-        module = CreateShaderModule(context, code.data(), code.size_bytes(), "vkCreateShaderModule");
-        VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
-        pipelineInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, module, "main", nullptr};
-        pipelineInfo.layout = pipelineLayout;
-        Check(context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline), "vkCreateComputePipelines");
-        VkSamplerCreateInfo samplerInfo{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-        samplerInfo.magFilter = VK_FILTER_NEAREST;
-        samplerInfo.minFilter = VK_FILTER_NEAREST;
-        samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-        samplerInfo.addressModeU = samplerInfo.addressModeV = samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        samplerInfo.maxLod = VK_LOD_CLAMP_NONE;
-        Check(context.Function<PFN_vkCreateSampler>("vkCreateSampler")(context.device, &samplerInfo, nullptr, &sampler), "vkCreateSampler");
-        const VkDescriptorPoolSize sizes[2]{{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1}, {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1}};
-        VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-        poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-        poolInfo.maxSets = 1;
-        poolInfo.poolSizeCount = 2;
-        poolInfo.pPoolSizes = sizes;
-        Check(context.Function<PFN_vkCreateDescriptorPool>("vkCreateDescriptorPool")(context.device, &poolInfo, nullptr, &pool), "vkCreateDescriptorPool");
-    }
-    ~SampleProgram() {
-        context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")(context.device, pool, nullptr);
-        context.Function<PFN_vkDestroySampler>("vkDestroySampler")(context.device, sampler, nullptr);
-        context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, pipeline, nullptr);
-        context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, module, nullptr);
-        context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, pipelineLayout, nullptr);
-        context.Function<PFN_vkDestroyDescriptorSetLayout>("vkDestroyDescriptorSetLayout")(context.device, setLayout, nullptr);
-    }
-    SampleProgram(const SampleProgram&) = delete;
-    SampleProgram& operator=(const SampleProgram&) = delete;
-
-    float Red(VkImageView view, VkImageLayout layout, float lod, float layer = 0) {
-        return Texel(view, layout, lod, 0.5f, 0.5f, layer)[0];
-    }
-
-    std::array<float, 4> Texel(VkImageView view, VkImageLayout layout, float lod, float u, float v, float layer = 0) {
-        VkDescriptorSetAllocateInfo allocateInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-        allocateInfo.descriptorPool = pool;
-        allocateInfo.descriptorSetCount = 1;
-        allocateInfo.pSetLayouts = &setLayout;
-        VkDescriptorSet set = VK_NULL_HANDLE;
-        Check(context.Function<PFN_vkAllocateDescriptorSets>("vkAllocateDescriptorSets")(context.device, &allocateInfo, &set), "vkAllocateDescriptorSets");
-        const VkDescriptorImageInfo image{sampler, view, layout};
-        const VkDescriptorBufferInfo buffer{result.Handle(), 0, VK_WHOLE_SIZE};
-        VkWriteDescriptorSet writes[2]{{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}, {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}};
-        writes[0].dstSet = set;
-        writes[0].dstBinding = 0;
-        writes[0].descriptorCount = 1;
-        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[0].pImageInfo = &image;
-        writes[1].dstSet = set;
-        writes[1].dstBinding = 1;
-        writes[1].descriptorCount = 1;
-        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        writes[1].pBufferInfo = &buffer;
-        context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, 2, writes, 0, nullptr);
-        const auto commands = recorder.Commands();
-        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
-        context.BindComputePipeline(commands, pipeline);
-        context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &set, 0, nullptr);
-        const float parameters[]{lod, layer, u, v};
-        context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(parameters), parameters);
-        context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, 1, 1, 1);
-        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
-        recorder.Submit();
-        recorder.Sync();
-        Check(context.Function<PFN_vkFreeDescriptorSets>("vkFreeDescriptorSets")(context.device, pool, 1, &set), "vkFreeDescriptorSets");
-        std::array<float, 4> texel{};
-        std::memcpy(texel.data(), result.Bytes().data(), sizeof(texel));
-        return texel;
-    }
-
-private:
-    const Context& context;
-    Recorder& recorder;
-    Buffer result;
-    VkDescriptorSetLayout setLayout = VK_NULL_HANDLE;
-    VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
-    VkShaderModule module = VK_NULL_HANDLE;
-    VkPipeline pipeline = VK_NULL_HANDLE;
-    VkSampler sampler = VK_NULL_HANDLE;
-    VkDescriptorPool pool = VK_NULL_HANDLE;
-};
-
 GuestTextureResource bc1Resource(std::uint32_t width, std::uint32_t height, std::uint32_t levels) {
     GuestTextureResource resource{};
     resource.baseAddress = 0x100000;
@@ -18407,6 +18739,12 @@ void keysFillTests(const Device& device, Recorder& recorder) {
         draw({{0.0f, 1.0f, 0.0f, 1.0f}});
         Require(image->FilledKeys() == DccKeys::Uncompressed, "results drawn after a key fill cleared at once are held under the fill's code");
         Require(holds({0, 255, 0, 255}), "results drawn after a key fill cleared at once were lost");
+        Require(fill(0x40) == 1, "a 0001 key fill did not cover the surface");
+        Require(StorageTexture::ClearByKeysFill(keysAddress, keyCount, 0x40) == 1, "a 0001 key fill did not clear the surface at once");
+        Require(holds({255, 0, 0, 0}), "a 0001 key fill cleared at once did not store its alpha in the first channel of a surface whose DCC alpha is not on the most significant channel");
+        Require(fill(0x80) == 1, "a 1110 key fill did not cover the surface");
+        Require(StorageTexture::ClearByKeysFill(keysAddress, keyCount, 0x80) == 1, "a 1110 key fill did not clear the surface at once");
+        Require(holds({0, 255, 255, 255}), "a 1110 key fill cleared at once did not store its alpha in the first channel of a surface whose DCC alpha is not on the most significant channel");
     }
     recorder.Sync();
 }
@@ -18417,12 +18755,46 @@ void integerClearTests(const Device& device) {
     for (const std::uint32_t format : {5u, 11u, 20u}) {
         if (!StorageFormatAvailable(context, format)) continue;
         ++tested;
-        Require(StorageClearAvailable(context, format, DccKeys::Clear0000), "an integer storage format refused the 0000 clear");
-        for (const auto keys : {DccKeys::Clear0001, DccKeys::Clear1111, DccKeys::ClearRegister, DccKeys::Uncompressed}) {
-            Require(!StorageClearAvailable(context, format, keys), "an integer storage format took a clear code other than 0000");
+        Require(StorageClearAvailable(context, format, true, DccKeys::Clear0000), "an integer storage format refused the 0000 clear");
+        for (const auto keys : {DccKeys::Clear1111, DccKeys::ClearRegister, DccKeys::Uncompressed}) {
+            Require(!StorageClearAvailable(context, format, true, keys), "an integer storage format took a clear code other than 0000");
+        }
+        for (const auto keys : {DccKeys::Clear0001, DccKeys::Clear1110}) {
+            std::string refusal;
+            try {
+                static_cast<void>(StorageClearAvailable(context, format, true, keys));
+            } catch (const std::runtime_error& error) {
+                refusal = error.what();
+            }
+            Require(refusal.find(std::string("DCC clear code ") + DccKeysName(keys) + " of a one-channel format") != std::string::npos, "a one-channel integer storage format did not refuse an asymmetric clear code as the other one-channel formats do");
         }
     }
     Require(tested == 3, "an integer storage format has no storage form");
+    const auto refusal = [&](std::uint32_t format, DccKeys keys) {
+        try {
+            static_cast<void>(StorageClearAvailable(context, format, true, keys));
+        } catch (const std::runtime_error& error) {
+            return std::string(error.what());
+        }
+        return std::string();
+    };
+    if (StorageFormatAvailable(context, 60)) {
+        ++tested;
+        for (const bool alphaOnMsb : {false, true}) {
+            Require(StorageClearAvailable(context, 60, alphaOnMsb, DccKeys::Clear0000), "a four-channel integer storage format refused the 0000 clear");
+            for (const auto keys : {DccKeys::Clear0001, DccKeys::Clear1110, DccKeys::Clear1111, DccKeys::ClearRegister, DccKeys::Uncompressed}) {
+                Require(refusal(60, keys).empty() && !StorageClearAvailable(context, 60, alphaOnMsb, keys), std::string("a four-channel integer storage format did not decline the clear code ") + DccKeysName(keys) + " without an error");
+            }
+        }
+    }
+    for (const std::uint32_t format : {30u, 131u}) {
+        if (!StorageFormatAvailable(context, format)) continue;
+        ++tested;
+        for (const auto keys : {DccKeys::Clear0001, DccKeys::Clear1110}) {
+            Require(refusal(format, keys).find(std::string("DCC clear code ") + DccKeysName(keys) + " of converted texture format " + std::to_string(format)) != std::string::npos, "a converted storage format stored in one channel was not refused as a converted format: " + refusal(format, keys));
+        }
+    }
+    if (StorageFormatAvailable(context, 131u)) Require(refusal(131u, DccKeys::Clear1111).find("DCC clear code 1111 of converted texture format 131") != std::string::npos, "the 6E4 storage format did not refuse the 1111 clear as a converted format: " + refusal(131u, DccKeys::Clear1111));
     std::cout << "integer storage clears: " << tested << " formats ok\n";
 }
 
@@ -20131,6 +20503,12 @@ int main(int argc, char** argv) {
             }
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--dcc-alpha-placement-only") {
+            movedMetadataTests(device, recorder, true);
+            recipeAlphaPlacementTests(device, recorder);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--dcc-restored-keys-only") return restoredKeysTests(device, recorder) ? 0 : 77;
         if (argc == 2 && std::string_view(argv[1]) == "--clear-hand-over-only") {
             clearHandOverTests(device, recorder, false);
             if (!clearHandOverTests(device, recorder, true)) {
@@ -20611,7 +20989,7 @@ int main(int argc, char** argv) {
 #ifdef _WIN32
         secondMappingImportTests(device);
 #endif
-        movedMetadataTests(device, recorder);
+        movedMetadataTests(device, recorder, false);
         viewPastLastMipTests(device, recorder);
         keysFillTests(device, recorder);
         clearHandOverTests(device, recorder, false);

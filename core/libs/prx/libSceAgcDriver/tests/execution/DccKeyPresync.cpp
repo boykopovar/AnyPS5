@@ -27,6 +27,7 @@
 #include <mutex>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -38,6 +39,7 @@ using ShaderRecompiler::ShaderStage;
 constexpr std::uint32_t Threads = 32;
 constexpr std::uint32_t Side = 128;
 constexpr std::uint32_t Format16Unorm = 7;
+constexpr std::uint32_t Format88Unorm = 14;
 constexpr std::uint32_t Format8888Unorm = 56;
 constexpr std::uint32_t Format565Unorm = 133;
 constexpr std::uint32_t TileRenderTarget64KB = 0x1b;
@@ -339,15 +341,22 @@ std::uint64_t GuestBytes(const Scenario& scenario) {
 }
 
 void RunTwoFormatViews(AgcDriver::VulkanDevice& device, const Scenario& clear, const Scenario& stored) {
+    std::array<std::byte, 2> probe{};
+    Require(AgcDriver::Graphics::FillDccClear(AgcDriver::Graphics::ResolveTextureFormat(Format88Unorm), AgcDriver::Graphics::DccKeys::Clear0001, false, probe), "R8G8_UNORM cannot encode the clear used by the two-format test");
+    bool refused = false;
+    try {
+        static_cast<void>(AgcDriver::Graphics::FillDccClear(AgcDriver::Graphics::ResolveTextureFormat(Format16Unorm), AgcDriver::Graphics::DccKeys::Clear0001, false, probe));
+    } catch (const std::runtime_error& error) {
+        refused = std::string(error.what()).find("DCC clear code 0001 of a one-channel format") != std::string::npos;
+    }
+    Require(refused, "R16_UNORM encoded the one-channel 0001 clear it cannot place");
+    Require(!AgcDriver::Graphics::FillDccClear(AgcDriver::Graphics::ResolveTextureFormat(Format565Unorm), AgcDriver::Graphics::DccKeys::Clear0001, false, probe), "R5G6B5 unexpectedly encodes the clear used by the two-format test");
     if (!AgcDriver::GuestMemory::Watched(AddressOf(clear.keys), KeyBytes)) {
         std::puts("skipped, the two-format keys are outside the write watch: a format-keyed proof cannot be observed");
         return;
     }
     Require(AddressOf(clear.texels) == AddressOf(stored.texels) && AddressOf(clear.keys) == AddressOf(stored.keys), "the two sampled views do not share one DCC range");
     Require(GuestBytes(clear) == GuestBytes(stored), "the two sampled views do not cover the same surface bytes");
-    std::array<std::byte, 2> probe{};
-    Require(AgcDriver::Graphics::FillDccClear(AgcDriver::Graphics::ResolveTextureFormat(Format16Unorm), AgcDriver::Graphics::DccKeys::Clear0001, false, probe), "R16_UNORM cannot encode the clear used by the two-format test");
-    Require(!AgcDriver::Graphics::FillDccClear(AgcDriver::Graphics::ResolveTextureFormat(Format565Unorm), AgcDriver::Graphics::DccKeys::Clear0001, false, probe), "R5G6B5 unexpectedly encodes the clear used by the two-format test");
 
     Reset(clear);
     std::memset(clear.keys, 0x40, KeyBytes);
@@ -399,7 +408,7 @@ int main() {
         GuestBlock twoFormats;
         GuestBlock clearOutput;
         GuestBlock storedOutput;
-        const auto clearView = Prepare(twoFormats.Data(), clearOutput.Data(), Format16Unorm);
+        const auto clearView = Prepare(twoFormats.Data(), clearOutput.Data(), Format88Unorm);
         const auto storedView = Prepare(twoFormats.Data(), storedOutput.Data(), Format565Unorm);
         RunTwoFormatViews(*device, clearView, storedView);
         RunMixedWordKeys(*device, fills);
