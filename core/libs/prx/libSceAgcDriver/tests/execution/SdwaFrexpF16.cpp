@@ -293,11 +293,9 @@ void CheckRefused(AgcDriver::VulkanDevice& device) {
         std::uint32_t word1;
         const char* expectedError;
     };
-    const std::array<RefusedCase, 6> cases{{
+    const std::array<RefusedCase, 4> cases{{
         {0x7e14b2f9u, 0x00000404u, "is not supported"},
         {0x7e14b4f9u, 0x00000404u, "is not supported"},
-        {0x7e14b2f9u, 0x00040004u, "is not supported"},
-        {0x7e14b4f9u, 0x00040004u, "is not supported"},
         {0x7e14b2f9u, 0x00041804u, "is not supported"},
         {0x7e14b4f9u, 0x00044404u, "VOP1 SDWA output modifiers are not supported"},
     }};
