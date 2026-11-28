@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -153,6 +154,32 @@ void testMalformedPackets() {
     }
 }
 
+void testUnmappedAndReadOnlyTargetPackets() {
+    Storage storage;
+    static const std::array<std::uint32_t, 14> readOnly{0xc00c3f00u};
+    check(storage.packet[0] == readOnly[0], "read-only branch fixture header differs from a branch packet");
+    auto* unmapped = reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10});
+    auto* readOnlyPacket = const_cast<std::uint32_t*>(readOnly.data());
+    errno = 71;
+    expectFailure([&] { sceAgcBranchPatchSetThenTarget(unmapped, targetAt(0x2000u), 1); });
+    check(errno == 71, "unmapped then target patch mutated errno");
+    expectFailure([&] { sceAgcBranchPatchSetThenTarget(readOnlyPacket, targetAt(0x2000u), 1); });
+    check(errno == 71, "read-only then target patch mutated errno");
+    expectFailure([&] { sceAgcBranchPatchSetElseTarget(unmapped, targetAt(0x2000u), 1); });
+    check(errno == 71, "unmapped else target patch mutated errno");
+    expectFailure([&] { sceAgcBranchPatchSetElseTarget(readOnlyPacket, targetAt(0x2000u), 1); });
+    check(errno == 71, "read-only else target patch mutated errno");
+    expectFailure([&] { sceAgcBranchPatchSetThenTarget_0300(unmapped, 1, targetAt(0x2000u), 1); });
+    check(errno == 71, "unmapped 3.00 then target patch mutated errno");
+    expectFailure([&] { sceAgcBranchPatchSetThenTarget_0300(readOnlyPacket, 1, targetAt(0x2000u), 1); });
+    check(errno == 71, "read-only 3.00 then target patch mutated errno");
+    expectFailure([&] { sceAgcBranchPatchSetElseTarget_0300(unmapped, 1, targetAt(0x2000u), 1); });
+    check(errno == 71, "unmapped 3.00 else target patch mutated errno");
+    expectFailure([&] { sceAgcBranchPatchSetElseTarget_0300(readOnlyPacket, 1, targetAt(0x2000u), 1); });
+    check(errno == 71, "read-only 3.00 else target patch mutated errno");
+    check(std::all_of(readOnly.begin() + 1, readOnly.end(), [](std::uint32_t word) { return word == 0u; }), "a target patch of a read-only packet changed it");
+}
+
 }
 
 void testUnmappedCompareAddressPacket() {
@@ -172,6 +199,7 @@ int main() {
         testConsoleArguments();
         testCompareAddress();
         testUnmappedCompareAddressPacket();
+        testUnmappedAndReadOnlyTargetPackets();
         testTarget(sceAgcBranchPatchSetThenTarget, 8, 0x10000000u, "then target setter wrote the wrong words");
         testTarget(sceAgcBranchPatchSetElseTarget, 11, 0x20000000u, "else target setter wrote the wrong words");
         testTargetWithCachePolicy(sceAgcBranchPatchSetThenTarget_0300, 8, "3.00 then target setter wrote the wrong words");
