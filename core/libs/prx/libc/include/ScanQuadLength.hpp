@@ -15,9 +15,13 @@ inline const char* FindQuadScanDirective(const char* format) {
         if (pos != format && *pos == '$') format = pos + 1;
         while (*format == '*' || *format == '\'') ++format;
         while (*format >= '0' && *format <= '9') ++format;
+        if (*format == 'm') {
+            const char* afterM = format + 1;
+            while (*afterM && std::strchr("hljztL", *afterM)) ++afterM;
+            if (*afterM == '[' || *afterM == 's' || *afterM == 'c') format = afterM;
+        }
         while (*format && std::strchr("hljztL", *format)) ++format;
         if (*format == 'q') return directive;
-        if (*format == 'm' && (format[1] == '[' || format[1] == 's' || format[1] == 'c')) ++format;
         if (*format == '[') {
             ++format;
             if (*format == '^') ++format;
