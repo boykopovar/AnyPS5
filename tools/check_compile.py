@@ -188,7 +188,7 @@ def index(build, root):
 
 
 def changed(root, base, suffixes=CPP):
-    fork = capture(["git", "-C", str(root), "merge-base", base, "HEAD"])
+    fork = capture(["git", "-C", str(root), "merge-base", *(("--end-of-options",) if base.startswith("-") else ()), base, "HEAD"])
     if fork.returncode != 0:
         raise ValueError(f"git merge-base {base}: {fork.stderr.strip()}")
     result = capture(["git", "-C", str(root), "diff", "--name-only", "--diff-filter=ACMR", "-z", fork.stdout.strip()])

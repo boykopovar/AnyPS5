@@ -572,6 +572,20 @@ class CheckCompilePathSelectionTests(CheckCompileFixture):
         self.assertEqual(result.returncode, 0)
         self.assertIn("no changed translation unit", result.stdout)
 
+    def test_a_base_that_looks_like_an_option_is_read_as_a_revision(self):
+        self.source("committed.cpp")
+        subprocess.run(["git", "-C", str(self.root), "add", "committed.cpp"], check=True)
+        subprocess.run(["git", "-C", str(self.root), "commit", "-qm", "add"], check=True)
+        self.manifest([])
+        for base in ("--octopus", "-a", "--"):
+            with self.subTest(base=base):
+                result = self.tool(f"--base={base}")
+                expected = subprocess.run(["git", "-C", str(self.root), "merge-base", "--end-of-options", base, "HEAD"],
+                                          capture_output=True, encoding="utf-8").stderr.strip()
+                self.assertEqual(result.returncode, 2)
+                self.assertIn(f"git merge-base {base}: {expected}", result.stderr)
+                self.assertNotIn("no changed translation unit", result.stdout)
+
     def test_the_commands_come_from_ninja_when_the_manifest_is_absent(self):
         source = self.source("unit.cpp")
         script = self.compiler("import sys\nsys.exit(0)\n")
