@@ -7,11 +7,13 @@
 #include FT_PARAMETER_TAGS_H
 #include <freetype/internal/ftobjs.h>
 #include <freetype/internal/tttypes.h>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
 #include <iterator>
+#include <stdexcept>
 #include <string>
 #include <vector>
 #ifdef _WIN32
@@ -94,6 +96,14 @@ int main() {
     FT_Set_Default_Properties_nid_postfix(library);
     Require(FT_Property_Get_nid_postfix(library, "truetype", "interpreter-version", &interpreterVersion) == 0);
     Require(interpreterVersion == 35);
+    errno = 71;
+    bool unreadableThrew = false;
+    try {
+        FT_Set_Default_Properties_nid_postfix(reinterpret_cast<FreeType::GuestLibrary*>(std::uintptr_t{0x10}));
+    } catch (const std::invalid_argument&) {
+        unreadableThrew = true;
+    }
+    Require(unreadableThrew && errno == 71);
     interpreterVersion = 40;
     Require(FT_Property_Set_nid_postfix(library, "truetype", "interpreter-version", &interpreterVersion) == 0);
     FT_Set_Default_Properties_nid_postfix(nullptr);
