@@ -36,6 +36,7 @@ class ProgressTests(unittest.TestCase):
         calls = []
         with patch.object(pr_overlap, "git", side_effect=lambda *args: calls.append(args) or (
                 "f" * 40 + "\trefs/heads/main\n" if args[0] == "ls-remote" else "")), \
+                patch.object(pr_overlap, "partial_clone_filter", return_value=""), \
                 patch.object(pr_overlap, "REPO", "owner/project", create=True):
             _, lines = self.capture(pr_overlap.fetch, "main", prs)
         self.assertEqual(len(calls), 4)
@@ -117,6 +118,64 @@ class ProgressTests(unittest.TestCase):
             _, lines = self.capture(pr_overlap.fetch_heads, "f" * 40, prs, True)
         self.assertEqual(calls, [])
         self.assertEqual(lines, [])
+
+    def test_a_partial_clone_fetches_with_its_filter(self):
+        prs = {1: {"ref": "refs/pr/1", "sha": "1" * 40}, 2: {"ref": "refs/pr/2", "sha": "2" * 40}}
+        config = {("config", "--get", "extensions.partialClone"): "origin\n",
+                  ("config", "--get", "remote.origin.partialCloneFilter"): "blob:none\n"}
+        fetches = []
+
+        def git(*args):
+            if args in config:
+                return config[args]
+            fetches.append(args)
+            if len(fetches) == 1:
+                raise pr_overlap.subprocess.CalledProcessError(1, ["git", *args])
+            return ""
+
+        with patch.object(pr_overlap, "git", side_effect=git), \
+                patch.object(pr_overlap, "REPO", "owner/project", create=True):
+            self.capture(pr_overlap.fetch_heads, "f" * 40, prs)
+        self.assertEqual(len(fetches), 4)
+        self.assertTrue(all("--filter=blob:none" in call for call in fetches), fetches)
+
+    def test_a_partial_clone_fetches_a_moved_head_with_its_filter(self):
+        prs = {1: {"ref": "refs/pr/1", "sha": "1" * 40}}
+        config = {("config", "--get", "extensions.partialClone"): "origin\n",
+                  ("config", "--get", "remote.origin.partialCloneFilter"): "blob:none\n"}
+        fetches = []
+
+        def git(*args):
+            if args in config:
+                return config[args]
+            if args[0] == "ls-remote":
+                return "9" * 40 + "\trefs/pull/1/head\n"
+            fetches.append(args)
+            if "9" * 40 not in args and "f" * 40 not in args or len(fetches) == 1:
+                raise pr_overlap.subprocess.CalledProcessError(1, ["git", *args])
+            return ""
+
+        with patch.object(pr_overlap, "git", side_effect=git), \
+                patch.object(pr_overlap, "REPO", "owner/project", create=True):
+            self.capture(pr_overlap.fetch_heads, "f" * 40, prs)
+        self.assertEqual(prs[1]["sha"], "9" * 40)
+        self.assertEqual(fetches[-1][-1], "9" * 40)
+        self.assertTrue(all("--filter=blob:none" in call for call in fetches), fetches)
+
+    def test_a_full_clone_fetches_without_a_filter(self):
+        prs = {1: {"ref": "refs/pr/1", "sha": "1" * 40}}
+        fetches = []
+
+        def git(*args):
+            if args[0] == "config":
+                raise pr_overlap.subprocess.CalledProcessError(1, ["git", *args])
+            fetches.append(args)
+            return ""
+
+        with patch.object(pr_overlap, "git", side_effect=git), \
+                patch.object(pr_overlap, "REPO", "owner/project", create=True):
+            self.capture(pr_overlap.fetch_heads, "f" * 40, prs)
+        self.assertEqual(fetches, [("fetch", "--no-write-fetch-head", "--no-tags", "-q", "https://github.com/owner/project.git", "f" * 40, "1" * 40)])
 
     def test_missing_commits_reports_only_commits_absent_from_the_repository(self):
         with tempfile.TemporaryDirectory() as directory:

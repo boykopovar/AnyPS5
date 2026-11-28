@@ -364,17 +364,27 @@ def missing_commits(commits):
     return [commit for commit in commits if commit not in present]
 
 
+def partial_clone_filter():
+    try:
+        remote = git("config", "--get", "extensions.partialClone").strip()
+        return git("config", "--get", f"remote.{remote}.partialCloneFilter").strip()
+    except subprocess.CalledProcessError:
+        return ""
+
+
 def fetch_heads(base_sha, prs, check_existing=False):
     remote = f"https://github.com/{REPO}.git"
     commits = [base_sha] + [pr["sha"] for pr in prs.values()]
     if check_existing:
         commits = missing_commits(commits)
+    selected = partial_clone_filter() if commits else ""
+    options = [f"--filter={selected}"] if selected else []
     for start in range(0, len(commits), FETCH_REFS):
         batch = commits[start:start + FETCH_REFS]
         try:
-            git("fetch", "--no-write-fetch-head", "--no-tags", "-q", remote, *batch)
+            git("fetch", "--no-write-fetch-head", "--no-tags", "-q", *options, remote, *batch)
         except subprocess.CalledProcessError:
-            fetch_each(remote, batch, base_sha, prs)
+            fetch_each(remote, batch, base_sha, prs, options)
         progress(f"fetched {min(start + FETCH_REFS, len(commits))}/{len(commits)} missing commits" if check_existing
                  else f"fetched {min(start + FETCH_REFS, len(commits)) - 1}/{len(prs)} pull request heads")
     for pr in prs.values():
@@ -382,13 +392,13 @@ def fetch_heads(base_sha, prs, check_existing=False):
     return base_sha
 
 
-def fetch_each(remote, batch, base_sha, prs):
+def fetch_each(remote, batch, base_sha, prs, options=()):
     owners = {}
     for number, pr in prs.items():
         owners.setdefault(pr["sha"], []).append(number)
     for sha in batch:
         try:
-            git("fetch", "--no-write-fetch-head", "--no-tags", "-q", remote, sha)
+            git("fetch", "--no-write-fetch-head", "--no-tags", "-q", *options, remote, sha)
             continue
         except subprocess.CalledProcessError:
             if sha == base_sha or sha not in owners:
@@ -397,7 +407,7 @@ def fetch_each(remote, batch, base_sha, prs):
             moved = git("ls-remote", "--exit-code", remote, f"refs/pull/{number}/head").split()[0]
             if moved == sha:
                 raise ValueError(f"cannot fetch the head {sha} of pull request #{number}")
-            git("fetch", "--no-write-fetch-head", "--no-tags", "-q", remote, moved)
+            git("fetch", "--no-write-fetch-head", "--no-tags", "-q", *options, remote, moved)
             progress(f"pull request #{number} moved from {sha[:10]} to {moved[:10]} during this run; comparing {moved[:10]}")
             prs[number]["sha"] = moved
 

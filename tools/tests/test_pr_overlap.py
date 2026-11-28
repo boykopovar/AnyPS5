@@ -235,6 +235,7 @@ class FetchTests(unittest.TestCase):
             9: {"ref": "refs/pr/9", "sha": "b" * 40, "author": "two", "depends": set()},
         }
         with patch.object(pr_overlap, "REPO", "owner/project", create=True), \
+                patch.object(pr_overlap, "partial_clone_filter", return_value=""), \
                 patch.object(pr_overlap, "git", side_effect=[f"{'c' * 40}\trefs/heads/main\n", ""]) as git:
             self.assertEqual(pr_overlap.fetch("main", prs), "c" * 40)
         self.assertEqual([call.args for call in git.call_args_list], [
@@ -253,6 +254,7 @@ class FetchTests(unittest.TestCase):
             for number in range(250)
         }
         with patch.object(pr_overlap, "REPO", "owner/project", create=True), \
+                patch.object(pr_overlap, "partial_clone_filter", return_value=""), \
                 patch.object(pr_overlap, "git", side_effect=[f"{'f' * 40}\trefs/heads/main\n", "", "", ""]) as git:
             pr_overlap.fetch("main", prs)
         self.assertEqual(git.call_count, 4)
