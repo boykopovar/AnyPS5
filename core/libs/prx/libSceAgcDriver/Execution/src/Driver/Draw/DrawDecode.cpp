@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdlib>
@@ -90,13 +91,48 @@ void AppendProgramMemory(std::vector<ShaderRecompiler::MemoryRegion>& memory, co
     }
 }
 
+const DrawProgram& PositionExportProgram(const std::vector<DrawProgram>& programs, const std::vector<ShaderRecompiler::ProgramRole>& roles, std::size_t index) {
+    using Role = ShaderRecompiler::ProgramRole;
+    require(roles.size() == programs.size() && index < programs.size(), "draw program roles are incomplete");
+    if (roles[index] == Role::Geometry && index + 1u < programs.size() && roles[index + 1u] == Role::Copy) return programs[index + 1u];
+    return programs[index];
+}
+
+std::vector<ShaderRecompiler::GeometryCopyExport> GeometryCopyExports(const DrawDecode& decoded, const std::vector<DrawProgram>& programs) {
+    const auto& geometry = decoded.state.stages.legacyGeometry;
+    require(geometry.has_value() && decoded.roles.size() == programs.size(), "GCN geometry copy exports were requested for a draw without a geometry configuration");
+    for (std::size_t i = 0; i < programs.size(); ++i) {
+        if (decoded.roles[i] == ShaderRecompiler::ProgramRole::Copy) return ShaderRecompiler::ParseGeometryCopyProgram(programs[i].binary.code, geometry->maxVertices, geometry->vertexDwords, decoded.copyStreamConfig);
+    }
+    require(false, "a GCN geometry draw has no copy program");
+    return {};
+}
+
+std::uint64_t GeometryConfigurationKey(const std::optional<ShaderRecompiler::GeometryConfiguration>& geometry) {
+    std::uint64_t key = 0xcbf29ce484222325ull;
+    const auto mix = [&](std::uint64_t value) {
+        key ^= value;
+        key *= 0x100000001b3ull;
+    };
+    mix(geometry.has_value());
+    if (!geometry) return key;
+    for (const auto value : {geometry->inputVertices, geometry->outputTopology, geometry->maxVertices, geometry->instances, geometry->esgsItemDwords, geometry->vertexDwords}) mix(value);
+    mix(geometry->exports.size());
+    for (const auto& copy : geometry->exports) {
+        for (const auto value : {copy.target, copy.enable, copy.constants}) mix(value);
+        for (const auto value : copy.values) mix(value);
+        mix(copy.done);
+    }
+    return key;
+}
+
 std::vector<std::pair<std::size_t, std::size_t>> UserDataWords(const std::vector<DrawProgram>& programs, const std::vector<ShaderRecompiler::ProgramRole>& roles, std::uint32_t location) {
     using Role = ShaderRecompiler::ProgramRole;
     require(roles.size() == programs.size(), "draw program roles are incomplete");
     std::vector<std::pair<std::size_t, std::size_t>> words;
     if (location == 0x280u) return words;
     for (std::size_t i = 0; i < programs.size(); ++i) {
-        if (roles[i] == Role::Fragment || roles[i] == Role::GeometryBack || location < programs[i].userDataBase) continue;
+        if (roles[i] == Role::Fragment || ShaderRecompiler::LinkedOnlyRole(roles[i]) || location < programs[i].userDataBase) continue;
         const auto word = location - programs[i].userDataBase + programs[i].hiddenUserWords;
         if (word < programs[i].userData.size()) words.emplace_back(i, static_cast<std::size_t>(word));
     }
@@ -127,7 +163,7 @@ void DecodeGraphicsPrograms(DrawDecode& decoded, const QueueState& queue, const 
         DrawProgram result{
             {stage, address, std::span(snapshot.code).subspan(codeOffset), snapshot.headerAddress, snapshot.header},
             userDataBase,
-            stage == Stage::Fragment || userDataBase == 0x04cu ? 0u : 8u,
+            stage == Stage::Fragment || userDataBase == 0x04cu || ShaderRecompiler::GcnGuestShaders() ? 0u : 8u,
             {},
             memory,
             program,
@@ -154,7 +190,12 @@ void DecodeGraphicsPrograms(DrawDecode& decoded, const QueueState& queue, const 
             roles.push_back(role);
         };
         auto& graphics = product->state;
-        if (graphics.stages.path == Graphics::ShaderPath::Tessellation || graphics.stages.path == Graphics::ShaderPath::TessellationGeometry) {
+        if (graphics.stages.legacyTessellation) {
+            require(graphics.stages.tessellation.has_value(), "tessellation draw has no tessellation configuration");
+            append(0x148, 5, Stage::Local, 0x14b, 0x14c, Role::Local);
+            append(0x108, 7, Stage::TessellationControl, 0x10b, 0x10c, Role::Hull);
+            append(0x048, 2, Stage::TessellationEvaluation, 0x04b, 0x04c, Role::Domain);
+        } else if (graphics.stages.path == Graphics::ShaderPath::Tessellation || graphics.stages.path == Graphics::ShaderPath::TessellationGeometry) {
             const auto localAddress = programAddress(0x148);
             const auto local = !staticAbi || localAddress != 0 ? ProgramSnapshot(registry, localAddress, {3, 5}) : nullptr;
             const bool mergedHull = local != nullptr && !local->header.empty() && local->type == 3;
@@ -182,6 +223,15 @@ void DecodeGraphicsPrograms(DrawDecode& decoded, const QueueState& queue, const 
             append(0xc8, type, Stage::Mesh, 0x8b, 0x8c, Role::Main);
             InitializeMerged(queue, programs.back(), 0x82, type == 4, staticAbi);
             if (type == 4) append(0x88, 6, Stage::Mesh, 0x8b, 0x8c, Role::GeometryBack);
+        } else if (graphics.stages.legacyGeometry) {
+            append(0x0c8, 4, Stage::Vertex, 0x0cb, 0x0cc, Role::Main);
+            append(0x088, 6, Stage::Geometry, 0x08b, 0x08c, Role::Geometry);
+            append(0x048, 2, Stage::Vertex, 0x04b, 0x04c, Role::Copy);
+            auto& geometry = *graphics.stages.legacyGeometry;
+            const auto copyResources = queue.shader.find(0x04bu);
+            const auto copyRsrc2 = copyResources == queue.shader.end() ? 0u : copyResources->second;
+            product->copyStreamConfig = (copyRsrc2 & 0x1000u) != 0u ? std::optional<std::uint32_t>((copyRsrc2 >> 1u) & 0x1fu) : std::nullopt;
+            geometry.exports = GeometryCopyExports(*product, programs);
         } else if (graphics.stages.legacyVertex) {
             append(0x48, 2, Stage::Vertex, 0x4b, 0x4c, Role::Main);
         } else {

@@ -988,7 +988,7 @@ PositionExportComponent DecodePositionExportComponent(std::uint32_t control, std
 }
 
 std::uint32_t NativeBinding(IrShaderStage stage, DescriptorBindingKind kind) {
-    const std::uint32_t group = stage == IrShaderStage::Pixel ? 1u : stage == IrShaderStage::TessellationControl ? 2u : stage == IrShaderStage::TessellationEvaluation ? 3u : 0u;
+    const std::uint32_t group = stage == IrShaderStage::Pixel ? 1u : stage == IrShaderStage::TessellationControl ? 2u : stage == IrShaderStage::TessellationEvaluation || stage == IrShaderStage::Geometry ? 3u : 0u;
     return RuntimeAbi::BindingNumber(static_cast<RuntimeAbi::Stage>(group), kind);
 }
 

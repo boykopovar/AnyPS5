@@ -107,6 +107,7 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/HostInterpolationChecker.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/ReadLaneEliminator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/MaskedSelectEliminator.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/GeometryLowering.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/TessellationLowering.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/QuadHelperProof.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/ImageOverwriteProof.cpp
@@ -272,7 +273,9 @@ function(add_shader_recompiler target runtimeTarget)
             HashBytes
             ImageOverwriteCovers
             LayoutBarycentricEmulation
+            LinkedOnlyRole
             MeshBarycentricLayoutOf
+            ParseGeometryCopyProgram
             NanSpeculation
             NanSpeculationFallbacks
             NanSpeculationRetryScope

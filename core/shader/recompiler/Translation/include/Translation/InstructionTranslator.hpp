@@ -23,7 +23,8 @@ enum class ShaderStageKind {
     Mesh,
     Local,
     TessellationControl,
-    TessellationEvaluation
+    TessellationEvaluation,
+    Geometry
 };
 
 struct TranslateOptions {

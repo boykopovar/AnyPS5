@@ -12,7 +12,8 @@ enum class IrShaderStage {
     Mesh,
     Local,
     TessellationControl,
-    TessellationEvaluation
+    TessellationEvaluation,
+    Geometry
 };
 
 }

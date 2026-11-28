@@ -338,6 +338,7 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::TessellationBase: return Invoke(EmitTessellationBase, ctx, inst);
         case IrOpcode::GetTessellationAttribute: return Invoke(EmitGetTessellationAttribute, ctx, inst);
         case IrOpcode::SetTessellationAttribute: return Invoke(EmitSetTessellationAttribute, ctx, inst);
+        case IrOpcode::EmitVertex: return Invoke(EmitGeometryVertex, ctx, inst);
         case IrOpcode::GetBuiltin: return Invoke(EmitGetBuiltin, ctx, inst);
         case IrOpcode::GetThreadBitScalarRegister: return Invoke(EmitGetThreadBitScalarRegister, ctx, inst);
         case IrOpcode::SetThreadBitScalarRegister: return Invoke(EmitSetThreadBitScalarRegister, ctx, inst);
@@ -1431,11 +1432,12 @@ void EmitVoid(SpirvValueEmitContext&) {
 
 void EmitBarrier(SpirvValueEmitContext& ctx, const IrValue& inst) {
     auto& state = ctx.state;
-    if (state.program.Resources().stage == IrShaderStage::Vertex) {
+    const auto stage = state.program.Resources().stage;
+    if (stage == IrShaderStage::Vertex || stage == IrShaderStage::Geometry) {
         if (PrecedesEveryMemoryAccess(state.program, inst)) return;
         for (const auto* block : state.program.BlockOrder()) {
             for (const auto* instruction : block->Instructions()) {
-                if (CommunicatesThroughMemory(instruction->Opcode())) ctx.Fail(inst, "s_barrier in a vertex program that accesses LDS or GDS or writes memory is not implemented");
+                if (CommunicatesThroughMemory(instruction->Opcode())) ctx.Fail(inst, stage == IrShaderStage::Vertex ? "s_barrier in a vertex program that accesses LDS or GDS or writes memory is not implemented" : "s_barrier in a geometry program that accesses LDS or GDS or writes memory is not implemented");
             }
         }
         return;

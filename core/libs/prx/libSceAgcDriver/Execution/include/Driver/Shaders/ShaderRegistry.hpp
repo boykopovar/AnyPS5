@@ -193,6 +193,7 @@ struct PreparedShaders : PreparedShaderState {
     bool pending = false;
     std::vector<std::size_t> convertedSamples;
     std::vector<std::size_t> layerRowSamples;
+    std::vector<std::pair<std::size_t, std::uint32_t>> tessellationConstants;
 };
 
 class SharedCode {

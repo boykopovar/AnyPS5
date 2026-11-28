@@ -9174,7 +9174,7 @@ void verifyPixelRequestSerialization() {
     minimal.context.pixel->layerExported = true;
     minimal.context.pixel->ditheredAlphaToCoverage = true;
     const auto encoded = serializer.Serialize(minimal);
-    require(requestPrefix(encoded, 8u) == "NVNQQUAAAAA=", "new requests did not use serialization version 64");
+    require(requestPrefix(encoded, 8u) == "NVNQQUMAAAA=", "new requests did not use serialization version 67");
     auto withBarycentric = minimal;
     withBarycentric.target.fragmentBarycentricBuiltins = true;
     require(serializer.Deserialize(serializer.Serialize(withBarycentric)).request.target.fragmentBarycentricBuiltins && !serializer.Deserialize(encoded).request.target.fragmentBarycentricBuiltins, "barycentric built-ins were lost in serialization");
@@ -9295,7 +9295,7 @@ void verifyPixelRequestSerialization() {
     for (std::size_t bytes = 0; bytes < 45u; ++bytes) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(requestPrefix(encoded, mappingOffset + bytes))); }, "truncated data", "a truncated pixel mapping, packing, dual-source, alpha-to-coverage, stencil reference export flag, primitive class, layer export, dither or front-face flag, quad pixel mask or quad sample mask was accepted");
     }
-    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA=", "NVNQQToAAAA=", "NVNQQT0AAAA=", "NVNQQUEAAAA="}) {
+    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA=", "NVNQQToAAAA=", "NVNQQT0AAAA=", "NVNQQUQAAAA="}) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(unsupported)); }, "serialization version", "an unsupported request version was accepted");
     }
     static constexpr std::string_view version18Request{
@@ -9352,9 +9352,9 @@ std::vector<std::uint8_t> decodeBase64(std::string_view text) {
     return bytes;
 }
 
-std::vector<std::uint8_t> version56Bytes(std::vector<std::uint8_t> bytes) {
-    require(bytes.size() > 22u && bytes[4] == 64u, "a legacy fixture did not start from serialization version 64");
-    bytes.resize(bytes.size() - 14u);
+std::vector<std::uint8_t> version56Bytes(std::vector<std::uint8_t> bytes, bool tessellated = false) {
+    require(bytes.size() > 22u && bytes[4] == 67u, "a legacy fixture did not start from serialization version 67");
+    bytes.resize(bytes.size() - (tessellated ? 17u : 14u));
     bytes[4] = 56u;
     return bytes;
 }
@@ -9415,9 +9415,9 @@ void verifyEmulatedBarycentricRequests() {
     require(replay.request.graphics.has_value() && replay.request.graphics->emulateBarycentrics && serializer.Serialize(replay.request) == encoded, "emulated barycentrics were lost in serialization");
     auto bytes = decodeBase64(serializer.Serialize(request));
     auto flagged = decodeBase64(encoded);
-    require(bytes[4] == 64u && flagged.size() == bytes.size() + 1u && flagged.back() == 1u && std::equal(bytes.begin(), bytes.end(), flagged.begin()), "emulated barycentrics are not one trailing byte after an otherwise identical request");
+    require(bytes[4] == 67u && flagged.size() == bytes.size() + 1u && flagged.back() == 1u && std::equal(bytes.begin(), bytes.end(), flagged.begin()), "emulated barycentrics are not one trailing byte after an otherwise identical request");
     auto legacyBytes = bytes;
-    legacyBytes.resize(legacyBytes.size() - 8u);
+    legacyBytes.resize(legacyBytes.size() - 9u);
     legacyBytes[4] = 62u;
     const auto legacy = serializer.Deserialize(encodeBase64(legacyBytes));
     require(legacy.request.graphics.has_value() && !legacy.request.graphics->emulateBarycentrics, "a version 62 request emulated barycentrics");
@@ -9426,7 +9426,7 @@ void verifyEmulatedBarycentricRequests() {
     require(legacyKey == native && serializer.Serialize(legacy.request) == serializer.Serialize(request), "a version 62 request changed its cache key or its upgraded bytes");
     flagged[4] = 62u;
     expectFailure([&] { static_cast<void>(serializer.Deserialize(encodeBase64(flagged))); }, "unexpected trailing data", "a version 62 request accepted an emulated barycentrics flag");
-    flagged[4] = 64u;
+    flagged[4] = 67u;
     flagged.back() = 0u;
     expectFailure([&] { static_cast<void>(serializer.Deserialize(encodeBase64(flagged))); }, "flag is clear", "a written but clear emulated barycentrics flag was accepted");
     auto orphanBytes = decodeBase64(serializer.Serialize(unset));
@@ -9989,7 +9989,7 @@ void verifyMergedHullConfiguration() {
     require(replay.request.graphics.has_value() && replay.request.graphics->tessellation.has_value() && replay.request.graphics->tessellation->mergedHull, "a merged hull configuration was lost in serialization");
     require(!serializer.Deserialize(separate).request.graphics->tessellation->mergedHull, "a separate hull configuration was read as merged");
     constexpr std::size_t pointTailBytes = 13u;
-    auto legacy = version56Bytes(decodeBase64(merged));
+    auto legacy = version56Bytes(decodeBase64(merged), true);
     require(legacy.size() > 60u + pointTailBytes && legacy[4] == 56u, "a merged hull request did not use serialization version 56");
     legacy.resize(legacy.size() - sizeof(std::uint32_t) - 7u - pointTailBytes);
     legacy.pop_back();
@@ -13741,6 +13741,21 @@ void verifyTableKeep() {
     }
 }
 
+void verifyReadWordsRegions() {
+    alignas(4096) static std::array<std::uint32_t, 2048> words{};
+    for (std::size_t index = 0; index < words.size(); ++index) words[index] = static_cast<std::uint32_t>(0x9e3779b9u * (index + 1u));
+    AgcDriver::ShaderMemory memory({});
+    std::array<std::uint32_t, 6> values{};
+    const auto first = words.data() + 1022;
+    require(memory.ReadWords(reinterpret_cast<std::uintptr_t>(first), values), "ReadWords failed on readable guest words");
+    require(std::equal(values.begin(), values.end(), first), "ReadWords returned other words than guest memory holds");
+    const auto recent = memory.TakeRecentRegions();
+    require(TableCovered(recent, first, sizeof(values)), "words read with ReadWords are missing from the recent regions");
+    require(!TableCovered(recent, words.data(), sizeof(std::uint32_t)) && !TableCovered(recent, first + values.size(), sizeof(std::uint32_t)), "the recent regions list words ReadWords did not read");
+    require(TableCovered(memory.Regions(), first, sizeof(values)), "words read with ReadWords are missing from the capture's regions");
+    require(memory.TakeRecentRegions().empty(), "ReadWords left recent regions after they were taken");
+}
+
 int main(int argc, char** argv) {
     try {
 #ifdef _WIN32
@@ -14345,6 +14360,7 @@ int main(int argc, char** argv) {
         require(Recompile(request, *nullRootCapture)->poisonedSrtReads >= nullRootCapture->snapshot.nullRootReads, "a capture through a null user-data pointer is cacheable");
         verifyAllocationChurnSnapshot();
         verifySnapshotAllocationMoves();
+        verifyReadWordsRegions();
         std::cout << "Shader memory capture, strict validation and deterministic replay passed\n";
         return 0;
     } catch (const std::exception& error) {
