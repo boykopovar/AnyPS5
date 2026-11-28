@@ -1074,6 +1074,57 @@ static void CheckEnvSysctl() {
     const int tooLong[] = {1, 14, 35, self, 0};
     Require(sysctl_nid_postfix(tooLong, 5, nullptr, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 22);
 }
+static void CheckProcessNodeNames() {
+    struct Node {
+        const char* name;
+        int number;
+    };
+    const int self = getpid_nid_postfix();
+    for (const Node& node : {Node{"kern.proc.pid", 1}, Node{"kern.proc.vmmap", 32}, Node{"kern.proc.env", 35}}) {
+        int mib[5] = {0x5a5a5a5a, 0x5a5a5a5a, 0x5a5a5a5a, 0x5a5a5a5a, 0x5a5a5a5a};
+        std::size_t size = 5;
+        *__error_nid_postfix() = 13;
+        Require(sysctlnametomib_nid_postfix(node.name, mib, &size) == 0 && size == 3);
+        Require(mib[0] == 1 && mib[1] == 14 && mib[2] == node.number && mib[3] == 0x5a5a5a5a);
+        mib[3] = self;
+        const int direct[] = {1, 14, node.number, self};
+        std::size_t resolvedLength = 0;
+        std::size_t directLength = 0;
+        Require(sysctl_nid_postfix(mib, 4, nullptr, &resolvedLength, nullptr, 0) == 0);
+        Require(sysctl_nid_postfix(direct, 4, nullptr, &directLength, nullptr, 0) == 0 && resolvedLength == directLength);
+        Require(*__error_nid_postfix() == 13);
+
+        unsigned char buffer[64];
+        std::memset(buffer, 0xaa, sizeof(buffer));
+        std::size_t length = sizeof(buffer);
+        Require(sysctlbyname_nid_postfix(node.name, buffer, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 22);
+        Require(length == sizeof(buffer) && Untouched(buffer, sizeof(buffer)));
+        length = 77;
+        *__error_nid_postfix() = 13;
+        Require(sysctlbyname_nid_postfix(node.name, nullptr, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 22 && length == 77);
+        *__error_nid_postfix() = 13;
+        Require(sysctlbyname_nid_postfix(node.name, nullptr, nullptr, nullptr, 0) == -1 && *__error_nid_postfix() == 22);
+        length = sizeof(buffer);
+        *__error_nid_postfix() = 13;
+        Require(sysctlbyname_nid_postfix(node.name, buffer, &length, buffer, sizeof(buffer)) == -1 && *__error_nid_postfix() == 1);
+        Require(length == sizeof(buffer) && Untouched(buffer, sizeof(buffer)));
+        auto* const unreadable = reinterpret_cast<std::size_t*>(std::uintptr_t{0x10});
+        *__error_nid_postfix() = 13;
+        Require(sysctlbyname_nid_postfix(node.name, buffer, unreadable, nullptr, 0) == -1 && *__error_nid_postfix() == 14);
+    }
+
+    unsigned char buffer[16];
+    std::memset(buffer, 0xaa, sizeof(buffer));
+    std::size_t length = sizeof(buffer);
+    *__error_nid_postfix() = 13;
+    Require(sysctlbyname_nid_postfix("kern.proc.pid_td", buffer, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 2);
+    Require(length == sizeof(buffer) && Untouched(buffer, sizeof(buffer)));
+    int absent[4] = {0x5a5a5a5a, 0x5a5a5a5a, 0x5a5a5a5a, 0x5a5a5a5a};
+    std::size_t size = 4;
+    *__error_nid_postfix() = 13;
+    Require(sysctlnametomib_nid_postfix("kern.proc.pid_td", absent, &size) == -1 && *__error_nid_postfix() == 2);
+    Require(size == 4 && absent[0] == 0x5a5a5a5a && absent[3] == 0x5a5a5a5a);
+}
 static void CheckPseudoRandomMibSysctl() {
     const int mib[] = {1, 50};
     *__error_nid_postfix() = 13;
@@ -1134,8 +1185,11 @@ static void CheckNameToMib() {
         {"hw.realmem", {6, 12}, 2},
         {"kern.arandom", {1, 37}, 2},
         {"kern.boottime", {1, 21}, 2},
+        {"kern.proc.env", {1, 14, 35}, 3},
         {"kern.proc.pathname", {1, 14, 12}, 3},
+        {"kern.proc.pid", {1, 14, 1}, 3},
         {"kern.proc.proc", {1, 14, 8}, 3},
+        {"kern.proc.vmmap", {1, 14, 32}, 3},
         {"kern.rng_pseudo", {1, 50}, 2},
         {"kern.sched.name", {1, 2147483182, 2147483181}, 3},
         {"kern.smp.maxcpus", {1, 2147482816, 2147482814}, 3},
@@ -1420,6 +1474,7 @@ int main() {
     CheckArandomSysctl();
     CheckVmmapSysctl();
     CheckEnvSysctl();
+    CheckProcessNodeNames();
     CheckPseudoRandomMibSysctl();
     CheckNameToMib();
     CheckSysconfMeasuredNames();
