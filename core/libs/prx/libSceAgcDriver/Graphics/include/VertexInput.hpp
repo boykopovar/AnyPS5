@@ -348,8 +348,8 @@ inline std::size_t VertexBufferReadSize(const ShaderRecompiler::VertexAttribute&
     const auto index = attribute.fetchIndex == 0 ? maxIndex : firstInstance + instances - 1u;
     const auto bytes = DecodeVertexFormat(attribute).bytes;
     const auto select = VertexBufferOutOfBoundsSelect(attribute);
-    const auto recordsUnchecked = stride == 0 ? select != 1u : select <= 1u;
-    if (!recordsUnchecked && index >= records) {
+    const auto indexChecked = stride == 0 && select == 1u;
+    if (indexChecked && index >= records) {
         Require(false, "vertex fetch exceeds descriptor record count: OOB_SELECT " + std::to_string(select) + ", stride " + std::to_string(stride) + ", NUM_RECORDS " + std::to_string(records) + (attribute.fetchIndex == 0 ? ", vertex index " : ", instance index ") + std::to_string(index));
     }
     const auto required = static_cast<std::uint64_t>(stride) * index + bytes;

@@ -352,7 +352,9 @@ void run() {
         Require(VertexBufferReadSize(input[0], 5, 1) == 176, "bounded vertex fetch failed");
         input[0].resource.fields[2] = 5;
         Require(live.TryGet(104, input) == bounded, "bounded record count rebuilt the layout");
-        fails([&] { VertexBufferReadSize(input[0], 5, 1); });
+        Require(VertexBufferReadSize(input[0], 5, 1) == 176, "bounded record count changed the fetch");
+        input[0].resource.fields[2] = 0;
+        Require(VertexBufferReadSize(input[0], 5, 1) == 16 && VertexBufferExtent(input[0]) == 16, "a zero-record bounded descriptor did not use the zero binding");
     }
     {
         VertexInputCache thrashing(ctx, 2);
