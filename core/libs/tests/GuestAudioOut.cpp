@@ -13,6 +13,7 @@
 namespace {
 
 constexpr int AUDIO_OUT_ERROR_INVALID_PORT = static_cast<int>(0x80260003);
+constexpr int AUDIO_OUT_ERROR_CLOSED_MAIN_PORT = static_cast<int>(0x80260001);
 constexpr int audioOutErrorInvalidPort = AUDIO_OUT_ERROR_INVALID_PORT;
 constexpr int invalidPort = AUDIO_OUT_ERROR_INVALID_PORT;
 constexpr int invalidPointer = static_cast<int>(0x80260004);
@@ -98,13 +99,42 @@ void TestClosedPortHandleBounds() {
     int vol[8] = {unity, unity, unity, unity, unity, unity, unity, unity};
 
     Require(sceAudioOutOutput(handle, nullptr) == AUDIO_OUT_ERROR_INVALID_PORT);
-    Require(sceAudioOutGetPortState(handle, &state) == AUDIO_OUT_ERROR_INVALID_PORT);
-    Require(sceAudioOutGetLastOutputTime(handle, &lastTime) == AUDIO_OUT_ERROR_INVALID_PORT);
-    Require(sceAudioOutSetVolume(handle, 0xFF, vol) == AUDIO_OUT_ERROR_INVALID_PORT);
+    Require(sceAudioOutGetPortState(handle, &state) == AUDIO_OUT_ERROR_CLOSED_MAIN_PORT);
+    Require(sceAudioOutGetLastOutputTime(handle, &lastTime) == AUDIO_OUT_ERROR_CLOSED_MAIN_PORT);
+    Require(sceAudioOutSetVolume(handle, 0xFF, vol) == AUDIO_OUT_ERROR_CLOSED_MAIN_PORT);
     Require(sceAudioOutSetMixLevelPadSpk(handle, defaultMixLevel) == AUDIO_OUT_ERROR_INVALID_PORT);
 
     AudioOutOutputParam badParam{handle, nullptr};
     Require(sceAudioOutOutputs(&badParam, 1) == AUDIO_OUT_ERROR_INVALID_PORT);
+}
+
+void TestClosedNonMainPortHandleKeepsInvalidPortNotMeasuredOnTheConsole() {
+    constexpr int nonMainTypes[] = {portTypeBgm, portTypePadSpk, portTypeAudio3d, portTypeAux};
+
+    for (const int type : nonMainTypes) {
+        const int handle = sceAudioOutOpen(user, type, 0, standardLen, standardFreq, 0);
+        Require(handle >= 1 && handle <= 32);
+        Require(sceAudioOutClose(handle) == 0);
+
+        AudioOutPortState state{};
+        std::uint64_t lastTime = 0;
+        int vol[8] = {unity, unity, unity, unity, unity, unity, unity, unity};
+        Require(sceAudioOutGetPortState(handle, &state) == AUDIO_OUT_ERROR_INVALID_PORT);
+        Require(sceAudioOutGetLastOutputTime(handle, &lastTime) == AUDIO_OUT_ERROR_INVALID_PORT);
+        Require(sceAudioOutSetVolume(handle, 0xFF, vol) == AUDIO_OUT_ERROR_INVALID_PORT);
+    }
+
+    const int mainHandle = sceAudioOutOpen(user, portTypeMain, 0, standardLen, standardFreq, 0);
+    Require(mainHandle >= 1 && mainHandle <= 32);
+    Require(sceAudioOutClose(mainHandle) == 0);
+
+    AudioOutPortState state{};
+    Require(sceAudioOutGetPortState(mainHandle, &state) == AUDIO_OUT_ERROR_CLOSED_MAIN_PORT);
+
+    const int otherHandle = sceAudioOutOpen(user, portTypeBgm, 0, standardLen, standardFreq, 0);
+    Require(otherHandle >= 1 && otherHandle <= 32);
+    Require(sceAudioOutClose(otherHandle) == 0);
+    Require(sceAudioOutGetPortState(otherHandle, &state) == AUDIO_OUT_ERROR_INVALID_PORT);
 }
 
 void TestSampleFrequencyValidation() {
@@ -207,7 +237,7 @@ void TestMillibelVolumeBitmaskClamping() {
     Require(sceAudioOutSetVolume(std::numeric_limits<int>::max(), 0xFF, nominalVol) == AUDIO_OUT_ERROR_INVALID_PORT);
 
     Require(sceAudioOutClose(handle) == 0);
-    Require(sceAudioOutSetVolume(handle, 0xFF, nominalVol) == AUDIO_OUT_ERROR_INVALID_PORT);
+    Require(sceAudioOutSetVolume(handle, 0xFF, nominalVol) == AUDIO_OUT_ERROR_CLOSED_MAIN_PORT);
 }
 
 void TestSurround71DownmixingValidation() {
@@ -263,8 +293,8 @@ void TestSurround71DownmixingValidation() {
             Require(sceAudioOutClose(handle) == 0);
             Require(sceAudioOutClose(handle) == AUDIO_OUT_ERROR_INVALID_PORT);
             Require(sceAudioOutOutput(handle, nullptr) == AUDIO_OUT_ERROR_INVALID_PORT);
-            Require(sceAudioOutGetPortState(handle, &state) == AUDIO_OUT_ERROR_INVALID_PORT);
-            Require(sceAudioOutGetLastOutputTime(handle, &lastTime) == AUDIO_OUT_ERROR_INVALID_PORT);
+            Require(sceAudioOutGetPortState(handle, &state) == AUDIO_OUT_ERROR_CLOSED_MAIN_PORT);
+            Require(sceAudioOutGetLastOutputTime(handle, &lastTime) == AUDIO_OUT_ERROR_CLOSED_MAIN_PORT);
         }
 
         bool vibrationThrew = false;
@@ -401,8 +431,8 @@ void TestStandardFrequency48000HzPortLifecycle() {
         Require(sceAudioOutClose(handle) == 0);
         Require(sceAudioOutClose(handle) == AUDIO_OUT_ERROR_INVALID_PORT);
         Require(sceAudioOutOutput(handle, nullptr) == AUDIO_OUT_ERROR_INVALID_PORT);
-        Require(sceAudioOutGetPortState(handle, &state) == AUDIO_OUT_ERROR_INVALID_PORT);
-        Require(sceAudioOutGetLastOutputTime(handle, &lastTime) == AUDIO_OUT_ERROR_INVALID_PORT);
+        Require(sceAudioOutGetPortState(handle, &state) == (type == portTypeMain ? AUDIO_OUT_ERROR_CLOSED_MAIN_PORT : AUDIO_OUT_ERROR_INVALID_PORT));
+        Require(sceAudioOutGetLastOutputTime(handle, &lastTime) == (type == portTypeMain ? AUDIO_OUT_ERROR_CLOSED_MAIN_PORT : AUDIO_OUT_ERROR_INVALID_PORT));
     }
 }
 
@@ -464,7 +494,7 @@ void TestPortStateAudit() {
         }
 
         Require(sceAudioOutClose(monoHandle) == 0);
-        Require(sceAudioOutGetPortState(monoHandle, &state) == AUDIO_OUT_ERROR_INVALID_PORT);
+        Require(sceAudioOutGetPortState(monoHandle, &state) == (desc.type == portTypeMain ? AUDIO_OUT_ERROR_CLOSED_MAIN_PORT : AUDIO_OUT_ERROR_INVALID_PORT));
 
         if (desc.supportsStereo) {
             const int stereoHandle = sceAudioOutOpen(user, desc.type, 0, standardLen, standardFreq, 1);
@@ -478,7 +508,7 @@ void TestPortStateAudit() {
             Require(stereoState.volume == 127);
 
             Require(sceAudioOutClose(stereoHandle) == 0);
-            Require(sceAudioOutGetPortState(stereoHandle, &stereoState) == AUDIO_OUT_ERROR_INVALID_PORT);
+            Require(sceAudioOutGetPortState(stereoHandle, &stereoState) == (desc.type == portTypeMain ? AUDIO_OUT_ERROR_CLOSED_MAIN_PORT : AUDIO_OUT_ERROR_INVALID_PORT));
         }
     }
 
@@ -603,6 +633,7 @@ int main() {
 
     TestPortHandleBounds();
     TestClosedPortHandleBounds();
+    TestClosedNonMainPortHandleKeepsInvalidPortNotMeasuredOnTheConsole();
     TestSampleFrequencyValidation();
     TestVolumeBoundaries();
     TestMillibelVolumeBitmaskClamping();
