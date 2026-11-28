@@ -618,12 +618,14 @@ void RegisterPeer(Session& session) {
     for (const auto* entry = certificate; entry && entry->raw.p; entry = entry->next)
         CheckBackend(mbedtls_x509_crt_parse_der(&chain->root, entry->raw.p, entry->raw.len), "SSL peer certificate copy failed");
     std::lock_guard lock(State().mutex);
+    std::vector<void*> peerHandles;
     for (const auto* entry = &chain->root; entry && entry->raw.p; entry = entry->next) {
         auto handle = std::make_unique<CertificateHandle>(CertificateHandle{chain, entry});
-        session.peerHandles.push_back(handle.get());
+        peerHandles.push_back(handle.get());
         chain->handles.push_back(handle.get());
         session.context->certificateHandles.push_back(std::move(handle));
     }
+    session.peerHandles = std::move(peerHandles);
     session.peer = std::move(chain);
 }
 
