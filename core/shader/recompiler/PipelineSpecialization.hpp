@@ -20,6 +20,7 @@ inline constexpr std::uint32_t BufferBase = 0u;
 inline constexpr std::uint32_t BufferWords = 4u;
 inline constexpr std::uint32_t ImageBase = 1024u;
 inline constexpr std::uint32_t ImageWords = 5u;
+inline constexpr std::uint32_t PackedStoreSwizzleModeBase = 65408u;
 inline constexpr std::uint32_t ImageComponentBase = 65536u;
 inline constexpr std::uint32_t ImageComponentBits = 2u;
 inline constexpr std::uint32_t NormalizedImageBase = 65664u;
