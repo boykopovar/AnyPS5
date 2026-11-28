@@ -49,13 +49,24 @@ bool SameCurve(const EcGroup& group, const EcPoint& point) {
     return group.curve.nid == point.curve.nid;
 }
 
-std::vector<unsigned char> Magnitude(const LibreSsl3Bignum* number, const char* caller) {
-    const int bits = BN_num_bits_nid_postfix(reinterpret_cast<const Bignum*>(number));
+std::vector<unsigned char> Magnitude(const LibreSsl3Bignum& record, const char* caller) {
+    const std::size_t limbs = record.top > 0 ? static_cast<std::size_t>(record.top) : 0u;
+    std::vector<std::uint64_t> data(limbs);
+    const int savedErrno = errno;
+    const bool readable = limbs == 0u || GuestCopyIn_nid_no_patch(data.data(), record.data, limbs * sizeof(std::uint64_t));
+    errno = savedErrno;
+    if (!readable) NotImplemented_nid_no_patch(caller);
+    Bignum number{};
+    number.d = data.data();
+    number.top = record.top;
+    number.dmax = static_cast<int>(limbs);
+    number.neg = record.negative;
+    number.flags = record.flags;
+    const int bits = BN_num_bits_nid_postfix(&number);
     if (bits < 0) NotImplemented_nid_no_patch(caller);
     const int length = (bits + 7) / 8;
     std::vector<unsigned char> bytes(static_cast<std::size_t>(length));
-    if (length != 0 &&
-        BN_bn2bin_nid_postfix(reinterpret_cast<const Bignum*>(number), bytes.data()) != length)
+    if (length != 0 && BN_bn2bin_nid_postfix(&number, bytes.data()) != length)
         NotImplemented_nid_no_patch(caller);
     return bytes;
 }
@@ -66,7 +77,7 @@ std::vector<unsigned char> Coordinate(const LibreSsl3Bignum* number, const EcGro
     const bool readable = GuestCopyIn_nid_no_patch(&record, number, sizeof(record));
     errno = savedErrno;
     if (!readable) NotImplemented_nid_no_patch(caller);
-    const std::vector<unsigned char> magnitude = Magnitude(number, caller);
+    const std::vector<unsigned char> magnitude = Magnitude(record, caller);
     Mpi value;
     if (mbedtls_mpi_read_binary(&value.value, magnitude.data(), magnitude.size()) != 0)
         NotImplemented_nid_no_patch(caller);
