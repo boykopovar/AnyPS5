@@ -503,7 +503,8 @@ void* APS5_VABI mmap_np(void* address, std::size_t length, int protection, int f
                                     length, protection, flags, descriptor, offset);
     if (mapped == reinterpret_cast<void*>(-1)) {
         if (*__error_nid_postfix() == PosixEnomem) {
-            NotImplemented_nid_no_patch(__func__);
+            sceKernelDebugRaiseException(static_cast<int>(0xa0020405u), 0);
+            *__error_nid_postfix() = PosixEnomem;
         }
         return mapped;
     }
