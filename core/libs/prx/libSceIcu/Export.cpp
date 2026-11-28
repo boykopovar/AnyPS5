@@ -115,15 +115,7 @@ int APS5_VABI ucnv_setFallback() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ucnv_setFromUCallBack() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI ucnv_setSubstChars() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ucnv_setToUCallBack() {
     NotImplemented_nid_no_patch(__func__);
 }
 
