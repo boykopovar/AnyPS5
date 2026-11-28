@@ -173,7 +173,6 @@ int APS5_VABI WKContextCopyPlugInAutoStartOriginHashes();
 int APS5_VABI WKContextDownloadURLRequest();
 int APS5_VABI WKContextGetApplicationCacheManager();
 int APS5_VABI WKContextGetGeolocationManager();
-int APS5_VABI WKContextGetGlobalStatistics();
 int APS5_VABI WKContextGetKeyValueStorageManager();
 int APS5_VABI WKContextGetNotificationManager();
 int APS5_VABI WKContextGetResourceCacheManager();

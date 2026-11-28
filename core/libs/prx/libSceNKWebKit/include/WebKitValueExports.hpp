@@ -9,6 +9,12 @@ namespace NKWebKit {
 struct PointValue;
 struct SizeValue;
 struct RectValue;
+struct ContextStatistics {
+    std::uint32_t viewCount;
+    std::uint32_t pageCount;
+    std::uint32_t frameCount;
+};
+static_assert(sizeof(ContextStatistics) == 12);
 struct OpaqueJSContext;
 struct OpaqueJSValue;
 using JSContextRef = const OpaqueJSContext*;
@@ -21,6 +27,7 @@ typedef void (APS5_VABI *WKResultErrorFunction)(const void* result, const void* 
 typedef void (APS5_VABI *WKUserContentExtensionStoreFunction)(const void* filter, std::uint32_t error, void* context);
 
 std::uint32_t APS5_VABI WKAXObjectGetTypeID();
+void APS5_VABI WKContextGetGlobalStatistics(NKWebKit::ContextStatistics* statistics);
 const void* APS5_VABI WKAXObjectCopyTitle(const void* objectRef);
 const void* APS5_VABI WKAXObjectCopyDescription(const void* objectRef);
 const void* APS5_VABI WKAXObjectCopyHelpText(const void* objectRef);
