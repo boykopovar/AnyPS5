@@ -7,6 +7,7 @@
 #include <functional>
 #include <stdexcept>
 #include <string>
+#include <sys/mman.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -291,6 +292,11 @@ void Floats() {
     Expect(Run([&] { __ubsan_handle_float_cast_overflow(&longCast, reinterpret_cast<std::uintptr_t>(extended)); }), 0,
            "f.c:2:5: runtime error: 1.5 is outside the range of representable values of type 'int'\n" + Summary("f.c:2:5"),
            "80-bit long double by pointer");
+
+    unsigned char beyondDouble[16] = {0, 0, 0, 0, 0, 0, 0, 0x80, 0x7f, 0x7e};
+    Expect(Run([&] { __ubsan_handle_float_cast_overflow(&longCast, reinterpret_cast<std::uintptr_t>(beyondDouble)); }), 0,
+           "f.c:2:5: runtime error: 3.01947e+4816 is outside the range of representable values of type 'int'\n" + Summary("f.c:2:5"),
+           "80-bit long double beyond the double range");
 }
 
 void Values() {
@@ -417,6 +423,20 @@ void Faults() {
                }
            }),
            0, "threw\n", "unreadable type descriptor");
+    void* page = ::mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED, "mmap");
+    auto* readOnly = static_cast<OverflowData*>(page);
+    *readOnly = OverflowData{{"x.c", 3, 1}, &Int};
+    Require(::mprotect(page, 4096, PROT_READ) == 0, "mprotect");
+    Expect(Run([&] {
+               try {
+                   __ubsan_handle_add_overflow(readOnly, 0x7fffffff, 1);
+               } catch (const std::invalid_argument&) {
+                   std::fputs("threw\n", stderr);
+               }
+           }),
+           0, "threw\n", "a read-only source location throws");
+    ::munmap(page, 4096);
 }
 
 void Unaligned() {
