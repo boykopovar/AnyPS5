@@ -147,6 +147,7 @@
 #include "prx/libSceNKWebKit/include/NodeTraversalExports.hpp"
 #include "prx/libSceNKWebKit/include/FrameTreeExports.hpp"
 #include "prx/libSceNKWebKit/include/ElementNavigationExports.hpp"
+#include "prx/libSceNKWebKit/include/MarkedTextExports.hpp"
 #include "prx/libSceNKWebKit/include/BasicFilterOperationExports.hpp"
 #include "prx/libSceNKWebKit/include/MarkingConstraintExports.hpp"
 #include "prx/libSceNKWebKit/include/EmptyLoaderLegacyCallbackExports.hpp"
