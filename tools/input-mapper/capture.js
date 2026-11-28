@@ -10,6 +10,8 @@ const codes = {
     NumpadDivide: 'Keypad /', NumpadMultiply: 'Keypad *', NumpadSubtract: 'Keypad -',
     NumpadAdd: 'Keypad +', NumpadEnter: 'Keypad Enter', NumpadDecimal: 'Keypad .',
     NumpadEqual: 'Keypad =', NumpadComma: 'Keypad ,', ContextMenu: 'Application',
+    Again: 'Again', Copy: 'Copy', Cut: 'Cut', Find: 'Find', Open: 'Execute',
+    Paste: 'Paste', Props: 'CrSel', Select: 'Select', Undo: 'Undo',
     NumpadBackspace: 'Keypad Backspace', NumpadClear: 'Keypad Clear', NumpadClearEntry: 'Keypad ClearEntry',
     NumpadParenLeft: 'Keypad (', NumpadParenRight: 'Keypad )',
     NumpadMemoryAdd: 'Keypad MemAdd', NumpadMemoryClear: 'Keypad MemClear',
