@@ -2,7 +2,7 @@
 
 ## change [Additional exports]
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 50 still-unimplemented callable exports: 49 named and 1 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 28 still-unimplemented callable exports: 27 named and 1 known only by NID; none is verified on a console. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. Sixteen libtls lifecycle/config exports are implemented in `LibTls.cpp` and `tls_config_parse_protocols` in `TlsProtocols.cpp`; five transport exports (`tls_connect_socket`, `tls_accept_socket`, `tls_handshake`, `tls_read`, `tls_write`) are in `LibTlsTransport.cpp`. Title compatibility beyond the tested client and server transports remains unverified.
 
 ## remove `4pEl-5DmrrM`
 

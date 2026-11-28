@@ -1,3 +1,23 @@
+/* Derived from LibreSSL 4.0.0 libtls tls.c and tls_server.c at
+ * https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libtls/tls.c
+ * https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libtls/tls_server.c */
+/* Altered: context roles, server configuration validation and accepted contexts are mapped to the mbedTLS transport. */
+/* $OpenBSD: tls_server.c,v 1.51 2024/03/26 08:54:48 joshua Exp $ */
+/*
+ * Copyright (c) 2014 Joel Sing <jsing@openbsd.org>
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ */
 #include "prx/libSceLibreSsl3/include/LibTls.hpp"
 
 #include <atomic>
@@ -6,6 +26,7 @@
 #include <initializer_list>
 #include <new>
 #include <stdexcept>
+#include <string>
 
 namespace {
 
@@ -24,12 +45,10 @@ struct ConfigStorage {
     const char* error = nullptr;
 };
 
-enum class Role { Client, Server };
-
 struct ContextStorage {
     ConfigStorage* config;
-    Role role;
-    const char* error;
+    TlsRole role;
+    std::string error;
 };
 
 ConfigStorage* Storage(TlsConfig* config) {
@@ -126,8 +145,8 @@ void Release(ConfigStorage* config) {
     delete config;
 }
 
-TlsContext* NewContext(Role role) {
-    auto* context = new (std::nothrow) ContextStorage{&DefaultConfig(), role, nullptr};
+TlsContext* NewContext(TlsRole role) {
+    auto* context = new (std::nothrow) ContextStorage{&DefaultConfig(), role, {}};
     if (!context) return nullptr;
     Retain(context->config);
     return Public(context);
@@ -171,22 +190,25 @@ int APS5_VABI tls_config_set_key_mem_nid_postfix(TlsConfig* config, const std::u
 }
 
 TlsContext* APS5_VABI tls_client_nid_postfix() {
-    return NewContext(Role::Client);
+    return NewContext(TlsRole::Client);
 }
 
 TlsContext* APS5_VABI tls_server_nid_postfix() {
-    return NewContext(Role::Server);
+    return NewContext(TlsRole::Server);
 }
 
 void APS5_VABI tls_free_nid_postfix(TlsContext* context) {
     if (!context) return;
     auto* state = Storage(context);
+    TlsTransportFree_nid_no_patch(context);
     Release(state->config);
     delete state;
 }
 
 const char* APS5_VABI tls_error_nid_postfix(TlsContext* context) {
-    return context ? Storage(context)->error : nullptr;
+    if (!context) return nullptr;
+    const auto& error = Storage(context)->error;
+    return error.empty() ? nullptr : error.c_str();
 }
 
 int APS5_VABI tls_configure_nid_postfix(TlsContext* context, TlsConfig* config) {
@@ -196,9 +218,18 @@ int APS5_VABI tls_configure_nid_postfix(TlsContext* context, TlsConfig* config) 
     Retain(replacement);
     Release(state->config);
     state->config = replacement;
-    if (state->role == Role::Server) {
-        state->error = replacement->keyLength ? "failed to read private key" : "private/public key mismatch";
-        return -1;
+    if (state->role == TlsRole::Server) {
+        TlsTransportConfig settings{};
+        settings.cert = replacement->cert;
+        settings.certLength = replacement->certLength;
+        settings.key = replacement->key;
+        settings.keyLength = replacement->keyLength;
+        settings.verifyClient = replacement->verifyClient != 0;
+        char message[256];
+        if (TlsTransportValidateServer_nid_no_patch(&settings, message, sizeof(message)) != 0) {
+            state->error = message;
+            return -1;
+        }
     }
     return 0;
 }
@@ -206,12 +237,12 @@ int APS5_VABI tls_configure_nid_postfix(TlsContext* context, TlsConfig* config) 
 int APS5_VABI tls_close_nid_postfix(TlsContext* context) {
     if (!context) return -1;
     auto* state = Storage(context);
-    state->error = nullptr;
-    if (state->role == Role::Server) {
+    state->error.clear();
+    if (state->role == TlsRole::Server) {
         state->error = "invalid operation for context";
         return -1;
     }
-    return 0;
+    return TlsTransportClose_nid_no_patch(context);
 }
 
 int APS5_VABI tls_config_set_ca_mem_nid_postfix(TlsConfig* config, const std::uint8_t* ca, std::size_t length) {
@@ -254,6 +285,41 @@ void APS5_VABI tls_config_verify_client_nid_postfix(TlsConfig* config) {
 
 void APS5_VABI tls_config_insecure_noverifyname_nid_postfix(TlsConfig* config) {
     if (config) Storage(config)->verifyName = 0;
+}
+
+bool TlsTransportGetConfig_nid_no_patch(TlsContext* context, TlsTransportConfig* config) {
+    if (!context || !config) return false;
+    const auto* state = Storage(context);
+    config->ca = state->config->ca;
+    config->caLength = state->config->caLength;
+    config->cert = state->config->cert;
+    config->certLength = state->config->certLength;
+    config->key = state->config->key;
+    config->keyLength = state->config->keyLength;
+    config->ciphers = state->config->ciphers;
+    config->protocols = state->config->protocols;
+    config->role = state->role;
+    config->verifyClient = state->config->verifyClient != 0;
+    config->verifyName = state->config->verifyName != 0;
+    return true;
+}
+
+void TlsTransportSetError_nid_no_patch(TlsContext* context, const char* error) {
+    if (context) Storage(context)->error = error ? error : "TLS transport failed";
+}
+
+void TlsTransportClearError_nid_no_patch(TlsContext* context) {
+    if (context) Storage(context)->error.clear();
+}
+
+TlsContext* TlsTransportAcceptContext_nid_no_patch(TlsContext* context) {
+    if (!context) return nullptr;
+    auto* state = Storage(context);
+    if (state->role != TlsRole::Server) return nullptr;
+    auto* accepted = new (std::nothrow) ContextStorage{state->config, TlsRole::ServerConnection, {}};
+    if (!accepted) return nullptr;
+    Retain(accepted->config);
+    return Public(accepted);
 }
 
 }
