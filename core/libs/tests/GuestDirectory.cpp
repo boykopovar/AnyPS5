@@ -16,6 +16,10 @@
 #include <string>
 #include <vector>
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #else
 #include <sys/mman.h>
@@ -197,6 +201,47 @@ int main() {
 
     Require(*__error_nid_postfix() == 9);
     Require(closedir_nid_postfix(directory) == 0);
+    for (void* badHandle : {static_cast<void*>(const_cast<char*>(UnreadablePage())), directory}) {
+        *__error_nid_postfix() = 0;
+        Require(readdir_nid_postfix(badHandle) == nullptr && *__error_nid_postfix() == 9);
+        *__error_nid_postfix() = 13;
+        Require(readdir_r_nid_postfix(badHandle, &buffer, &result) == 9 && *__error_nid_postfix() == 13);
+        *__error_nid_postfix() = 0;
+        Require(closedir_nid_postfix(badHandle) == -1 && *__error_nid_postfix() == 9);
+        *__error_nid_postfix() = 0;
+        rewinddir_nid_postfix(badHandle);
+        Require(*__error_nid_postfix() == 9);
+        *__error_nid_postfix() = 0;
+        Require(telldir_nid_postfix(badHandle) == -1 && *__error_nid_postfix() == 9);
+        *__error_nid_postfix() = 0;
+        seekdir_nid_postfix(badHandle, 0);
+        Require(*__error_nid_postfix() == 9);
+    }
+    {
+        const auto requireInvalidArg = [](auto&& action) {
+            bool threw = false;
+            try {
+                action();
+            } catch (const std::invalid_argument&) {
+                threw = true;
+            }
+            Require(threw);
+        };
+        GuestDirectoryEntry validEntry{};
+        std::strcpy(validEntry.name, "alpha");
+        const GuestDirectoryEntry* validPtr = &validEntry;
+        const GuestDirectoryEntry* badEntryPtr = reinterpret_cast<const GuestDirectoryEntry*>(UnreadablePage());
+        const GuestDirectoryEntry* nullEntryPtr = nullptr;
+        const auto* badOuter = reinterpret_cast<const GuestDirectoryEntry* const*>(UnreadablePage());
+        requireInvalidArg([&] { alphasort_nid_postfix(nullptr, &validPtr); });
+        requireInvalidArg([&] { alphasort_nid_postfix(&validPtr, nullptr); });
+        requireInvalidArg([&] { alphasort_nid_postfix(badOuter, &validPtr); });
+        requireInvalidArg([&] { alphasort_nid_postfix(&validPtr, badOuter); });
+        requireInvalidArg([&] { alphasort_nid_postfix(&badEntryPtr, &validPtr); });
+        requireInvalidArg([&] { alphasort_nid_postfix(&validPtr, &badEntryPtr); });
+        requireInvalidArg([&] { alphasort_nid_postfix(&nullEntryPtr, &validPtr); });
+        requireInvalidArg([&] { alphasort_nid_postfix(&validPtr, &nullEntryPtr); });
+    }
     Require(opendir_nid_postfix((root / "missing").string().c_str()) == nullptr);
     Require(*__error_nid_postfix() == 2);
     const auto symlinkLoop = root / "symlink-loop";
