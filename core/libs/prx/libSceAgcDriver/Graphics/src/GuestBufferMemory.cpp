@@ -475,7 +475,7 @@ struct HostImports {
     std::map<std::uint64_t, std::uint64_t> spaceUses;
     bool dmaBufSelected = false;
     std::uint64_t budgetRefusals = 0;
-    std::array<const HostImport*, 4> recentImports{};
+    std::array<const HostImport*, 16> recentImports{};
     std::uint64_t recentEpoch = std::numeric_limits<std::uint64_t>::max();
     std::size_t recentSize = 0;
     std::size_t recentNext = 0;
@@ -507,6 +507,7 @@ void rememberImport(HostImports& state, const HostImport* entry) {
         state.recentImports = {};
         state.recentEpoch = state.epoch;
         state.recentSize = state.imports.size();
+        state.recentNext = 0;
     }
     state.recentImports[state.recentNext++ % state.recentImports.size()] = entry;
 }
@@ -2077,7 +2078,7 @@ std::uint64_t retireLeastRecent(const Context& context, HostImports& state, cons
     return freed;
 }
 
-std::uint64_t physicalMemoryBytes() {
+std::uint64_t queryPhysicalMemoryBytes() {
 #ifdef _WIN32
     MEMORYSTATUSEX status{};
     status.dwLength = sizeof(status);
@@ -2087,6 +2088,11 @@ std::uint64_t physicalMemoryBytes() {
     const auto pageSize = sysconf(_SC_PAGESIZE);
     return pages > 0 && pageSize > 0 ? static_cast<std::uint64_t>(pages) * static_cast<std::uint64_t>(pageSize) : 0;
 #endif
+}
+
+std::uint64_t physicalMemoryBytes() {
+    static const std::uint64_t bytes = queryPhysicalMemoryBytes();
+    return bytes;
 }
 
 std::atomic<std::uint64_t> budgetOverride{0};
@@ -3063,8 +3069,14 @@ const HostImport* peekImport(const HostImports& state, std::uint64_t begin, std:
 }
 
 const HostImport* findImport(HostImports& state, std::uint64_t begin, std::uint64_t end) {
+    if (recentImportsEnabled()) {
+        if (const auto* recent = recentImport(state, begin, end)) return recent;
+    }
     const auto* entry = peekImport(state, begin, end);
-    if (entry != nullptr) entry->lastUse = ++state.useCounter;
+    if (entry != nullptr) {
+        entry->lastUse = ++state.useCounter;
+        if (recentImportsEnabled()) rememberImport(state, entry);
+    }
     return entry;
 }
 
@@ -5340,17 +5352,7 @@ const HostImport* HostImportFor(const Context& context, std::uint64_t address, s
 #endif
     // A hit is only valid while the registry has not changed since the imports were reconciled.
     if (!importsStale(context, state) || refreshedFromLoggedChanges(context, state)) {
-        if (recentImportsEnabled()) {
-            if (const auto* entry = recentImport(state, address, address + bytes)) {
-                entry->lastUse = ++state.useCounter;
-                return entry;
-            }
-        }
-        if (const auto* entry = findImport(state, address, address + bytes)) {
-            entry->lastUse = ++state.useCounter;
-            if (recentImportsEnabled()) rememberImport(state, entry);
-            return entry;
-        }
+        if (const auto* entry = findImport(state, address, address + bytes)) return entry;
     }
     const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
     refreshImports(context, state, lease);
@@ -5386,10 +5388,7 @@ const HostImport* HostImportJoinedFor(const Context& context, std::uint64_t addr
 #endif
     const auto end = address + bytes;
     if (!importsStale(context, state) || refreshedFromLoggedChanges(context, state)) {
-        if (const auto* entry = findImport(state, address, end)) {
-            entry->lastUse = ++state.useCounter;
-            return entry;
-        }
+        if (const auto* entry = findImport(state, address, end)) return entry;
     }
     const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
     refreshImports(context, state, lease);

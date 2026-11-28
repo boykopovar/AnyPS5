@@ -1145,6 +1145,7 @@ private:
                 continue;
             }
             Require(GuestMemory::Watched(range.address, range.bytes), "initial multisampled DCC contents require watched guest memory");
+            GuestMemory::MaterializeKnownZero(range.address, range.bytes);
             if (index != 0u) GuestMemory::MaterializeKnownZero(range.address, range.bytes);
             range.generation = collectBlocks(range.address, range.bytes);
             Require(range.generation != 0, "initial multisampled DCC contents have no write generation");
@@ -1428,6 +1429,7 @@ RetiredGpuOwners retireGuarded(std::uintptr_t address, std::size_t bytes, bool r
 }
 
 void retireUnmapped(std::uintptr_t address, std::size_t bytes) {
+    StorageTexture::NoteUnmapped(address, bytes);
     static_cast<void>(retireGuarded(address, bytes, false));
 }
 
@@ -1734,7 +1736,7 @@ void InstallResidentImageReadGuard_nid_no_patch() {
 void UpdateResidentImageUnmapObserver_nid_no_patch() {
     static std::mutex mutex;
     std::lock_guard lock(mutex);
-    GuestAllocations::GuestAllocationsSetUnmapObserver_nid_postfix(anyGuarded().load(std::memory_order_acquire) || anySingleClears().load(std::memory_order_acquire) || HasResidentDepthGuards_nid_no_patch() || DepthPlanesStale() ? &retireUnmapped : nullptr);
+    GuestAllocations::GuestAllocationsSetUnmapObserver_nid_postfix(anyGuarded().load(std::memory_order_acquire) || anySingleClears().load(std::memory_order_acquire) || HasResidentDepthGuards_nid_no_patch() || DepthPlanesStale() || StorageTexture::Created() ? &retireUnmapped : nullptr);
 }
 
 void RetireResidentImagesOver_nid_no_patch(std::uintptr_t address, std::size_t bytes) {

@@ -481,6 +481,16 @@ void testMapMemory() {
     setSize(0x20);
     check(sceVideodecMapMemory(nullptr, memory) == ErrorArgumentPointer, "map memory accepted a null control block");
     check(sceVideodecMapMemory(&ctrl, nullptr) == ErrorArgumentPointer, "map memory accepted a null memory block");
+    auto* const badCtrl = reinterpret_cast<Ctrl*>(std::uintptr_t{0x10});
+    auto* const badMemory = reinterpret_cast<const void*>(std::uintptr_t{0x10});
+    check(sceVideodecMapMemory(badCtrl, memory) == ErrorArgumentPointer, "map memory accepted an unreadable control block");
+    check(sceVideodecMapMemory(&ctrl, badMemory) == ErrorArgumentPointer, "map memory accepted an unreadable memory block");
+    const std::uint64_t ctrlTailSize = sizeof(Ctrl);
+    PageTail shortCtrlHandle(&ctrlTailSize, sizeof(ctrlTailSize));
+    check(sceVideodecMapMemory(shortCtrlHandle.As<Ctrl>(), memory) == ErrorArgumentPointer, "map memory accepted a control block whose handle cannot be read");
+    const std::uint64_t memoryTailSize = 0x28;
+    PageTail shortMemoryFields(&memoryTailSize, sizeof(memoryTailSize));
+    check(sceVideodecMapMemory(&ctrl, shortMemoryFields.As<const void>()) == ErrorArgumentPointer, "map memory accepted a memory block whose fields cannot be read");
     check(sceVideodecMapMemory(&wrongSize, memory) == ErrorStructSize, "map memory accepted a control block size other than 24");
     for (const std::uint64_t size : {0ull, 0x18ull, 0x1full, 0x21ull, 0x30ull, 0x40ull, 0x47ull, 0x49ull, 0x50ull}) {
         setSize(size);

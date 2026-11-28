@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 
 namespace {
 
@@ -129,6 +130,70 @@ void TestNamedObject() {
                    "libkernel_sys still sees the id deleted through libkernel_web");
 }
 
+void TestRandomizedPath() {
+    constexpr char Expected[] = "gkbHtXc3Wq";
+    constexpr std::size_t ExpectedLength = sizeof(Expected) - 1;
+
+    char full[32]{};
+    std::size_t fullLength = sizeof(full);
+    Require(__sys_randomized_path_nid_postfix(nullptr, full, &fullLength) == 0, "libkernel_sys randomized-path query failed");
+    Require(fullLength == ExpectedLength && std::strcmp(full, Expected) == 0, "libkernel_sys randomized-path output mismatch");
+
+    char shortBuffer[8];
+    std::memset(shortBuffer, 'x', sizeof(shortBuffer));
+    std::size_t shortLength = 5;
+    Require(__sys_randomized_path_nid_disambig1_nid_postfix(nullptr, shortBuffer, &shortLength) == 0, "libkernel_web short randomized-path query failed");
+    Require(shortLength == ExpectedLength && std::memcmp(shortBuffer, "gkbH\0", 5) == 0 && shortBuffer[5] == 'x',
+            "libkernel_web short randomized-path result mismatch");
+
+    char one[2] = {'x', 'y'};
+    std::size_t oneLength = 1;
+    Require(__sys_randomized_path_nid_postfix(nullptr, one, &oneLength) == 0 && oneLength == ExpectedLength && one[0] == '\0' && one[1] == 'y',
+            "capacity-one randomized-path query mismatch");
+
+    char zero[2] = {'x', 'y'};
+    std::size_t zeroLength = 0;
+    Require(__sys_randomized_path_nid_postfix(nullptr, zero, &zeroLength) == 0 && zeroLength == ExpectedLength && zero[0] == 'x' && zero[1] == 'y',
+            "capacity-zero randomized-path query wrote the buffer");
+
+    std::size_t untouchedLength = 77;
+    Require(__sys_randomized_path_nid_postfix(nullptr, nullptr, &untouchedLength) == 0 && untouchedLength == 77,
+            "null randomized-path output changed the length");
+    char untouched[4] = {'a', 'b', 'c', '\0'};
+    Require(__sys_randomized_path_nid_postfix(nullptr, untouched, nullptr) == 0 && std::strcmp(untouched, "abc") == 0,
+            "null randomized-path length changed the output");
+
+    std::size_t badLength = sizeof(full);
+    RequireFailure(__sys_randomized_path_nid_postfix(nullptr, reinterpret_cast<char*>(0x10), &badLength), GuestEfault,
+                   "unwritable randomized-path output did not fail with EFAULT");
+    Require(badLength == ExpectedLength, "randomized-path output length was not written before the buffer fault");
+    RequireFailure(__sys_randomized_path_nid_postfix(nullptr, full, reinterpret_cast<std::size_t*>(0x10)), GuestEfault,
+                   "unreadable randomized-path length did not fail with EFAULT");
+
+    constexpr std::size_t Page = 0x4000;
+    void* const failed = reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1));
+    auto* const memory = static_cast<char*>(mmap_nid_postfix(nullptr, Page * 2, 3, 0x1002, -1, 0));
+    Require(memory != failed, "randomized-path boundary mapping failed");
+    char* const boundary = memory + Page - ExpectedLength;
+    std::memset(boundary, 'x', ExpectedLength);
+    Require(sceKernelMprotect(memory + Page, Page, 0) == 0, "randomized-path boundary protection failed");
+    std::size_t boundaryLength = ExpectedLength + 1;
+    RequireFailure(__sys_randomized_path_nid_postfix(nullptr, boundary, &boundaryLength), GuestEfault,
+                   "randomized-path terminator crossing an inaccessible page did not fail with EFAULT");
+    Require(boundaryLength == ExpectedLength, "randomized-path boundary failure did not preserve length-first output");
+    Require(std::memcmp(boundary, "xxxxxxxxxx", ExpectedLength) == 0,
+            "randomized-path boundary failure partially modified the unterminated output");
+    Require(sceKernelMprotect(memory + Page, Page, 3) == 0, "randomized-path boundary protection restore failed");
+    Require(munmap_nid_postfix(memory, Page * 2) == 0, "randomized-path boundary mapping release failed");
+    bool threw = false;
+    try {
+        __sys_randomized_path_nid_postfix("replacement", full, &fullLength);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw, "setting the randomized path did not stay unimplemented");
+}
+
 void TestWait4() {
     int status = -1;
     RequireFailure(_wait4_nid_disambig1_nid_postfix(-1, &status, GuestWnohang, nullptr), GuestEchild,
@@ -180,6 +245,7 @@ int main() {
     TestDevelopmentMode();
     TestGetGPI();
     TestNamedObject();
+    TestRandomizedPath();
     TestWait4();
     TestRdup();
     return 0;
