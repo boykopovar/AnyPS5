@@ -114,6 +114,36 @@ void CheckPartialProcessing() {
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(entries[0].start), GuestPageSize) == 0);
 }
 
+void CheckUndefinedProtection() {
+    KernelBatchMapEntry entries[2] = {FlexibleMapEntry(), FlexibleMapEntry()};
+    entries[1].protection = 0x0b;
+    int processed = -1;
+    Require(sceKernelBatchMap2(entries, 2, &processed, 0) == SCE_KERNEL_ERROR_EINVAL && processed == 1);
+    Require(entries[0].start != nullptr && entries[1].start == nullptr);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(entries[0].start), GuestPageSize) == 0);
+    KernelBatchMapEntry direct = FlexibleMapEntry();
+    direct.operation = 0;
+    direct.protection = 0x08;
+    processed = -1;
+    Require(sceKernelBatchMap(&direct, 1, &processed) == SCE_KERNEL_ERROR_EINVAL && processed == 0 && direct.start == nullptr);
+}
+
+void CheckProtectDropsUndefinedBits() {
+    KernelBatchMapEntry map = FlexibleMapEntry();
+    int processed = -1;
+    Require(sceKernelBatchMap2(&map, 1, &processed, 0) == 0 && processed == 1 && map.start != nullptr);
+    KernelBatchMapEntry protect{};
+    protect.operation = 2;
+    protect.start = map.start;
+    protect.length = GuestPageSize;
+    protect.protection = 0x09;
+    processed = -1;
+    Require(sceKernelBatchMap(&protect, 1, &processed) == 0 && processed == 1);
+    VirtualQueryInfo info{};
+    Require(sceKernelVirtualQuery(map.start, 0, &info, sizeof(info)) == 0 && info.protection == 1);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(map.start), GuestPageSize) == 0);
+}
+
 void CheckUnwritableResultSlot() {
     void* pages = AllocateGuardPages(2);
     const std::size_t page = HostPageSize();
@@ -172,6 +202,8 @@ void CheckPoolProtectDropsUndefinedBits() {
 int main() {
     CheckBatchMapHappyPath();
     CheckPartialProcessing();
+    CheckUndefinedProtection();
+    CheckProtectDropsUndefinedBits();
     CheckUnwritableResultSlot();
     CheckUnreadableEntriesArray();
     CheckPoolProtectDropsUndefinedBits();
