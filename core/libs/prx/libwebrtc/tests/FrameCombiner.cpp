@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -12,11 +13,22 @@
 #include <stdexcept>
 #include <vector>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 namespace {
 
 void* lastFreed = nullptr;
+std::size_t allocations = 0;
 
-void* APS5_VABI TestAllocate(std::size_t size) { return std::malloc(size); }
+void* APS5_VABI TestAllocate(std::size_t size) {
+    ++allocations;
+    return std::malloc(size);
+}
 void APS5_VABI TestFree(void* pointer) { lastFreed = pointer; std::free(pointer); }
 void* APS5_VABI TestCalloc(std::size_t count, std::size_t size) { return std::calloc(count, size); }
 void* APS5_VABI TestReallocate(void* pointer, std::size_t size) { return std::realloc(pointer, size); }
@@ -67,6 +79,174 @@ std::unique_ptr<WebRtcAudioFrame> Filled(int rate, std::size_t channels, std::in
     _ZN6webrtc10AudioFrame11UpdateFrameEjPKsmiNS0_10SpeechTypeENS0_11VADActivityEm_nid_postfix(
         frame.get(), 0, data.data(), samples, rate, WebRtcAudioFrameSpeechUndefined, WebRtcAudioFrameVadUnknown, channels);
     return frame;
+}
+
+enum class Access { ReadOnly, None };
+
+struct GuardedPages {
+    std::size_t pageSize = 0;
+    std::size_t size = 0;
+    unsigned char* base = nullptr;
+
+    explicit GuardedPages(std::size_t bytes) {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        size = (bytes + pageSize - 1) / pageSize * pageSize;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+#else
+        pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        size = (bytes + pageSize - 1) / pageSize * pageSize;
+        void* mapped = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        base = mapped == MAP_FAILED ? nullptr : static_cast<unsigned char*>(mapped);
+#endif
+        Require(base != nullptr);
+    }
+
+    ~GuardedPages() {
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, size);
+#endif
+    }
+
+    GuardedPages(const GuardedPages&) = delete;
+    GuardedPages& operator=(const GuardedPages&) = delete;
+
+    template<typename T> T* As(std::size_t offset = 0) const { return reinterpret_cast<T*>(base + offset); }
+
+    void Protect(Access access, std::size_t offset = 0) const {
+#ifdef _WIN32
+        DWORD previous = 0;
+        Require(VirtualProtect(base + offset, size - offset, access == Access::ReadOnly ? PAGE_READONLY : PAGE_NOACCESS, &previous) != 0);
+#else
+        Require(mprotect(base + offset, size - offset, access == Access::ReadOnly ? PROT_READ : PROT_NONE) == 0);
+#endif
+    }
+};
+
+void CombineRaw(WebRtcFrameCombiner* combiner, WebRtcAudioFrame* const* frames, std::size_t count, std::size_t channels, int rate, std::size_t streams,
+                WebRtcAudioFrame* output) {
+    _ZN6webrtc13FrameCombiner7CombineEN3rtc9ArrayViewIKPNS_10AudioFrameELln4711EEEmimS4__nid_postfix(
+        combiner, {frames, count}, channels, rate, streams, output);
+}
+
+void TestInaccessibleGuestPointersThrow() {
+    const std::size_t allocationsBefore = allocations;
+    {
+        GuardedPages readOnly(sizeof(WebRtcFrameCombiner));
+        std::memset(readOnly.base, 0x5a, readOnly.size);
+        readOnly.Protect(Access::ReadOnly);
+        RequireInvalidArgument([&] { _ZN6webrtc13FrameCombinerC1Eb_nid_postfix(readOnly.As<WebRtcFrameCombiner>(), true); });
+        GuardedPages none(sizeof(WebRtcFrameCombiner));
+        none.Protect(Access::None);
+        RequireInvalidArgument([&] { _ZN6webrtc13FrameCombinerC1Eb_nid_postfix(none.As<WebRtcFrameCombiner>(), true); });
+        RequireInvalidArgument([&] { _ZN6webrtc13FrameCombinerD1Ev_nid_postfix(none.As<WebRtcFrameCombiner>()); });
+        Require(allocations == allocationsBefore && readOnly.As<unsigned char>()[0] == 0x5a);
+    }
+
+    GuardedPages combinerPages(sizeof(WebRtcFrameCombiner));
+    auto* combiner = combinerPages.As<WebRtcFrameCombiner>();
+    _ZN6webrtc13FrameCombinerC1Eb_nid_postfix(combiner, false);
+    void* dumper = combiner->dataDumper;
+    combinerPages.Protect(Access::ReadOnly);
+    lastFreed = nullptr;
+    RequireInvalidArgument([&] { _ZN6webrtc13FrameCombinerD1Ev_nid_postfix(combiner); });
+    Require(lastFreed == nullptr && combiner->dataDumper == dumper);
+
+    auto first = Filled(16000, 1, 100);
+    auto second = Filled(16000, 1, 200);
+    WebRtcAudioFrame* const pair[] = {first.get(), second.get()};
+    auto output = Filled(16000, 1, 7);
+    const auto outputBefore = std::make_unique<WebRtcAudioFrame>(*output);
+    RequireInvalidArgument([&] { CombineRaw(combiner, pair, 2, 1, 16000, 2, output.get()); });
+    Require(std::memcmp(output.get(), outputBefore.get(), sizeof(WebRtcAudioFrame)) == 0);
+    CombineRaw(combiner, pair, 2, 1, 16000, 1, output.get());
+    Require(output->data[0] == 100 && output->data[159] == 100 && !output->muted);
+    *output = *outputBefore;
+
+    GuardedPages readOnlyOutput(sizeof(WebRtcAudioFrame));
+    *readOnlyOutput.As<WebRtcAudioFrame>() = *outputBefore;
+    readOnlyOutput.Protect(Access::ReadOnly);
+    RequireInvalidArgument([&] { CombineRaw(combiner, pair, 2, 1, 16000, 1, readOnlyOutput.As<WebRtcAudioFrame>()); });
+    Require(std::memcmp(readOnlyOutput.As<WebRtcAudioFrame>(), outputBefore.get(), sizeof(WebRtcAudioFrame)) == 0);
+
+    GuardedPages mono(sizeof(WebRtcAudioFrame));
+    *mono.As<WebRtcAudioFrame>() = *first;
+    mono.Protect(Access::ReadOnly);
+    WebRtcAudioFrame* const readOnlyMono[] = {mono.As<WebRtcAudioFrame>()};
+    RequireInvalidArgument([&] { CombineRaw(combiner, readOnlyMono, 1, 2, 16000, 1, output.get()); });
+    Require(std::memcmp(output.get(), outputBefore.get(), sizeof(WebRtcAudioFrame)) == 0);
+    CombineRaw(combiner, readOnlyMono, 1, 1, 16000, 1, output.get());
+    Require(output->data[0] == 100 && mono.As<WebRtcAudioFrame>()->numChannels == 1);
+    *output = *outputBefore;
+
+    GuardedPages hidden(sizeof(WebRtcAudioFrame));
+    hidden.Protect(Access::None);
+    WebRtcAudioFrame* const hiddenFrame[] = {first.get(), hidden.As<WebRtcAudioFrame>()};
+    RequireInvalidArgument([&] { CombineRaw(combiner, hiddenFrame, 2, 1, 16000, 1, output.get()); });
+    Require(std::memcmp(output.get(), outputBefore.get(), sizeof(WebRtcAudioFrame)) == 0);
+
+    GuardedPages list(2 * combinerPages.pageSize);
+    auto* tail = list.As<WebRtcAudioFrame*>(list.pageSize - sizeof(pair));
+    tail[0] = first.get();
+    tail[1] = second.get();
+    list.Protect(Access::None, list.pageSize);
+    RequireInvalidArgument([&] { CombineRaw(combiner, tail, std::size_t{1} << 40, 1, 16000, 1, output.get()); });
+    RequireInvalidArgument([&] { CombineRaw(combiner, tail, 3, 1, 16000, 1, output.get()); });
+    Require(std::memcmp(output.get(), outputBefore.get(), sizeof(WebRtcAudioFrame)) == 0);
+    CombineRaw(combiner, tail, 2, 1, 16000, 1, output.get());
+    Require(output->data[0] == 100);
+    Require(allocations == allocationsBefore + 1);
+}
+
+std::int16_t ExpectedDownmix(const WebRtcAudioFrame& stereo, std::size_t index) {
+    return static_cast<std::int16_t>((std::int32_t{stereo.data[2 * index]} + stereo.data[2 * index + 1]) / 2);
+}
+
+void TestLaterFrameFailureLeavesEarlierFramesUnchanged() {
+    Combiner combiner(false);
+    auto first = Filled(16000, 2, 0);
+    for (std::size_t i = 0; i < 320; ++i)
+        first->data[i] = static_cast<std::int16_t>(i % 2 ? 40 : 20);
+    const auto firstBefore = std::make_unique<WebRtcAudioFrame>(*first);
+    auto output = Filled(16000, 1, 7);
+    const auto outputBefore = std::make_unique<WebRtcAudioFrame>(*output);
+
+    GuardedPages readOnly(sizeof(WebRtcAudioFrame));
+    *readOnly.As<WebRtcAudioFrame>() = *Filled(16000, 2, 300);
+    readOnly.Protect(Access::ReadOnly);
+    GuardedPages hidden(sizeof(WebRtcAudioFrame));
+    hidden.Protect(Access::None);
+    for (std::size_t streams : {std::size_t{1}, std::size_t{2}}) {
+        WebRtcAudioFrame* const unwritable[] = {first.get(), readOnly.As<WebRtcAudioFrame>()};
+        RequireInvalidArgument([&] { CombineRaw(combiner.object.get(), unwritable, 2, 1, 16000, streams, output.get()); });
+        WebRtcAudioFrame* const unreadable[] = {first.get(), hidden.As<WebRtcAudioFrame>()};
+        RequireInvalidArgument([&] { CombineRaw(combiner.object.get(), unreadable, 2, 1, 16000, streams, output.get()); });
+        Require(std::memcmp(first.get(), firstBefore.get(), sizeof(WebRtcAudioFrame)) == 0);
+        Require(std::memcmp(output.get(), outputBefore.get(), sizeof(WebRtcAudioFrame)) == 0);
+    }
+}
+
+void TestRemixedFramesAreWrittenAfterEveryFrameIsRead() {
+    for (std::size_t streams : {std::size_t{1}, std::size_t{2}}) {
+        Combiner combiner(false);
+        auto first = Filled(16000, 2, 1000);
+        auto second = Filled(16000, 1, 200);
+        WebRtcAudioFrame* const pointers[] = {first.get(), second.get()};
+        std::memcpy(first->data, pointers, sizeof(pointers));
+        const auto firstBefore = std::make_unique<WebRtcAudioFrame>(*first);
+        auto output = Frame();
+        CombineRaw(combiner.object.get(), reinterpret_cast<WebRtcAudioFrame* const*>(first->data), streams, 1, 16000, streams, output.get());
+        Require(first->numChannels == 1 && output->numChannels == 1 && output->samplesPerChannel == 160);
+        for (std::size_t i = 0; i < 160; ++i) {
+            const std::int16_t downmixed = ExpectedDownmix(*firstBefore, i);
+            const std::int32_t mixed = streams == 1 ? downmixed : std::clamp(std::int32_t{downmixed} + 200, -32768, 32767);
+            Require(first->data[i] == downmixed && output->data[i] == mixed);
+        }
+    }
 }
 
 void TestConstructorAndDestructor() {
@@ -266,5 +446,8 @@ int main() {
     TestChannelCountIsCappedAtEight();
     TestNonMultipleOf20WorksWithoutLimiter();
     TestRejectsUpstreamPreconditions();
+    TestInaccessibleGuestPointersThrow();
+    TestLaterFrameFailureLeavesEarlierFramesUnchanged();
+    TestRemixedFramesAreWrittenAfterEveryFrameIsRead();
     return 0;
 }
