@@ -284,43 +284,55 @@ void APS5_VABI _ZN6webrtc17RtpPacketReceivedD1Ev_nid_postfix(WebRtcRtpPacketRece
     const char* badPacket = "RtpPacketReceived destructor requires a readable and writable object";
     WebRtcRtpPacketReceived packetCopy{};
     CopyIn(&packetCopy, packet, sizeof(packetCopy), badPacket);
-    RequireWritable(packet, sizeof(*packet), badPacket);
+    GuestWriteScope packetWrite(packet, sizeof(*packet), badPacket);
+    std::optional<GuestWriteScope> bufferWrite;
+    if (packetCopy.buffer.buffer)
+        bufferWrite.emplace(packetCopy.buffer.buffer, sizeof(*packetCopy.buffer.buffer), badPacket);
     if (void* data = packetCopy.additionalData) {
         ValidateRefCountAlignment(data, badPacket);
-        GuestWriteScope refWrite(static_cast<std::uint8_t*>(data) + RefCountOffset, sizeof(std::int32_t), badPacket);
         const void* destructorEntry = nullptr;
-        const std::int32_t currentRefCount = RefCount(data).load(std::memory_order_acquire);
-        if (currentRefCount == 1) {
-            const void* const* vtable = nullptr;
-            CopyIn(&vtable, data, sizeof(vtable), badPacket);
-            if (!vtable)
-                throw std::invalid_argument(badPacket);
-            CopyIn(&destructorEntry, vtable + DeletingDestructorSlot, sizeof(destructorEntry), badPacket);
-            if (!IsExecutableAddress(destructorEntry))
-                throw std::invalid_argument(badPacket);
+        bool shouldDelete = false;
+        {
+            GuestWriteScope refWrite(static_cast<std::uint8_t*>(data) + RefCountOffset, sizeof(std::int32_t), badPacket);
+            auto refCount = RefCount(data);
+            std::int32_t expected = refCount.load(std::memory_order_acquire);
+            for (;;) {
+                if (expected <= 0)
+                    throw std::invalid_argument(badPacket);
+                if (expected == 1) {
+                    if (!destructorEntry) {
+                        const void* const* vtable = nullptr;
+                        CopyIn(&vtable, data, sizeof(vtable), badPacket);
+                        if (!vtable)
+                            throw std::invalid_argument(badPacket);
+                        CopyIn(&destructorEntry, vtable + DeletingDestructorSlot, sizeof(destructorEntry), badPacket);
+                        if (!IsExecutableAddress(destructorEntry))
+                            throw std::invalid_argument(badPacket);
+                    }
+                    if (refCount.compare_exchange_weak(expected, 0, std::memory_order_acq_rel, std::memory_order_acquire)) {
+                        shouldDelete = true;
+                        break;
+                    }
+                } else {
+                    if (refCount.compare_exchange_weak(expected, expected - 1, std::memory_order_acq_rel, std::memory_order_acquire))
+                        break;
+                }
+            }
         }
         void* cleared = nullptr;
-        CopyOut(reinterpret_cast<unsigned char*>(packet) + offsetof(WebRtcRtpPacketReceived, additionalData), &cleared, sizeof(cleared), badPacket);
-        if (RefCount(data).fetch_sub(1, std::memory_order_acq_rel) == 1) {
-            if (!destructorEntry) {
-                const void* const* vtable = nullptr;
-                CopyIn(&vtable, data, sizeof(vtable), badPacket);
-                if (!vtable)
-                    throw std::invalid_argument(badPacket);
-                CopyIn(&destructorEntry, vtable + DeletingDestructorSlot, sizeof(destructorEntry), badPacket);
-                if (!IsExecutableAddress(destructorEntry))
-                    throw std::invalid_argument(badPacket);
-            }
-            reinterpret_cast<DeletingDestructor>(const_cast<void*>(destructorEntry))(data);
+        {
+            ErrnoGuard guard;
+            GuestCopyOut_nid_no_patch(reinterpret_cast<unsigned char*>(packet) + offsetof(WebRtcRtpPacketReceived, additionalData), &cleared, sizeof(cleared));
         }
+        if (shouldDelete)
+            reinterpret_cast<DeletingDestructor>(const_cast<void*>(destructorEntry))(data);
     }
+    _ZN3rtc17CopyOnWriteBufferD1Ev_nid_postfix(&packetCopy.buffer);
+    bufferWrite.reset();
     {
-        std::optional<GuestWriteScope> bufferWrite;
-        if (packetCopy.buffer.buffer)
-            bufferWrite.emplace(packetCopy.buffer.buffer, sizeof(*packetCopy.buffer.buffer), badPacket);
-        _ZN3rtc17CopyOnWriteBufferD1Ev_nid_postfix(&packetCopy.buffer);
+        ErrnoGuard guard;
+        GuestCopyOut_nid_no_patch(reinterpret_cast<unsigned char*>(packet) + offsetof(WebRtcRtpPacketReceived, buffer), &packetCopy.buffer, sizeof(packetCopy.buffer));
     }
-    CopyOut(reinterpret_cast<unsigned char*>(packet) + offsetof(WebRtcRtpPacketReceived, buffer), &packetCopy.buffer, sizeof(packetCopy.buffer), badPacket);
     if (packetCopy.extensionEntriesBegin)
         _ZdlPv_nid_postfix(packetCopy.extensionEntriesBegin);
 }

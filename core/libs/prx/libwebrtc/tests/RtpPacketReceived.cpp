@@ -253,6 +253,13 @@ void TestGuardedPointers() {
     Require(valid.additionalData == &nonExecObj && nonExecObj.refCount == 1);
     valid.additionalData = nullptr;
 
+    RefCounted sharedObj{badDtorVTable, 2};
+    WebRtcRtpPacketReceived badBufPacket = valid;
+    badBufPacket.buffer.buffer = reinterpret_cast<decltype(badBufPacket.buffer.buffer)>(pages.ReadOnly());
+    badBufPacket.additionalData = &sharedObj;
+    Require(ThrowsInvalidArgument([&] { _ZN6webrtc17RtpPacketReceivedD1Ev_nid_postfix(&badBufPacket); }));
+    Require(badBufPacket.additionalData == &sharedObj && sharedObj.refCount == 2);
+
     Require(allocations.size() == allocsBefore);
 
     _ZN6webrtc17RtpPacketReceivedD1Ev_nid_postfix(&valid);
