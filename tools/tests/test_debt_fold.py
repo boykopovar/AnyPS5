@@ -30,6 +30,21 @@ class FoldTests(unittest.TestCase):
         self.root = Path(directory.name)
         self.write(DEBT, BASE)
 
+    def test_unreadable_fragment_is_reported_cleanly_in_check_mode(self):
+        name = "docs/dev/debt/changes/invalid-encoding.md"
+        self.write(name, "")
+        fragment = self.root / name
+        fragment.write_bytes(b"\xff")
+        original = (self.root / DEBT).read_bytes()
+        errors = io.StringIO()
+        with contextlib.redirect_stderr(errors):
+            status = debt_fold.main(["--root", str(self.root), "--check"])
+        self.assertEqual(status, 1)
+        self.assertIn(str(fragment), errors.getvalue())
+        self.assertIn("utf-8", errors.getvalue())
+        self.assertEqual((self.root / DEBT).read_bytes(), original)
+        self.assertTrue(fragment.is_file())
+
     def write(self, name, text):
         path = self.root / name
         path.parent.mkdir(parents=True, exist_ok=True)
