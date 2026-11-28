@@ -16,7 +16,15 @@ static_assert(sizeof(SceKernelProsperoSystemSwVersion) == 0x28);
 
 static void Require(bool value) { if (!value) std::abort(); }
 
-static void CheckProsperoSystemSwVersion() {
+static void SetGuestFirmwareVersion(const char* value) {
+#ifdef _WIN32
+    Require(_putenv_s("ANYPS5_FIRMWARE_VERSION", value) == 0);
+#else
+    Require(setenv("ANYPS5_FIRMWARE_VERSION", value, 1) == 0);
+#endif
+}
+
+static void CheckProsperoSystemSwVersion(const char* expectedString, std::uint32_t expectedVersion) {
     *__error_nid_postfix() = 13;
     Require(sceKernelGetProsperoSystemSwVersion_nid_postfix(nullptr) == 0);
     Require(sceKernelGetProsperoSystemSwVersion_nid_postfix(reinterpret_cast<SceKernelProsperoSystemSwVersion*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
@@ -30,24 +38,41 @@ static void CheckProsperoSystemSwVersion() {
         storage.version.size = size;
         Require(sceKernelGetProsperoSystemSwVersion_nid_postfix(&storage.version) == 0);
         Require(storage.version.size == size);
-        Require(std::strcmp(storage.version.versionString, "01.000.000") == 0);
-        for (std::size_t i = sizeof("01.000.000"); i < sizeof(storage.version.versionString); ++i) Require(storage.version.versionString[i] == 0);
-        Require(storage.version.version == 0x01000000);
+        Require(std::strcmp(storage.version.versionString, expectedString) == 0);
+        for (std::size_t i = std::strlen(expectedString) + 1; i < sizeof(storage.version.versionString); ++i) Require(storage.version.versionString[i] == 0);
+        Require(storage.version.version == expectedVersion);
         for (const unsigned char byte : storage.suffix) Require(byte == 0xaa);
     }
     Require(*__error_nid_postfix() == 13);
 }
 
-static void CheckAllowedSdkVersionOnSystem() {
+static void CheckAllowedSdkVersionOnSystem(std::uint32_t expected) {
     *__error_nid_postfix() = 13;
     Require(sceKernelGetAllowedSdkVersionOnSystem_nid_postfix(nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelGetAllowedSdkVersionOnSystem_nid_postfix(reinterpret_cast<std::uint32_t*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
-    std::uint32_t allowed = 0xaaaaaaaa;
-    Require(sceKernelGetAllowedSdkVersionOnSystem_nid_postfix(&allowed) == 0);
+    std::array<std::uint32_t, 2> allowed{0xaaaaaaaa, 0xbbbbbbbb};
+    Require(sceKernelGetAllowedSdkVersionOnSystem_nid_postfix(allowed.data()) == 0);
+    Require(allowed[0] == expected && allowed[1] == 0xbbbbbbbb);
+    Require(*__error_nid_postfix() == 13);
+}
+
+
+static void CheckInvalidGuestFirmwareVersion() {
+    *__error_nid_postfix() = 13;
+    Require(sceKernelGetProsperoSystemSwVersion_nid_postfix(nullptr) == 0);
+    Require(sceKernelGetAllowedSdkVersionOnSystem_nid_postfix(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(*__error_nid_postfix() == 13);
     SceKernelProsperoSystemSwVersion system{};
-    system.size = sizeof(system);
-    Require(sceKernelGetProsperoSystemSwVersion_nid_postfix(&system) == 0);
-    Require(allowed == (system.version | 0xfff) && allowed >> 16 == system.version >> 16);
+    std::array<unsigned char, sizeof(system)> untouched;
+    untouched.fill(0xaa);
+    std::memcpy(&system, untouched.data(), untouched.size());
+    Require(sceKernelGetProsperoSystemSwVersion_nid_postfix(&system) == SCE_KERNEL_ERROR_EINVAL);
+    Require(std::memcmp(&system, untouched.data(), untouched.size()) == 0);
+    Require(*__error_nid_postfix() == 13);
+
+    std::array<std::uint32_t, 2> allowed{0xaaaaaaaa, 0xbbbbbbbb};
+    Require(sceKernelGetAllowedSdkVersionOnSystem_nid_postfix(allowed.data()) == SCE_KERNEL_ERROR_EINVAL);
+    Require(allowed[0] == 0xaaaaaaaa && allowed[1] == 0xbbbbbbbb);
     Require(*__error_nid_postfix() == 13);
 }
 
@@ -111,10 +136,36 @@ static void CheckTitleWorkaround() {
 
 }
 
-int main() {
-    CheckCompiledSdkVersions();
-    CheckProsperoSystemSwVersion();
-    CheckAllowedSdkVersionOnSystem();
-    CheckTitleWorkaround();
-    return 0;
+int main(int argc, char** argv) {
+    Require(argc <= 2);
+    const bool missing = argc == 2 && std::strcmp(argv[1], "missing") == 0;
+    if (missing) Require(std::getenv("ANYPS5_FIRMWARE_VERSION") == nullptr);
+    SetGuestFirmwareVersion("98.998.998");
+    if (argc == 2 && std::strcmp(argv[1], "invalid") == 0) {
+        CheckInvalidGuestFirmwareVersion();
+        return 0;
+    }
+    struct FirmwareCase {
+        const char* formatted;
+        std::uint32_t packed;
+        std::uint32_t allowed;
+    };
+    static constexpr FirmwareCase cases[] = {
+        {"01.000.000", 0x01000000, 0x01000fff},
+        {"11.600.005", 0x11600005, 0x11600fff},
+        {"12.700.001", 0x12700001, 0x12700fff},
+        {"13.420.000", 0x13420000, 0x13420fff},
+        {"13.600.007", 0x13600007, 0x13600fff},
+        {"99.999.999", 0x99999999, 0x99999fff},
+    };
+    const char* expected = argc == 2 && !missing ? argv[1] : cases[0].formatted;
+    for (const auto& test : cases) {
+        if (std::strcmp(expected, test.formatted) != 0) continue;
+        CheckCompiledSdkVersions();
+        CheckProsperoSystemSwVersion(test.formatted, test.packed);
+        CheckAllowedSdkVersionOnSystem(test.allowed);
+        CheckTitleWorkaround();
+        return 0;
+    }
+    return 1;
 }

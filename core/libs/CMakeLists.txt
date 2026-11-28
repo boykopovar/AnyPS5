@@ -444,8 +444,11 @@ if(BUILD_TESTING)
     target_link_libraries(guest_kernel_sys_sdk_version_tests PRIVATE libkernel_sys libkernel libc)
     configure_windows_unwind(guest_kernel_sys_sdk_version_tests)
     add_test(NAME guest_kernel_sys_sdk_version COMMAND guest_kernel_sys_sdk_version_tests)
+    add_test(NAME guest_kernel_sys_sdk_version_configured COMMAND guest_kernel_sys_sdk_version_tests configured)
+    set_tests_properties(guest_kernel_sys_sdk_version PROPERTIES ENVIRONMENT "ANYPS5_FIRMWARE_VERSION=")
+    set_tests_properties(guest_kernel_sys_sdk_version_configured PROPERTIES ENVIRONMENT "ANYPS5_FIRMWARE_VERSION=13.600.007")
     if(WIN32)
-        set_tests_properties(guest_kernel_sys_sdk_version PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_kernel_sys_sdk_version guest_kernel_sys_sdk_version_configured PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
     endif()
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
