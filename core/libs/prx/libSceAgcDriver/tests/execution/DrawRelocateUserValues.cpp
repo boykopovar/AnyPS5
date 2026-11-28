@@ -33,11 +33,10 @@
 namespace AgcDriver::DriverDetail {
 
 struct DriverTestAccess {
-    static void SetPendingRelocation(std::uint64_t key, std::uint64_t alias, std::uint64_t identity, const std::shared_ptr<DrawEntry>& donor) {
+    static void SetPendingRelocation(std::uint64_t key, std::uint64_t, std::uint64_t identity, const std::shared_ptr<DrawEntry>& donor) {
         auto& pending = Driver::Get().drawRelocationPending;
         pending = {};
         pending.key = key;
-        pending.alias = alias;
         pending.identity = identity;
         pending.donor = donor;
     }
@@ -47,14 +46,9 @@ struct DriverTestAccess {
         return found == Driver::Get().drawRelocations.end() ? nullptr : found->second;
     }
     static void InsertDraw(std::uint64_t key, const std::shared_ptr<DrawEntry>& entry) { Driver::Get().drawCache.emplace(key, entry); }
-    static std::uint64_t AliasedKey(std::uint64_t alias) {
-        const auto found = Driver::Get().drawAliases.find(alias);
-        return found == Driver::Get().drawAliases.end() ? 0u : found->second;
-    }
-    static void Forget(std::uint64_t key, std::uint64_t alias, std::uint64_t identity) {
+    static void Forget(std::uint64_t key, std::uint64_t, std::uint64_t identity) {
         Driver::Get().drawCache.erase(key);
         Driver::Get().drawRelocations.erase(identity);
-        Driver::Get().drawAliases.erase(alias);
     }
 };
 
@@ -69,7 +63,9 @@ using AgcDriver::DriverDetail::DrawDecode;
 using AgcDriver::DriverDetail::DrawEntry;
 using AgcDriver::DriverDetail::DrawProgram;
 using AgcDriver::DriverDetail::Driver;
+using AgcDriver::DriverDetail::PatchedValueWord;
 using AgcDriver::DriverDetail::RelocatableUserWord;
+using AgcDriver::DriverDetail::ValueWordChangeAllowed;
 using ShaderRecompiler::RecompileResult;
 
 alignas(256) constexpr std::array<std::uint32_t, 2> SwappcCode{0xbe822100u, 0xbf810000u};
@@ -161,12 +157,13 @@ void BufferValueWordsArePatchedInTheirBinding() {
 
     const auto variant = Variant(result(false));
     Driver::tagUserValueWords(*variant, program);
-    Require(variant->valueWords == ((1u << 4u) | (1u << 6u)), "the base and record words of a read-only V# in user data were not tagged (mask " + std::to_string(variant->valueWords) + ")");
-    Require(variant->valueSlots.size() == 2u && variant->valueSlots[0] == std::array<std::uint32_t, 3>{4u, 0u, 0u} && variant->valueSlots[1] == std::array<std::uint32_t, 3>{6u, 0u, 2u}, "the tagged V# words do not name their binding words");
-    variant->descriptorPatches = {{0u, 0u, descriptor[0] + 0x100u}, {0u, 2u, 7u}};
+    Require(variant->valueWords == ((1u << 4u) | (1u << 5u) | (1u << 6u)), "the base, high-address and record words of a read-only V# in user data were not tagged (mask " + std::to_string(variant->valueWords) + ")");
+    Require(variant->valueHalfWords == (1u << 5u), "only the high-address word of a V# in user data was expected to keep its upper half (mask " + std::to_string(variant->valueHalfWords) + ")");
+    Require(variant->valueSlots.size() == 3u && variant->valueSlots[0] == std::array<std::uint32_t, 3>{4u, 0u, 0u} && variant->valueSlots[1] == std::array<std::uint32_t, 3>{5u, 0u, 1u} && variant->valueSlots[2] == std::array<std::uint32_t, 3>{6u, 0u, 2u}, "the tagged V# words do not name their binding words");
+    variant->descriptorPatches = {{0u, 0u, descriptor[0] + 0x100u}, {0u, 1u, (descriptor[1] & 0xffff0000u) | 0x1234u}, {0u, 2u, 7u}};
     Driver::applyShaderDataPatches(*variant);
     const auto& patched = variant->compiled->bindings[0].guestDescriptor;
-    Require(patched[0] == descriptor[0] + 0x100u && patched[1] == descriptor[1] && patched[2] == 7u && patched[3] == descriptor[3], "the descriptor patches did not move the bound V# base and record count");
+    Require(patched[0] == descriptor[0] + 0x100u && patched[1] == ((descriptor[1] & 0xffff0000u) | 0x1234u) && patched[2] == 7u && patched[3] == descriptor[3], "the descriptor patches did not move the bound V# base, high address and record count");
     Require(variant->descriptorPatches.empty(), "the descriptor patches were kept after they were applied");
 
     const auto written = Variant(result(true));
@@ -195,19 +192,20 @@ void BufferValueWordsArePatchedInTheirBinding() {
     Driver::tagUserValueWords(*pointer, program);
     Require((pointer->valueWords >> 4u & 1u) == 0u, "a user word relocated as a pointer was also tagged as a V# value");
 
-    const auto shared = [&](std::uint32_t otherRecords) {
+    const auto shared = [&](std::uint32_t otherRecords, std::uint32_t otherHigh) {
         auto compiled = result(false);
-        compiled->bindings.push_back(GuestBuffer({Low(Buffer.data()) + 0x100u, descriptor[1], otherRecords, descriptor[3]}, false));
+        compiled->bindings.push_back(GuestBuffer({Low(Buffer.data()) + 0x100u, otherHigh, otherRecords, descriptor[3]}, false));
         compiled->bindings.back().binding = 1;
         const auto variant = Variant(compiled);
         Driver::tagUserValueWords(*variant, program);
         return variant;
     };
-    const auto sharedCount = shared(descriptor[2]);
-    Require((sharedCount->valueWords >> 4u & 1u) != 0u && (sharedCount->valueWords >> 6u & 1u) == 0u, "a record count that also builds a second descriptor was tagged (mask " + std::to_string(sharedCount->valueWords) + ")");
-    Require(sharedCount->valueSlots.size() == 1u && sharedCount->valueSlots[0] == std::array<std::uint32_t, 3>{4u, 0u, 0u}, "a V# whose record count builds a second descriptor recorded a record-count patch");
-    const auto ownCount = shared(descriptor[2] + 1u);
-    Require((ownCount->valueWords >> 6u & 1u) != 0u, "a record count used by one descriptor only was not tagged next to an independent second descriptor");
+    const auto sharedCount = shared(descriptor[2], descriptor[1]);
+    Require((sharedCount->valueWords >> 4u & 1u) != 0u && (sharedCount->valueWords >> 5u & 1u) == 0u && (sharedCount->valueWords >> 6u & 1u) == 0u, "a shared high word and record count that build a second descriptor were tagged (mask " + std::to_string(sharedCount->valueWords) + ")");
+    Require(sharedCount->valueSlots.size() == 1u && sharedCount->valueSlots[0] == std::array<std::uint32_t, 3>{4u, 0u, 0u}, "a V# whose high word and record count build a second descriptor recorded a patch");
+    const auto ownCount = shared(descriptor[2] + 1u, descriptor[1] + 1u);
+    Require((ownCount->valueWords >> 5u & 1u) != 0u && (ownCount->valueWords >> 6u & 1u) != 0u, "a high word and record count used by one descriptor only were not tagged next to an independent second descriptor");
+    Require(ownCount->valueSlots.size() == 3u && ownCount->valueSlots[0] == std::array<std::uint32_t, 3>{4u, 0u, 0u} && ownCount->valueSlots[1] == std::array<std::uint32_t, 3>{5u, 0u, 1u} && ownCount->valueSlots[2] == std::array<std::uint32_t, 3>{6u, 0u, 2u}, "a V# with independent high word and record count did not record all patches");
 }
 
 alignas(256) constexpr std::array<std::uint32_t, 16> VertexCode{
@@ -333,6 +331,30 @@ void BufferValueWordsKeyByNothing() {
     Require(readable && first == second, "a V# value word changed the relocated content key");
 }
 
+void HalfWordValueChangesStayInTheAddressHalf() {
+    constexpr std::uint64_t half = 1u << 5u;
+    Require(ValueWordChangeAllowed(half, 5u, 0x12340000u, 0x1234abcd), "a V# word1 whose low half changed was refused");
+    Require(!ValueWordChangeAllowed(half, 5u, 0x12340000u, 0x12350000u), "a V# word1 whose stride or flags changed was accepted");
+    Require(PatchedValueWord(half, 5u, 0x12340000u, 0xabcd1234u) == 0x12341234u, "a half-word patch did not preserve the stride and flags");
+    Require(PatchedValueWord(0u, 5u, 0x12340000u, 0xabcd1234u) == 0xabcd1234u, "a full-word patch was masked");
+}
+
+void ForwardedWordWithoutDescriptorSelectsItsPatchedPushConstants() {
+    auto compiled = std::make_shared<RecompileResult>();
+    compiled->pushConstants.resize(8);
+    compiled->shaderDataUserWords = {4u};
+    const auto variant = Variant(compiled);
+    variant->valueWords = 1u << 4u;
+    variant->shaderDataPatches = {{0u, 0x3e800000u}};
+    Driver::applyShaderDataPatches(*variant);
+    Require(variant->patchedPushConstants.size() == compiled->pushConstants.size(), "a forwarded word without a descriptor slot did not keep patched push constants");
+    std::uint32_t patched = 0;
+    std::memcpy(&patched, variant->patchedPushConstants.data(), sizeof(patched));
+    Require(patched == 0x3e800000u, "the forwarded word was not patched into the push constants");
+    Require(AgcDriver::DriverDetail::UsesPatchedPushConstants(false, false, true, *variant), "a data-only candidate with a moved forwarded word did not use its patched push constants");
+    Require(!AgcDriver::DriverDetail::UsesPatchedPushConstants(false, false, false, *variant), "a full build used a candidate's patched push constants");
+}
+
 void* ArenaBlock(std::size_t bytes) {
     void* block = nullptr;
 #ifdef _WIN32
@@ -404,7 +426,6 @@ void HighCalleeWordsLearnDeltaOffsets() {
     DriverTestAccess::LearnPendingRelocation();
     const auto keyed = DriverTestAccess::Relocation(Identity);
     Require(keyed != nullptr && keyed->words.size() == 1u && keyed->words[0].reads == expected, "the keyed entry learned different reads than the donor");
-    Require(DriverTestAccess::AliasedKey(Aliased) == Keyed && DriverTestAccess::AliasedKey(DonorAlias) == DonorKey, "the learned aliases did not record their draw keys");
 
     bool readable = true;
     const auto donorKey = Driver::relocatedContentKey(words[0], Low(first), readable);
@@ -426,6 +447,8 @@ int main() {
         CalleeWordsAreKeyedByTheirCode();
         BufferValueWordsArePatchedInTheirBinding();
         BufferValueWordsKeyByNothing();
+        HalfWordValueChangesStayInTheAddressHalf();
+        ForwardedWordWithoutDescriptorSelectsItsPatchedPushConstants();
         HighCalleeWordsLearnDeltaOffsets();
         {
             const auto device = OpenVulkanTestDevice();

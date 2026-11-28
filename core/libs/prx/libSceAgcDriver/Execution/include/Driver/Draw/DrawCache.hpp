@@ -87,6 +87,7 @@ using DrawDataCandidates = std::vector<std::vector<std::pair<std::shared_ptr<Dis
 struct StageDataHit {
     std::vector<std::uint32_t> words;
     std::shared_ptr<const ShaderRecompiler::RecompileResult> compiled;
+    bool bufferWords = false;
 };
 
 enum class DrawMiss : std::size_t { FrontDiffering, FragmentDiffering, OtherDiffering, QueuedStores, Layout, Gate, Stages, Count };
@@ -103,7 +104,7 @@ struct DrawEntryCounters {
     std::array<std::uint64_t, 6> registerKeyMissChanges{};
     std::uint64_t differingSameRuns = 0, differingWords = 0, differingRunsChanged = 0;
     std::uint64_t dataHits = 0, dataStagesReused = 0, dataStagesCompiled = 0, dataVerified = 0;
-    std::uint64_t stageDataHits = 0, stageDataWords = 0, stageDataVerified = 0, stageDataInserts = 0, stageDataPositions = 0;
+    std::uint64_t stageDataHits = 0, stageDataWords = 0, stageDataVerified = 0, stageDataInserts = 0, stageDataPositions = 0, bufferDataVerified = 0;
     std::uint64_t recordWordsForwarded = 0, recordStagesRecompiled = 0, recordWordsRefused = 0, recordWordsVerified = 0;
     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
 };
@@ -133,6 +134,8 @@ struct StageCapture {
     std::uint32_t pushOffset = 0;
     ShaderRecompiler::SrtUserDataUse userDataUse;
     std::uint64_t userDataMask = ~std::uint64_t{0};
+    std::shared_ptr<const ShaderRecompiler::SourceHandle> prepared;
+    std::vector<ShaderRecompiler::BufferBaseWord> bufferBaseWords;
 };
 
 struct RelocatableUserWord {
@@ -140,6 +143,7 @@ struct RelocatableUserWord {
     std::vector<std::pair<std::int64_t, std::uint32_t>> reads;
     bool value = false;
     std::uint32_t high = 0;
+    std::vector<std::int64_t> dataOffsets;
 };
 
 struct DrawRelocation {
@@ -152,8 +156,30 @@ struct DrawUserPatch {
     std::uint32_t index, value;
 };
 
+struct DrawAliasKeys {
+    static constexpr std::size_t Stages = 3;
+    std::uint64_t structure = 0;
+    std::array<std::uint64_t, Stages> content{};
+    static std::size_t Stage(std::uint32_t reg) { return reg >= 0x10cu ? 2 : reg >= 0x08cu ? 1 : 0; }
+    std::uint64_t Key(std::uint64_t stageKey, std::uint32_t userDataBase) const { return (stageKey ^ (content[Stage(userDataBase)] + 0x9e3779b97f4a7c15ull)) * 0x100000001b3ull + userDataBase; }
+};
+
+struct DrawStageDonor {
+    std::weak_ptr<DispatchVariant> variant;
+    std::vector<std::uint32_t> userData;
+    std::uint64_t ownerKey = 0;
+    std::weak_ptr<DrawEntry> owner;
+};
+
+struct DrawDecodeDonor {
+    std::shared_ptr<const DrawDecode> decode;
+    std::vector<std::uint64_t> stageKeys;
+};
+
 struct DrawRelocationPending {
-    std::uint64_t key = 0, alias = 0, identity = 0;
+    std::uint64_t key = 0, identity = 0;
+    DrawAliasKeys aliases;
+    std::shared_ptr<const DrawRelocation> relocation;
     std::weak_ptr<const DrawEntry> donor;
 };
 

@@ -1,6 +1,7 @@
 #include "Optimization/SrtWalker/SrtDescriptorEvaluation.hpp"
 #include "Optimization/SrtWalker/SrtEvaluator.hpp"
 #include "Optimization/SrtWalker/SrtTape.hpp"
+#include "Optimization/SrtWalker/SrtInstructionPredicates.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 
 #include <cstdio>
@@ -166,6 +167,14 @@ bool evaluateRuntimeSources(const IrResourcePlan& program, std::span<const std::
                 }
             }
         }
+        if (runtime.userDataUse != nullptr && source->dwordCount != 0) {
+            IrValue* lead = source->dwords[0]->Resolve();
+            if (!lead->HasImmediate() && lead->Opcode() == IrOpcode::ReadConst && lead->ArgumentCount() == 2) {
+                IrValue* slot = lead->Argument(1)->Resolve();
+                if (slot->HasImmediate() && slot->Type() == IrType::U32 && slot->ImmediateU32() < program.srtReads.size()) lead = program.srtReads[slot->ImmediateU32()].value->Resolve();
+            }
+            if (!lead->HasImmediate() && IsRawRead(program, *lead)) runtime.userDataUse->sourceLeads.emplace_back(sourceIndex, lead);
+        }
         evaluated.push_back(value);
     }
     std::vector<std::uint32_t> flattened;
@@ -254,6 +263,9 @@ bool interpretRuntimeSources(const IrResourcePlan& program, std::span<const std:
     const auto baseBefore = use != nullptr ? use->asBase : 0;
     const auto valueBefore = use != nullptr ? use->asValue : 0;
     const auto useReadsBefore = use != nullptr ? use->reads.size() : 0;
+    const auto useReadInstructionsBefore = use != nullptr ? use->readInstructions.size() : 0;
+    const auto useOperandReadsBefore = use != nullptr ? use->operandReads.size() : 0;
+    const auto useSourceLeadsBefore = use != nullptr ? use->sourceLeads.size() : 0;
     const auto runWithRetry = [&](auto evaluateFn) {
         for (std::uint32_t attempt = 0; attempt < 3u; ++attempt) {
             if (attempt != 0u) {
@@ -266,6 +278,9 @@ bool interpretRuntimeSources(const IrResourcePlan& program, std::span<const std:
                     use->asBase = baseBefore;
                     use->asValue = valueBefore;
                     use->reads.resize(useReadsBefore);
+                    use->readInstructions.resize(useReadInstructionsBefore);
+                    use->operandReads.resize(useOperandReadsBefore);
+                    use->sourceLeads.resize(useSourceLeadsBefore);
                 }
             }
             const SrtForceSyncScope forceSync(runtime, attempt == 2u);

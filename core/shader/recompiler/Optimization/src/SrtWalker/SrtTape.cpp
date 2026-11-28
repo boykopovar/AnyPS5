@@ -326,10 +326,13 @@ struct SrtTape::Frame {
     std::uint8_t* states;
     bool nullRoot = false;
     std::uint32_t addressDepth = 0;
+    std::uint32_t operandDepth = 0;
     std::size_t descriptorBytes = 0;
 };
 
 bool SrtTape::evaluate(Frame& frame, std::uint32_t index, std::uint64_t& result) const {
+    const auto& node = nodes[index];
+    if (frame.operandDepth > 0 && frame.runtime.userDataUse != nullptr && (node.op == Op::Read || node.op == Op::ReadConstBuffer)) frame.runtime.userDataUse->operandReads.push_back(node.source);
     const auto state = frame.states[index];
     if (state == 1) {
         result = frame.values[index];
@@ -337,7 +340,10 @@ bool SrtTape::evaluate(Frame& frame, std::uint32_t index, std::uint64_t& result)
     }
     if (state == 2) return false;
     std::uint64_t value = 0;
-    if (!compute(frame, nodes[index], value)) {
+    ++frame.operandDepth;
+    const bool computed = compute(frame, node, value);
+    --frame.operandDepth;
+    if (!computed) {
         frame.states[index] = 2;
         return false;
     }
@@ -439,7 +445,10 @@ bool SrtTape::compute(Frame& frame, const Node& node, std::uint64_t& result) con
                 frame.nullRoot = true;
                 return false;
             }
-            if (frame.runtime.userDataUse != nullptr) frame.runtime.userDataUse->reads.emplace_back(address, origin);
+            if (frame.runtime.userDataUse != nullptr) {
+                frame.runtime.userDataUse->reads.emplace_back(address, origin);
+                frame.runtime.userDataUse->readInstructions.push_back(node.source);
+            }
             if (node.loaded && frame.runtime.accessible != nullptr && !frame.runtime.accessible(frame.runtime.userContext, address, sizeof(std::uint32_t))) return false;
             if (auto* trace = frame.runtime.readTrace; trace != nullptr) {
                 if (node.source == trace->leaf) trace->leaves.emplace_back(trace->leafSlot, address);
@@ -557,6 +566,9 @@ bool SrtTape::Run(const IrResourcePlan& plan, const SrtRuntime& runtime, std::ve
     const auto baseBefore = use != nullptr ? use->asBase : 0;
     const auto valueBefore = use != nullptr ? use->asValue : 0;
     const auto useReadsBefore = use != nullptr ? use->reads.size() : 0;
+    const auto useReadInstructionsBefore = use != nullptr ? use->readInstructions.size() : 0;
+    const auto useOperandReadsBefore = use != nullptr ? use->operandReads.size() : 0;
+    const auto useSourceLeadsBefore = use != nullptr ? use->sourceLeads.size() : 0;
     const auto refuse = [&] {
         if (trace != nullptr) {
             trace->leaves.resize(leavesBefore);
@@ -567,6 +579,9 @@ bool SrtTape::Run(const IrResourcePlan& plan, const SrtRuntime& runtime, std::ve
             use->asBase = baseBefore;
             use->asValue = valueBefore;
             use->reads.resize(useReadsBefore);
+            use->readInstructions.resize(useReadInstructionsBefore);
+            use->operandReads.resize(useOperandReadsBefore);
+            use->sourceLeads.resize(useSourceLeadsBefore);
         }
         return false;
     };
@@ -586,6 +601,19 @@ bool SrtTape::Run(const IrResourcePlan& plan, const SrtRuntime& runtime, std::ve
         std::fill_n(states, nodes.size(), std::uint8_t {0});
     }
     Frame frame {runtime, values, states};
+    const auto noteErasedOperand = [&](IrValue* expression, std::uint32_t root) {
+        if (use == nullptr || root == NoNode || (nodes[root].op != Op::Read && nodes[root].op != Op::ReadConstBuffer) || nodes[root].source == nullptr || expression == nullptr) return;
+        auto* value = expression->Resolve();
+        for (;;) {
+            if ((value->Opcode() == IrOpcode::BitCastU32F32 || value->Opcode() == IrOpcode::BitCastF32U32) && value->ArgumentCount() == 1) value = value->Argument(0)->Resolve();
+            else if (value->Opcode() == IrOpcode::ReadConst && value->ArgumentCount() == 2) {
+                auto* slot = value->Argument(1)->Resolve();
+                if (!slot->HasImmediate() || slot->Type() != IrType::U32 || slot->ImmediateU32() >= plan.srtReads.size() || plan.srtReads[slot->ImmediateU32()].value == nullptr) break;
+                value = plan.srtReads[slot->ImmediateU32()].value->Resolve();
+            } else break;
+        }
+        if (value != nodes[root].source) use->operandReads.push_back(nodes[root].source);
+    };
 
     struct Scratch {
         std::uint32_t attempt = 0;
@@ -643,6 +671,7 @@ bool SrtTape::Run(const IrResourcePlan& plan, const SrtRuntime& runtime, std::ve
             bool cleanEvaluable = false;
             {
                 const SrtBranchScope branch;
+                if (block.condition != nullptr && runtime.readSpecializationMemory != nullptr) noteErasedOperand(block.condition, conditionRoots[index]);
                 cleanEvaluable = block.condition != nullptr && runtime.readSpecializationMemory != nullptr && conditionRoots[index] != NoNode && evaluate(frame, conditionRoots[index], condition);
             }
             if (frame.nullRoot) return refuse();
@@ -667,11 +696,20 @@ bool SrtTape::Run(const IrResourcePlan& plan, const SrtRuntime& runtime, std::ve
             for (std::uint32_t dword = 0; dword < source.dwordCount; ++dword) {
                 std::uint64_t word = 0;
                 frame.descriptorBytes = source.dwordCount > 1u ? static_cast<std::size_t>(source.dwordCount - dword) * sizeof(std::uint32_t) : 0u;
+                noteErasedOperand(source.dwords[dword], sourceDwords[sourceIndex][dword]);
                 const bool ok = evaluate(frame, sourceDwords[sourceIndex][dword], word);
                 frame.descriptorBytes = 0u;
                 if (!ok) return refuse();
                 value.dwords[dword] = static_cast<std::uint32_t>(word);
             }
+        }
+        if (use != nullptr && source.dwordCount != 0 && source.dwords[0] != nullptr) {
+            auto* lead = source.dwords[0]->Resolve();
+            if (!lead->HasImmediate() && lead->Opcode() == IrOpcode::ReadConst && lead->ArgumentCount() == 2) {
+                auto* slot = lead->Argument(1)->Resolve();
+                if (slot->HasImmediate() && slot->Type() == IrType::U32 && slot->ImmediateU32() < plan.srtReads.size() && plan.srtReads[slot->ImmediateU32()].value != nullptr) lead = plan.srtReads[slot->ImmediateU32()].value->Resolve();
+            }
+            if (!lead->HasImmediate() && IsRawRead(plan, *lead)) use->sourceLeads.emplace_back(sourceIndex, lead);
         }
         evaluated.push_back(value);
     }
@@ -687,6 +725,7 @@ bool SrtTape::Run(const IrResourcePlan& plan, const SrtRuntime& runtime, std::ve
             trace->leafSlot = read.flatOffset;
         }
         std::uint64_t word = 0;
+        noteErasedOperand(read.value, flatRoots[slot]);
         const bool ok = read.flatOffset < flattened.size() && evaluate(frame, flatRoots[slot], word);
         if (pure) trace->leaf = nullptr;
         if (!ok) return refuse();
