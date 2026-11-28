@@ -1822,6 +1822,7 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
             cache.index[key] = cache.entries.begin();
             cache.byImage[texture.get()] = cache.entries.begin();
             texture->SetCached(true);
+            if (auto* recorder = Recorder::Active(); recorder != nullptr && GuestMemory::GpuMutex().HeldByThisThread()) recorder->ForgetKeptBytes(texture.get());
             counters.storageCreated.fetch_add(1, std::memory_order_relaxed);
             if (profile) LookupOutcomes::Add(LookupOutcomes::StorageMade, start);
         }
@@ -1829,8 +1830,13 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
     for (const auto& image : evicted) {
         std::vector<std::shared_ptr<ShaderResources>> resources;
         SharedResourceCache().RemoveImage(image.get(), &resources);
-        if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->Recording()) {
-            if (image.use_count() > 1) recorder->KeepBytes(image.get(), static_cast<std::size_t>(heldBytes(*image)));
+        auto* recorder = Recorder::Active();
+        if (recorder != nullptr && image.use_count() > 1) {
+            const auto bytes = static_cast<std::size_t>(heldBytes(*image));
+            if (recorder->Recording()) recorder->KeepBytes(image.get(), bytes);
+            if (GuestMemory::GpuMutex().HeldByThisThread()) recorder->CountRetainedBytes(image.get(), bytes);
+        }
+        if (recorder != nullptr && recorder->Recording()) {
             for (auto& resource : resources) {
                 resource->KeepStorageImageBytes(*recorder);
                 recorder->Keep(std::move(resource));
@@ -2094,10 +2100,17 @@ std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage) {
                     }
                     std::vector<std::shared_ptr<ShaderResources>> resources;
                     const bool removed = SharedResourceCache().TryRemoveImage(image.get(), &resources);
-                    if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->Recording()) {
-                        for (auto& resource : resources) recorder->Keep(std::move(resource));
+                    auto* recorder = Recorder::Active();
+                    if (recorder != nullptr && recorder->Recording()) {
+                        for (auto& resource : resources) {
+                            resource->KeepStorageImageBytes(*recorder);
+                            recorder->Keep(std::move(resource));
+                        }
                     }
                     resources.clear();
+                    if (recorder != nullptr && image.use_count() > 1) {
+                        recorder->CountRetainedBytes(image.get(), static_cast<std::size_t>(heldBytes(*image)));
+                    }
                     ++storageEntries;
                     image.reset();
                     freed = ImageMemoryReleasedBytes() - releasedBefore;

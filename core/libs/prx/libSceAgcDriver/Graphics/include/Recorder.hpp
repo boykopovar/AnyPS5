@@ -240,6 +240,8 @@ public:
     }
 
     void KeepBytes(const void* owner, std::size_t bytes);
+    void CountRetainedBytes(const void* owner, std::size_t bytes);
+    void ForgetKeptBytes(const void* owner);
     enum class UploadScratch : std::uint8_t { Tiled = 0, Linear, Count };
     std::shared_ptr<DeviceBuffer> UploadScratchBuffer(UploadScratch kind, std::size_t bytes);
     static constexpr VkPipelineStageFlags UploadScratchReuseStages = VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
@@ -803,7 +805,7 @@ private:
         VkFence fence = VK_NULL_HANDLE;
         std::vector<std::shared_ptr<void>> kept;
         std::size_t keptBytes = 0;
-        std::unordered_set<const void*> keptOwners;
+        std::unordered_map<const void*, std::size_t> keptOwners;
         std::array<std::shared_ptr<DeviceBuffer>, static_cast<std::size_t>(UploadScratch::Count)> uploadScratch;
         std::vector<std::function<void()>> completions;
         std::vector<std::function<void()>> discards;

@@ -3785,7 +3785,36 @@ void Recorder::dropStaleHoldKept() {
 void Recorder::KeepBytes(const void* owner, std::size_t bytes) {
     if (owner == nullptr || bytes == 0) return;
     ensureOpen();
-    if (open->keptOwners.insert(owner).second) open->keptBytes += bytes;
+    if (open->keptOwners.emplace(owner, bytes).second) open->keptBytes += bytes;
+}
+
+void Recorder::CountRetainedBytes(const void* owner, std::size_t bytes) {
+    GuestMemory::AssertGpuLockHeld("Recorder::CountRetainedBytes");
+    if (owner == nullptr || bytes == 0) return;
+    const auto count = [&](Batch& batch) -> std::size_t {
+        if (batch.keptOwners.contains(owner)) return 0;
+        if (std::none_of(batch.kept.begin(), batch.kept.end(), [owner](const auto& kept) { return kept.get() == owner; })) return 0;
+        batch.keptOwners.emplace(owner, bytes);
+        batch.keptBytes += bytes;
+        return bytes;
+    };
+    if (open != nullptr) count(*open);
+    for (auto& batch : inFlight) inFlightKeptBytes += count(*batch);
+}
+
+void Recorder::ForgetKeptBytes(const void* owner) {
+    GuestMemory::AssertGpuLockHeld("Recorder::ForgetKeptBytes");
+    if (owner == nullptr) return;
+    const auto forget = [&](Batch& batch) {
+        const auto found = batch.keptOwners.find(owner);
+        if (found == batch.keptOwners.end()) return std::size_t{0};
+        const auto bytes = found->second;
+        batch.keptOwners.erase(found);
+        batch.keptBytes -= bytes;
+        return bytes;
+    };
+    if (open != nullptr) forget(*open);
+    for (auto& batch : inFlight) inFlightKeptBytes -= forget(*batch);
 }
 
 void Recorder::BoundKeptBytes() {
