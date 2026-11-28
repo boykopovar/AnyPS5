@@ -425,6 +425,7 @@ public:
         bool checked = false;
     };
     static constexpr std::uint64_t DeadImagePresents = 2;
+    static constexpr std::uint64_t CapIdlePresents = 120;
     static void ClassifyAccess(std::uint64_t address, std::size_t bytes, AccessClassification& out);
     // The flush hook's skip (C4, Recorder.cpp FlushForAccess): whether every image FlushPending
     // would store for the access keeps every 64 KiB block of it (the keep rule of writeBackLayers:
@@ -499,6 +500,7 @@ public:
     static bool OrderedFlushArmedForTest();
     // A consumer found the image current and used it (Refresh, the fast revalidation).
     void NoteProved() const;
+    std::uint64_t ProvedPresent() const { return provedPresent.load(std::memory_order_relaxed); }
     void NoteUsed() const {
         if (!usedUnlisted.load(std::memory_order_relaxed)) usedUnlisted.store(true, std::memory_order_relaxed);
     }
