@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
+#include <string>
 #include <thread>
 
 static constexpr int SCE_OK = 0;
@@ -46,7 +47,7 @@ static void CheckSpinAcquire() {
 
     counts = {};
     Require(Spin(5, 3, 4, counts));
-    Require(counts.tries == 4 && counts.pauses == 2 && counts.yields == 0);
+    Require(counts.tries == 4 && counts.pauses == 3 && counts.yields == 0);
 
     counts = {};
     Require(Spin(5, 3, 8, counts));
@@ -63,6 +64,49 @@ static void CheckSpinAcquire() {
     counts = {};
     Require(!Spin(-3, -1, 0, counts));
     Require(counts.tries == 1 && counts.pauses == 0 && counts.yields == 0);
+
+    counts = {};
+    Require(!Spin(0, 0, 0, counts));
+    Require(counts.tries == 1 && counts.pauses == 0 && counts.yields == 0);
+
+    {
+        bool paused = false;
+        int tries = 0;
+        int yields = 0;
+        const bool acquired = MutexOperations::SpinAcquire(
+            1,
+            0,
+            [&] {
+                ++tries;
+                return paused;
+            },
+            [&] { paused = true; },
+            [&] { ++yields; });
+        Require(acquired);
+        Require(paused);
+        Require(tries == 2);
+        Require(yields == 0);
+    }
+
+    {
+        std::string events;
+        auto appendEvent = [&](char symbol) {
+            if (!events.empty())
+                events += ',';
+            events += symbol;
+        };
+        const bool acquired = MutexOperations::SpinAcquire(
+            2,
+            1,
+            [&] {
+                appendEvent('T');
+                return false;
+            },
+            [&] { appendEvent('P'); },
+            [&] { appendEvent('Y'); });
+        Require(!acquired);
+        Require(events == "T,P,T,P,T,Y,T");
+    }
 }
 
 struct Shared {
