@@ -527,57 +527,88 @@ int main() {
     Require(!padInput.SlotOccupied(1));
     Require(!padInput.SlotOccupied(2));
 
-    SDL_Event add0{};
-    add0.type = SDL_CONTROLLERDEVICEADDED;
-    add0.cdevice.which = dev0;
-    padInput.HandleEvent(add0, window);
+    const auto pump = [&] {
+        SDL_Event event{};
+        while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_CONTROLLERDEVICEADDED || event.type == SDL_CONTROLLERDEVICEREMOVED) {
+                padInput.HandleEvent(event, window);
+            }
+        }
+    };
+    const auto attach = [&] {
+        const int device = SDL_JoystickAttachVirtualEx(&desc);
+        Require(device >= 0 && SDL_IsGameController(device));
+        pump();
+        return device;
+    };
+    const auto detach = [&](SDL_JoystickID instance) {
+        for (int device = 0; device < SDL_NumJoysticks(); ++device) {
+            if (SDL_JoystickGetDeviceInstanceID(device) == instance) {
+                Require(SDL_JoystickDetachVirtual(device) == 0);
+                pump();
+                return;
+            }
+        }
+        Require(false);
+    };
+    pump();
     Require(padInput.SlotOccupied(0));
     Require(!padInput.SlotOccupied(1));
     Require(!padInput.SlotOccupied(2));
 
     desc.name = "Virtual Controller 1";
-    const int dev1 = SDL_JoystickAttachVirtualEx(&desc);
-    Require(dev1 >= 0);
-    Require(SDL_IsGameController(dev1));
-
-    SDL_Event add1{};
-    add1.type = SDL_CONTROLLERDEVICEADDED;
-    add1.cdevice.which = dev1;
-    padInput.HandleEvent(add1, window);
+    const auto id1 = SDL_JoystickGetDeviceInstanceID(attach());
     Require(padInput.SlotOccupied(0));
     Require(!padInput.SlotOccupied(1));
     Require(padInput.SlotOccupied(2));
     Require(Pad::IsConnected(2));
 
-    const SDL_JoystickID id0 = SDL_JoystickGetDeviceInstanceID(dev0);
-    SDL_Event rem0{};
-    rem0.type = SDL_CONTROLLERDEVICEREMOVED;
-    rem0.cdevice.which = id0;
-    padInput.HandleEvent(rem0, window);
+    detach(SDL_JoystickGetDeviceInstanceID(dev0));
     Require(!padInput.SlotOccupied(0));
     Require(!padInput.SlotOccupied(1));
     Require(padInput.SlotOccupied(2));
     Require(Pad::IsConnected(2));
 
-    padInput.HandleEvent(add0, window);
+    desc.name = "Virtual Controller 0";
+    const int reconnected = attach();
+    const auto id0 = SDL_JoystickGetDeviceInstanceID(reconnected);
     Require(padInput.SlotOccupied(0));
     Require(!padInput.SlotOccupied(1));
     Require(padInput.SlotOccupied(2));
-    HandOff(padInput, window, dev0);
-    ControllerHotkeysAfterModal(padInput, window, dev0, configPath);
-    ControllerRemapping(padInput, window, dev0, configPath);
+    HandOff(padInput, window, reconnected);
+    ControllerHotkeysAfterModal(padInput, window, reconnected, configPath);
+    ControllerRemapping(padInput, window, reconnected, configPath);
 
-    const SDL_JoystickID id1 = SDL_JoystickGetDeviceInstanceID(dev1);
-    SDL_Event rem1{};
-    rem1.type = SDL_CONTROLLERDEVICEREMOVED;
-    rem1.cdevice.which = id1;
-    padInput.HandleEvent(rem1, window);
+    const auto id2 = SDL_JoystickGetDeviceInstanceID(attach());
+    const auto spare = SDL_JoystickGetDeviceInstanceID(attach());
+    const auto nextSpare = SDL_JoystickGetDeviceInstanceID(attach());
+    Require(padInput.SlotOccupied(3));
+    Require(SDL_GameControllerFromInstanceID(spare) == nullptr);
+    Require(SDL_GameControllerFromInstanceID(nextSpare) == nullptr);
+
+    detach(id1);
+    Require(!padInput.SlotOccupied(1));
+    Require(padInput.SlotOccupied(2));
+    Require(Pad::IsConnected(2));
+    auto* replacement = SDL_JoystickFromInstanceID(spare);
+    Require(replacement != nullptr);
+    Require(SDL_JoystickSetVirtualButton(replacement, SDL_CONTROLLER_BUTTON_A, 1) == 0);
+    padInput.Update(window);
+    Require(Pad::ReadState(2).buttons == static_cast<std::uint32_t>(Pad::PadButton::Cross));
+    Require(Pad::ReadState(3).buttons == 0);
+
+    Require(SDL_GameControllerFromInstanceID(nextSpare) == nullptr);
+    detach(spare);
+    Require(padInput.SlotOccupied(2));
+    Require(SDL_GameControllerFromInstanceID(nextSpare) != nullptr);
+    detach(nextSpare);
     Require(padInput.SlotOccupied(0));
     Require(!padInput.SlotOccupied(1));
     Require(!padInput.SlotOccupied(2));
     Require(!Pad::IsConnected(2));
 
-    padInput.HandleEvent(rem0, window);
+    detach(id2);
+    detach(id0);
     Require(!padInput.SlotOccupied(0));
     Require(!padInput.SlotOccupied(1));
     Require(!padInput.SlotOccupied(2));
@@ -585,8 +616,6 @@ int main() {
     InjectedPressAfterUnreadRelease(padInput, window, commandPath, 3, false);
     InjectedPressAfterUnreadRelease(padInput, window, commandPath, 4, true);
 
-    Require(SDL_JoystickDetachVirtual(dev1) == 0);
-    Require(SDL_JoystickDetachVirtual(dev0) == 0);
     SDL_QuitSubSystem(SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK);
 
     return 0;
