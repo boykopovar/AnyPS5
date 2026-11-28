@@ -1,0 +1,5 @@
+# libSceAgcDriver
+
+## change [sceAgcDriverGetHsOffchipParam, sceAgcDriverSetHsOffchipParam]
+
+- [sceAgcDriverGetHsOffchipParam, sceAgcDriverSetHsOffchipParam](../../../core/libs/prx/libSceAgcDriver/State/src/Configuration.cpp) (libSceAgcDriver) - `Get` reports (0, 0) until set, and `Set(granularity, buffering)` returns 0 and keeps the low 2 bits of granularity and the low 9 bits of buffering, as a payload process measured on firmware 13.00: 4 read back as 0, 7 as 3 and 0xffff as 3; 512 as 0, 600 as 88, 1023 as 511 and 0xffff as 511 (1023 also in [PS5_Vulkan's findings](https://github.com/mihawk-99/PS5_Vulkan/blob/ace98a99460c95a8d2821a9e33935c7b71070f7f/docs/HARDWARE_FINDINGS.md#L3415-L3429)). Arguments follow [ps5-vulkan](https://github.com/mpereiraesaa/ps5-vulkan/blob/e6d3c3f82f3c8a574e28c174b15b287f9c0ecc6d/native/graphics_queue_ps5.c#L45-L56). A null or unwritable output pointer throws (rejecting unwritable memory is a host-safety fallback; console fault handling is unmeasured). Nothing reads the pair: tessellated draws run as host tessellation stages. PPSA99011 imports `Get`

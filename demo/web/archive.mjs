@@ -8,6 +8,13 @@ export { batchMemoryEstimate, batchOutputDirectory, memoryEstimate, MEMORY_LIMIT
 export const CONVERSION_LIMIT = 256 * 1024 * 1024;
 export const ICON_LIMIT = 16 * 1024 * 1024;
 const MAX_ENTRIES = 100000;
+const moduleDirs = ["sce_module", "sce_modules", "prx"];
+const unityDirs = ["Media/Modules", "Media/Plugins"];
+
+function isModulePath(name) {
+  const parent = name.substring(0, name.lastIndexOf("/"));
+  return moduleDirs.includes(parent) || unityDirs.includes(parent);
+}
 
 class BoundedBlobReader extends BlobReader {
   async readUint8Array(offset, length) {
@@ -207,8 +214,6 @@ export class Archive {
     }
     this.prefix = prefix;
     this.files = this.entries.filter(entry => entry.filename.startsWith(prefix) && entry.filename !== prefix).map(entry => ({ entry, name: entry.filename.slice(prefix.length) }));
-    const moduleDirs = ["sce_module", "sce_modules", "prx"];
-    const unityDirs = ["Media/Modules", "Media/Plugins"];
     const present = directory => this.files.some(item => item.name.startsWith(directory + "/"));
     if (present("sce_module") && present("sce_modules")) throw new Error(translate(locale, "duplicateModuleDirs"));
     const executables = [];
@@ -219,16 +224,11 @@ export class Archive {
       const item = this.files[index];
       report({ phase: translate(locale, "inspectingFiles"), phaseKey: "inspectingFiles", input: item.name, completed: index, total: this.files.length });
       if (item.entry.directory || item.name.startsWith("sce_sys/")) continue;
-      const moduleDir = moduleDirs.find(directory => item.name.startsWith(directory + "/"));
-      const unityDir = unityDirs.find(directory => item.name.startsWith(directory + "/")
-        && !item.name.slice(directory.length + 1).includes("/"));
-      if (!moduleDir && !unityDir && item.name.includes("/")) continue;
-      if ((moduleDir || unityDir) && item.name.endsWith(".guest.prx")) continue;
+      const module = isModulePath(item.name);
+      if (!module && item.name.includes("/")) continue;
+      if (module && item.name.endsWith(".guest.prx")) continue;
       const header = await headerBytes(item.entry);
-      if (unityDir) {
-        if (isElf(header)) throw new Error(`${item.name} is a Unity ELF module the web converter cannot relink. Use the native relinker with --module-dir ${unityDir}.`);
-        if (isSelf(header)) selfModules.push(item.name);
-      } else if (moduleDir) {
+      if (module) {
         if (isElf(header)) this.modules.push(item);
         else if (isSelf(header)) selfModules.push(item.name);
       } else if (isElf(header)) {
@@ -252,7 +252,7 @@ export class Archive {
     const warnings = [];
     if (!this.files.some(item => item.name.startsWith("sce_sys/"))) warnings.push(translate(locale, "warnSceSysMissing"));
     else if (!this.icon) warnings.push(translate(locale, "warnIconMissing"));
-    if (!moduleDirs.some(present)) warnings.push(translate(locale, "warnModulesMissing"));
+    if (!this.modules.length && !moduleDirs.some(present)) warnings.push(translate(locale, "warnModulesMissing"));
     if (selfModules.length > 0) warnings.push(translate(locale, "warnSelfModuleSkipped", { names: selfModules.join(", ") }));
     this.totalBytes = total;
     return { name: this.executable.name, files: files.length, modules: this.modules.length, totalBytes: total, selectedBytes: this.selectedBytes, windowsSelectedBytes: this.windowsSelectedBytes, windowsIconTooLarge: (this.icon?.entry.uncompressedSize ?? 0) > ICON_LIMIT, root: prefix, warnings };
@@ -400,7 +400,7 @@ export async function packageArchive(archive, converted, outputName, libraryFile
     if (options.receipt) claim(receiptName);
     if (converted.diagnostics) claim("windows-diagnostics-imports.txt");
     for (const module of converted.modules) {
-      if (!["app0/sce_module/", "app0/sce_modules/", "app0/prx/"].some(prefix => module.name.startsWith(prefix))) throw new Error(translate(locale, "invalidModulePath"));
+      if (!module.name.startsWith("app0/") || !isModulePath(module.name.slice("app0/".length))) throw new Error(translate(locale, "invalidModulePath"));
       claim(module.name);
     }
     const outputEntries = [

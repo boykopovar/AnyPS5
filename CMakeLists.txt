@@ -8,6 +8,22 @@ project(Relinker CXX)
 set(ANYPS5_TEST_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
 if(MINGW)
     enable_language(RC)
+    function(configure_windows_resource_preprocessor target source)
+        if(NOT CMAKE_HOST_WIN32 OR CMAKE_VERSION VERSION_LESS 3.25 OR NOT CMAKE_GENERATOR MATCHES "Ninja|Makefiles")
+            return()
+        endif()
+        get_filename_component(resourceCompiler "${CMAKE_RC_COMPILER}" NAME_WE)
+        get_filename_component(resourceCompilerDirectory "${CMAKE_RC_COMPILER}" DIRECTORY)
+        if(NOT resourceCompiler MATCHES "^(.*-mingw32-)?windres$" OR NOT resourceCompilerDirectory MATCHES " "
+                OR NOT EXISTS "${resourceCompilerDirectory}/gcc.exe")
+            return()
+        endif()
+        set(launcher "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/cmake/WindowsResourceCompiler.cmake")
+        set_property(TARGET ${target} PROPERTY RULE_LAUNCH_COMPILE
+            "\"${CMAKE_COMMAND}\" -P \"${launcher}\" --")
+        set_property(SOURCE "${source}" APPEND PROPERTY OBJECT_DEPENDS "${launcher}")
+    endfunction()
+
     function(add_test_executable_manifests_test)
         if(NOT BUILD_TESTING)
             return()
@@ -259,6 +275,7 @@ if(MINGW)
     add_library(anyps5_windows_test_exit OBJECT cmake/WindowsTestExit.cpp)
     add_library(anyps5_windows_test_manifest OBJECT cmake/WindowsManifest.rc)
     set_source_files_properties(cmake/WindowsManifest.rc PROPERTIES OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/cmake/WindowsManifest.manifest)
+    configure_windows_resource_preprocessor(anyps5_windows_test_manifest cmake/WindowsManifest.rc)
 endif()
 
 if(BUILD_TESTING)
@@ -699,6 +716,9 @@ if(BUILD_TESTING)
         add_test(NAME configure_seed_paths COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedPathTests)
         set_tests_properties(configure_seed_paths PROPERTIES TIMEOUT 20)
+        add_test(NAME configure_seed_check_name_round_trips COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedCheckNameRoundTripTests)
+        set_tests_properties(configure_seed_check_name_round_trips PROPERTIES TIMEOUT 30)
         add_test(NAME configure_seed_round_trips COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedRoundTripTests)
         set_tests_properties(configure_seed_round_trips PROPERTIES TIMEOUT 30)
@@ -734,6 +754,9 @@ if(BUILD_TESTING)
             add_test(NAME vulkan_validation_gate_nested_containment COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py NestedContainmentTests)
         endif()
+        add_test(NAME frame_capture_minimize_replay COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_SOURCE_DIR}/tools/tests/test_frame_capture_minimize_replay.py)
+        set_tests_properties(frame_capture_minimize_replay PROPERTIES TIMEOUT 20)
         add_test(NAME vulkan_validation_gate_arguments COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py ArgumentTests)
         add_test(NAME vulkan_validation_gate_identity COMMAND ${Python3_EXECUTABLE}

@@ -150,7 +150,7 @@ FrameRecorder* FrameRecorder::Active() {
 }
 
 FrameRecorder::FrameRecorder(std::filesystem::path directory, std::filesystem::path trigger, std::uint64_t atBoundary, std::uint64_t frames)
-    : directory(std::move(directory)), trigger(std::move(trigger)), atBoundary(atBoundary), frames(frames), origin(std::chrono::steady_clock::now()) {}
+    : directory(std::move(directory)), trigger(std::move(trigger)), atBoundary(atBoundary), frames(frames), beforeFirstSubmit(readNumber(std::getenv("APS5_FRAME_CAPTURE_BEFORE_FIRST_SUBMIT"), 0) != 0), origin(std::chrono::steady_clock::now()) {}
 
 FrameCall FrameRecorder::make(FrameCallKind kind) {
     FrameCall call;
@@ -278,6 +278,9 @@ void FrameRecorder::writeReferenceFrames() {
 
 void FrameRecorder::record(FrameCall call, bool prologueCall, std::span<const Shader* const> shaders, const std::function<void()>& accept) {
     std::unique_lock lock(mutex);
+    if (accept && state == State::Waiting && beforeFirstSubmit && call.kind == FrameCallKind::Submit &&
+        boundaries == 0 && atBoundary == 0 && unrecordedAccepts.load(std::memory_order_acquire) == 0 &&
+        DriverDetail::Driver::Get().SerialProgress().first == 0 && (trigger.empty() || triggered())) start();
     if (accept && !prologueCall && state != State::Recording) {
         unrecordedAccepts.fetch_add(1, std::memory_order_relaxed);
         lock.unlock();
@@ -581,12 +584,17 @@ void FrameRecorder::SetStartIdleWaitForTest(std::function<bool()> wait) {
 }
 
 void FrameRecorder::start() {
+    constexpr std::uint64_t MaxStartAttempts = 600;
+    constexpr std::uint64_t WaitingReportEvery = 50;
     ++startAttempts;
     auto& driver = DriverDetail::Driver::Get();
     if (unrecordedAccepts.load(std::memory_order_acquire) != 0 || !(startIdleWaitForTest ? startIdleWaitForTest() : driver.WaitIdleUnlessTitleWaitsFor(std::chrono::seconds(10)))) {
-        if (startAttempts >= 600) {
+        if (startAttempts >= MaxStartAttempts) {
             std::fprintf(stderr, "[frame-capture] giving up: the driver was not idle, or a guest call was still being accepted, at all of %llu frame boundaries\n", static_cast<unsigned long long>(startAttempts));
             state = State::Done;
+        } else if (startAttempts == 1 || startAttempts % WaitingReportEvery == 0) {
+            std::fprintf(stderr, "[frame-capture] waiting to start the capture: the driver was not idle, or a guest call was still being accepted, at %llu of up to %llu frame boundaries\n",
+                    static_cast<unsigned long long>(startAttempts), static_cast<unsigned long long>(MaxStartAttempts));
         }
         return;
     }

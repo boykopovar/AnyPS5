@@ -118,9 +118,9 @@ void TestInvalidUserIdRejection() {
         Require(sceUserServiceGetPlatformPrivacyWs1(invalidId, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
 
         uint64_t accountId = 0xDEADBEEF;
-        Require(sceUserServiceGetNpAccountId(invalidId, &accountId) == USER_SERVICE_ERROR_UNKNOWN_USER);
+        Require(sceUserServiceGetNpAccountId(invalidId, &accountId) == USER_SERVICE_ERROR_NOT_INITIALIZED);
         Require(accountId == 0xDEADBEEF);
-        Require(sceUserServiceGetNpAccountId(invalidId, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+        Require(sceUserServiceGetNpAccountId(invalidId, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
 
         UserServiceGamePresets presets{};
         presets.difficulty = 0x5A;
@@ -193,6 +193,11 @@ void TestLoginStateTransitions() {
 
     UserServiceLoginUserIdList uninitList{};
     Require(sceUserServiceGetLoginUserIdList(&uninitList) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+
+    uint64_t uninitAccountId = 0xDEAD;
+    Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID, &uninitAccountId) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(uninitAccountId == 0xDEAD);
+    Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
 
     UserServiceInitParam badParam{};
     badParam.priority = USER_SERVICE_THREAD_PRIORITY_MIN - 1;
