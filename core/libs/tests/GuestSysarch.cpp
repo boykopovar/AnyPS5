@@ -84,6 +84,53 @@ int main() {
     Require(sysarch(3, outsidePorts) == -1 && *__error_nid_postfix() == 22 && outsidePorts[1] == 5);
     *__error_nid_postfix() = 0;
     Require(sysarch(4, ports) == -1 && *__error_nid_postfix() == 1);
+    struct {
+        std::uint64_t address;
+        std::int32_t length;
+        std::int32_t pad;
+    } xfpu{};
+    static_assert(sizeof(xfpu) == 16);
+    std::uint32_t xfpu32[2]{};
+    std::uint8_t state[64]{};
+    for (const std::int32_t length : {1024, 2048, 4096, 8192, -1}) {
+        xfpu = {reinterpret_cast<std::uintptr_t>(state), length, 0};
+        *__error_nid_postfix() = 0;
+        Require(sysarch(132, &xfpu) == -1 && *__error_nid_postfix() == 22);
+        xfpu32[1] = static_cast<std::uint32_t>(length);
+        *__error_nid_postfix() = 0;
+        Require(sysarch(11, xfpu32) == -1 && *__error_nid_postfix() == 22);
+    }
+    xfpu = {0, 0, 0};
+    Require(sysarch(132, &xfpu) == 0);
+    xfpu = {reinterpret_cast<std::uintptr_t>(state), 0, 0};
+    Require(sysarch(132, &xfpu) == 0);
+    xfpu32[0] = 0;
+    xfpu32[1] = 0;
+    Require(sysarch(11, xfpu32) == 0);
+    xfpu = {0, 64, 0};
+    *__error_nid_postfix() = 0;
+    Require(sysarch(132, &xfpu) == -1 && *__error_nid_postfix() == 14);
+    xfpu32[1] = 64;
+    *__error_nid_postfix() = 0;
+    Require(sysarch(11, xfpu32) == -1 && *__error_nid_postfix() == 14);
+    xfpu = {0, 512, 0};
+    *__error_nid_postfix() = 0;
+    Require(sysarch(132, &xfpu) == -1 && *__error_nid_postfix() == 14);
+    xfpu32[1] = 512;
+    *__error_nid_postfix() = 0;
+    Require(sysarch(11, xfpu32) == -1 && *__error_nid_postfix() == 14);
+    for (const int operation : {11, 132}) {
+        *__error_nid_postfix() = 0;
+        Require(sysarch(operation, reinterpret_cast<void*>(std::uintptr_t{0x10})) == -1 && *__error_nid_postfix() == 14);
+    }
+    constexpr std::size_t page = 0x4000;
+    auto* const pages = static_cast<unsigned char*>(mmap_nid_postfix(nullptr, 2 * page, 3, 0x1002, -1, 0));
+    Require(pages != reinterpret_cast<unsigned char*>(static_cast<std::uintptr_t>(-1)) && mprotect_nid_postfix(pages + page, page, 0) == 0);
+    std::memset(pages + page - 12, 0, 12);
+    *__error_nid_postfix() = 0;
+    Require(sysarch(132, pages + page - 12) == -1 && *__error_nid_postfix() == 14);
+    Require(sysarch(11, pages + page - 8) == 0);
+    Require(munmap_nid_postfix(pages, 2 * page) == 0);
 #if (defined(__linux__) || defined(_WIN32)) && defined(__x86_64__)
     static std::uint64_t slots[2] = {0x1234567890abcdefull, 0};
     std::uint64_t base = reinterpret_cast<std::uintptr_t>(slots);
