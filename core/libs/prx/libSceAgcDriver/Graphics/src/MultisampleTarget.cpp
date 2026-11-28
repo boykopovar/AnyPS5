@@ -1145,6 +1145,7 @@ private:
                 continue;
             }
             Require(GuestMemory::Watched(range.address, range.bytes), "initial multisampled DCC contents require watched guest memory");
+            GuestMemory::MaterializeKnownZero(range.address, range.bytes);
             if (index != 0u) GuestMemory::MaterializeKnownZero(range.address, range.bytes);
             range.generation = collectBlocks(range.address, range.bytes);
             Require(range.generation != 0, "initial multisampled DCC contents have no write generation");

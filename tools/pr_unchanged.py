@@ -81,17 +81,28 @@ def fetch(repo):
     owner, name = repo.split("/", 1)
     prs, after, main = [], None, None
     seen = set()
+    numbers = set()
     while True:
         variables = {"owner": owner, "name": name, "size": PAGE_SIZE}
         if after:
             variables["after"] = after
         data = graphql(QUERY, **variables)["repository"]
-        main = main or data["defaultBranchRef"]["target"]["oid"]
+        page_main = data["defaultBranchRef"]["target"]["oid"]
+        if main is not None and page_main != main:
+            raise ValueError("main changed while reading open pull requests")
+        main = page_main
         connection = data["pullRequests"]
-        prs += [candidate(node) for node in listed(connection)]
-        if not connection["pageInfo"]["hasNextPage"]:
+        more = connection["pageInfo"]["hasNextPage"]
+        if more:
+            after = pagination_cursor(connection, seen, "open pull request")
+        for node in listed(connection):
+            pr = candidate(node)
+            if pr["number"] in numbers:
+                raise ValueError(f"open pull request #{pr['number']} appeared more than once")
+            numbers.add(pr["number"])
+            prs.append(pr)
+        if not more:
             return main, prs
-        after = pagination_cursor(connection, seen, "open pull request")
 
 
 def touched(repo, number):

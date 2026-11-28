@@ -33,8 +33,12 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <iterator>
+#include <limits>
 #include <list>
 #include <map>
 #include <memory>
@@ -308,16 +312,17 @@ struct FcPattern {
 
 namespace {
 
-FcBool AddValue(FcPattern* pattern, const char* object, PatternValue value) {
-    if (!pattern || !object) NotImplemented_nid_no_patch(__func__);
-    if (!ValidType(object, value.type)) return 0;
-    const auto found = pattern->objects.find(object);
+FcBool AddValue(FcPattern* pattern, const char* object, PatternValue value, const char* caller) {
+    if (!pattern || !object) NotImplemented_nid_no_patch(caller);
+    const std::string name = FontconfigReadGuestCString_nid_no_patch(object, caller);
+    if (!ValidType(name, value.type)) return 0;
+    const auto found = pattern->objects.find(name);
     if (found != pattern->objects.end()) {
         found->second.push_back(std::move(value));
     } else {
         std::list<PatternValue> values;
         values.push_back(std::move(value));
-        pattern->objects.emplace(object, std::move(values));
+        pattern->objects.emplace(name, std::move(values));
     }
     return 1;
 }
@@ -534,20 +539,20 @@ void APS5_VABI FcLangSetDestroy(FcLangSet* set) {
 
 FcBool APS5_VABI FcLangSetAdd(FcLangSet* set, const FcChar8* language) {
     if (!set || !language) NotImplemented_nid_no_patch(__func__);
-    const std::string_view name(reinterpret_cast<const char*>(language));
-    const auto entry = std::lower_bound(std::begin(fontconfig_data::Languages), std::end(fontconfig_data::Languages), name,
-        [](auto known, auto candidate) { return CompareLanguageIndex(known, candidate) < 0; });
-    if (entry != std::end(fontconfig_data::Languages) && CompareLanguageIndex(*entry, name) == 0) {
-        set->known[entry - std::begin(fontconfig_data::Languages)] = true;
-        return 1;
-    }
     try {
-        const auto [entry, inserted] = set->extra.emplace(name);
+        const std::string name = FontconfigReadGuestCString_nid_no_patch(reinterpret_cast<const char*>(language), __func__);
+        const auto entry = std::lower_bound(std::begin(fontconfig_data::Languages), std::end(fontconfig_data::Languages), std::string_view(name),
+            [](auto known, auto candidate) { return CompareLanguageIndex(known, candidate) < 0; });
+        if (entry != std::end(fontconfig_data::Languages) && CompareLanguageIndex(*entry, name) == 0) {
+            set->known[entry - std::begin(fontconfig_data::Languages)] = true;
+            return 1;
+        }
+        const auto [insertedEntry, inserted] = set->extra.emplace(name);
         if (inserted) {
             try {
                 set->extraOrder.emplace_back(name);
             } catch (...) {
-                set->extra.erase(entry);
+                set->extra.erase(insertedEntry);
                 throw;
             }
         }
@@ -559,8 +564,8 @@ FcBool APS5_VABI FcLangSetAdd(FcLangSet* set, const FcChar8* language) {
 
 FcLangResult APS5_VABI FcLangSetHasLang(const FcLangSet* set, const FcChar8* language) {
     if (!set || !language) NotImplemented_nid_no_patch(__func__);
-    const std::string_view name(reinterpret_cast<const char*>(language));
-    const auto entry = std::lower_bound(std::begin(fontconfig_data::Languages), std::end(fontconfig_data::Languages), name,
+    const std::string name = FontconfigReadGuestCString_nid_no_patch(reinterpret_cast<const char*>(language), __func__);
+    const auto entry = std::lower_bound(std::begin(fontconfig_data::Languages), std::end(fontconfig_data::Languages), std::string_view(name),
         [](auto known, auto candidate) { return CompareLanguageIndex(known, candidate) < 0; });
     const auto index = static_cast<int>(entry - std::begin(fontconfig_data::Languages));
     if (entry != std::end(fontconfig_data::Languages) && CompareLanguageIndex(*entry, name) == 0 && set->known[index])
@@ -605,10 +610,19 @@ FcPattern* APS5_VABI FcPatternDuplicate_nid_postfix(const FcPattern* pattern) {
 FcPattern* APS5_VABI FcPatternFilter(FcPattern* pattern, const FcObjectSet* objects) {
     if (!objects) return FcPatternDuplicate_nid_postfix(pattern);
     if (!pattern) NotImplemented_nid_no_patch(__func__);
+    FcObjectSet objectSet{};
+    ReadGuestValue(objectSet, objects, __func__);
+    if (objectSet.nobject < 0 || (objectSet.nobject > 0 && !objectSet.objects)) NotImplemented_nid_no_patch(__func__);
     try {
         auto copy = std::make_unique<FcPattern>();
-        for (int i = 0; i < objects->nobject; ++i) {
-            const auto entry = pattern->objects.find(objects->objects[i]);
+        const auto arrayBase = reinterpret_cast<std::uintptr_t>(objectSet.objects);
+        for (int i = 0; i < objectSet.nobject; ++i) {
+            const auto offset = static_cast<std::size_t>(i);
+            if (offset > (std::numeric_limits<std::uintptr_t>::max() - arrayBase) / sizeof(const char*)) NotImplemented_nid_no_patch(__func__);
+            const char* namePointer = nullptr;
+            ReadGuestValue(namePointer, reinterpret_cast<const char* const*>(arrayBase + offset * sizeof(const char*)), __func__);
+            const std::string name = FontconfigReadGuestCString_nid_no_patch(namePointer, __func__);
+            const auto entry = pattern->objects.find(name);
             if (entry == pattern->objects.end()) continue;
             auto& values = copy->objects[entry->first];
             for (const auto& value : entry->second) values.push_back(value);
@@ -633,7 +647,8 @@ FcBool APS5_VABI FcPatternEqual(const FcPattern* first, const FcPattern* second)
 
 FcBool APS5_VABI FcPatternDel_nid_postfix(FcPattern* pattern, const char* object) {
     if (!pattern || !object) NotImplemented_nid_no_patch(__func__);
-    const auto entry = pattern->objects.find(object);
+    const std::string name = FontconfigReadGuestCString_nid_no_patch(object, __func__);
+    const auto entry = pattern->objects.find(name);
     if (entry == pattern->objects.end()) return 0;
     pattern->objects.erase(entry);
     return 1;
@@ -641,7 +656,8 @@ FcBool APS5_VABI FcPatternDel_nid_postfix(FcPattern* pattern, const char* object
 
 FcBool APS5_VABI FcPatternRemove(FcPattern* pattern, const char* object, int id) {
     if (!pattern || !object) NotImplemented_nid_no_patch(__func__);
-    const auto entry = pattern->objects.find(object);
+    const std::string name = FontconfigReadGuestCString_nid_no_patch(object, __func__);
+    const auto entry = pattern->objects.find(name);
     if (entry == pattern->objects.end() || id < 0 || static_cast<std::size_t>(id) >= entry->second.size()) return 0;
     entry->second.erase(std::next(entry->second.begin(), id));
     if (entry->second.empty()) pattern->objects.erase(entry);
@@ -650,8 +666,9 @@ FcBool APS5_VABI FcPatternRemove(FcPattern* pattern, const char* object, int id)
 
 FcResult APS5_VABI FcPatternGet_nid_postfix(const FcPattern* pattern, const char* object, int id, FcValue* value) {
     if (!object) NotImplemented_nid_no_patch(__func__);
+    const std::string name = FontconfigReadGuestCString_nid_no_patch(object, __func__);
     if (!pattern) return FcResultNoMatch;
-    const auto entry = pattern->objects.find(object);
+    const auto entry = pattern->objects.find(name);
     if (entry == pattern->objects.end()) return FcResultNoMatch;
     if (id < 0 || static_cast<std::size_t>(id) >= entry->second.size()) return FcResultNoId;
     if (!value) NotImplemented_nid_no_patch(__func__);
@@ -696,7 +713,7 @@ FcBool APS5_VABI FcPatternAddInteger_nid_postfix(FcPattern* pattern, const char*
         PatternValue entry;
         entry.type = FcTypeInteger;
         entry.integer = value;
-        return AddValue(pattern, object, std::move(entry));
+        return AddValue(pattern, object, std::move(entry), __func__);
     } catch (const std::bad_alloc&) { return 0; }
 }
 
@@ -705,7 +722,7 @@ FcBool APS5_VABI FcPatternAddBool_nid_postfix(FcPattern* pattern, const char* ob
         PatternValue entry;
         entry.type = FcTypeBool;
         entry.integer = value;
-        return AddValue(pattern, object, std::move(entry));
+        return AddValue(pattern, object, std::move(entry), __func__);
     } catch (const std::bad_alloc&) { return 0; }
 }
 
@@ -714,7 +731,7 @@ FcBool APS5_VABI FcPatternAddDouble(FcPattern* pattern, const char* object, doub
         PatternValue entry;
         entry.type = FcTypeDouble;
         entry.real = value;
-        return AddValue(pattern, object, std::move(entry));
+        return AddValue(pattern, object, std::move(entry), __func__);
     } catch (const std::bad_alloc&) { return 0; }
 }
 
@@ -724,8 +741,8 @@ FcBool APS5_VABI FcPatternAddString(FcPattern* pattern, const char* object, cons
     try {
         PatternValue entry;
         entry.type = FcTypeString;
-        entry.text = reinterpret_cast<const char*>(value);
-        return AddValue(pattern, object, std::move(entry));
+        entry.text = FontconfigReadGuestCString_nid_no_patch(reinterpret_cast<const char*>(value), __func__);
+        return AddValue(pattern, object, std::move(entry), __func__);
     } catch (const std::bad_alloc&) { return 0; }
 }
 
@@ -736,7 +753,7 @@ FcBool APS5_VABI FcPatternAddCharSet(FcPattern* pattern, const char* object, con
         PatternValue entry;
         entry.type = FcTypeCharSet;
         entry.charset = RetainCharSet(value);
-        return AddValue(pattern, object, std::move(entry));
+        return AddValue(pattern, object, std::move(entry), __func__);
     } catch (const std::bad_alloc&) { return 0; }
 }
 
@@ -747,7 +764,7 @@ FcBool APS5_VABI FcPatternAddLangSet(FcPattern* pattern, const char* object, con
         PatternValue entry;
         entry.type = FcTypeLangSet;
         entry.langset = std::make_unique<FcLangSet>(*value);
-        return AddValue(pattern, object, std::move(entry));
+        return AddValue(pattern, object, std::move(entry), __func__);
     } catch (const std::bad_alloc&) { return 0; }
 }
 
@@ -758,7 +775,7 @@ FcBool APS5_VABI FcPatternAddMatrix(FcPattern* pattern, const char* object, cons
         PatternValue entry;
         entry.type = FcTypeMatrix;
         ReadGuestValue(entry.matrix, value, __func__);
-        return AddValue(pattern, object, std::move(entry));
+        return AddValue(pattern, object, std::move(entry), __func__);
     } catch (const std::bad_alloc&) { return 0; }
 }
 
@@ -822,6 +839,30 @@ FcPattern* APS5_VABI FcFontRenderPrepare(FcConfig* config, FcPattern* pattern, F
     }
 }
 
+}
+
+std::string FontconfigReadGuestCString_nid_no_patch(const char* source, const char* caller) {
+    if (!source) NotImplemented_nid_no_patch(caller);
+    std::string result;
+    const auto base = reinterpret_cast<std::uintptr_t>(source);
+    std::size_t offset = 0;
+    for (;;) {
+        if (offset > std::numeric_limits<std::uintptr_t>::max() - base) NotImplemented_nid_no_patch(caller);
+        const auto current = base + offset;
+        const std::size_t toPageEnd = 4096u - (current % 4096u);
+        const std::size_t chunk = toPageEnd < 256u ? toPageEnd : 256u;
+        char buffer[256];
+        const int savedErrno = errno;
+        const bool ok = GuestCopyIn_nid_no_patch(buffer, reinterpret_cast<const void*>(current), chunk);
+        errno = savedErrno;
+        if (!ok) NotImplemented_nid_no_patch(caller);
+        if (const auto* end = static_cast<const char*>(std::memchr(buffer, '\0', chunk))) {
+            result.append(buffer, static_cast<std::size_t>(end - buffer));
+            return result;
+        }
+        result.append(buffer, chunk);
+        offset += chunk;
+    }
 }
 
 std::vector<std::string> FontconfigLanguages_nid_no_patch(const FcLangSet* set, bool enumerate) {

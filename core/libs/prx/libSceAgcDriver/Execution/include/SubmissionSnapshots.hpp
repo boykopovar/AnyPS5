@@ -88,6 +88,26 @@ private:
     std::array<FaultTokenEntry, Capacity> entries{};
 };
 
+inline FaultToken ClaimBatchBeginToken(FaultTokenRing& ring, std::uint64_t submitSerial) noexcept {
+    const FaultToken token = ring.Claim();
+    if (FaultTokenEntry* entry = ring.Mutable(token)) {
+        entry->submitSerial = submitSerial;
+        entry->programAddress = 0;
+        entry->variantId = 0;
+        for (char& character : entry->desc) character = 0;
+        constexpr char description[] = "batch begin";
+        for (std::size_t i = 0; i + 1 < sizeof(description); ++i) entry->desc[i] = description[i];
+        entry->stage = static_cast<std::uint32_t>(FaultStage::unknown);
+        entry->argBuffer = 0;
+        entry->argOffset = 0;
+        entry->argStride = 0;
+        for (std::uint32_t& word : entry->argWords) word = 0;
+        entry->argCount = 0;
+        std::atomic_ref<FaultToken>(entry->token).store(token, std::memory_order_release);
+    }
+    return token;
+}
+
 struct SubmissionSnapshot {
     std::uint64_t submitSerial = 0;
     std::uint64_t spaceSerial = 0;

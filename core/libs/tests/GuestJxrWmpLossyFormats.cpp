@@ -146,14 +146,14 @@ int main() {
     };
 
     const FormatCase formats[] = {
-        {0, 2, JxrGuest_GUID_PKPixelFormat16bppRGB555_nid_no_patch, 0},
-        {1, 2, JxrGuest_GUID_PKPixelFormat16bppRGB565_nid_no_patch, 0},
-        {2, 3, JxrGuest_GUID_PKPixelFormat24bppBGR_nid_no_patch, 0},
-        {3, 4, JxrGuest_GUID_PKPixelFormat32bppBGR_nid_no_patch, 0},
-        {4, 4, JxrGuest_GUID_PKPixelFormat32bppRGBA_nid_no_patch, 2},
-        {5, 2, JxrGuest_GUID_PKPixelFormat16bppGray_nid_no_patch, 0},
-        {6, 6, JxrGuest_GUID_PKPixelFormat48bppRGB_nid_no_patch, 0},
-        {7, 8, JxrGuest_GUID_PKPixelFormat64bppRGBA_nid_no_patch, 2},
+        {0, 2, GUID_PKPixelFormat16bppRGB555_nid_no_patch, 0},
+        {1, 2, GUID_PKPixelFormat16bppRGB565_nid_no_patch, 0},
+        {2, 3, GUID_PKPixelFormat24bppBGR_nid_no_patch, 0},
+        {3, 4, GUID_PKPixelFormat32bppBGR_nid_no_patch, 0},
+        {4, 4, GUID_PKPixelFormat32bppRGBA_nid_no_patch, 2},
+        {5, 2, GUID_PKPixelFormat16bppGray_nid_no_patch, 0},
+        {6, 6, GUID_PKPixelFormat48bppRGB_nid_no_patch, 0},
+        {7, 8, GUID_PKPixelFormat64bppRGBA_nid_no_patch, 2},
     };
 
     const uint8_t overlapValues[] = {0, 2};
