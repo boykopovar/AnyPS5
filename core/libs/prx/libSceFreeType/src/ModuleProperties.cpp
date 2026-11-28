@@ -20,14 +20,30 @@ struct GuestGlyphToScriptMap {
     std::uint16_t* map;
 };
 
+static bool CopyGuestIn(void* destination, const void* source, std::size_t size) {
+    const int saved = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(destination, source, size);
+    errno = saved;
+    return copied;
+}
+
+static bool CopyGuestOut(void* destination, const void* source, std::size_t size) {
+    const int saved = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, size);
+    errno = saved;
+    return copied;
+}
+
 static int ReadGlyphToScriptMap(FT_Library library, const char* moduleName, const char* propertyName, void* output) {
     GuestFaceRec* face = nullptr;
-    std::memcpy(&face, output, sizeof(face));
+    if (!CopyGuestIn(&face, output, sizeof(face))) return FT_Err_Invalid_Argument;
     const GuestFace* owner = FaceOf(face);
     FT_Prop_GlyphToScriptMap property{owner ? owner->host : nullptr, nullptr};
     const int error = FT_Property_Get(library, moduleName, propertyName, &property);
-    if (!error) std::memcpy(static_cast<char*>(output) + offsetof(GuestGlyphToScriptMap, map), &property.map, sizeof(property.map));
-    return error;
+    if (error) return error;
+    if (!CopyGuestOut(static_cast<char*>(output) + offsetof(GuestGlyphToScriptMap, map), &property.map, sizeof(property.map)))
+        return FT_Err_Invalid_Argument;
+    return FT_Err_Ok;
 }
 
 static bool IsGlyphToScriptMap(const char* moduleName, const char* propertyName) {
@@ -85,20 +101,21 @@ template <typename TValue>
 int Read(FT_Library library, const char* moduleName, const char* propertyName, void* output) {
     TValue value{};
     const auto error = FT_Property_Get(library, moduleName, propertyName, &value);
-    if (!error) std::memcpy(output, &value, sizeof(value));
-    return error;
+    if (error) return error;
+    return CopyGuestOut(output, &value, sizeof(value)) ? FT_Err_Ok : FT_Err_Invalid_Argument;
 }
 
 int ReadIncreaseXHeight(FT_Library library, const char* moduleName, const char* propertyName, void* output) {
     GuestFaceRec* guestFace = nullptr;
-    std::memcpy(&guestFace, output, sizeof(guestFace));
+    if (!CopyGuestIn(&guestFace, output, sizeof(guestFace))) return FT_Err_Invalid_Argument;
     const auto face = FaceOf(guestFace);
     FT_Prop_IncreaseXHeight hostProp{};
     hostProp.face = face ? face->host : nullptr;
     const auto error = FT_Property_Get(library, moduleName, propertyName, &hostProp);
     if (!error) {
         const std::uint32_t limit = hostProp.limit;
-        std::memcpy(static_cast<char*>(output) + offsetof(GuestPropIncreaseXHeight, limit), &limit, sizeof(limit));
+        if (!CopyGuestOut(static_cast<char*>(output) + offsetof(GuestPropIncreaseXHeight, limit), &limit, sizeof(limit)))
+            return FT_Err_Invalid_Argument;
     }
     return error;
 }
@@ -106,13 +123,13 @@ int ReadIncreaseXHeight(FT_Library library, const char* moduleName, const char* 
 template <typename TValue>
 int Write(FT_Library library, const char* moduleName, const char* propertyName, const void* input) {
     TValue value{};
-    std::memcpy(&value, input, sizeof(value));
+    if (!CopyGuestIn(&value, input, sizeof(value))) return FT_Err_Invalid_Argument;
     return FT_Property_Set(library, moduleName, propertyName, &value);
 }
 
 int WriteIncreaseXHeight(FT_Library library, const char* moduleName, const char* propertyName, const void* input) {
     GuestPropIncreaseXHeight guestProp{};
-    std::memcpy(&guestProp, input, sizeof(guestProp));
+    if (!CopyGuestIn(&guestProp, input, sizeof(guestProp))) return FT_Err_Invalid_Argument;
     const auto face = FaceOf(guestProp.face);
     FT_Prop_IncreaseXHeight hostProp{};
     hostProp.face = face ? face->host : nullptr;
@@ -120,12 +137,14 @@ int WriteIncreaseXHeight(FT_Library library, const char* moduleName, const char*
     return FT_Property_Set(library, moduleName, propertyName, &hostProp);
 }
 
-bool InstallsRendererHooks(FT_Library library, const char* moduleName, const char* propertyName, const void* input) {
+int WriteRendererHooks(FT_Library library, const char* moduleName, const char* propertyName, const void* input, const char* function) {
     HookTable hooks{};
-    std::memcpy(&hooks, input, sizeof(hooks));
-    if (std::find(hooks.begin(), hooks.end(), std::uintptr_t{0}) != hooks.end()) return false;
-    HookTable current{};
-    return FT_Property_Get(library, moduleName, propertyName, &current) == FT_Err_Ok;
+    if (!CopyGuestIn(&hooks, input, sizeof(hooks))) return FT_Err_Invalid_Argument;
+    if (std::find(hooks.begin(), hooks.end(), std::uintptr_t{0}) == hooks.end()) {
+        HookTable current{};
+        if (FT_Property_Get(library, moduleName, propertyName, &current) == FT_Err_Ok) NotImplemented_nid_no_patch(function);
+    }
+    return FT_Property_Set(library, moduleName, propertyName, &hooks);
 }
 
 }
@@ -162,9 +181,7 @@ extern "C" int APS5_VABI FT_Property_Set_nid_postfix(GuestLibrary* library, cons
         case PropertyType::Boolean: return Write<FT_Bool>(host, moduleName, propertyName, value);
         case PropertyType::Darkening: return Write<DarkeningParameters>(host, moduleName, propertyName, value);
         case PropertyType::IncreaseXHeight: return WriteIncreaseXHeight(host, moduleName, propertyName, value);
-        case PropertyType::RendererHooks:
-            if (InstallsRendererHooks(host, moduleName, propertyName, value)) NotImplemented_nid_no_patch(__func__);
-            return Write<HookTable>(host, moduleName, propertyName, value);
+        case PropertyType::RendererHooks: return WriteRendererHooks(host, moduleName, propertyName, value, __func__);
         case PropertyType::Forwarded: break;
     }
     return FT_Property_Set(host, moduleName, propertyName, value);
