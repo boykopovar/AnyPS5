@@ -480,7 +480,7 @@ def computed_reads(text, prefixes=PREFIXES):
     return found
 
 
-SHADOW = re.compile(r'(?<![\w.:>])[A-Za-z_][\w:]*(?:\s*[*&]+\s*|\s+)(?:const\s+)?(?P<name>[A-Za-z_]\w*)\s*(?P<after>[=;,)\[{(])')
+SHADOW = re.compile(r'(?<![\w.:>])(?!(?:return|throw|delete|else|goto|co_return|co_yield|co_await)\b)[A-Za-z_][\w:]*(?:\s*[*&]+\s*|\s+)(?:const\s+)?(?P<name>[A-Za-z_]\w*)\s*(?P<after>[=;,)\[{(])')
 INCLUDE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*"([^"]+)"', re.M)
 
 
