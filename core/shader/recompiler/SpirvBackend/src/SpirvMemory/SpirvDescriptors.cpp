@@ -4,6 +4,7 @@
 #include "SpirvBackend/SpirvMemory/SpirvConstants.hpp"
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include "PipelineSpecialization.hpp"
+#include "RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <stdexcept>
@@ -66,6 +67,21 @@ std::uint32_t RuntimeMipCount(SpirvEmitterState& state, std::uint32_t resource) 
     const auto first = EmitAndConstant(state, Binary(state, spv::OpShiftRightLogical, TypeU32(state), word, ConstantU32(state, 12u)), 0xfu);
     const auto last = EmitAndConstant(state, Binary(state, spv::OpShiftRightLogical, TypeU32(state), word, ConstantU32(state, 16u)), 0xfu);
     return Binary(state, spv::OpIAdd, TypeU32(state), Binary(state, spv::OpISub, TypeU32(state), last, first), ConstantU32(state, 1u));
+}
+
+std::uint32_t CubeFaceLimit(SpirvEmitterState& state, std::uint32_t resource) {
+    if (!state.registrationModules) return state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::CubeFaceLimitBase + resource, 0u);
+    const auto descriptorDword = offsetof(RuntimeAbi::ResourceMetadata, descriptor) / sizeof(std::uint32_t);
+    const auto typeWord = RuntimeImageDword(state, resource, descriptorDword + 3u);
+    const auto word = RuntimeImageDword(state, resource, descriptorDword + 4u);
+    const auto type = EmitAndConstant(state, Binary(state, spv::OpShiftRightLogical, TypeU32(state), typeWord, ConstantU32(state, 28u)), 0xfu);
+    const auto cube = Binary(state, spv::OpIEqual, TypeBool(state), type, ConstantU32(state, static_cast<std::uint32_t>(ImageType::Cube)));
+    const auto depth = EmitAndConstant(state, Binary(state, spv::OpBitwiseAnd, TypeU32(state), word, ConstantU32(state, 0x1fffu)), 0x1fffu);
+    const auto base = EmitAndConstant(state, Binary(state, spv::OpShiftRightLogical, TypeU32(state), word, ConstantU32(state, 16u)), 0x1fffu);
+    const auto span = Binary(state, spv::OpISub, TypeU32(state), depth, base);
+    const auto shortRange = Binary(state, spv::OpLogicalAnd, TypeBool(state), Binary(state, spv::OpULessThan, TypeBool(state), base, depth), Binary(state, spv::OpULessThan, TypeBool(state), span, ConstantU32(state, 5u)));
+    const auto shortCube = Binary(state, spv::OpLogicalAnd, TypeBool(state), cube, shortRange);
+    return Select(state, TypeU32(state), shortCube, Binary(state, spv::OpIAdd, TypeU32(state), span, ConstantU32(state, 1u)), ConstantU32(state, 0u));
 }
 
 void DecorateTableNonUniform(SpirvEmitterState& state, std::uint32_t id) {

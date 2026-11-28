@@ -315,8 +315,10 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     }
     const bool storage = base.resourceClass == ImageResourceClass::Storage;
     const bool table = base.table != NoTable;
-    if (decoded.cube && (storage || !base.sampledOnly) && descriptorIsShortCube(descriptor)) {
-        return rejectImage(PoisonReason::Dimension, "a cube descriptor with fewer than six slices is implemented only for sampling; loads, stores and dimension queries through it stop at its last slice");
+    // A short cube's face limit is a specialization constant built from its direct descriptor; a record
+    // selected through a runtime image table carries no descriptor words, so it keeps the refusal.
+    if (decoded.cube && (storage || table || !base.sampledOnly) && descriptorIsShortCube(descriptor) && (storage || table || !base.shortCubeCompatible)) {
+        return rejectImage(PoisonReason::Dimension, "a cube descriptor with fewer than six slices is implemented only for sampling, mip-0 loads and dimension queries; stores, atomics and loads at a mip level through it are not implemented");
     }
     decoded.fmask = IsFmaskTextureFormat(format);
     if (decoded.fmask && !base.fmaskCompatible) return rejectImage(PoisonReason::Fmask, "FMASK requires a direct 32-bit image load");
@@ -2708,6 +2710,11 @@ std::uint32_t ResourceMaterializer::RuntimeImageMode(const ImageResource& image,
     const auto match = TryRuntimeImageMode(image, descriptor, modes);
     if (!match.mode.has_value()) throw std::runtime_error(match.detail);
     return *match.mode;
+}
+
+std::uint32_t ResourceMaterializer::ShortCubeFaceLimit(const DescriptorValue& descriptor) {
+    if (!descriptorIsShortCube(descriptor)) return 0u;
+    return (descriptor.dwords[4] & 0x1fffu) - ((descriptor.dwords[4] >> 16u) & 0x1fffu) + 1u;
 }
 
 std::uint32_t ResourceMaterializer::VolumeGatherState(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint32_t index) {

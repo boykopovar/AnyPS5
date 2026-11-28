@@ -13173,12 +13173,22 @@ void verifyShortCubeMode() {
     const auto modes = ResourceMaterializer::RuntimeImageModes(image);
     require(modes[ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)].cube, "a sampled cube with five slices did not select a cube runtime mode");
     image.sampledOnly = false;
-    expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)); }, "fewer than six slices is implemented only for sampling", "a loaded cube with five slices was accepted");
+    require(modes[ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)].cube, "a loaded cube with five slices did not select a cube runtime mode");
+    require(ResourceMaterializer::ShortCubeFaceLimit(descriptor) == 5u, "a cube with five slices reported a face limit other than 5");
+    image.shortCubeCompatible = false;
+    expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)); }, "fewer than six slices is implemented only for sampling", "a cube with five slices loaded at a mip was accepted");
+    image.shortCubeCompatible = true;
     for (const auto range : {0u, 5u, 5u | (5u << 16u), 6u}) {
         descriptor.dwords[4] = range;
         require(modes[ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)].cube, "a loaded cube with six faces or more was rejected");
     }
     image.sampledOnly = true;
+    descriptor.dwords[4] = 4u;
+    image.table = 0u;
+    expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, ResourceMaterializer::RuntimeImageModes(image))); }, "fewer than six slices is implemented only for sampling", "a cube with five slices selected through an image table was accepted");
+    image.table = NoTable;
+    const auto directModes = ResourceMaterializer::RuntimeImageModes(image);
+    require(directModes[ResourceMaterializer::RuntimeImageMode(image, descriptor, directModes)].cube, "a direct sampled cube with five slices did not select a cube runtime mode");
     image.resourceClass = ImageResourceClass::Storage;
     image.written = true;
     descriptor.dwords[4] = 3u | (1u << 16u);
