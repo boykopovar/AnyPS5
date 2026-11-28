@@ -34,6 +34,8 @@ static_assert(offsetof(PosixForWebKitPasswd, pw_fields) == 72);
 extern "C" {
 
 PosixForWebKitPasswd* APS5_VABI getpwuid_nid_postfix(std::uint32_t uid);
+int APS5_VABI getpwuid_r_nid_postfix(std::uint32_t uid, PosixForWebKitPasswd* pwd, char* buffer, std::size_t bufsize, PosixForWebKitPasswd** result);
+int APS5_VABI getpwnam_r_nid_postfix(const char* name, PosixForWebKitPasswd* pwd, char* buffer, std::size_t bufsize, PosixForWebKitPasswd** result);
 PosixForWebKitPasswd* APS5_VABI getpwnam_nid_postfix(const char* name);
 PosixForWebKitPasswd* APS5_VABI getpwent_nid_postfix();
 void APS5_VABI setpwent_nid_postfix();
@@ -44,6 +46,7 @@ int APS5_VABI closedir_nid_disambig1_nid_postfix(void* handle);
 GuestDirectoryEntry* APS5_VABI readdir_nid_disambig1_nid_postfix(void* handle);
 int APS5_VABI readdir_r_nid_disambig1_nid_postfix(void* handle, GuestDirectoryEntry* entry, GuestDirectoryEntry** result);
 int APS5_VABI fnmatch_nid_postfix(const char* pattern, const char* string, int flags);
+std::uint32_t APS5_VABI ualarm_nid_postfix(std::uint32_t usecs, std::uint32_t reload);
 int APS5_VABI ftw_nid_postfix(const char* path, int (APS5_VABI *fn)(const char*, const void*, int), int nfds);
 int APS5_VABI lockf_nid_postfix(int descriptor, int function, std::int64_t size);
 int APS5_VABI nftw_nid_postfix(const char* path, int (APS5_VABI *fn)(const char*, const void*, int, void*), int nopenfd, int flags);
@@ -73,6 +76,7 @@ int APS5_VABI setenv_np(const char* name, const char* value, int overwrite);
 int APS5_VABI scePosixForWebKit_sysinfo(PosixForWebKitSysinfo* info);
 int APS5_VABI mkostemp_nid_postfix(char* pattern, int flags);
 int APS5_VABI mkstemp_nid_postfix(char* pattern);
+int APS5_VABI mkstemps_nid_postfix(char* pattern, int suffixLength);
 char* APS5_VABI mkdtemp_nid_postfix(char* pattern);
 int APS5_VABI isatty_nid_postfix(int descriptor);
 GuestResolver::HostEntry* APS5_VABI gethostbyname_nid_postfix(const char* name);

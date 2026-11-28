@@ -269,18 +269,20 @@ struct Launch {
     std::uint32_t instances = 1;
 };
 
-std::vector<std::uint32_t> DepthDraw(const Surfaces& surfaces, bool expand, bool twoSamples, const Launch& launch = {}, float clearDepth = 1.0f, const Triangle& vertices = Vertices) {
-    const auto extent = (Height << 16u) | Width;
+std::vector<std::uint32_t> DepthDraw(const Surfaces& surfaces, bool expand, bool twoSamples, const Launch& launch = {}, float clearDepth = 1.0f, const Triangle& vertices = Vertices, std::pair<std::uint32_t, std::uint32_t> size = {Width, Height}) {
+    const auto drawWidth = size.first;
+    const auto drawHeight = size.second;
+    const auto extent = (drawHeight << 16u) | drawWidth;
     const std::vector<std::pair<std::uint32_t, std::uint32_t>> context{
         {0x2d5, 0x2000}, {0x1b6, 0}, {0x203, 0}, {0x2dc, 0xaa00}, {0x293, 0},
         {0x80, 0}, {0x8d, 0}, {0x83, 0xffff}, {0x8c, 0xa}, {0x2f9, 0x2d}, {0x313, 0x6000}, {0x30e, 0xffffffff}, {0x30f, 0xffffffff},
         {0x206, 0x43f}, {0x204, 0x80000}, {0x205, 0x240}, {0x8f, 0}, {0x202, ColorDisabled},
         {0x1c4, 0}, {0x1c5, 0}, {0x1c3, 4}, {0x207, 0}, {0xc, 0}, {0x81, 0x80000000}, {0x90, 0x80000000}, {0x94, 0x80000000},
         {0xb4, 0}, {0xb5, std::bit_cast<std::uint32_t>(1.0f)}, {0x114, 0}, {0x113, std::bit_cast<std::uint32_t>(1.0f)},
-        {0x10f, std::bit_cast<std::uint32_t>(Width / 2.0f)}, {0x110, std::bit_cast<std::uint32_t>(Width / 2.0f)},
-        {0x111, std::bit_cast<std::uint32_t>(Height / 2.0f)}, {0x112, std::bit_cast<std::uint32_t>(Height / 2.0f)},
+        {0x10f, std::bit_cast<std::uint32_t>(drawWidth / 2.0f)}, {0x110, std::bit_cast<std::uint32_t>(drawWidth / 2.0f)},
+        {0x111, std::bit_cast<std::uint32_t>(drawHeight / 2.0f)}, {0x112, std::bit_cast<std::uint32_t>(drawHeight / 2.0f)},
         {0xd, extent}, {0x82, extent}, {0x91, extent}, {0x95, extent},
-        {0x002, 0}, {0x007, ((Height - 1u) << 16u) | (Width - 1u)}, {0x00a, 0}, {0x00b, std::bit_cast<std::uint32_t>(clearDepth)},
+        {0x002, 0}, {0x007, ((drawHeight - 1u) << 16u) | (drawWidth - 1u)}, {0x00a, 0}, {0x00b, std::bit_cast<std::uint32_t>(clearDepth)},
         {0x010, ZInfo}, {0x011, StencilInfo}, {0x201, 0}, {0x10b, 0}, {0x10c, 0}, {0x10d, 0},
         {0x000, expand ? CompressDisable : 0u}, {0x200, expand ? 0u : DepthWriteAlways},
         {0x8e, expand ? 0xffffffffu : 0u}, {0x2f8, twoSamples ? TwoSamples : 0u}, {0x292, twoSamples ? 3u : 2u},
@@ -600,6 +602,23 @@ bool RunGuestReadBase(TexelReader& reader) {
     return expanded && same;
 }
 
+bool RunSmallerExtentOverLiveSurface(TexelReader& reader) {
+    constexpr std::uint32_t LiveWidth = 192;
+    constexpr std::uint32_t LiveHeight = 112;
+    const auto name = std::string("the game's expand of a smaller extent over a live depth surface of a larger one");
+    const auto surfaces = NewSurfaces();
+    const Surfaces live{Address(NewBlock(static_cast<std::size_t>(DepthSliceBytes({LiveWidth, LiveHeight}, 4u)))), Address(NewBlock(static_cast<std::size_t>(DepthSliceBytes({LiveWidth, LiveHeight}, 1u)))), surfaces.htile, surfaces.written};
+    Fill(surfaces.htile, Block, 0xffffffffu);
+    std::vector<std::uint32_t> depth(Texels);
+    for (std::uint32_t texel = 0; texel < Texels; ++texel) depth[texel] = std::bit_cast<std::uint32_t>(0.25f + Expected(texel % Width, texel / Width));
+    StoreTiled(live.depth, depth);
+    std::printf("%s: read base 0x%llx, write base 0x%llx\n", name.c_str(), static_cast<unsigned long long>(live.depth), static_cast<unsigned long long>(live.written));
+    Submit(DepthDraw(live, false, false, {}, 1.0f, Vertices, {LiveWidth, LiveHeight}), name + ": depth draw of the larger extent at the read base");
+    Submit(DepthDraw(live, true, false), name + ": DB expand of the smaller extent from the read base to the write base");
+    const auto guest = DetileRaw(live.depth, GuestBytes(live.depth, PlaneBytes()));
+    return Expanded(reader, live.written, guest, name);
+}
+
 bool RunBufferRead(TexelReader& reader, bool addressBased) {
     const auto name = std::string(addressBased ? "an address-based buffer copy of the write base after the game's expand" : "a buffer copy of the write base after the game's expand");
     const auto surfaces = NewSurfaces();
@@ -885,6 +904,7 @@ int main(int argc, char** argv) {
             {"direct-indexed", RunDirectIndexed, "depth expand: a DRAW_INDEX_2 DB expand of no indices or no instances changed the write base, or one of three indices did not expand"},
             {"cleared-read-base", RunClearedReadBase, "depth expand: the write base does not hold DB_DEPTH_CLEAR after the DB expand of an HTILE-cleared read base without a depth surface"},
             {"guest-read-base", RunGuestReadBase, "depth expand: the write base does not hold the read base's guest bytes after the DB expand of a read base without a depth surface"},
+            {"smaller-extent-over-live-surface", RunSmallerExtentOverLiveSurface, "depth expand: the write base does not hold the read base's guest bytes after the DB expand of a smaller extent over a live depth surface of a larger one"},
             {"buffer-read", [](TexelReader& reader) { return RunBufferRead(reader, false); }, "depth expand: a buffer copy of the write base right after the DB expand does not hold the read surface's depth"},
             {"address-based-buffer-read", [](TexelReader& reader) { return RunBufferRead(reader, true); }, "depth expand: an address-based buffer copy of the write base right after the DB expand does not hold the read surface's depth"},
             {"unimported-mirrored-buffer-read", [](TexelReader& reader) { return RunUnimportedBufferRead(reader, true); }, "depth expand: an address-based buffer copy of a heap-mirrored write base no host import serves does not hold the read surface's depth"},

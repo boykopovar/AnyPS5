@@ -404,7 +404,8 @@ int APS5_VABI scePfsValidate(const void* header, int mode) {
         if (!hasBlocks || !hasRegion) return UnsupportedFormat;
         const std::uint32_t bound = static_cast<std::uint32_t>(blocks.words[1] >> 0x14);
         const auto* table = reinterpret_cast<const PfsIndexEntry*>(reinterpret_cast<const std::uint8_t*>(header) + (blocks.words[0] >> 0x10));
-        const std::uint32_t count = bound >= 2 ? bound : 1;
+        const auto steps = static_cast<std::int32_t>(bound - 1u);
+        const std::uint64_t count = steps > 0 ? static_cast<std::uint64_t>(steps) + 1 : 1;
         const std::uint64_t limit = region.words[1] >> 0x10;
         PfsIndexEntry previousEntry{};
         if (count > 1 && !CopyIn(&previousEntry, table, sizeof(previousEntry))) return InvalidArgument;

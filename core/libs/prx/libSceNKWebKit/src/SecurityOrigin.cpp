@@ -641,4 +641,21 @@ OriginRef APS5_VABI _ZNK7WebCore18SecurityOriginData14securityOriginEv(const Sec
     return CreateFromData(Checked(self), __func__);
 }
 
+SecurityOriginData APS5_VABI _ZNK7WebCore18SecurityOriginData12isolatedCopyEv(const SecurityOriginData* self) {
+    SecurityOriginData result;
+    result.index = kSecurityOriginOpaqueIndex;
+    IsolatedCopyData(result, Checked(self));
+    return result;
+}
+
+SecurityOriginData APS5_VABI _ZN7WebCore18SecurityOriginData9fromFrameEPNS_5FrameE(void* frame) {
+    if (!frame) {
+        SecurityOriginData result;
+        new (&result.storage.tuple) SecurityOriginTuple{};
+        result.index = kSecurityOriginTupleIndex;
+        return result;
+    }
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }

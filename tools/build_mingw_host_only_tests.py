@@ -179,7 +179,7 @@ def source_relative_path(source_root, source):
         return None
 
 
-def target_reached_sources(target, targets, source_root):
+def target_reached_sources(target, targets, source_root, include_product_libraries=False):
     reached = set()
     visited = set()
     queue = [target]
@@ -205,7 +205,8 @@ def target_reached_sources(target, targets, source_root):
             kind = dependency.get("type")
             if kind not in {"OBJECT_LIBRARY", "STATIC_LIBRARY", "INTERFACE_LIBRARY", "SHARED_LIBRARY", "MODULE_LIBRARY"}:
                 continue
-            if kind in {"SHARED_LIBRARY", "MODULE_LIBRARY"} and is_product_library(dependency, source_root):
+            if (not include_product_libraries and kind in {"SHARED_LIBRARY", "MODULE_LIBRARY"}
+                    and is_product_library(dependency, source_root)):
                 continue
             if dep_id not in visited:
                 visited.add(dep_id)
