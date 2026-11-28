@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <span>
 #include <stdexcept>
 
 #if LOWERING_EXECUTION_AVAILABLE
@@ -21,7 +22,7 @@ struct Machine {
 
 class Runner {
 public:
-    explicit Runner(const Bytes& body) {
+    explicit Runner(const Bytes& body, std::span<const Codegen::StubRelocation> relocations = {}, std::span<const std::uint8_t> shared = {}) {
         Bytes code{0x48, 0x8B, 0x4F, 0x08, 0x48, 0x8B, 0x3F, 0x48, 0x89, 0xE2, 0x48, 0x89, 0xCC, 0x52};
         code.insert(code.end(), {0x48, 0x8D, 0x87});
         append32(code, 512);
@@ -35,6 +36,7 @@ public:
             code.insert(code.end(), {0x48, 0x89, 0x8C, 0x24});
             append32(code, -128 + slot * 8);
         }
+        const auto bodyStart = code.size();
         code.insert(code.end(), body.begin(), body.end());
         for (std::uint8_t reg = 0; reg < 16; ++reg) {
             code.insert(code.end(), {0xC4, static_cast<std::uint8_t>((reg & 8 ? 0x60 : 0xE0) | 1), 0x7E, 0x7F, static_cast<std::uint8_t>(0x87 | ((reg & 7) << 3))});
@@ -48,16 +50,20 @@ public:
         }
         code.insert(code.end(), {0x5C, 0xC5, 0xF8, 0x77, 0xC3});
         entry = LoweringExecution::AppendHostEntry(code);
-        if (code.size() > kPage) throw std::runtime_error("Vector execution code is too large");
-        page = LoweringExecution::AllocatePages(kPage);
+        while (code.size() % 16 != 0) code.push_back(0xCC);
+        const auto sharedStart = code.size();
+        code.insert(code.end(), shared.begin(), shared.end());
+        Codegen::ApplyStubRelocations(std::span<std::uint8_t>(code.data() + bodyStart, body.size()), relocations, bodyStart, bodyStart, 0, shared.empty() ? std::nullopt : std::optional<std::uint64_t>(sharedStart));
+        size = (code.size() + kPage - 1) / kPage * kPage;
+        page = LoweringExecution::AllocatePages(size);
         if (!page) throw std::runtime_error("Cannot allocate the vector execution page");
         std::memcpy(page, code.data(), code.size());
-        if (!LoweringExecution::ProtectPages(page, kPage, true, false)) {
-            LoweringExecution::FreePages(page, kPage);
+        if (!LoweringExecution::ProtectPages(page, size, true, false)) {
+            LoweringExecution::FreePages(page, size);
             throw std::runtime_error("Cannot make the vector execution page executable");
         }
     }
-    ~Runner() { LoweringExecution::FreePages(page, kPage); }
+    ~Runner() { LoweringExecution::FreePages(page, size); }
     Runner(const Runner&) = delete;
     Runner& operator=(const Runner&) = delete;
     void Run(Machine& machine) const {
@@ -72,6 +78,7 @@ public:
 private:
     static constexpr std::size_t kPage = 8192;
     std::uint8_t* page = nullptr;
+    std::size_t size = 0;
     std::size_t entry = 0;
     static void append32(Bytes& bytes, std::int32_t value) {
         for (unsigned shift = 0; shift < 32; shift += 8) bytes.push_back(static_cast<std::uint8_t>(static_cast<std::uint32_t>(value) >> shift));
