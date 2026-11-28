@@ -1,12 +1,24 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdio>
+#include <cstring>
 #include <functional>
 #include <iostream>
 #include <span>
@@ -58,6 +70,44 @@ alignas(256) std::array<std::byte, Width * Height * 4> Pixels{};
 alignas(256) std::array<std::byte, Width * Height * 4> NullBindingTexture{};
 alignas(256) std::array<std::byte, 128 * 128 * 4> DepthMemory{};
 alignas(256) std::array<std::byte, 256 * 256> StencilMemory{};
+constexpr VkExtent2D LargeDepthExtent{512u, 256u};
+constexpr std::size_t LargeStencilPlaneBytes = 512u * 256u;
+alignas(256) std::array<std::byte, 512 * 256 * 4> LargeDepthMemory{};
+
+class StencilBlock {
+public:
+    static constexpr std::size_t PageBytes = 65536;
+    static constexpr std::size_t BlockBytes = LargeStencilPlaneBytes + PageBytes;
+
+    StencilBlock() {
+#ifdef _WIN32
+        block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(BlockBytes, PageBytes));
+        if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, BlockBytes, PAGE_READWRITE, BlockBytes);
+#else
+        void* mapped = mmap(nullptr, BlockBytes + PageBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (mapped != MAP_FAILED) {
+            const auto begin = reinterpret_cast<std::uintptr_t>(mapped);
+            const auto aligned = (begin + PageBytes - 1) & ~(static_cast<std::uintptr_t>(PageBytes) - 1);
+            if (aligned != begin) munmap(mapped, aligned - begin);
+            if (aligned + BlockBytes != begin + BlockBytes + PageBytes) munmap(reinterpret_cast<void*>(aligned + BlockBytes), begin + PageBytes - aligned);
+            block = reinterpret_cast<std::uint8_t*>(aligned);
+            GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, BlockBytes);
+        }
+#endif
+        Require(block != nullptr, "cannot allocate the stencil plane block");
+        std::memset(block, 0, BlockBytes);
+        GuestAllocations::Mutation().Add(Following(), PageBytes, true, false, true);
+    }
+
+    StencilBlock(const StencilBlock&) = delete;
+    StencilBlock& operator=(const StencilBlock&) = delete;
+
+    std::uint8_t* Plane() const { return block; }
+    std::uint8_t* Following() const { return block + LargeStencilPlaneBytes; }
+
+private:
+    std::uint8_t* block = nullptr;
+};
 
 alignas(256) constexpr std::array<std::uint32_t, 6> VertexCode{
     0xe0382000, 0x80000005, 0xbf8c3f70, 0xf80008cf, 0x03020100, 0xbf810000,
@@ -300,6 +350,14 @@ int main() {
         Check(all, "an empty typed image element remains supported without stencil export");
         Draw(*device, alternating, exported, replace(), 6u, 2u, false, {}, {}, Vertices, VertexCode, {}, {}, true);
         Check(all, "an empty typed image element preserves stencil replay colors");
+        const StencilBlock stencilBlock;
+        std::memcpy(stencilBlock.Following(), Vertices.data(), sizeof(Vertices));
+        const std::span<const std::array<float, 4>> followingVertices(reinterpret_cast<const std::array<float, 4>*>(stencilBlock.Following()), Vertices.size());
+        const auto largeDepth = [&](AgcDriver::Graphics::State& state) {
+            state.depth = AgcDriver::Graphics::DepthTarget{reinterpret_cast<std::uintptr_t>(LargeDepthMemory.data()), reinterpret_cast<std::uintptr_t>(stencilBlock.Plane()), LargeDepthExtent, VK_FORMAT_D32_SFLOAT_S8_UINT, 1.0f, 0};
+        };
+        Draw(*device, alternating, exported, replace(), 6u, 2u, false, largeDepth, {}, followingVertices, VertexCode, {}, {}, true);
+        Check(all, "a vertex buffer right after the stencil plane of a 512x256 depth target is replayed as a plain read");
         Draw(*device, PlainPixelCode, plain, equal(255u));
         Check(even, "an empty typed image element preserves the even stencil reference");
         Draw(*device, PlainPixelCode, plain, equal(0u));

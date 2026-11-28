@@ -37,8 +37,39 @@ bool TranslationContext::float64Operation(const RdnaInstruction& inst, IrOpcode 
     }
     RdnaOperand destination = inst.destination;
     if (!floatMode.has_value()) destination.omod = 0u;
+    const std::uint32_t rounding = floatMode.has_value() ? floatMode->floatMode & 3u : 0u;
+    if (opcode == IrOpcode::ConvertF32F64 && rounding != 0u) {
+        IrValue& high = ir.BitwiseAnd(source[1].Value(), ir.Constant(0x7fffffffu));
+        IrValue& sign = ir.BitwiseAnd(source[1].Value(), ir.Constant(0x80000000u));
+        IrValue& exponent = ir.ShiftRightLogical(high, ir.Constant(20u));
+        IrValue& fraction = ir.BitwiseAnd(high, ir.Constant(0x000fffffu));
+        IrValue& mantissa = ir.BitwiseOr(ir.ShiftLeftLogical(fraction, ir.Constant(3u)), ir.ShiftRightLogical(source[0].Value(), ir.Constant(29u)));
+        IrValue& significand = ir.BitwiseOr(mantissa, ir.Constant(0x00800000u));
+        IrValue& distance = ir.ISub(ir.Constant(897u), exponent);
+        IrValue& shift = ir.Select(ir.UGreaterThan(distance, ir.Constant(31u)), ir.Constant(31u), distance);
+        IrValue& lost = ir.INotEqual(ir.BitwiseAnd(significand, ir.ISub(ir.ShiftLeftLogical(ir.Constant(1u), shift), ir.Constant(1u))), ir.Constant(0u));
+        IrValue& rest = ir.INotEqual(ir.BitwiseAnd(source[0].Value(), ir.Constant(0x1fffffffu)), ir.Constant(0u));
+        IrValue& normal = ir.UGreaterThan(exponent, ir.Constant(896u));
+        IrValue& overflow = ir.UGreaterThan(exponent, ir.Constant(1150u));
+        IrValue& zeroExponent = ir.IEqual(exponent, ir.Constant(0u));
+        IrValue& inRange = ir.IAdd(ir.ShiftLeftLogical(ir.ISub(exponent, ir.Constant(896u)), ir.Constant(23u)), mantissa);
+        IrValue* truncated = &ir.Select(normal, inRange, ir.ShiftRightLogical(significand, shift));
+        truncated = &ir.Select(overflow, ir.Constant(0x7f7fffffu), *truncated);
+        truncated = &ir.Select(zeroExponent, ir.Constant(0u), *truncated);
+        IrValue* inexact = &ir.LogicalAnd(ir.LogicalNot(zeroExponent), ir.LogicalOr(overflow, ir.LogicalOr(rest, ir.LogicalAnd(ir.LogicalNot(normal), lost))));
+        if ((floatMode->floatMode & 0x40u) != 0u) {
+            inexact = &ir.LogicalOr(*inexact, ir.LogicalAnd(zeroExponent, ir.INotEqual(ir.BitwiseOr(fraction, source[0].Value()), ir.Constant(0u))));
+        }
+        IrValue* bits = truncated;
+        if (rounding != 3u) {
+            IrValue& negative = ir.INotEqual(sign, ir.Constant(0u));
+            IrValue& away = rounding == 1u ? ir.LogicalNot(negative) : negative;
+            bits = &ir.Select(ir.LogicalAnd(*inexact, away), ir.IAdd(*truncated, ir.Constant(1u)), *truncated);
+        }
+        IrValue& finite = ir.ULessThan(high, ir.Constant(0x7ff00000u));
+        result = &ir.Emit(IrOpcode::SelectF32, IrType::F32, {&finite, &ir.BitCastF32(ir.BitwiseOr(sign, *bits)), result});
+    }
     if (opcode == IrOpcode::ConvertF32F64 && floatMode.has_value() && ((floatMode->floatMode >> 4u) & 2u) == 0u) {
-        const std::uint32_t rounding = floatMode->floatMode & 3u;
         IrValue& high = ir.BitwiseAnd(source[1].Value(), ir.Constant(0x7fffffffu));
         IrValue& sign = ir.BitwiseAnd(source[1].Value(), ir.Constant(0x80000000u));
         const auto below = [&](std::uint64_t limit) -> IrValue& {
@@ -128,14 +159,39 @@ bool TranslationContext::minMaxF64(const RdnaInstruction& inst, IrOpcode opcode)
     return true;
 }
 
+IrValue& TranslationContext::ldexpF64(const std::array<IrU32, 2>& argument, IrValue& exponent) {
+    const std::uint32_t rounding = floatRoundMode(2u);
+    if (rounding == 0u) return ir.Emit(IrOpcode::FPLdexp64, IrType::U64, {&ir.ConstructU64(argument[0].Value(), argument[1].Value()), &exponent});
+    IrValue& sign = ir.BitwiseAnd(argument[1].Value(), ir.Constant(0x80000000u));
+    IrValue& high = ir.BitwiseAnd(argument[1].Value(), ir.Constant(0x7fffffffu));
+    IrValue& biased = ir.ShiftRightLogical(high, ir.Constant(20u));
+    IrValue& normal = ir.INotEqual(biased, ir.Constant(0u));
+    IrValue& significand = ir.ConstructU64(argument[0].Value(), ir.BitwiseOr(ir.BitwiseAnd(high, ir.Constant(0x000fffffu)), ir.Select(normal, ir.Constant(0x00100000u), ir.Constant(0u))));
+    IrValue& msb = ir.Emit(IrOpcode::FindUMsb64, IrType::U32, {&significand});
+    IrValue& aligned = ir.Emit(IrOpcode::ShiftLeftLogical64, IrType::U64, {&significand, &ir.ISub(ir.Constant(52u), msb)});
+    IrValue& limited = ir.Emit(IrOpcode::SMax32, IrType::U32, {&ir.Emit(IrOpcode::SMin32, IrType::U32, {&exponent, &ir.Constant(2200u)}), &ir.Constant(static_cast<std::uint32_t>(-2200))});
+    IrValue& target = ir.IAdd(ir.IAdd(ir.Select(normal, biased, ir.Constant(1u)), limited), ir.ISub(msb, ir.Constant(52u)));
+    IrValue& shift = ir.Emit(IrOpcode::SMin32, IrType::U32, {&ir.ISub(ir.Constant(1u), target), &ir.Constant(63u)});
+    IrValue& kept = ir.Emit(IrOpcode::ShiftRightLogical64, IrType::U64, {&aligned, &shift});
+    IrValue& inexact = ir.Emit(IrOpcode::INotEqual64, IrType::U1, {&ir.Emit(IrOpcode::ShiftLeftLogical64, IrType::U64, {&kept, &shift}), &aligned});
+    IrValue& away = rounding == 3u ? ir.ConstantBool(false) : rounding == 1u ? ir.IEqual(sign, ir.Constant(0u)) : ir.INotEqual(sign, ir.Constant(0u));
+    IrValue& subnormal = ir.Emit(IrOpcode::IAdd64, IrType::U64, {&kept, &ir.Select(ir.LogicalAnd(inexact, away), ir.ConstantU64(1u), ir.ConstantU64(0u))});
+    IrValue& finite = ir.ConstructU64(ir.CompositeExtract(aligned, 0u), ir.BitwiseOr(ir.ShiftLeftLogical(target, ir.Constant(20u)), ir.BitwiseAnd(ir.CompositeExtract(aligned, 1u), ir.Constant(0x000fffffu))));
+    IrValue& overflow = ir.Select(away, ir.ConstantU64(0x7ff0000000000000ull), ir.ConstantU64(0x7fefffffffffffffull));
+    IrValue& tiny = ir.Emit(IrOpcode::SLessThan32, IrType::U1, {&target, &ir.Constant(1u)});
+    IrValue& huge = ir.Emit(IrOpcode::SGreaterThan32, IrType::U1, {&target, &ir.Constant(0x7feu)});
+    IrValue& magnitude = ir.Select(tiny, subnormal, ir.Select(huge, overflow, finite));
+    IrValue& passthrough = ir.LogicalOr(ir.IEqual(biased, ir.Constant(0x7ffu)), ir.IEqual(ir.BitwiseOr(high, argument[0].Value()), ir.Constant(0u)));
+    return ir.ConstructU64(ir.Select(passthrough, argument[0].Value(), ir.CompositeExtract(magnitude, 0u)), ir.Select(passthrough, argument[1].Value(), ir.BitwiseOr(ir.CompositeExtract(magnitude, 1u), sign)));
+}
+
 bool TranslationContext::float64Unary(const RdnaInstruction& inst, IrOpcode opcode) {
     const bool ldexp = opcode == IrOpcode::FPLdexp64;
     const bool transcendental = opcode == IrOpcode::FPRcp64 || opcode == IrOpcode::FPRsq64 || opcode == IrOpcode::FPSqrt64;
     const bool flushesInput = ldexp || transcendental || opcode == IrOpcode::FPFloor64 || opcode == IrOpcode::FPCeil64 || opcode == IrOpcode::FPFract64 || opcode == IrOpcode::FPFrexpMant64;
     const auto bits = flushesInput ? flushF64Bits(readF64Bits(sourceAt(inst, 0u)), 0x40u) : readF64Bits(sourceAt(inst, 0u));
-    IrValue& argument = ir.ConstructU64(bits[0].Value(), bits[1].Value());
     IrValue* exponent = ldexp ? &readU32(sourceAt(inst, 1u)).Value() : nullptr;
-    IrValue& result = ldexp ? ir.Emit(opcode, IrType::U64, {&argument, exponent}) : ir.Emit(opcode, IrType::U64, {&argument});
+    IrValue& result = ldexp ? ldexpF64(bits, *exponent) : ir.Emit(opcode, IrType::U64, {&ir.ConstructU64(bits[0].Value(), bits[1].Value())});
     std::array<IrU32, 2> words{IrU32(ir.CompositeExtract(result, 0u)), IrU32(ir.CompositeExtract(result, 1u))};
     if (opcode == IrOpcode::FPFract64 || transcendental) words = flushF64Bits(words, 0x80u);
     if (ldexp && floatMode.has_value() && (floatMode->floatMode & 0x80u) == 0u) {

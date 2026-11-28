@@ -8,6 +8,7 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "VulkanTestDevice.hpp"
+#include "tests/CommandLineArgument.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -613,8 +614,12 @@ int main(int argc, char** argv) {
 #endif
             SetEnvironment("APS5_NO_PIPELINE_JOURNAL", "1");
             ClearEnvironment("APS5_LAZY_SHADER_PREPARE");
-            const std::string command = "\"" + std::string(argv[0]) + "\" --eager-reference";
-            Require(std::system(command.c_str()) == 0, "lazy resolved ABI: the eager reference process failed");
+#ifdef _WIN32
+            const int status = _wsystem((L"\"" + ArgumentPath(argv, 0).native() + L"\" --eager-reference").c_str());
+#else
+            const int status = std::system(("\"" + std::string(argv[0]) + "\" --eager-reference").c_str());
+#endif
+            Require(status == 0, "lazy resolved ABI: the eager reference process failed");
             cached = CacheFiles(cache);
             Require(!cached.empty(), "lazy resolved ABI: the eager reference process wrote no shader cache files");
             SetEnvironment("APS5_LAZY_SHADER_PREPARE", "1");

@@ -77,6 +77,12 @@ void booleanFlags() {
     require(args.inputPath == "input.elf" && args.outputPath == "output.elf", "flags consumed the positional paths");
 }
 
+void functionSymbolRoots() {
+    const auto args = parse({"--function-symbol-roots", "input.elf", "output.elf"});
+    require(args.functionSymbolRoots, "--function-symbol-roots was ignored");
+    require(args.inputPath == "input.elf" && args.outputPath == "output.elf", "--function-symbol-roots consumed the positional paths");
+}
+
 void trapSdkSyscallStubs() {
     const auto args = parse({"--trap-sdk-syscall-stubs", "input.elf", "output.elf"});
     require(args.trapSdkSyscallStubs, "--trap-sdk-syscall-stubs was ignored");
@@ -410,12 +416,18 @@ void dryRun() {
         require(args.dryRun && args.writeRegistry, "dry run must preserve conversion options");
         require(args.inputPath == "input.elf" && args.outputPath == "output", "dry run consumed a positional path");
     }
-    require(parse({"--dry-run", "input.elf", "output"}).dryRun, "Linux dry run was ignored");
+    const auto text = parse({"--dry-run", "input.elf", "output"});
+    require(text.dryRun && !text.dryRunJson, "text dry run was ignored");
+    const auto json = parse({"input.elf", "--dry-run-json", "--dry-run", "output"});
+    require(json.dryRun && json.dryRunJson && json.outputPath == "output", "JSON dry run did not preserve its mode and paths");
     require(parse({"--dry-run", "--dry-run", "input.elf", "output"}).dryRun, "repeated dry run was rejected");
     expectThrows({"--dry-run", "--autorun", "input.elf", "output"}, "--dry-run conflicts with --autorun");
     expectThrows({"--autorun", "--dry-run", "input.elf", "output"}, "--dry-run conflicts with --autorun");
     expectThrows({"--verify-patches", "p.toml", "--dry-run", "input.elf"}, "--dry-run cannot be used with --verify-patches");
     expectUsage({"--dry-run", "input.elf"});
+    expectUsage({"--dry-run-json", "input.elf"});
+    expectThrows({"--dry-run-json", "--autorun", "input.elf", "output"}, "--dry-run-json conflicts with --autorun");
+    expectThrows({"--verify-patches", "p.toml", "--dry-run-json", "input.elf"}, "--dry-run-json cannot be used with --verify-patches");
 }
 
 int main() {
@@ -423,6 +435,7 @@ int main() {
         defaults();
         dryRun();
         booleanFlags();
+        functionSymbolRoots();
         trapSdkSyscallStubs();
         positionalsInterleaveWithFlags();
         singleDashIsPositional();

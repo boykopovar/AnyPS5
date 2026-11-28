@@ -14,6 +14,9 @@
 #include <mutex>
 #include <thread>
 #include <vector>
+#ifdef _WIN32
+#include "prx/libc/include/PreciseWait.hpp"
+#endif
 
 namespace {
 
@@ -403,14 +406,16 @@ int APS5_VABI sceNgs2StreamCreateWithAllocator(uintptr_t system_handle, const vo
 }
 
 int APS5_VABI sceNgs2StreamDestroy(uintptr_t stream_handle, void* buffer_info) {
+    const Ngs2Lock lock;
+    if (Ngs2FindStream(stream_handle) == nullptr) return NGS2_ERROR_INVALID_STREAM_HANDLE;
     static_cast<void>(buffer_info);
-    if (stream_handle == 0) return NGS2_ERROR_INVALID_STREAM_HANDLE;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNgs2StreamRunCommands(uintptr_t stream_handle, const void* commands, std::size_t count) {
-    if (stream_handle == 0) return NGS2_ERROR_INVALID_STREAM_HANDLE;
+    const Ngs2Lock lock;
+    if (Ngs2FindStream(stream_handle) == nullptr) return NGS2_ERROR_INVALID_STREAM_HANDLE;
     if (commands == nullptr && count != 0) return NGS2_ERROR_INVALID_STREAM_COMMANDS;
     if (count == 0) return 0;
     std::vector<Ngs2CommandRecord> records(count);
@@ -441,7 +446,8 @@ int APS5_VABI sceNgs2StreamRunCommands(uintptr_t stream_handle, const void* comm
 }
 
 int APS5_VABI sceNgs2StreamQueryInfo(uintptr_t stream_handle, std::uint32_t info_id, void* info, std::size_t info_size) {
-    if (stream_handle == 0) return NGS2_ERROR_INVALID_STREAM_HANDLE;
+    const Ngs2Lock lock;
+    if (Ngs2FindStream(stream_handle) == nullptr) return NGS2_ERROR_INVALID_STREAM_HANDLE;
     const std::uint32_t cmd = info_id & 0x00FFFFFFu;
     if (cmd == 0xf24001) {
         if (info_size < 8) return NGS2_ERROR_INVALID_OUT_SIZE;
@@ -516,7 +522,11 @@ int APS5_VABI sceNgs2ModuleQueueEnumItems(const void* queue, void* out, std::uin
         if (retries >= 17) {
             constexpr std::array<std::uint32_t, 4> Backoff{100, 200, 500, 1000};
             const std::size_t index = std::min<std::size_t>(retries - 17, Backoff.size() - 1);
+#ifdef _WIN32
+            PreciseSleepUs(Backoff[index]);
+#else
             std::this_thread::sleep_for(std::chrono::microseconds(Backoff[index]));
+#endif
         }
     }
     struct QueueUnlock {
