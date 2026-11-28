@@ -1,4 +1,6 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
+#include <array>
 #include "prx/libc/include/exceptions/Runtime.hpp"
 #include <cstdio>
 #include <cstring>
@@ -79,9 +81,24 @@ static unsigned objectFrees, messageFrees;
 
 static void TrackedFree(void* pointer) {
     if (pointer && (pointer == foreignObject || pointer == foreignMessage)) FixtureFail(50);
-    if (pointer && pointer == watchedObject && ++objectFrees != 1) FixtureFail(51);
+    if (pointer && pointer == watchedObject) FixtureFail(51);
     if (pointer && pointer == watchedMessage && ++messageFrees != 1) FixtureFail(52);
     originalFree(pointer);
+}
+
+static void* APS5_VABI GuestAllocate(std::size_t size) { return std::malloc(size); }
+static void APS5_VABI GuestRelease(void* pointer) {
+    if (pointer && (pointer == foreignObject || pointer == watchedMessage || pointer == foreignMessage)) FixtureFail(50);
+    if (pointer && pointer == watchedObject && ++objectFrees != 1) FixtureFail(51);
+    std::free(pointer);
+}
+static void* APS5_VABI GuestCalloc(std::size_t count, std::size_t size) { return std::calloc(count, size); }
+static void* APS5_VABI GuestReallocate(void* pointer, std::size_t size) { return std::realloc(pointer, size); }
+static void* APS5_VABI GuestAlign(std::size_t, std::size_t size) { return std::malloc(size); }
+static void* APS5_VABI GuestRealign(void* pointer, std::size_t size, std::size_t) { return std::realloc(pointer, size); }
+static int APS5_VABI GuestPosixAlign(void** pointer, std::size_t, std::size_t size) {
+    *pointer = std::malloc(size);
+    return *pointer ? 0 : 12;
 }
 
 static void ReplaceFree(std::uintptr_t address) {
@@ -117,11 +134,17 @@ static void TrackFree() {
 }
 
 static int TestVtable(const char* mode) {
+    const std::array<void*, 10> api{
+        reinterpret_cast<void*>(GuestAllocate), reinterpret_cast<void*>(GuestRelease),
+        reinterpret_cast<void*>(GuestCalloc), reinterpret_cast<void*>(GuestReallocate),
+        reinterpret_cast<void*>(GuestAlign), reinterpret_cast<void*>(GuestRealign),
+        reinterpret_cast<void*>(GuestPosixAlign), nullptr, nullptr, nullptr};
+    ApplicationHeapRegister_nid_no_patch(api.data());
     const bool plain = std::strstr(mode, "plain") != nullptr;
     const bool deleting = std::strstr(mode, "delete") != nullptr;
     const bool destroying = deleting || std::strstr(mode, "destroy") != nullptr;
-    auto* actual = static_cast<LibcException::ExceptionObject*>(std::malloc(sizeof(LibcException::ExceptionObject)));
-    auto* other = static_cast<LibcException::ExceptionObject*>(std::malloc(sizeof(LibcException::ExceptionObject)));
+    auto* actual = static_cast<LibcException::ExceptionObject*>(_Znwm_nid_postfix(sizeof(LibcException::ExceptionObject)));
+    auto* other = static_cast<LibcException::ExceptionObject*>(_Znwm_nid_postfix(sizeof(LibcException::ExceptionObject)));
     if (!actual || !other) FixtureFail(57);
     actual->message = other->message = nullptr;
     if (plain) {
@@ -163,8 +186,9 @@ static int TestVtable(const char* mode) {
         _ZNSt12out_of_rangeD1Ev_nid_postfix(other);
 
     }
-    if (!deleting) std::free(actual);
-    std::free(other);
+    watchedObject = foreignObject = watchedMessage = foreignMessage = nullptr;
+    if (!deleting) _ZdlPv_nid_postfix(actual);
+    _ZdlPv_nid_postfix(other);
     return 0;
 }
 

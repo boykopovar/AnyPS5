@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdlib>
@@ -23,6 +24,8 @@ extern const Vtable _ZTVSt15underflow_error_nid_postfix;
 static void Require(bool value) { if (!value) std::abort(); }
 
 int main() {
+    void* const heap[10]{};
+    ApplicationHeapRegister_nid_no_patch(heap);
     const auto& type = _ZTISt15underflow_error_nid_postfix;
     const auto& runtimeType = _ZTISt13runtime_error_nid_postfix;
     Require(std::strcmp(type.name, "St15underflow_error") == 0);
@@ -55,7 +58,7 @@ int main() {
     table.destroy(&nullMessage);
     Require(nullMessage.message == nullptr);
 
-    auto* allocated = static_cast<LibcException::ExceptionObject*>(std::malloc(sizeof(LibcException::ExceptionObject)));
+    auto* allocated = static_cast<LibcException::ExceptionObject*>(_Znwm_nid_postfix(sizeof(LibcException::ExceptionObject)));
     Require(allocated != nullptr);
     *allocated = {};
     _ZNSt13runtime_errorC1EPKc_nid_postfix(allocated, "heap underflow");
