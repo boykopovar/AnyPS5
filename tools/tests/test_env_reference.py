@@ -425,6 +425,13 @@ class EnvReferenceTests(unittest.TestCase):
         self.assertEqual(found["APS5_PRESENT"], [(source.as_posix(), 1, "presence", "")])
         self.assertEqual(found["ANYPS5_INTEGER"], [(source.as_posix(), 3, "integer", "")])
 
+    def test_check_and_table_are_mutually_exclusive(self):
+        errors = io.StringIO()
+        with contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as raised:
+            env_reference.main(["--check", "--table", "--root", "nonexistent"])
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("not allowed with argument", errors.getvalue())
+
     def test_main_check_rejects_an_undocumented_spaced_read(self):
         root = self.fixture()
         (root / "core" / "Sample.cpp").write_text('auto value = !std::getenv \t("APS5_UNDOCUMENTED");\n', encoding="utf-8")

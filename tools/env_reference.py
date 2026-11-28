@@ -756,9 +756,10 @@ def main(argv=None):
             stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(
         description="list the environment names the code reads, or check them against a reference document")
-    parser.add_argument("--check", action="store_true",
+    output = parser.add_mutually_exclusive_group()
+    output.add_argument("--check", action="store_true",
                         help="compare the names the code reads with the document and fail on a mismatch")
-    parser.add_argument("--table", action="store_true",
+    output.add_argument("--table", action="store_true",
                         help="emit the reference table rows, grouped by library")
     parser.add_argument("--doc", default=DOC, help="reference document to check (default: %(default)s)")
     parser.add_argument("--root", action="append", default=None,
