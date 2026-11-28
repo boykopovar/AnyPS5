@@ -1,0 +1,5 @@
+# libkernel
+
+## add Unknown function info
+
+- [_umtx_op UMTX_OP_SHM](../../../core/libs/prx/libkernel/SyncOnAddress/src/SyncOnAddress.cpp) (libkernel) - keys on the guest address, where FreeBSD keys on the backing object and offset, so two mappings of one object do not share a key; a key whose memory is unmapped stays registered until `UMTX_SHM_DESTROY` (FreeBSD drops it when the object terminates). The registry holds a guest-visible descriptor per key; a title closing it makes calls on that key throw. Returned descriptors duplicate it and share its file offset. `UMTX_SHM_ALIVE` reads the mapped object from `/proc/self/maps` on Linux and `proc_pidinfo` on macOS, and throws on Windows after a destroy; it never returns `EINVAL`, and another file reusing a destroyed object's inode reads as dead. No `RLIMIT_UMTXP` count. The 16 KiB object size (the PS5 page) is not measured. Else as FreeBSD stable/11 [kern_umtx.c](https://github.com/freebsd/freebsd-src/blob/5ed7eb0d97ba4436218e810f61bd059acba984c2/sys/kern/kern_umtx.c#L3709-L3966)
