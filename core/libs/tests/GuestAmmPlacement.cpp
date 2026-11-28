@@ -92,14 +92,6 @@ static bool Throws(TCall call) {
     return false;
 }
 
-static bool FixedMapThrows(void* address, std::size_t bytes, bool reserve) {
-    return Throws([&] {
-        void* target = address;
-        if (reserve) sceKernelReserveVirtualRange(&target, bytes, 0x10, 0);
-        else sceKernelMapFlexibleMemory(&target, bytes, 3, 0x10);
-    });
-}
-
 template <typename TCall>
 static bool NotImplemented(TCall call) {
     const auto before = NotImplementedCalls_nid_no_patch();
@@ -109,6 +101,14 @@ static bool NotImplemented(TCall call) {
         return NotImplementedCalls_nid_no_patch() == before + 1;
     }
     return false;
+}
+
+static bool FixedMapRefused(void* address, std::size_t bytes, bool reserve) {
+    return NotImplemented([&] {
+        void* target = address;
+        if (reserve) sceKernelReserveVirtualRange(&target, bytes, 0x10, 0);
+        else sceKernelMapFlexibleMemory(&target, bytes, 3, 0x10);
+    });
 }
 
 template <typename TCall>
@@ -150,11 +150,11 @@ static bool MmapFails(void* address, std::size_t bytes, int flags, int descripto
 static void CheckTitleMapsIntoWindow(std::uint64_t start, std::uint64_t page) {
     void* const inside = reinterpret_cast<void*>(start + 16 * page);
     void* const misaligned = reinterpret_cast<void*>(start + 16 * page + 1);
-    Require(Throws([&] { mmap_nid_postfix(inside, page, 3, PrivateAnonymous | Fixed, -1, 0); }), "a fixed anonymous mmap inside the AMM window did not throw");
-    Require(Throws([&] {
+    Require(NotImplemented([&] { mmap_nid_postfix(inside, page, 3, PrivateAnonymous | Fixed, -1, 0); }), "a fixed anonymous mmap inside the AMM window did not call NotImplemented");
+    Require(NotImplemented([&] {
         void* out = nullptr;
         sceKernelMmap(inside, page, 3, PrivateAnonymous | Fixed, -1, 0, &out);
-    }), "a fixed anonymous sceKernelMmap inside the AMM window did not throw");
+    }), "a fixed anonymous sceKernelMmap inside the AMM window did not call NotImplemented");
     Require(MmapFails(misaligned, page, PrivateAnonymous | Fixed, -1, 22), "a misaligned fixed anonymous mmap inside the AMM window did not fail with EINVAL");
 
     const auto path = std::filesystem::path("anyps5-amm-window-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".bin");
@@ -165,10 +165,10 @@ static void CheckTitleMapsIntoWindow(std::uint64_t start, std::uint64_t page) {
     }
     const int fd = sceKernelOpen(path.string().c_str(), SCE_KERNEL_O_RDWR, 0);
     Require(fd >= 0, "the file for the file-backed AMM window maps did not open");
-    const bool sharedThrows = Throws([&] { mmap_nid_postfix(inside, page, 3, Shared | Fixed, fd, 0); });
-    const bool privateThrows = Throws([&] { mmap_nid_postfix(inside, page, 3, Private | Fixed, fd, 0); });
-    const bool noOverwriteThrows = Throws([&] { mmap_nid_postfix(inside, page, 3, Shared | Fixed | NoOverwrite, fd, 0); });
-    const bool kernelThrows = Throws([&] {
+    const bool sharedThrows = NotImplemented([&] { mmap_nid_postfix(inside, page, 3, Shared | Fixed, fd, 0); });
+    const bool privateThrows = NotImplemented([&] { mmap_nid_postfix(inside, page, 3, Private | Fixed, fd, 0); });
+    const bool noOverwriteThrows = NotImplemented([&] { mmap_nid_postfix(inside, page, 3, Shared | Fixed | NoOverwrite, fd, 0); });
+    const bool kernelThrows = NotImplemented([&] {
         void* out = nullptr;
         sceKernelMmap(inside, page, 3, Shared | Fixed, fd, 0, &out);
     });
@@ -176,23 +176,23 @@ static void CheckTitleMapsIntoWindow(std::uint64_t start, std::uint64_t page) {
     sceKernelClose(fd);
     std::error_code removed;
     std::filesystem::remove(path, removed);
-    Require(sharedThrows, "a fixed shared file mmap inside the AMM window did not throw");
-    Require(privateThrows, "a fixed private file mmap inside the AMM window did not throw");
-    Require(noOverwriteThrows, "a fixed no-overwrite file mmap inside the AMM window did not throw");
-    Require(kernelThrows, "a fixed shared file sceKernelMmap inside the AMM window did not throw");
+    Require(sharedThrows, "a fixed shared file mmap inside the AMM window did not call NotImplemented");
+    Require(privateThrows, "a fixed private file mmap inside the AMM window did not call NotImplemented");
+    Require(noOverwriteThrows, "a fixed no-overwrite file mmap inside the AMM window did not call NotImplemented");
+    Require(kernelThrows, "a fixed shared file sceKernelMmap inside the AMM window did not call NotImplemented");
     Require(misalignedFails, "a misaligned fixed file mmap inside the AMM window did not fail with EINVAL");
 
     std::int64_t physical = -1;
     Require(sceKernelAllocateDirectMemory(0, static_cast<std::int64_t>(sceKernelGetDirectMemorySize()), page, page, 0, &physical) == 0, "direct memory for the AMM window maps was not allocated");
-    Require(Throws([&] {
+    Require(NotImplemented([&] {
         void* target = inside;
         sceKernelMapDirectMemory(&target, page, 3, Fixed, physical, 0);
-    }), "a fixed direct map inside the AMM window did not throw");
-    Require(Throws([&] {
+    }), "a fixed direct map inside the AMM window did not call NotImplemented");
+    Require(NotImplemented([&] {
         void* target = inside;
         sceKernelMapDirectMemory(&target, page, 3, Fixed | NoOverwrite, physical, 0);
-    }), "a fixed no-overwrite direct map inside the AMM window did not throw");
-    Require(Throws([&] {
+    }), "a fixed no-overwrite direct map inside the AMM window did not call NotImplemented");
+    Require(NotImplemented([&] {
         void* target = inside;
         sceKernelReserveVirtualRange(&target, page, Fixed | NoOverwrite, 0);
     }), "a fixed no-overwrite reserve inside the AMM window did not throw");
@@ -708,9 +708,9 @@ int main() {
         Require(sceKernelReserveVirtualRange(&top, topBytes, 0x90, 0) == 0 && reinterpret_cast<std::uint64_t>(top) == arenaEnd - topBytes, "a fixed no-overwrite reserve at the top of the guest arena failed after AMM init");
         Require(sceKernelMunmap(arenaEnd - topBytes, topBytes) == 0, "the reserve at the top of the guest arena was not released");
 
-        Require(FixedMapThrows(reinterpret_cast<void*>(multimapEnd - page), page, true), "a fixed reserve inside the AMM window did not throw");
-        Require(FixedMapThrows(reinterpret_cast<void*>(start), page, false), "a fixed flexible map inside the AMM window did not throw");
-        Require(FixedMapThrows(reinterpret_cast<void*>(start - page), 2 * page, true), "a fixed reserve across the AMM window start did not throw");
+        Require(FixedMapRefused(reinterpret_cast<void*>(multimapEnd - page), page, true), "a fixed reserve inside the AMM window did not call NotImplemented");
+        Require(FixedMapRefused(reinterpret_cast<void*>(start), page, false), "a fixed flexible map inside the AMM window did not call NotImplemented");
+        Require(FixedMapRefused(reinterpret_cast<void*>(start - page), 2 * page, true), "a fixed reserve across the AMM window start did not call NotImplemented");
         CheckTitleMapsIntoWindow(start, page);
         CheckTitleChangesInWindow(start, page);
         CheckArgumentErrorsBeforeWindow(start, multimapEnd, page);
