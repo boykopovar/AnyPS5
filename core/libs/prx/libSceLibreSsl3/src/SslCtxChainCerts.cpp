@@ -15,13 +15,14 @@ namespace {
 void APS5_VABI ReleaseCertificate(void* pointer) {
     if (!pointer) return;
     auto* const certificate = static_cast<LibreSsl3X509*>(pointer);
+    auto* const references = reinterpret_cast<std::int32_t*>(static_cast<unsigned char*>(pointer) + offsetof(LibreSsl3X509, references));
     std::int32_t currentRefs = 0;
     const int savedErrno = errno;
-    const bool valid = GuestCopyIn_nid_no_patch(&currentRefs, &certificate->references, sizeof(currentRefs)) &&
-                       GuestWritable_nid_no_patch(&certificate->references, sizeof(certificate->references));
+    const bool valid = GuestCopyIn_nid_no_patch(&currentRefs, references, sizeof(currentRefs)) &&
+                       GuestWritable_nid_no_patch(references, sizeof(currentRefs));
     errno = savedErrno;
     if (!valid) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-    std::atomic_ref<std::int32_t> count(certificate->references);
+    std::atomic_ref<std::int32_t> count(*references);
     std::int32_t expected = count.load(std::memory_order_relaxed);
     while (expected > 0) {
         if (count.compare_exchange_weak(expected, expected - 1, std::memory_order_acq_rel, std::memory_order_relaxed)) {

@@ -26,7 +26,7 @@ void* APS5_VABI Realign(void*, std::size_t) { throw std::runtime_error("unexpect
 int APS5_VABI PosixAlign(void**, std::size_t, std::size_t) { throw std::runtime_error("unexpected posix_memalign"); }
 
 void RegisterHeap() {
-    std::array<void*, 7> api{reinterpret_cast<void*>(Allocate), reinterpret_cast<void*>(Release),
+    std::array<void*, 10> api{reinterpret_cast<void*>(Allocate), reinterpret_cast<void*>(Release),
         reinterpret_cast<void*>(Callocate), reinterpret_cast<void*>(Reallocate), reinterpret_cast<void*>(Align),
         reinterpret_cast<void*>(Realign), reinterpret_cast<void*>(PosixAlign)};
     ApplicationHeapRegister_nid_no_patch(api.data());
