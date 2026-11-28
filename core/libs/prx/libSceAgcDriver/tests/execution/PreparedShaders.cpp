@@ -1093,6 +1093,7 @@ void LazyRegistration() {
         return snapshot;
     };
     const auto lazySnapshot = registered();
+    if (!budgetOnly) AgcDriverResolveShaderAbi_nid_postfix(&header.shader, {}, {});
     {
         AgcDriver::DriverDetail::ShaderPreparationTransaction transaction;
         const auto& state = transaction.Read(*lazySnapshot);
