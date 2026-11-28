@@ -2183,11 +2183,12 @@ bool collectWindowsWrites(StampRuns& runs, std::uint64_t first, std::uint64_t st
         auto cursor = first;
         while (cursor < stop) {
             std::size_t count = tracker.pages.size();
-            if (!collect(cursor, static_cast<std::size_t>(stop - cursor), tracker.pages.data(), &count, clear)) return false;
+            const bool collected = collect(cursor, static_cast<std::size_t>(stop - cursor), tracker.pages.data(), &count, clear);
             for (std::size_t i = 0; i < count; ++i) {
                 const auto page = reinterpret_cast<std::uintptr_t>(tracker.pages[i]);
                 stampWrittenRun(&runs, page, page + WritePageBytes);
             }
+            if (!collected) return false;
             if (count < tracker.pages.size()) break;
             cursor = reinterpret_cast<std::uintptr_t>(tracker.pages[count - 1]) + WritePageBytes;
         }

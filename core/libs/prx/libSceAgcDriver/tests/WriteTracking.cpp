@@ -1965,6 +1965,30 @@ void CheckCollectBoundaries() {
 }
 
 #ifdef _WIN32
+void CheckFailedCollectKeepsTheWritesItReset() {
+    constexpr std::size_t bytes = 2 * Block;
+    auto* memory = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, Block));
+    Require(memory != nullptr, "cannot allocate the failed collect test memory");
+    struct Cleanup {
+        std::uint8_t* memory;
+        ~Cleanup() {
+            GuestArena::GuestArenaReset_nid_postfix(memory, bytes);
+            GuestArena::GuestArenaRelease_nid_postfix(memory, bytes);
+        }
+    } cleanup{memory};
+    GuestArena::GuestArenaCommit_nid_postfix(memory, bytes, PAGE_READWRITE, Block);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    std::memset(memory, 17, bytes);
+    BumpCollectEpoch();
+    const auto before = CollectWrites(base, Block);
+    Require(before != 0, "a collect over the first private allocation failed");
+    static_cast<volatile std::uint8_t*>(memory)[3 * 4096 + 8] = 19;
+    Require(VirtualFree(memory + Block, Block, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER) != 0, "cannot release the second private allocation behind the mappings");
+    BumpCollectEpoch();
+    Require(CollectWrites(base, bytes) == 0, "a collect over a private allocation released behind the mappings succeeded");
+    Require(WrittenSince(base, Block, before) && !UnchangedSince(base, Block, before), "a collect that failed after resetting a CPU write hid that write");
+}
+
 void CheckWidenedCollectBesideUncommittedPages() {
     constexpr std::size_t reserved = std::size_t{1} << 30;
     constexpr std::size_t committed = Block - 4 * 4096;
@@ -3048,6 +3072,7 @@ int main(int argc, char** argv) {
 #ifdef _WIN32
         CheckWidenedCollectBesideUncommittedPages();
         CheckRefusedCollectBesideInaccessibleView();
+        CheckFailedCollectKeepsTheWritesItReset();
 #endif
         CheckImportWindow();
         CheckImportWindowTouchIsNotAStore();

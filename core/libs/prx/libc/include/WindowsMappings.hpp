@@ -678,7 +678,9 @@ private:
             found = 0;
             if (admission != Admission::Walk || from >= to) return true;
             found = capacity - delivered;
-            return collect(from, to, pages + delivered, &found, clear, collection, skipRefused);
+            if (collect(from, to, pages + delivered, &found, clear, collection, skipRefused)) return true;
+            *count = delivered + found;
+            return false;
         };
         auto cursor = address;
         for (const auto& [first, last] : spans) {

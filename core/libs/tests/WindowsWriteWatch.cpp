@@ -246,6 +246,25 @@ void CheckHostStoresKeepCollectedPages() {
     VirtualFree(memory, 0, MEM_RELEASE);
 }
 
+void CheckFailedCollectReportsResetPages() {
+    auto& mappings = Mappings::Get();
+    auto* memory = static_cast<unsigned char*>(mappings.Reserve(nullptr, 2 * Bytes));
+    Require(memory != nullptr, "private reservation failed");
+    mappings.Commit(memory, 2 * Bytes, PAGE_READWRITE, Bytes, true);
+    const auto address = reinterpret_cast<std::uintptr_t>(memory);
+    CollectPages(address, 2 * Bytes / Small, {.capacity = 32});
+    static_cast<volatile unsigned char*>(memory)[3 * Small] = 3;
+    Require(mappings.BeginHostWrite(address, Small), "host write refused");
+    Require(VirtualFree(memory + Bytes, Bytes, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER) != 0, "cannot release the second private allocation behind the mappings");
+    std::array<void*, 32> found{};
+    std::size_t count = found.size();
+    Require(!mappings.Collect(address, 2 * Bytes, found.data(), &count, true), "a collect over a private allocation released behind the mappings succeeded");
+    Require(count == 2 && found[0] == memory && found[1] == memory + 3 * Small, "a failed collect beside an open host store hid the pages it reset");
+    mappings.EndHostWrite(address, Small);
+    mappings.Reset(memory, 2 * Bytes);
+    VirtualFree(memory, 0, MEM_RELEASE);
+}
+
 void CheckRefusedCollectPassesReleasedAllocations() {
     auto& mappings = Mappings::Get();
     auto* memory = static_cast<unsigned char*>(mappings.Reserve(nullptr, 2 * Bytes));
@@ -1318,6 +1337,7 @@ int main(int argc, char** argv) {
         CheckKnownZeroFirstReads();
         CheckKnownZeroMarks();
         CheckResidentRunNoAccessTransitions();
+        CheckFailedCollectReportsResetPages();
         CheckRefusedCollectPassesReleasedAllocations();
         CheckRefusedCollectPassesUnwatchedResidentRuns();
         std::cout << "Windows deferred write-watch tests passed\n";
