@@ -557,6 +557,7 @@ public:
     std::optional<std::uint16_t> port;
     bool protocolNull = false;
     bool hostNull = false;
+    bool isOpaque = false;
 };
 
 class ResourceCacheManager final : public ObjectOf<ObjectType::CacheManager> {
