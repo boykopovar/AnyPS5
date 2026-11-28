@@ -1,0 +1,5 @@
+# libSceGnmDriver
+
+## change [Submission pacing]
+
+- [Submission pacing](../../../core/libs/prx/libSceGnmDriver/Export.cpp) (libSceGnmDriver, PS4) - a submission is queued without waiting for earlier ones, so the GPU can trail the title by several milliseconds, far more than the console's command processor. A title that reuses command buffer memory or descriptor tables a frame later then races with work that has not run yet: CUSA04865 loses packet headers and binds descriptors from rebuilt tables. `APS5_GNM_SUBMIT_WAIT_IDLE=1` waits for queued work before each `sceGnmSubmitCommandBuffers` and `sceGnmSubmitAndFlipCommandBuffers` that follows an earlier one, across `sceGnmSubmitDone` as well, so the GPU trails the title by at most one submission, which removes these races there; compute queues parked on a label the title writes do not hold up the pacing wait. It is off by default because a submission whose packets wait on a label the title writes only after a later submission would never finish. The wait holds the submission lock, so a label written by another thread after it takes that lock hangs the same way.
