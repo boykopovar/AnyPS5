@@ -46,6 +46,7 @@ std::atomic<bool> armed{false};
 std::atomic<bool> failStartup{false};
 std::atomic<unsigned> queries{0};
 std::atomic<unsigned> faults{0};
+std::atomic<unsigned> creations{0};
 std::size_t initialBytes = 64;
 
 std::vector<std::byte> Payload() {
@@ -58,6 +59,7 @@ std::vector<std::byte> Payload() {
 VKAPI_ATTR VkResult VKAPI_CALL Create(VkDevice, const VkPipelineCacheCreateInfo* info, const VkAllocationCallbacks*, VkPipelineCache* output) {
     std::lock_guard lock(mutex);
     *output = reinterpret_cast<VkPipelineCache>(next++);
+    ++creations;
     if (info->initialDataSize != 0) {
         const auto* bytes = static_cast<const std::byte*>(info->pInitialData);
         caches[*output] = std::vector<std::byte>(bytes, bytes + info->initialDataSize);
@@ -118,14 +120,75 @@ void Grow(VkPipelineCache cache, std::size_t bytes = 128) {
     caches.at(cache).resize(bytes, std::byte{9});
 }
 
+#ifdef _WIN32
+std::byte Filler(std::size_t index) {
+    return static_cast<std::byte>((index * 7u + (index >> 12u)) & 0xffu);
+}
+
+bool HasTemporary(const std::filesystem::path& directory) {
+    for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+        if (entry.path().filename().string().find(".tmp") != std::string::npos) return true;
+    }
+    return false;
+}
+
+int RunMapped(bool lowMemory, std::unique_ptr<PipelineCache> cache, const std::filesystem::path& file, const Context& context, const VkPhysicalDeviceProperties& properties) {
+    const std::size_t large = (std::size_t{70} << 20u) + 12345u;
+    const auto small = Read(file);
+    {
+        std::lock_guard lock(mutex);
+        auto& bytes = caches.at(cache->Handle());
+        bytes.resize(large);
+        for (std::size_t index = initialBytes; index < large; ++index) bytes[index] = Filler(index);
+    }
+    _putenv_s("APS5_PIPELINE_CACHE_MAPPED_SAVE_MB", "1");
+    _putenv_s("APS5_PIPELINE_CACHE_SAVE_WINDOW_KIB", "16384");
+    _putenv_s("APS5_PIPELINE_CACHE_SAVE_FREE_MB", lowMemory ? "100000000" : "0");
+    const auto mappedBefore = PipelineCache::MappedSaves();
+    const auto windowsBefore = PipelineCache::MappedSaveWindows();
+    const auto postponedBefore = PipelineCache::PostponedSaves();
+    cache->SaveNow();
+    if (lowMemory) {
+        Check(Read(file) == small, "a save the host has no memory for replaced the file");
+        Check(PipelineCache::PostponedSaves() == postponedBefore + 1, "a save the host has no memory for was not counted as put off");
+        Check(!HasTemporary(file.parent_path()), "a save that was put off left a temporary file");
+        cache.reset();
+    }
+    Check(PipelineCache::MappedSaves() == mappedBefore + 1, lowMemory ? "the teardown save was put off or was not written through a mapped file" : "the large save was not written through a mapped file");
+    const auto windows = PipelineCache::MappedSaveWindows() - windowsBefore;
+    Check(windows >= 1 && windows <= 4, "the mapped file was not opened to the driver a window at a time");
+    std::vector<std::byte> saved;
+    Check(ShaderRecompiler::ReadWholeFile(file, saved) && saved.size() == 24 + large, "the large save has another size than the header and the cache");
+    const auto start = Payload();
+    bool same = std::memcmp(saved.data() + 24, start.data(), start.size()) == 0;
+    for (std::size_t index = initialBytes; same && index < large; ++index) same = saved[24 + index] == Filler(index);
+    Check(same, "the large save does not hold the cache's bytes");
+    Check(!HasTemporary(file.parent_path()), "the large save left a temporary file");
+    if (cache) {
+        cache->SaveNow();
+        std::vector<std::byte> again;
+        Check(ShaderRecompiler::ReadWholeFile(file, again) && again == saved, "an idle save after the large one changed the file");
+        cache.reset();
+    }
+    {
+        PipelineCache reader(context, properties);
+        std::lock_guard lock(mutex);
+        Check(caches.at(reader.Handle()).size() == large, "a second cache did not load the large save");
+    }
+    Check(caches.empty(), "the mapped save test leaked Vulkan objects");
+    std::printf("%s: the 70 MiB cache was saved through a mapped file in 16 MiB windows, loaded back, and no temporary file stayed\n", lowMemory ? "mapped-low-memory" : "mapped");
+    return 0;
+}
+#endif
+
 }
 
 int main(int argc, char** argv) {
-    Check(argc == 2, "expected startup, now, busy, destructor, worker or read-retry");
+    Check(argc == 2, "expected startup, now, busy, destructor, worker, read-retry, first-save, mapped or mapped-low-memory");
     const std::string_view mode(argv[1]);
-    Check(mode == "startup" || mode == "now" || mode == "busy" || mode == "destructor" || mode == "worker" || mode == "read-retry", "unknown mode");
+    Check(mode == "startup" || mode == "now" || mode == "busy" || mode == "destructor" || mode == "worker" || mode == "read-retry" || mode == "first-save" || mode == "mapped" || mode == "mapped-low-memory", "unknown mode");
 #ifndef _WIN32
-    if (mode == "read-retry") return 77;
+    if (mode == "read-retry" || mode == "mapped" || mode == "mapped-low-memory") return 77;
 #endif
     const auto root = std::filesystem::temp_directory_path() / ("aps5-cache-allocation-" + std::to_string(std::random_device{}()));
     Check(std::filesystem::create_directory(root), "test cache directory already exists");
@@ -170,7 +233,19 @@ int main(int argc, char** argv) {
     std::filesystem::path file;
     for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) if (entry.path().extension() == ".bin") file = entry.path();
     Check(!file.empty(), "initial save created no cache file");
+    if (mode == "first-save") {
+        Grow(cache->Handle());
+        const auto before = creations.load();
+        cache->SaveNow();
+        Check(Read(file).size() == 24 + 128, "the save after the first one did not write the grown cache");
+        Check(creations == before, "a cache read back and merged the file its own first save wrote");
+        cache.reset();
+        Check(caches.empty(), "the first-save test leaked Vulkan objects");
+        std::puts("first-save: the save after a cache's first one in a new folder wrote the file without reading it back");
+        return 0;
+    }
 #ifdef _WIN32
+    if (mode == "mapped" || mode == "mapped-low-memory") return RunMapped(mode == "mapped-low-memory", std::move(cache), file, context, properties);
     if (mode == "read-retry") {
         {
             PipelineCache writer(context, properties);
@@ -218,8 +293,15 @@ int main(int argc, char** argv) {
         return 0;
     }
 #endif
+    {
+        PipelineCache writer(context, properties);
+        Grow(writer.Handle(), 96);
+        writer.SaveNow();
+    }
     const auto original = Read(file);
+    Check(original.size() == 24 + 96, "the second writer did not update the cache file");
     Grow(cache->Handle());
+    const auto created = creations.load();
     queries = 0;
     armed = true;
     if (mode == "destructor") cache.reset();
@@ -229,6 +311,7 @@ int main(int argc, char** argv) {
     } else if (mode == "busy") cache->SaveUnlessBusy();
     else cache->SaveNow();
     Check(faults == 1 && !armed, "the snapshot allocation was not exercised");
+    Check(creations == created + 1, "the failed snapshot did not merge the other writer's file");
     Check(Read(file) == original, "a failed snapshot replaced the previous cache file");
     {
         std::unique_lock lock(mutex);

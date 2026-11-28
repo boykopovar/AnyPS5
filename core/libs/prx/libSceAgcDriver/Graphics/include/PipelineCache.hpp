@@ -27,6 +27,9 @@ public:
     PipelineCacheSynchronization& Synchronization() { return synchronization; }
     void SaveNow();
     void SaveUnlessBusy();
+    static std::uint64_t MappedSaves();
+    static std::uint64_t MappedSaveWindows();
+    static std::uint64_t PostponedSaves();
 
     friend struct PipelineCacheTestAccess;
 
