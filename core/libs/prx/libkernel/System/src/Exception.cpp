@@ -176,12 +176,14 @@ bool FaultSignal(int signum) {
     return signum == SignalIllegal || signum == SignalFloatingPoint || signum == SignalBus || signum == SignalSegmentation;
 }
 
-bool SiginfoFault(int signum) {
-    return (signum == SignalSegmentation || signum == SignalBus) && SiginfoFaultHandlerInstalled(signum);
+bool SiginfoFault(const Fault& fault) {
+    const bool delivered = fault.signum == SignalSegmentation || fault.signum == SignalBus || (fault.signum == SignalFloatingPoint && fault.trap.number == TrapDivide);
+    return delivered && SiginfoFaultHandlerInstalled(fault.signum);
 }
 
 std::int32_t SiginfoCode(int signum, const Trap& trap, std::int32_t hostCode) {
     if (signum == SignalSegmentation) return hostCode != 0 ? hostCode : (trap.error & PageProtection) != 0 ? 2 : 1;
+    if (signum == SignalFloatingPoint && trap.number == TrapDivide) return 2;
     return trap.number == TrapAlignment ? 1 : 3;
 }
 
@@ -1029,7 +1031,7 @@ bool DeliverHostFault(void* exceptionPointers) noexcept {
     Fault fault{};
     if (!Classify(*info.ExceptionRecord, context, fault)) return false;
     const auto handler = Handler(fault.signum);
-    const bool siginfo = handler == nullptr && SiginfoFault(fault.signum);
+    const bool siginfo = handler == nullptr && SiginfoFault(fault);
     if ((handler == nullptr && !siginfo) || !GuestCode(context.Rip)) return false;
     auto& pending = pendingFault;
     if (pending.handler != nullptr || pending.siginfo) return false;
@@ -1281,7 +1283,7 @@ void DeliverFault(int hostSignal, siginfo_t* info, void* context) {
     const bool deliverable = info->si_code > 0 && Classify(hostSignal, host, fault);
     if (deliverable && fault.trap.number == TrapPage && GuestWriteWatch::GuestWriteWatchHandleFault_nid_postfix(fault.trap.address)) return;
     const auto handler = deliverable ? Handler(fault.signum) : nullptr;
-    const bool siginfo = deliverable && handler == nullptr && SiginfoFault(fault.signum);
+    const bool siginfo = deliverable && handler == nullptr && SiginfoFault(fault);
     if ((handler == nullptr && !siginfo) || !GuestCode(static_cast<std::uintptr_t>(host.gregs[REG_RIP]))) {
         ChainFault(hostSignal, info, context);
         return;
