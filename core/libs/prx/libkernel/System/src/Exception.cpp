@@ -8,6 +8,7 @@
 #include "prx/libc/include/HostFault.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
+#include "prx/libkernel/System/include/RaiseHold.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include "prx/libkernel/System/include/FaultSignals.hpp"
 #include "prx/libkernel/System/include/UserContext.hpp"
@@ -268,9 +269,14 @@ void Deliver(GuestExceptionHandler handler, int signum, CONTEXT& context, const 
     context.MxCsr = context.FltSave.MxCsr;
 }
 
+void DeliverRaise(GuestExceptionHandler handler, int signum, CONTEXT& context) {
+    if (HoldBlockedDelivery(signum)) return;
+    Deliver(handler, signum, context);
+}
+
 [[noreturn]] void RedirectedEntry(Delivery* delivery) {
     CONTEXT context = delivery->context;
-    Deliver(delivery->handler, delivery->signum, context);
+    DeliverRaise(delivery->handler, delivery->signum, context);
     Aps5RedirectedExit(&context, delivery->saveVectors != 0 ? delivery->vectors : nullptr, RtlRestoreContext);
 }
 
@@ -323,7 +329,7 @@ void DeferredWaitingEntry(void* parameter) {
     if (!claimed) return;
     CONTEXT context{};
     RtlCaptureContext(&context);
-    Deliver(handler, signum, context);
+    DeliverRaise(handler, signum, context);
 }
 
 void CALLBACK WaitingEntry(ULONG_PTR parameter) {
@@ -335,7 +341,7 @@ void CALLBACK WaitingEntry(ULONG_PTR parameter) {
     if (!claimed) return;
     CONTEXT context{};
     RtlCaptureContext(&context);
-    Deliver(handler, signum, context);
+    DeliverRaise(handler, signum, context);
 }
 
 static_assert(HomeArea + 8 == 40, "Aps5RedirectedEntryStub finds the delivery 40 bytes above its stack pointer");
@@ -628,7 +634,7 @@ QueuedDelivery* ClaimReturnBreak(ReturnBreak& entry, QueuedDelivery* queued) {
     const auto handler = stored->handler;
     const int signum = stored->signum;
     delete stored;
-    Deliver(handler, signum, context);
+    DeliverRaise(handler, signum, context);
     Aps5RedirectedExit(&context, nullptr, RtlRestoreContext);
 }
 
@@ -884,7 +890,7 @@ bool RaiseOn(Pthread thread, GuestExceptionHandler handler, int signum) {
     if (thread == scePthreadSelf()) {
         CONTEXT context{};
         RtlCaptureContext(&context);
-        Deliver(handler, signum, context);
+        DeliverRaise(handler, signum, context);
         return true;
     }
     const auto native = static_cast<HANDLE>(thread->nativeHandle);
@@ -1176,6 +1182,7 @@ void ToHost(const GuestMcontext& m, mcontext_t& host) {
 
 void Deliver(int signum, siginfo_t*, void* context) {
     if (TimedWait::DeferDelivery(signum)) return;
+    if (HoldBlockedDelivery(RaisedSignal)) return;
     const auto handler = Handler(RaisedSignal);
     if (handler == nullptr) {
         static constexpr char message[] = "sceKernelRaiseException: the handler was removed before the signal was delivered\n";
@@ -1464,6 +1471,16 @@ void InstallSiginfoFaultDelivery() {
 #endif
 }
 
+void DeliverHeldException(int signum) {
+ const auto handler = Handler(signum);
+ if (handler == nullptr) throw std::runtime_error("sceKernelRaiseException: the handler was removed before the signal was delivered");
+#ifdef _WIN32
+ RaiseOn(scePthreadSelf(), handler, signum);
+#else
+ RaiseOn(scePthreadSelf());
+#endif
+}
+
 extern "C" {
 
 int APS5_VABI sceKernelInstallExceptionHandler(int signum, void* handler) {
@@ -1497,6 +1514,13 @@ int APS5_VABI sceKernelRaiseException(Pthread thread, int signum) {
  if (thread == nullptr || !GuestThreadIsLive(thread)) return SCE_KERNEL_ERROR_ESRCH;
  const auto handler = Handler(signum);
  if (handler == nullptr) throw std::runtime_error("sceKernelRaiseException: no handler installed for the signal");
+ std::int64_t target = 0;
+ {
+  const auto live = LockLiveGuestThread(thread);
+  if (!live.owns_lock()) return SCE_KERNEL_ERROR_ESRCH;
+  target = thread->tid;
+ }
+ if (HoldRaisedException(target, signum)) return 0;
 #ifdef _WIN32
  if (thread->suspended.load(std::memory_order_acquire)) {
   int pending = 0;
