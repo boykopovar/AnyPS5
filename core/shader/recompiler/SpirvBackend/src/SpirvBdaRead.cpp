@@ -184,7 +184,7 @@ std::uint32_t DefineBdaSpanReadFunction(SpirvEmitterState& state, bool coherent,
     const auto reader = state.bdaDwordReadFunctions[stops][coherent];
     const auto function = state.module.AllocateId();
     state.module.AddName(function, std::string("read_bda_span") + (stops ? "_stop" : "") + (coherent ? "_coherent" : ""));
-    state.module.AddFunction(spv::OpFunction, result, function, spv::FunctionControlDontInlineMask, state.module.Type(spv::OpTypeFunction, result, u64, u32, u32, u32));
+    state.module.AddFunction(spv::OpFunction, result, function, state.bdaSpanReadInline ? spv::FunctionControlInlineMask : spv::FunctionControlDontInlineMask, state.module.Type(spv::OpTypeFunction, result, u64, u32, u32, u32));
     const auto address = state.module.AllocateId();
     const auto offset = state.module.AllocateId();
     const auto used = state.module.AllocateId();

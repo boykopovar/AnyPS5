@@ -512,6 +512,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_NO_TEXTURE_CACHE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | builds every texture and storage-image object fresh instead of caching it |
 | `APS5_NO_TEXTURE_HASH` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` |  | finds texture-cache entries by scanning the list instead of the hash index |
 | `APS5_NO_TIMELINE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | leaves timeline semaphores off, so drains wait under the mutex |
+| `APS5_NO_TWO_LANE_SPAN_READ_INLINE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | keeps `read_bda_span` a `DontInline` call on NVIDIA's proprietary driver in wave64 modules that hold two lanes per invocation, instead of asking the driver to inline it (in the shader disk cache key through the target) |
 | `APS5_NO_UNIT_SHADOW` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/UnitShadow.cpp` |  | makes every unit shadow primitive inert |
 | `APS5_NO_UNLOCKED_DEVICE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Dispatch/Dispatch.cpp` |  | loads the device and runs a dispatch under the GPU mutex instead of using an unlocked device |
 | `APS5_NO_UNLOCKED_DRAIN` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Packets/PacketMemory.cpp` |  | keeps the GPU mutex held while draining a packet instead of the unlocked drain |
