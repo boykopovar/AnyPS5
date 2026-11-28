@@ -1,4 +1,6 @@
 #include "prx/libSceWkFontConfig/libSceWkFontConfig.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libSceSystemService/include/SystemService.hpp"
 
 #include <array>
 #include <cstddef>
@@ -6,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include <string>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -166,6 +169,88 @@ void CheckRecordReads() {
     }
     Require(threw && unread[1] == 0);
 }
+const FontRecord* Select(std::uint32_t fontId, std::uint32_t family, std::uint32_t weight, std::uint32_t style) {
+    const FontAttr attr{0x14, family, weight, style, 0};
+    const void* font = nullptr;
+    Require(sceWkFontConfigGetFont(&font, fontId, &attr) == 0 && font != nullptr);
+    return static_cast<const FontRecord*>(font);
+}
+
+std::string Name(const FontRecord* font) { return font->name; }
+
+void CheckFontTable() {
+    constexpr int bufferTooSmall = static_cast<int>(0x813C0002u);
+    constexpr int notFound = static_cast<int>(0x813C0003u);
+    const void* font = nullptr;
+    Require(sceWkFontConfigGetFont(&font, 25, nullptr) == 0 && Name(static_cast<const FontRecord*>(font)) == "SST Medium");
+    Require(Name(Select(25, 0, 0, 0)) == "SST Medium");
+    Require(Name(Select(25, 0, 1, 0)) == "SST Light");
+    Require(Name(Select(25, 0, 3, 0)) == "SST Light");
+    Require(Name(Select(25, 0, 6, 0)) == "SST Medium");
+    Require(Name(Select(8, 0, 7, 0)) == "SST Bold");
+    Require(Name(Select(14, 0, 9, 0)) == "SST Bold");
+    Require(Name(Select(25, 0, 4, 1)) == "SST Medium Italic");
+    Require(Name(Select(25, 0, 3, 1)) == "SST Light Italic");
+    Require(Name(Select(25, 3, 0, 1)) == "SST Typewriter Roman");
+    Require(Name(Select(25, 3, 5, 0)) == "SST Typewriter Roman");
+    Require(Name(Select(25, 3, 3, 0)) == "SST Typewriter Roman");
+    Require(Name(Select(25, 3, 8, 0)) == "SST Typewriter Bold");
+    Require(Name(Select(0, 3, 0, 1)) == "SST Japanese Pro Regular");
+    Require(Name(Select(20, 0, 7, 0)) == "SST Japanese Pro Bold");
+    Require(Name(Select(108, 0, 5, 0)) == "SST Japanese Pro Regular");
+    Require(Name(Select(2, 0, 0, 0)) == "SST Arabic Medium");
+    Require(Name(Select(1, 0, 3, 0)) == "SST Arabic Light");
+    Require(Name(Select(18, 0, 0, 0)) == "SCEPS4Yoongd-Medium");
+    Require(Name(Select(122, 0, 7, 0)) == "SCEPS4Yoongd-Bold");
+    for (std::uint32_t fontId : {3u, 19u, 26u, 109u, 121u, 123u, 0x95u}) Require(Name(Select(fontId, 3, 7, 1)) == "DFHeiW5-A-SONY Regular");
+    int language = -1;
+    const bool chineseOrKorean = sceSystemServiceParamGetInt(1, &language) == 0 && language >= 9 && language <= 11;
+    Require(Name(Select(17, 0, 7, 0)) == (chineseOrKorean ? "DFHeiW5-A-SONY Regular" : "SST Japanese Pro Bold"));
+
+    const FontRecord* typewriterBold = Select(25, 3, 7, 0);
+    std::uint32_t attr[5] = {0x14, 0, 0, 0, 0};
+    Require(sceWkFontConfigGetAttr(typewriterBold, attr) == 0);
+    Require(attr[0] == 0x14 && attr[1] == 3 && attr[2] == 7 && attr[3] == 2 && attr[4] == 2);
+
+    const void* found = nullptr;
+    Require(sceWkFontConfigGetFontFromFontName(&found, "SST Bold Italic") == 0 && found == Select(25, 0, 7, 1));
+    Require(sceWkFontConfigGetFontFromFontName(&found, "DFHeiW5-A-SONY Regular") == 0 && found == Select(3, 0, 0, 0));
+    Require(sceWkFontConfigGetFontFromFontName(&found, "SCEPS4Yoongd-Light") == 0 && found == Select(18, 0, 3, 0));
+    found = &attr;
+    Require(sceWkFontConfigGetFontFromFontName(&found, "SST") == notFound && found == &attr);
+    Require(sceWkFontConfigGetFontFromFontName(&found, "sst bold") == notFound && found == &attr);
+    Require(sceWkFontConfigGetFontFromFontName(&found, "") == notFound && found == &attr);
+
+    GuardedPage page;
+    page.data[page.size - 1] = 'X';
+    Require(sceWkFontConfigGetFontFromFontName(&found, reinterpret_cast<const char*>(page.data + page.size - 1)) == notFound);
+    std::memcpy(page.data + page.size - 3, "SST", 3);
+    bool threw = false;
+    try {
+        sceWkFontConfigGetFontFromFontName(&found, reinterpret_cast<const char*>(page.data + page.size - 3));
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw && found == &attr);
+
+    const FontRecord* medium = Select(25, 0, 0, 0);
+    const std::string expected = std::string("/") + sceKernelGetFsSandboxRandomWord() + "/common/font/SST-Medium.otf";
+    char path[128];
+    std::memset(path, 'x', sizeof(path));
+    Require(sceWkFontConfigGetFontPath(medium, path, static_cast<std::uint32_t>(expected.size())) == bufferTooSmall && path[0] == 'x');
+    Require(sceWkFontConfigGetFontPath(medium, path, static_cast<std::uint32_t>(expected.size() + 1)) == 0);
+    Require(expected == path && path[expected.size() + 1] == 'x');
+    const std::string longPath(0x3ff, 'p');
+    const FontRecord longest{longPath.c_str(), "long", {0x14, 0, 0, 0, 0}, 0};
+    std::string large(0x800, 'x');
+    Require(sceWkFontConfigGetFontPath(&longest, large.data(), static_cast<std::uint32_t>(large.size())) == 0);
+    Require(std::string(large.c_str()) == std::string("/") + sceKernelGetFsSandboxRandomWord() + longPath);
+    const std::string tooLong(0x400, 'p');
+    const FontRecord overLimit{tooLong.c_str(), "long", {0x14, 0, 0, 0, 0}, 0};
+    Require(sceWkFontConfigGetFontPath(&overLimit, large.data(), static_cast<std::uint32_t>(large.size())) == bufferTooSmall);
+    const FontRecord nullPath{nullptr, "none", {0x14, 0, 0, 0, 0}, 0};
+    Require(Throws(sceWkFontConfigGetFontPath, &nullPath, path, sizeof(path)));
+}
 } // namespace
 
 int main() {
@@ -199,5 +284,6 @@ int main() {
     RequireEarlyReturnBeforeUnreadableTail(invalidArgument);
     CheckAttributeCopyOrder();
     CheckRecordReads();
+    CheckFontTable();
     return 0;
 }
