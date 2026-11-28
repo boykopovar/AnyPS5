@@ -5042,7 +5042,20 @@ int main(int argc, char** argv) {
         Require(range.bytes == page * 3 && range.readable && range.writable);
     }
     Require(mprotect_nid_postfix(memory, 0, 1) == 0);
-    Require(mprotect_nid_postfix(nullptr, page, 1) == -1 && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(mprotect_nid_postfix(nullptr, page, 1) == 0 && *__error_nid_postfix() == 0);
+    Require(mprotect_nid_postfix(reinterpret_cast<void*>(1), 1, 1) == 0);
+    Require(mprotect_nid_postfix(nullptr, page * 2, 1) == 0);
+    Require(mprotect_nid_postfix(reinterpret_cast<void*>(0x800000000000), page, 1) == 0);
+    Require(mprotect_nid_postfix(reinterpret_cast<void*>(0x800000000000 - page), page * 2, 1) == 0);
+    Require(mprotect_nid_postfix(reinterpret_cast<void*>(0x900000000000), page, 1) == 0 && *__error_nid_postfix() == 0);
+    Require(mprotect_nid_postfix(reinterpret_cast<void*>(std::numeric_limits<std::uintptr_t>::max() - page + 1), 1, 1) == -1 && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(mprotect_nid_postfix(reinterpret_cast<void*>(0x800000000000), std::numeric_limits<std::size_t>::max() - 0x800000000000 - page + 1, 1) == 0 && *__error_nid_postfix() == 0);
+    Require(mprotect_nid_postfix(reinterpret_cast<void*>(0x800000000000), std::numeric_limits<std::size_t>::max() - 0x800000000000 - page + 2, 1) == -1 && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(mprotect_nid_postfix(reinterpret_cast<void*>(0x800000000000), std::numeric_limits<std::size_t>::max() - 0x7fffffffffff, 1) == -1 && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
     Require(mprotect_nid_postfix(memory + 1, 1, 1) == 0);
     {
         GuestAllocations::Mutation mutation;
