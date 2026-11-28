@@ -244,4 +244,46 @@ std::size_t CmaskLayout::Nibble(std::uint32_t tileX, std::uint32_t tileY) const 
     return block * Alignment * 2u + offset;
 }
 
+namespace {
+
+constexpr std::uint32_t GcnCmaskPipes = 8u;
+constexpr std::uint32_t GcnCmaskPipeInterleaveBits = 256u * 8u;
+constexpr std::uint32_t GcnCmaskMacroTilesX = 64u;
+constexpr std::uint32_t GcnCmaskMacroTilesY = 32u;
+constexpr std::uint32_t GcnCmaskTilesPerPipe = 256u;
+constexpr std::uint32_t GcnCmaskElementBits = 4u;
+
+std::size_t gcnCmaskSliceBytes(std::uint32_t pitch, std::uint32_t height) {
+    return static_cast<std::size_t>(pitch) * height * GcnCmaskElementBits / 8u / 64u;
+}
+
+std::uint32_t bitOf(std::uint32_t value, std::uint32_t bit) {
+    return (value >> bit) & 1u;
+}
+
+}
+
+GcnCmaskLayout::GcnCmaskLayout(std::uint32_t width, std::uint32_t height) : width(width), height(height), pitch(0), paddedHeight(0), bytes(0) {
+    require(width != 0 && height != 0 && width <= 16384 && height <= 16384, "AGC graphics: invalid GCN CMASK surface extent");
+    const auto macroWidth = GcnCmaskMacroTilesX * 8u;
+    const auto macroHeight = GcnCmaskMacroTilesY * 8u;
+    pitch = (width + macroWidth - 1u) / macroWidth * macroWidth;
+    paddedHeight = (height + macroHeight - 1u) / macroHeight * macroHeight;
+    while (gcnCmaskSliceBytes(pitch, paddedHeight) % (GcnCmaskPipeInterleaveBits / 8u * GcnCmaskPipes) != 0) paddedHeight += macroHeight;
+    bytes = gcnCmaskSliceBytes(pitch, paddedHeight);
+}
+
+std::size_t GcnCmaskLayout::Nibble(std::uint32_t tileX, std::uint32_t tileY) const {
+    require(tileX < TilesX() && tileY < TilesY(), "AGC graphics: GCN CMASK tile out of range");
+    const auto macroNumber = static_cast<std::uint64_t>(tileX / GcnCmaskMacroTilesX) + static_cast<std::uint64_t>(tileY / GcnCmaskMacroTilesY) * (pitch / (GcnCmaskMacroTilesX * 8u));
+    const auto microX = (tileX % GcnCmaskMacroTilesX) / 4u;
+    const auto microY = (tileY % GcnCmaskMacroTilesY) / 4u;
+    const auto element = (bitOf(tileX, 1u) ^ bitOf(tileY, 0u)) | (bitOf(tileX, 1u) << 1u);
+    const auto microNumber = ((static_cast<std::uint64_t>(microX + microY * (GcnCmaskMacroTilesX / 4u)) << 1u) & ~std::uint64_t{3}) + element;
+    const auto offset = microNumber * GcnCmaskElementBits + macroNumber * GcnCmaskTilesPerPipe * GcnCmaskElementBits;
+    const auto pipe = (bitOf(tileX, 0u) ^ bitOf(tileY, 0u) ^ bitOf(tileX, 1u)) | ((bitOf(tileX, 1u) ^ bitOf(tileY, 1u)) << 1u) | ((bitOf(tileX, 2u) ^ bitOf(tileY, 2u)) << 2u);
+    const auto bit = offset % GcnCmaskPipeInterleaveBits + pipe * GcnCmaskPipeInterleaveBits + offset / GcnCmaskPipeInterleaveBits * GcnCmaskPipeInterleaveBits * GcnCmaskPipes;
+    return static_cast<std::size_t>(bit / GcnCmaskElementBits);
+}
+
 }

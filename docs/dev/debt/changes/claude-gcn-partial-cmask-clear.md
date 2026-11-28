@@ -1,0 +1,5 @@
+# libSceAgcDriver
+
+## change [PS4 (GCN) single-sample and one-fragment fast clears]
+
+- [PS4 (GCN) single-sample and one-fragment fast clears](../../../core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp) (libSceAgcDriver, PS4) - not checked on a console. Throws for CMASK codes 4 to 0xb and for a partial fast clear of a 1D-tiled or linear target or through CMASK_IS_LINEAR (order not modeled). Codes 0 to 3 of a single-sample target are fast cleared, reading bits 3:2 as the fast clear state as AMD PAL does ([`gfx6MaskRam.h`](https://github.com/GPUOpen-Drivers/pal/blob/f01505f7fe4b38b573a41cb4d9d66d00e0c256f0/src/core/hw/gfxip/gfx6/gfx6MaskRam.h#L261-L263)); a one-fragment target's are 0 alone. Cleared tiles of a 2D-tiled target are found through addrlib's P8_32x32_16x16 CMASK order ([`siaddrlib.cpp`](https://gitlab.freedesktop.org/mesa/mesa/-/blob/mesa-25.2.8/src/amd/addrlib/src/r800/siaddrlib.cpp#L1272-L1415)) and take the clear color. A partial CMASK whose CMASK_SLICE is below addrlib's padded size (an odd count of 512x256 macro tiles) throws.
