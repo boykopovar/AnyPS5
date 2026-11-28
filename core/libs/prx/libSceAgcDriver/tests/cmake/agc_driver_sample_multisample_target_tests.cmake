@@ -1,7 +1,7 @@
 target_include_directories(agc_driver_sample_multisample_target_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 
 if(BUILD_TESTING)
-    foreach(initialMode IN ITEMS uniform uniform_refusals uniform_hook)
+    foreach(initialMode IN ITEMS uniform uniform_refusals uniform_hook uniform_cmask uniform_cmask_refusal)
         add_test(NAME agc_driver_native_color_initial_${initialMode} COMMAND agc_driver_sample_multisample_target_tests --initial-${initialMode})
         set_tests_properties(agc_driver_native_color_initial_${initialMode} PROPERTIES TIMEOUT 30 ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
         if(WIN32)
