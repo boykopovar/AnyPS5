@@ -199,9 +199,7 @@ std::size_t dropEveryOther(TMap& map) {
 
 }
 
-void Driver::learnPendingRelocation() {
-    const auto pending = drawRelocationPending;
-    drawRelocationPending = {};
+void Driver::learnPendingRelocation(const DrawRelocationPending& pending) {
     if (pending.key == 0) return;
     const auto inserted = drawCache.find(pending.key);
     std::shared_ptr<const DrawEntry> learned;
