@@ -57,11 +57,12 @@ function(add_jpeg_decoder target runtimeTarget)
             BUILD_BYPRODUCTS
                 "${jpeg_turbo_library}"
         )
+        add_library(jpeg_turbo_headers INTERFACE)
+        target_include_directories(jpeg_turbo_headers INTERFACE
+            "${PROJECT_SOURCE_DIR}/3rdparty/libjpeg-turbo/src" "${jpeg_turbo_prefix}/include")
         add_library(jpeg_turbo STATIC IMPORTED GLOBAL)
-        set_target_properties(jpeg_turbo PROPERTIES
-            IMPORTED_LOCATION "${jpeg_turbo_library}"
-            INTERFACE_INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/3rdparty/libjpeg-turbo/src;${jpeg_turbo_prefix}/include"
-        )
+        set_target_properties(jpeg_turbo PROPERTIES IMPORTED_LOCATION "${jpeg_turbo_library}")
+        target_link_libraries(jpeg_turbo INTERFACE jpeg_turbo_headers)
         if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
             target_link_options(jpeg_turbo INTERFACE "LINKER:--exclude-libs,$<TARGET_FILE_NAME:jpeg_turbo>")
         endif()
