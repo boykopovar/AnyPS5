@@ -1011,6 +1011,23 @@ class ConstantTableTests(unittest.TestCase):
         self.assertEqual(env_reference.shadowed_names('const char* kName = "ANYPS5_A";\n'), set())
         self.assertEqual(env_reference.shadowed_names("constexpr int kX = 1;\n"), set())
 
+    def test_statements_that_use_a_constant_do_not_shadow_it(self):
+        for statement in ("return kName;", "throw kName;", "delete kName;", "else kName;", "goto kName;",
+                          "co_return kName;", "co_yield kName;", "co_await kName;"):
+            with self.subTest(statement=statement):
+                self.assertEqual(env_reference.shadowed_names("    " + statement + "\n"), set())
+        self.assertEqual(env_reference.shadowed_names("int returned = 1;\n"), {"returned"})
+
+    def test_a_constant_returned_elsewhere_in_the_file_is_still_read(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Trace.cpp").write_text(
+                'constexpr const char* kTrace = "APS5_RETURNED_NAME";\n'
+                "const char* TraceName() { return kTrace; }\n"
+                "bool Tracing() { return std::getenv(kTrace) != nullptr; }\n", encoding="utf-8")
+            found = env_reference.reads([root])
+        self.assertEqual([read[:2] for read in found["APS5_RETURNED_NAME"]], [((root / "Trace.cpp").as_posix(), 3)])
+
     def test_identifier_reads_resolves_a_single_known_constant_only(self):
         reads = env_reference.identifier_reads("getenv(kName)", {"kName": {"ANYPS5_A"}}, set())
         self.assertEqual([kind for kind, _ in reads], ["getenv"])
