@@ -71,6 +71,7 @@ public:
     bool Known(Slot slot) const { return (valid & Mask(slot)) != 0; }
     VkPipeline BoundPipeline() const { return pipelineKnown ? pipeline : VK_NULL_HANDLE; }
     void BindPipeline(const Context& context, VkPipeline pipeline, std::uint32_t dynamicSlots);
+    void ExecuteCommands(const Context& context, std::uint32_t count, const VkCommandBuffer* buffers);
     void SetViewport(const Context& context, const VkViewport& viewport);
     void SetScissor(const Context& context, const VkRect2D& scissor);
     void SetViewports(const Context& context, std::span<const VkViewport> viewports, std::span<const VkRect2D> scissors);
@@ -172,7 +173,7 @@ public:
     static bool DispatchOverlapEnabled();
     static void SetDispatchOrder(std::uint32_t queueKey, bool unordered);
     static std::uint32_t TakeDispatchOrder(bool& unordered);
-    static constexpr std::uint64_t RunAccessWritten = 1, RunAccessImage = 2;
+    static constexpr std::uint64_t RunAccessWritten = 1, RunAccessImage = 2, RunAccessBuffer = 4;
     using RunAccess = std::array<std::uint64_t, 3>;
     static std::uint32_t PeekUnorderedDispatch();
     VkCommandBuffer OverlapCommands(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses, VkAccessFlags* coveredAccess, bool& overlapped);
@@ -192,8 +193,8 @@ public:
         bool barrier = true;
         PassBreak reason = PassBreak::Continued;
     };
-    DrawPassStart StartDrawPass(std::uint64_t key, bool forced, bool fenced, const PassAccess& access);
-    void LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool fenced, const PassAccess& access, std::function<void(CommandState&)> afterPass = {});
+    DrawPassStart StartDrawPass(std::uint64_t key, bool forced, bool fenced, const PassAccess& access, bool secondaryContents = false);
+    void LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool fenced, const PassAccess& access, std::function<void(CommandState&)> afterPass = {}, bool secondaryContents = false);
     void AfterRenderPass(std::function<void(Recorder&)> work);
     void SealPassWriteOnly();
     // DCC "uncompressed" key stores (DccMetadata.cpp StoreUncompressedOnGpu): queued on the open
@@ -217,6 +218,7 @@ public:
     // Whether recorded work still has completion actions (write-backs the CPU must see) to run.
     bool HasCompletions() const;
     void Keep(std::shared_ptr<void> object, std::size_t bytes = 0);
+    bool KeepWithOutstanding(const std::shared_ptr<void>& object) noexcept;
     void KeepThroughHold(std::shared_ptr<void> object);
     void ReserveRetention(std::size_t additional);
     template<typename T>
@@ -922,6 +924,7 @@ private:
         struct RenderPass {
             bool open = false;
             bool fenced = false;
+            bool secondaryContents = false;
             std::uint64_t key = 0;
             std::uint32_t timing = NoTiming;
             std::function<void(CommandState&)> afterPass;

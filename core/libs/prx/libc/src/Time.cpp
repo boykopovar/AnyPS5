@@ -786,8 +786,13 @@ GuestTm* APS5_VABI gmtime_nid_postfix(const int64_t* timer) {
 }
 
 int64_t APS5_VABI libc_mktime_nid_postfix(GuestTm* timeptr) {
+    GuestTm guest{};
+    if (timeptr == nullptr || !GuestCopyIn_nid_no_patch(&guest, timeptr, sizeof(guest))) {
+        errno = EFAULT;
+        return -1;
+    }
     const ZoneScope zone;
-    std::tm host = toHostTm(*timeptr);
+    std::tm host = toHostTm(guest);
     if (host.tm_isdst > 0) {
         const auto local = utcSeconds(host);
         GuestTm early{};
@@ -820,7 +825,10 @@ int64_t APS5_VABI libc_mktime_nid_postfix(GuestTm* timeptr) {
         std::int64_t time = 0;
         GuestTm normalized{};
         if (!timeOfLocalSeconds(approximate, time) || localtime_s_nid_postfix(&time, &normalized) == nullptr) return -1;
-        *timeptr = normalized;
+        if (!GuestCopyOut_nid_no_patch(timeptr, &normalized, sizeof(normalized))) {
+            errno = EFAULT;
+            return -1;
+        }
         return time;
     }
 #endif
@@ -839,7 +847,10 @@ int64_t APS5_VABI libc_mktime_nid_postfix(GuestTm* timeptr) {
     const int64_t time = static_cast<int64_t>(t) + moved;
     GuestTm normalized{};
     if (localtime_s_nid_postfix(&time, &normalized) == nullptr) return -1;
-    *timeptr = normalized;
+    if (!GuestCopyOut_nid_no_patch(timeptr, &normalized, sizeof(normalized))) {
+        errno = EFAULT;
+        return -1;
+    }
     return time;
 }
 
@@ -848,7 +859,11 @@ int64_t APS5_VABI mktime_nid_postfix(GuestTm* timeptr) {
 }
 
 int64_t APS5_VABI timelocal_nid_postfix(GuestTm* timeptr) {
-    if (timeptr != nullptr) timeptr->tm_isdst = -1;
+    const int unknownDaylight = -1;
+    if (timeptr != nullptr && !GuestCopyOut_nid_no_patch(&timeptr->tm_isdst, &unknownDaylight, sizeof(unknownDaylight))) {
+        errno = EFAULT;
+        return -1;
+    }
     return libc_mktime_nid_postfix(timeptr);
 }
 

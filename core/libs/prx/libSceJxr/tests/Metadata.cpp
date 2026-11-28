@@ -2,6 +2,8 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "tests/CommandLineArgument.hpp"
 #include <array>
+#include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -121,6 +123,24 @@ void Invalid(Cleanup cleanup) {
         cleanup(&value);
         Require(false, "unsupported metadata tag accepted");
     } catch (const std::invalid_argument&) {}
+    errno = 71;
+    try {
+        cleanup(reinterpret_cast<Jxr::MetadataVariant*>(std::uintptr_t{0x10}));
+        Require(false, "unreadable metadata record accepted");
+    } catch (const std::invalid_argument&) {
+        Require(errno == 71, "errno preserved on unreadable metadata record");
+    }
+    static char readOnlyDummy[8] = {'a'};
+    static const Jxr::MetadataVariant readOnly{.type = 30, .value = {.text = readOnlyDummy}};
+    const unsigned count = frees;
+    errno = 71;
+    try {
+        cleanup(const_cast<Jxr::MetadataVariant*>(&readOnly));
+        Require(false, "read-only metadata record accepted");
+    } catch (const std::invalid_argument&) {
+        Require(errno == 71 && frees == count && readOnly.value.text == readOnlyDummy,
+                "read-only metadata rejected before freeing or mutating");
+    }
 }
 
 void Retagged(Cleanup cleanup) {

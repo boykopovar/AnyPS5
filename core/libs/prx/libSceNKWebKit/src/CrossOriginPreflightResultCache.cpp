@@ -192,6 +192,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -482,6 +483,51 @@ std::unique_ptr<Item> Adopt(CrossOriginPreflightResultCacheItem* guest) {
     return item;
 }
 
+String LowerASCIIString(const String& text) {
+    const StringView view = NKWebKit::WtfAbi::ViewOf(text.impl);
+    bool hasUpperCase = false;
+    for (unsigned index = 0; index < view.length && !hasUpperCase; ++index) {
+        const char16_t unit = NKWebKit::WtfAbi::CodeUnitAt(view, index);
+        hasUpperCase = unit >= u'A' && unit <= u'Z';
+    }
+    if (!hasUpperCase) return String(text);
+    void* characters = nullptr;
+    String result(NKWebKit::WtfAbi::CreateUninitialized(view.length, view.is8Bit, characters));
+    for (unsigned index = 0; index < view.length; ++index) {
+        char16_t unit = NKWebKit::WtfAbi::CodeUnitAt(view, index);
+        if (unit >= u'A' && unit <= u'Z') unit = static_cast<char16_t>(unit + (u'a' - u'A'));
+        if (view.is8Bit) static_cast<unsigned char*>(characters)[index] = static_cast<unsigned char>(unit);
+        else static_cast<char16_t*>(characters)[index] = unit;
+    }
+    return result;
+}
+
+String JoinWithCommas(const std::vector<String>& names) {
+    std::uint64_t total = names.size() - 1;
+    bool is8Bit = true;
+    for (const String& name : names) {
+        const StringView view = NKWebKit::WtfAbi::ViewOf(name.impl);
+        total += view.length;
+        is8Bit = is8Bit && view.is8Bit;
+    }
+    if (total > static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max()))
+        throw std::length_error("Access-Control-Request-Headers exceeds the maximum string length");
+    void* characters = nullptr;
+    String result(NKWebKit::WtfAbi::CreateUninitialized(static_cast<unsigned>(total), is8Bit, characters));
+    std::size_t offset = 0;
+    const auto put = [&](char16_t unit) {
+        if (is8Bit) static_cast<unsigned char*>(characters)[offset] = static_cast<unsigned char>(unit);
+        else static_cast<char16_t*>(characters)[offset] = unit;
+        ++offset;
+    };
+    for (std::size_t index = 0; index < names.size(); ++index) {
+        if (index) put(u',');
+        const StringView view = NKWebKit::WtfAbi::ViewOf(names[index].impl);
+        for (unsigned unit = 0; unit < view.length; ++unit) put(NKWebKit::WtfAbi::CodeUnitAt(view, unit));
+    }
+    return result;
+}
+
 }  // namespace
 
 double NKWebKit::PreflightCache::LifetimeSeconds(const String& maxAge) {
@@ -524,6 +570,26 @@ void NKWebKit::PreflightCache::Append(const String& origin, const URL& url, std:
     Cache& cache = State();
     cache.hasTable = true;
     cache.entries[Key{Units(origin.impl), Units(url.impl)}] = std::move(item);
+}
+
+String NKWebKit::PreflightCache::UnsafeRequestHeaderNames(const HTTPHeaderMap& requestHeaders) {
+    Validate(requestHeaders.common);
+    Validate(requestHeaders.uncommon);
+    std::vector<String> names;
+    for (unsigned index = 0; index < requestHeaders.common.size; ++index) {
+        const auto& header = requestHeaders.common.buffer[index];
+        const auto nameIndex = static_cast<std::size_t>(static_cast<std::uint32_t>(header.key));
+        if (nameIndex >= NKWebKit::HttpAbi::headerNames.size()) throw std::invalid_argument("unknown WebCore::HTTPHeaderName in a WebCore::HTTPHeaderMap");
+        if (IsCrossOriginSafeRequestHeader(header.key, header.value)) continue;
+        const std::string_view name(NKWebKit::HttpAbi::headerNames[nameIndex]);
+        const String key(_ZN3WTF10StringImpl6createEPKhj(reinterpret_cast<const unsigned char*>(name.data()), static_cast<unsigned>(name.size())));
+        names.push_back(LowerASCIIString(key));
+    }
+    for (unsigned index = 0; index < requestHeaders.uncommon.size; ++index) names.push_back(LowerASCIIString(requestHeaders.uncommon.buffer[index].key));
+    if (names.empty()) return String();
+    std::sort(names.begin(), names.end(), [](const String& a, const String& b) { return Units(a.impl) < Units(b.impl); });
+    if (names.size() == 1) return names.front();
+    return JoinWithCommas(names);
 }
 
 extern "C" {

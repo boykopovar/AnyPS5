@@ -33,6 +33,9 @@ enum Id : std::uint32_t {
     PhysicalPointer,
     Snapshot,
     Writable,
+    PrivatePointer,
+    Parity,
+    Selector,
     First = 100u,
 };
 
@@ -95,8 +98,8 @@ public:
 
 bool failed = false;
 
-void expect(const char* name, const Module& module, bool rejected, std::span<const std::uint32_t> snapshots = {}) {
-    const auto reason = ShaderRecompiler::SpannedBarrierInDivergentFlow(module.words, snapshots);
+void expect(const char* name, const Module& module, bool rejected, std::span<const std::uint32_t> snapshots = {}, bool unreachableExits = true) {
+    const auto reason = ShaderRecompiler::SpannedBarrierInDivergentFlow(module.words, snapshots, unreachableExits);
     if (reason.has_value() == rejected) return;
     std::fprintf(stderr, "%s: expected %s, got %s\n", name, rejected ? "a rejection" : "no rejection", reason ? reason->c_str() : "none");
     failed = true;
@@ -107,6 +110,49 @@ void expectReason(const char* name, const Module& module, const char* part) {
     if (reason.has_value() && reason->find(part) != std::string::npos) return;
     std::fprintf(stderr, "%s: expected a rejection naming \"%s\", got %s\n", name, part, reason ? reason->c_str() : "none");
     failed = true;
+}
+
+void expectStray(const char* name, const Module& module, bool stray) {
+    const auto reason = ShaderRecompiler::SpannedUnreachableOutsideSpecializedSwitch(module.words);
+    if (reason.has_value() == stray) return;
+    std::fprintf(stderr, "%s: expected %s, got %s\n", name, stray ? "a stray OpUnreachable" : "none", reason ? reason->c_str() : "none");
+    failed = true;
+}
+
+Module guardedUnreachable(spv::Op selector, bool branchedTo) {
+    Module module;
+    module.emit(spv::OpTypePointer, {PrivatePointer, spv::StorageClassPrivate, Uint});
+    module.emit(spv::OpVariable, {PrivatePointer, Parity, spv::StorageClassPrivate});
+    module.emit(selector, {Uint, Selector, 0u});
+    module.function(Main);
+    module.emit(spv::OpLabel, {First});
+    module.lane(First + 1u);
+    module.emit(spv::OpULessThan, {Bool, First + 2u, First + 1u, Three});
+    module.emit(spv::OpSelectionMerge, {First + 4u, spv::SelectionControlMaskNone});
+    module.emit(spv::OpBranchConditional, {First + 2u, First + 3u, First + 4u});
+    module.emit(spv::OpLabel, {First + 3u});
+    module.emit(spv::OpSelectionMerge, {First + 6u, spv::SelectionControlMaskNone});
+    module.emit(spv::OpSwitch, {Selector, First + 5u, 0u, First + 6u, 1u, branchedTo ? First + 5u : First + 6u});
+    module.emit(spv::OpLabel, {First + 5u});
+    module.emit(spv::OpUnreachable, {});
+    module.emit(spv::OpLabel, {First + 6u});
+    module.emit(spv::OpBranch, {First + 4u});
+    module.emit(spv::OpLabel, {First + 4u});
+    module.emit(spv::OpStore, {Parity, Two});
+    module.emit(spv::OpBranch, {First + 7u});
+    module.emit(spv::OpLabel, {First + 7u});
+    module.emit(spv::OpLoopMerge, {First + 10u, First + 9u, spv::LoopControlMaskNone});
+    module.emit(spv::OpBranch, {First + 8u});
+    module.emit(spv::OpLabel, {First + 8u});
+    module.barrier();
+    module.emit(spv::OpBranch, {First + 9u});
+    module.emit(spv::OpLabel, {First + 9u});
+    module.emit(spv::OpLoad, {Uint, First + 11u, Parity});
+    module.emit(spv::OpIEqual, {Bool, First + 12u, First + 11u, Two});
+    module.emit(spv::OpBranchConditional, {First + 12u, First + 10u, First + 7u});
+    module.emit(spv::OpLabel, {First + 10u});
+    module.end();
+    return module;
 }
 
 Module selection(bool perLane) {
@@ -382,5 +428,12 @@ int main() {
     };
     expect("a barrier under a snapshot word read at a uniform index with the default", joined(snapshotRead(Snapshot)), false, snapshotsFor(nullptr));
     expect("a barrier under a snapshot word read at a uniform index with the opt-out set", joined(snapshotRead(Snapshot)), true, snapshotsFor("1"));
+    const auto guarded = guardedUnreachable(spv::OpSpecConstant, false);
+    expect("a barrier in a loop on a private word stored after a per-lane guard holding an OpUnreachable, counted as an exit", guarded, true);
+    expect("a barrier in a loop on a private word stored after a per-lane guard holding an OpUnreachable, not counted as an exit", guarded, false, {}, false);
+    expect("a barrier after a per-lane return with OpUnreachable not counted as an exit", early(true, spv::OpReturn), true, {}, false);
+    expectStray("an OpUnreachable only reached as the default of a specialization-constant switch", guarded, false);
+    expectStray("an OpUnreachable reached as the default of a constant switch", guardedUnreachable(spv::OpConstant, false), true);
+    expectStray("an OpUnreachable also reached as a case of a specialization-constant switch", guardedUnreachable(spv::OpSpecConstant, true), true);
     return failed ? EXIT_FAILURE : EXIT_SUCCESS;
 }
