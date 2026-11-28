@@ -33,6 +33,7 @@ static_assert(offsetof(CommandBufferObject, base) == 0x10);
 
 inline constexpr std::uint16_t ScatterGatherValid = 1;
 inline constexpr std::uint16_t MapActive = 2;
+inline constexpr std::uint16_t HostEncoded = 4;
 
 enum class Opcode : std::uint32_t {
     Nop = 0,
