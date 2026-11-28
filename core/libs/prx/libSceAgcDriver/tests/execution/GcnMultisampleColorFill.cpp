@@ -240,6 +240,10 @@ int main() {
             return VulkanTestSkipped;
         }
         auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+        if ((context.limits.framebufferColorSampleCounts & Samples) == 0u) {
+            std::printf("skipped, the device lacks 2-sample color targets (framebufferColorSampleCounts 0x%x)\n", static_cast<unsigned>(context.limits.framebufferColorSampleCounts));
+            return VulkanTestSkipped;
+        }
         TextureDetiler detiler(context);
         context.detiler = &detiler;
         Require(context.recorder != nullptr, "the test device's graphics context has no recorder");
