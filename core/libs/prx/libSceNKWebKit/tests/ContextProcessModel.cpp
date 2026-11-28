@@ -55,9 +55,11 @@ int main() {
 
     WKContextSetUsesNetworkProcess(contextRef, false);
     Require(!pool->usesNetworkProcess);
+    Require(WKContextGetNetworkProcessIdentifier(contextRef) == 0);
 
     WKContextSetUsesNetworkProcess(contextRef, true);
     Require(pool->usesNetworkProcess);
+    Require(WKContextGetNetworkProcessIdentifier(contextRef) == 1001);
 
     WKContextSetDiskCacheSpeculativeValidationEnabled(contextRef, true);
     Require(pool->diskCacheSpeculativeValidationEnabled);
@@ -111,6 +113,9 @@ int main() {
 
     RequireThrows([&] { WKContextTerminateNetworkProcess(nullptr); });
     RequireThrows([&] { WKContextTerminateNetworkProcess(dummy); });
+
+    RequireThrows([&] { WKContextGetNetworkProcessIdentifier(nullptr); });
+    RequireThrows([&] { WKContextGetNetworkProcessIdentifier(dummy); });
 
     WKRelease(bundleId);
     WKRelease(dummy);
