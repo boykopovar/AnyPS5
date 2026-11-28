@@ -1,5 +1,5 @@
 #include <codegen/IAmd64OnlyConverter.hpp>
-#include <codegen/IInstructionScanner.hpp>
+#include <codegen/CodegenTypes.hpp>
 #include <codegen/CodegenException.hpp>
 #include <codegen/x86/Amd64OnlySubstitutionTable.hpp>
 #include <codegen/x86/DecodedInstruction.hpp>
@@ -36,6 +36,39 @@ constexpr std::uint32_t kExecutableSegment = 1;
 constexpr std::uint8_t kLea = 0x8D;
 constexpr std::uint64_t kIslandSearchBytes = 0x100;
 constexpr std::size_t kFlagScanBytes = 0x80;
+constexpr std::size_t kMaxX64InstructionLength = 15;
+constexpr std::size_t kLocalWindowRadius = 512;
+constexpr std::size_t kNoMatchIndex = std::numeric_limits<std::size_t>::max();
+
+struct ByteWindow {
+    std::size_t Begin;
+    std::size_t End;
+};
+
+struct LeaTableCandidate {
+    std::uint64_t Table;
+    bool AddressSize32;
+};
+
+struct SegmentAnalysis {
+    std::vector<std::uint64_t> BranchTargets;
+    std::vector<InstructionMatch> LocalMatches;
+    std::set<std::size_t> NonEntryWindowStarts;
+};
+
+bool _blocksFollowingInfo(const DecodedInstructionInfo& info) {
+    return info.FlowKind != ControlFlowKind::Sequential && info.FlowKind != ControlFlowKind::ConditionalBranch;
+}
+
+bool _paddingInfo(const std::span<const std::uint8_t> seg, const std::size_t offset, const DecodedInstructionInfo& info) {
+    if (info.IsTwoByteOpcode)
+        return info.Opcode == X64OpcodeConstants::TwoByteNopModRm;
+    if (info.Opcode != X64OpcodeConstants::OneByteNop)
+        return info.Length == 1 && seg[offset] == X64OpcodeConstants::OneByteInt3;
+    const auto prefixes = seg.subspan(offset, info.OpcodeOffset);
+    return (info.RexPrefix & X64OpcodeConstants::RexBBit) == 0 &&
+           std::find(prefixes.begin(), prefixes.end(), X64OpcodeConstants::PrefixRep) == prefixes.end();
+}
 
 struct Placement {
     std::vector<TrampolineSite> Sites;
@@ -47,15 +80,16 @@ struct Placement {
 class WindowPlacer {
 public:
     WindowPlacer(
-        std::vector<std::uint8_t>& seg,
+        const std::span<std::uint8_t> seg,
         const std::vector<InstructionMatch>& matches,
         const Domain::ProgramHeader& ph,
-        const std::set<std::uint64_t>& branchTargets,
+        const std::vector<std::uint64_t>& branchTargets,
         const std::set<std::size_t>& pending,
         const std::set<std::size_t>& claimed,
+        const std::set<std::size_t>& nonEntryWindowStarts,
         const IAmd64OnlyInstructionMatcher& matcher,
         const bool keepSegmentAccesses
-    ) : _seg(seg), _matches(matches), _ph(ph), _branchTargets(branchTargets), _pending(pending), _claimed(claimed), _matcher(matcher), _keepSegmentAccesses(keepSegmentAccesses) {}
+    ) : _seg(seg), _matches(matches), _ph(ph), _branchTargets(branchTargets), _pending(pending), _claimed(claimed), _nonEntryWindowStarts(nonEntryWindowStarts), _matcher(matcher), _keepSegmentAccesses(keepSegmentAccesses) {}
 
     [[nodiscard]] std::optional<Placement> Window(const std::size_t index) const {
         std::optional<Placement> fallback;
@@ -96,12 +130,13 @@ public:
     }
 
 private:
-    std::vector<std::uint8_t>& _seg;
+    std::span<std::uint8_t> _seg;
     const std::vector<InstructionMatch>& _matches;
     const Domain::ProgramHeader& _ph;
-    const std::set<std::uint64_t>& _branchTargets;
+    const std::vector<std::uint64_t>& _branchTargets;
     const std::set<std::size_t>& _pending;
     const std::set<std::size_t>& _claimed;
+    const std::set<std::size_t>& _nonEntryWindowStarts;
     const IAmd64OnlyInstructionMatcher& _matcher;
     const bool _keepSegmentAccesses;
     X64InstructionDecoder _decoder;
@@ -113,7 +148,7 @@ private:
     [[nodiscard]] DecodedInstructionInfo _info(const std::size_t index) const { return _decoder.DecodeInstruction(_seg.data() + _matches[index].Offset, _matches[index].Length); }
 
     [[nodiscard]] bool _entered(const std::uint64_t start, const std::uint64_t end) const {
-        const auto hit = _branchTargets.upper_bound(start);
+        const auto hit = std::upper_bound(_branchTargets.begin(), _branchTargets.end(), start);
         return hit != _branchTargets.end() && *hit < end;
     }
 
@@ -123,23 +158,19 @@ private:
     }
 
     [[nodiscard]] bool _padding(const std::size_t index) const {
-        const auto info = _info(index);
-        if (info.IsTwoByteOpcode)
-            return info.Opcode == X64OpcodeConstants::TwoByteNopModRm;
-        if (info.Opcode != X64OpcodeConstants::OneByteNop)
-            return _int3(index);
-        const auto prefixes = _bytes(index).first(info.OpcodeOffset);
-        return (info.RexPrefix & X64OpcodeConstants::RexBBit) == 0 && std::find(prefixes.begin(), prefixes.end(), X64OpcodeConstants::PrefixRep) == prefixes.end();
+        return _paddingInfo(_seg, static_cast<std::size_t>(_matches[index].Offset), _info(index));
     }
 
     [[nodiscard]] bool _mayBeEntered(const std::size_t index) const {
         for (auto previous = index; previous > 0; --previous) {
-            if (_end(previous - 1) != _address(previous) || _blocksFollowing(previous - 1))
+            if (_end(previous - 1) != _address(previous))
+                return !_nonEntryWindowStarts.contains(previous);
+            if (_blocksFollowing(previous - 1))
                 return true;
             if (!_padding(previous - 1))
                 return false;
         }
-        return true;
+        return !_nonEntryWindowStarts.contains(0);
     }
 
     [[nodiscard]] bool _enteredWithin(const std::size_t first, const std::size_t last) const {
@@ -285,86 +316,148 @@ private:
         std::uint64_t total
     ) const;
 
-    [[nodiscard]] static std::set<std::uint64_t> _collectBranchTargets(
-        const std::vector<std::uint8_t>& seg,
-        const std::vector<InstructionMatch>& matches,
+    [[nodiscard]] static SegmentAnalysis _analyzeTrampolineSegment(
+        std::span<const std::uint8_t> seg,
+        std::size_t decodedLimit,
         const Domain::ProgramHeader& ph,
         const std::vector<std::uint8_t>& fileBytes,
-        const std::vector<Domain::ProgramHeader>& segments
+        const std::vector<Domain::ProgramHeader>& segments,
+        const std::vector<ByteWindow>& windows
     );
 };
 
-std::set<std::uint64_t> Amd64OnlyConverter::_collectBranchTargets(
-    const std::vector<std::uint8_t>& seg,
-    const std::vector<InstructionMatch>& matches,
+SegmentAnalysis Amd64OnlyConverter::_analyzeTrampolineSegment(
+    const std::span<const std::uint8_t> seg,
+    const std::size_t decodedLimit,
     const Domain::ProgramHeader& ph,
     const std::vector<std::uint8_t>& fileBytes,
-    const std::vector<Domain::ProgramHeader>& segments
+    const std::vector<Domain::ProgramHeader>& segments,
+    const std::vector<ByteWindow>& windows
 ) {
-    const auto startsInstruction = [&](const std::uint64_t address) {
-        const auto offset = address - ph.MappedAddress;
-        const auto match = std::lower_bound(matches.begin(), matches.end(), offset, [](const InstructionMatch& item, const std::uint64_t value) { return item.Offset < value; });
-        return match != matches.end() && match->Offset == offset;
+    SegmentAnalysis analysis;
+    std::vector<std::uint64_t> instrStarts((seg.size() + 63) / 64, 0);
+    const auto setStart = [&](const std::size_t offset) {
+        instrStarts[offset >> 6] |= (std::uint64_t{1} << (offset & 63));
     };
-    const auto pastPrefixes = [&](const std::uint64_t address) {
-        const auto offset = address - ph.MappedAddress;
-        const auto after = std::upper_bound(matches.begin(), matches.end(), offset, [](const std::uint64_t value, const InstructionMatch& item) { return value < item.Offset; });
-        if (after == matches.begin())
-            return false;
-        const auto& match = *std::prev(after);
-        const auto inside = offset - match.Offset;
-        return inside != 0 && inside < match.Length && inside > DecodedInstruction{seg.data() + match.Offset, match.Length}.OpcodeOffset();
+    const auto hasStart = [&](const std::size_t offset) {
+        return (instrStarts[offset >> 6] & (std::uint64_t{1} << (offset & 63))) != 0;
     };
+
     const X64InstructionDecoder decoder;
-    std::set<std::uint64_t> targets;
-    for (const auto& match : matches) {
-        const auto info = decoder.DecodeInstruction(seg.data() + match.Offset, match.Length);
-        const auto next = ph.MappedAddress + match.Offset + info.Length;
+    std::vector<std::uint64_t> rawBranchTargets;
+    std::vector<LeaTableCandidate> leaTables;
+    const bool collectWindows = !windows.empty();
+    std::size_t winIdx = 0;
+    bool mayBeEntered = true;
+
+    for (std::size_t off = 0; off < decodedLimit;) {
+        const auto info = decoder.DecodeInstruction(seg.data() + off, seg.size() - off);
+        setStart(off);
+
+        if (collectWindows) {
+            while (winIdx < windows.size() && windows[winIdx].End <= off)
+                ++winIdx;
+            if (winIdx < windows.size() && off >= windows[winIdx].Begin) {
+                if (analysis.LocalMatches.empty() || analysis.LocalMatches.back().Offset + analysis.LocalMatches.back().Length != off) {
+                    if (!mayBeEntered)
+                        analysis.NonEntryWindowStarts.insert(analysis.LocalMatches.size());
+                }
+                analysis.LocalMatches.push_back({off, info.Length});
+            }
+            if (_blocksFollowingInfo(info))
+                mayBeEntered = true;
+            else if (!_paddingInfo(seg, off, info))
+                mayBeEntered = false;
+        }
+
+        const auto next = ph.MappedAddress + off + info.Length;
         if (info.HasBranchTarget && !info.HasRipRelativeDisp) {
             const auto displacement = static_cast<std::uint64_t>(info.BranchDisp);
             const auto target = next + displacement;
             const auto wrapped = info.BranchDisp < 0 ? target > next : target < next;
-            if (!wrapped && !pastPrefixes(target))
-                targets.insert(target);
+            if (!wrapped)
+                rawBranchTargets.push_back(target);
         } else if (info.HasRipRelativeDisp && info.Opcode == kLea) {
             std::int32_t displacement;
-            std::memcpy(&displacement, seg.data() + match.Offset + info.RipRelativeDispOffset, sizeof(displacement));
-            const auto prefixes = std::span(seg).subspan(match.Offset, info.OpcodeOffset);
+            std::memcpy(&displacement, seg.data() + off + info.RipRelativeDispOffset, sizeof(displacement));
+            const auto prefixes = seg.subspan(off, info.OpcodeOffset);
             const bool tableAddress32 = info.AddressSize32 || ((info.RexPrefix & X64OpcodeConstants::RexWBit) == 0 &&
                 std::find(prefixes.begin(), prefixes.end(), X64OpcodeConstants::PrefixOperandSize) == prefixes.end());
+            bool overflow = false;
             if (!tableAddress32) {
                 if (displacement < 0 && next < static_cast<std::uint64_t>(-static_cast<std::int64_t>(displacement)))
-                    continue;
+                    overflow = true;
                 if (displacement > 0 && std::numeric_limits<std::uint64_t>::max() - next < static_cast<std::uint64_t>(displacement))
-                    continue;
+                    overflow = true;
             }
-            auto table = next + static_cast<std::uint64_t>(static_cast<std::int64_t>(displacement));
-            if (tableAddress32) table = static_cast<std::uint32_t>(table);
-            for (const auto& data : segments) {
-                if (data.Type != kLoadSegment || table < data.MappedAddress || table - data.MappedAddress >= data.FileSize)
-                    continue;
-                if (data.Offset > fileBytes.size() || data.FileSize > fileBytes.size() - data.Offset)
-                    throw CodegenException("Segment exceeds the file", data.Offset);
-                for (auto entry = table; entry - data.MappedAddress + sizeof(std::int32_t) <= data.FileSize; entry += sizeof(std::int32_t)) {
-                    std::int32_t relative;
-                    std::memcpy(&relative, fileBytes.data() + data.Offset + (entry - data.MappedAddress), sizeof(relative));
-                    if (!info.AddressSize32) {
-                        if (relative < 0 && table < static_cast<std::uint64_t>(-static_cast<std::int64_t>(relative)))
-                            break;
-                        if (relative > 0 && std::numeric_limits<std::uint64_t>::max() - table < static_cast<std::uint64_t>(relative))
-                            break;
-                    }
-                    const auto target = info.AddressSize32
-                        ? static_cast<std::uint64_t>(static_cast<std::uint32_t>(table + static_cast<std::uint64_t>(static_cast<std::int64_t>(relative))))
-                        : table + static_cast<std::uint64_t>(static_cast<std::int64_t>(relative));
-                    if (!startsInstruction(target))
+            if (!overflow) {
+                auto table = next + static_cast<std::uint64_t>(static_cast<std::int64_t>(displacement));
+                if (tableAddress32)
+                    table = static_cast<std::uint32_t>(table);
+                leaTables.push_back({table, info.AddressSize32});
+            }
+        }
+        off += info.Length;
+    }
+
+    const auto startsInstruction = [&](const std::uint64_t address) {
+        if (address < ph.MappedAddress)
+            return false;
+        const auto offset = address - ph.MappedAddress;
+        return offset < seg.size() && hasStart(static_cast<std::size_t>(offset));
+    };
+    const auto pastPrefixes = [&](const std::uint64_t address) {
+        if (address < ph.MappedAddress)
+            return false;
+        const auto offset = address - ph.MappedAddress;
+        if (offset >= seg.size() || hasStart(static_cast<std::size_t>(offset)))
+            return false;
+        const auto offSize = static_cast<std::size_t>(offset);
+        const auto back = std::min<std::size_t>(offSize, kMaxX64InstructionLength - 1);
+        for (std::size_t delta = 1; delta <= back; ++delta) {
+            const auto prev = offSize - delta;
+            if (!hasStart(prev))
+                continue;
+            const auto prevLen = decoder.Decode(seg.data() + prev, seg.size() - prev);
+            return delta < prevLen && delta > DecodedInstruction{seg.data() + prev, prevLen}.OpcodeOffset();
+        }
+        return false;
+    };
+
+    analysis.BranchTargets.reserve(rawBranchTargets.size());
+    for (const auto target : rawBranchTargets) {
+        if (!pastPrefixes(target))
+            analysis.BranchTargets.push_back(target);
+    }
+
+    for (const auto& candidate : leaTables) {
+        for (const auto& data : segments) {
+            if (data.Type != kLoadSegment || candidate.Table < data.MappedAddress || candidate.Table - data.MappedAddress >= data.FileSize)
+                continue;
+            if (data.Offset > fileBytes.size() || data.FileSize > fileBytes.size() - data.Offset)
+                throw CodegenException("Segment exceeds the file", data.Offset);
+            for (auto entry = candidate.Table; entry - data.MappedAddress + sizeof(std::int32_t) <= data.FileSize; entry += sizeof(std::int32_t)) {
+                std::int32_t relative;
+                std::memcpy(&relative, fileBytes.data() + data.Offset + (entry - data.MappedAddress), sizeof(relative));
+                if (!candidate.AddressSize32) {
+                    if (relative < 0 && candidate.Table < static_cast<std::uint64_t>(-static_cast<std::int64_t>(relative)))
                         break;
-                    targets.insert(target);
+                    if (relative > 0 && std::numeric_limits<std::uint64_t>::max() - candidate.Table < static_cast<std::uint64_t>(relative))
+                        break;
                 }
+                const auto target = candidate.AddressSize32
+                    ? static_cast<std::uint64_t>(static_cast<std::uint32_t>(candidate.Table + static_cast<std::uint64_t>(static_cast<std::int64_t>(relative))))
+                    : candidate.Table + static_cast<std::uint64_t>(static_cast<std::int64_t>(relative));
+                if (!startsInstruction(target))
+                    break;
+                analysis.BranchTargets.push_back(target);
             }
         }
     }
-    return targets;
+
+    std::sort(analysis.BranchTargets.begin(), analysis.BranchTargets.end());
+    analysis.BranchTargets.erase(std::unique(analysis.BranchTargets.begin(), analysis.BranchTargets.end()), analysis.BranchTargets.end());
+    return analysis;
 }
 
 void Amd64OnlyConverter::_convertSegment(
@@ -379,25 +472,34 @@ void Amd64OnlyConverter::_convertSegment(
         throw CodegenException("Code segment exceeds the file", ph.Offset);
     const auto segOffset = static_cast<std::size_t>(ph.Offset);
     const auto segSize = static_cast<std::size_t>(ph.FileSize);
+    const std::span<std::uint8_t> seg(fileBytes.data() + segOffset, segSize);
 
-    std::vector<std::uint8_t> seg(
-        fileBytes.begin() + static_cast<std::ptrdiff_t>(segOffset),
-        fileBytes.begin() + static_cast<std::ptrdiff_t>(segOffset + segSize)
-    );
-
-    const auto scanner = MakeInstructionScanner([&](auto offset, auto) { if (progress) progress(completed + offset, total); });
-    const auto matches = _atFileOffset(ph.Offset, [&] { return scanner->ScanCodeSection(seg, 0, seg.size()); });
-
-    if (progress) progress(completed + segSize, total);
+    const X64InstructionDecoder decoder;
     std::vector<Pending> pending;
-    for (std::size_t index = 0; index < matches.size(); ++index) {
-        if (progress && index != 0 && index % 4096 == 0) progress(completed + segSize + matches[index].Offset, total);
-        const auto& match = matches[index];
-        const auto next = match.Offset + match.Length;
-        const std::span<const std::uint8_t> following(seg.data() + next, next < seg.size() ? std::min<std::size_t>(seg.size() - next, kFlagScanBytes) : 0);
-        auto substitution = _atFileOffset(ph.Offset + match.Offset, [&] { return _matcher->Match(seg.data() + match.Offset, match.Length, {}, following); });
+    std::size_t decodedLimit = 0;
+    std::size_t lastReport = 0;
+    if (progress) progress(completed, total);
+    while (decodedLimit < segSize) {
+        const std::uint8_t* cursor = seg.data() + decodedLimit;
+        const std::size_t available = segSize - decodedLimit;
+        std::size_t length = 0;
+        try {
+            length = decoder.Decode(cursor, available);
+        } catch (const CodegenException& e) {
+            if (std::all_of(cursor, cursor + available, [](const std::uint8_t b) { return b == 0; }))
+                break;
+            throw CodegenException(std::string("Cannot decode instruction: ") + e.what(), ph.Offset + decodedLimit);
+        }
+        const auto next = decodedLimit + length;
+        const std::span<const std::uint8_t> following(seg.data() + next, next < segSize ? std::min<std::size_t>(segSize - next, kFlagScanBytes) : 0);
+        auto substitution = _atFileOffset(ph.Offset + decodedLimit, [&] { return _matcher->Match(cursor, length, {}, following); });
         if (substitution.has_value())
-            pending.push_back({index, match, std::move(*substitution)});
+            pending.push_back({kNoMatchIndex, InstructionMatch{decodedLimit, length}, std::move(*substitution)});
+        decodedLimit = next;
+        if (progress && decodedLimit - lastReport >= 65536) {
+            progress(completed + std::uint64_t{2} * decodedLimit, total);
+            lastReport = decodedLimit;
+        }
     }
     if (progress) progress(completed + std::uint64_t{2} * segSize, total);
     if (pending.empty()) {
@@ -408,11 +510,40 @@ void Amd64OnlyConverter::_convertSegment(
     const bool needsBranchTargets = std::any_of(pending.begin(), pending.end(), [](const Pending& item) {
         return item.Substitution.Lowering == Amd64OnlyLowering::Trampoline;
     });
-    const auto branchTargets = needsBranchTargets ? _collectBranchTargets(seg, matches, ph, fileBytes, segments) : std::set<std::uint64_t>{};
+
+    std::vector<ByteWindow> windows;
+    if (needsBranchTargets) {
+        for (const auto& item : pending) {
+            if (item.Substitution.Lowering != Amd64OnlyLowering::Trampoline || item.Instruction.Length >= Amd64OnlySubstitutionTable::kJmpRel32.Size)
+                continue;
+            const auto off = static_cast<std::size_t>(item.Instruction.Offset);
+            const auto begin = off > kLocalWindowRadius ? off - kLocalWindowRadius : 0;
+            const auto end = std::min<std::size_t>(decodedLimit, off + kLocalWindowRadius);
+            if (!windows.empty() && begin <= windows.back().End)
+                windows.back().End = std::max(windows.back().End, end);
+            else
+                windows.push_back({begin, end});
+        }
+    }
+
+    const auto analysis = needsBranchTargets
+        ? _analyzeTrampolineSegment(seg, decodedLimit, ph, fileBytes, segments, windows)
+        : SegmentAnalysis{};
+    const auto& branchTargets = analysis.BranchTargets;
+    const auto& matches = analysis.LocalMatches;
 
     std::set<std::size_t> pendingIndices;
-    for (const auto& item : pending)
-        pendingIndices.insert(item.Index);
+    if (!matches.empty()) {
+        std::size_t cursor = 0;
+        for (auto& item : pending) {
+            while (cursor < matches.size() && matches[cursor].Offset < item.Instruction.Offset)
+                ++cursor;
+            if (cursor < matches.size() && matches[cursor].Offset == item.Instruction.Offset) {
+                item.Index = cursor;
+                pendingIndices.insert(cursor);
+            }
+        }
+    }
     std::set<std::size_t> claimed;
     std::set<std::size_t> consumed;
 
@@ -420,7 +551,7 @@ void Amd64OnlyConverter::_convertSegment(
     for (const auto& item : pending) {
         if (progress && processed != 0 && processed % 256 == 0) progress(completed + std::uint64_t{2} * segSize + item.Instruction.Offset, total);
         ++processed;
-        if (consumed.contains(item.Index))
+        if (item.Index != kNoMatchIndex && consumed.contains(item.Index))
             continue;
         const auto& match = item.Instruction;
         const auto& substitution = item.Substitution;
@@ -439,7 +570,7 @@ void Amd64OnlyConverter::_convertSegment(
         }
         case Amd64OnlyLowering::Trampoline: {
             if (substitution.RelocatableWindow && match.Length < Amd64OnlySubstitutionTable::kJmpRel32.Size) {
-                WindowPlacer placer(seg, matches, ph, branchTargets, pendingIndices, claimed, *_matcher, _keepSegmentAccesses);
+                WindowPlacer placer(seg, matches, ph, branchTargets, pendingIndices, claimed, analysis.NonEntryWindowStarts, *_matcher, _keepSegmentAccesses);
                 auto placement = placer.Window(item.Index);
                 if (!placement)
                     placement = placer.Island(item.Index);
@@ -457,7 +588,6 @@ void Amd64OnlyConverter::_convertSegment(
                 std::size_t siteLength = match.Length;
                 auto stub = substitution;
                 if (siteLength < Amd64OnlySubstitutionTable::kJmpRel32.Size) {
-                    const X64InstructionDecoder decoder;
                     std::vector<std::span<const std::uint8_t>> sequence{std::span<const std::uint8_t>(seg.data() + match.Offset, match.Length)};
                     std::size_t trailingBytes = 0;
                     for (auto next = item.Index + 1; siteLength < Amd64OnlySubstitutionTable::kJmpRel32.Size; ++next) {
@@ -485,7 +615,7 @@ void Amd64OnlyConverter::_convertSegment(
                         throw CodegenException("AMD-only instruction sequence has no out-of-line lowering", fileOffset);
                     stub = std::move(*relocated);
                 }
-                const auto hit = branchTargets.upper_bound(address);
+                const auto hit = std::upper_bound(branchTargets.begin(), branchTargets.end(), address);
                 if (hit != branchTargets.end() && *hit < address + siteLength)
                     throw CodegenException("Branch enters an AMD-only instruction", ph.Offset + (*hit - ph.MappedAddress));
                 const auto begin = seg.begin() + static_cast<std::ptrdiff_t>(match.Offset);
@@ -500,8 +630,10 @@ void Amd64OnlyConverter::_convertSegment(
                 });
                 replacementLength = stub.StubBody.size();
                 consumed.insert(taken.begin(), taken.end());
-                for (auto k = item.Index; k < matches.size() && matches[k].Offset < match.Offset + siteLength; ++k)
-                    claimed.insert(k);
+                if (item.Index != kNoMatchIndex) {
+                    for (auto k = item.Index; k < matches.size() && matches[k].Offset < match.Offset + siteLength; ++k)
+                        claimed.insert(k);
+                }
             } catch (const CodegenException&) {
                 if (!substitution.Optional)
                     throw;
@@ -519,9 +651,6 @@ void Amd64OnlyConverter::_convertSegment(
         result.Reports.push_back({substitution.InstructionName, fileOffset, match.Length, replacementLength, substitution.Lowering});
     }
 
-    if (seg.size() != segSize)
-        throw CodegenException("Code segment size changed during Intel conversion", ph.Offset);
-    std::copy(seg.begin(), seg.end(), fileBytes.begin() + static_cast<std::ptrdiff_t>(segOffset));
     if (progress) progress(completed + std::uint64_t{3} * segSize, total);
 }
 
