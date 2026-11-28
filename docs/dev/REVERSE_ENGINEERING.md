@@ -72,6 +72,10 @@ buffer did not, so the export still throws. A silent stub is allowed only when i
 
 1. Unwrap the title's decrypted `eboot.bin` with `tools/unwrap_self.py`
    ([GAME_TESTING](GAME_TESTING.md)).
+   Run `python3 tools/inspect_self.py eboot.bin` to read the original metadata. In the JSON, `inner_elf`
+   and `records[].offset` are byte offsets in the SELF. `program_headers[].offset` is the original ELF
+   `p_offset`, and `vaddr` is the virtual address. The program header's `size` and `memory` are its
+   file and memory sizes in bytes.
 2. Relink it with `--registry` ([USAGE](../user/USAGE.md)). `app.registry.json` lists every import of the executable
    with its `nid`, `relocationType`, `targetOffset` (the GOT slot) and `callSites` (virtual addresses). Bundled modules'
    registries have no `callSites`. `tools/nid_names.py --name sceXxx` gives the NID of a name, and `--nid` the name of a
