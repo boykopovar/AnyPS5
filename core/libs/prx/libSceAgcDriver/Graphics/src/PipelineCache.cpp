@@ -67,8 +67,7 @@ std::uint64_t saveReserveBytes(const HostMemory& memory) {
 #ifdef _WIN32
 std::optional<std::size_t> mappedSaveFromBytes() {
     const char* text = std::getenv("APS5_PIPELINE_CACHE_MAPPED_SAVE_MB");
-    if (text == nullptr || *text == '\0') return std::size_t{256} << 20u;
-    if (std::strcmp(text, "off") == 0) return std::nullopt;
+    if (text == nullptr || *text == '\0' || std::strcmp(text, "off") == 0) return std::nullopt;
     return static_cast<std::size_t>(std::strtoull(text, nullptr, 10)) << 20u;
 }
 

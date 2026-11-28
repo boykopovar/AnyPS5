@@ -252,9 +252,9 @@ int RunMapped(bool lowMemory, std::unique_ptr<PipelineCache> cache, const std::f
 }
 
 int main(int argc, char** argv) {
-    Check(argc == 2, "expected startup, now, busy, destructor, worker, read-retry, first-save, external-merge, mapped, mapped-low-memory, mapped-no-slot, mapped-no-protection or mapped-no-helper");
+    Check(argc == 2, "expected startup, now, busy, destructor, worker, read-retry, first-save, external-merge, mapped, mapped-low-memory, mapped-default, mapped-no-slot, mapped-no-protection or mapped-no-helper");
     const std::string_view mode(argv[1]);
-    Check(mode == "startup" || mode == "now" || mode == "busy" || mode == "destructor" || mode == "worker" || mode == "read-retry" || mode == "first-save" || mode == "external-merge" || mode == "mapped" || mode == "mapped-low-memory" || mode == "mapped-no-slot" || mode == "mapped-no-protection" || mode == "mapped-no-helper", "unknown mode");
+    Check(mode == "startup" || mode == "now" || mode == "busy" || mode == "destructor" || mode == "worker" || mode == "read-retry" || mode == "first-save" || mode == "external-merge" || mode == "mapped" || mode == "mapped-low-memory" || mode == "mapped-default" || mode == "mapped-no-slot" || mode == "mapped-no-protection" || mode == "mapped-no-helper", "unknown mode");
 #ifndef _WIN32
     if (mode == "read-retry" || mode.starts_with("mapped")) return 77;
 #endif
@@ -351,6 +351,21 @@ int main(int argc, char** argv) {
     }
 #ifdef _WIN32
     if (mode == "mapped-no-slot" || mode == "mapped-no-protection") return RunUnthrottled(mode == "mapped-no-slot", std::move(cache), file, root, context, properties);
+    if (mode == "mapped-default") {
+        const std::size_t large = (std::size_t{257} << 20u) + 12345u;
+        Grow(cache->Handle(), large);
+        _putenv_s("APS5_PIPELINE_CACHE_MAPPED_SAVE_MB", "");
+        _putenv_s("APS5_PIPELINE_CACHE_SAVE_FREE_MB", "0");
+        const auto mappedBefore = PipelineCache::MappedSaves();
+        cache->SaveNow();
+        Check(std::filesystem::file_size(file) == 24 + large, "the default save did not write the large cache");
+        Check(PipelineCache::MappedSaves() == mappedBefore, "a save was written through a mapped file without APS5_PIPELINE_CACHE_MAPPED_SAVE_MB");
+        Check(!HasTemporary(file.parent_path()), "the default save left a temporary file");
+        cache.reset();
+        Check(caches.empty(), "the default save test leaked Vulkan objects");
+        std::puts("mapped-default: without the switch a 257 MiB cache was saved from a buffer");
+        return 0;
+    }
     if (mode == "mapped" || mode == "mapped-low-memory") return RunMapped(mode == "mapped-low-memory", std::move(cache), file, context, properties);
     if (mode == "read-retry") {
         {
