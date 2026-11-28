@@ -90,9 +90,23 @@ std::vector<std::uint32_t> opcodeSequence(const IrProgram& program) {
     return sequence;
 }
 
+std::vector<std::uint32_t> interpolationModes(const IrProgram& program) {
+    std::vector<std::uint32_t> modes;
+    for (const auto& block : program.Blocks()) {
+        for (const auto* instruction : block->Instructions()) {
+            if (instruction->Opcode() != IrOpcode::FPInterpolateF32) continue;
+            const auto* mode = instruction->Argument(3)->Resolve();
+            if (mode->HasImmediate()) modes.push_back(mode->ImmediateU32());
+        }
+    }
+    return modes;
+}
+
 constexpr std::uint32_t endProgram = 0xbf810000;
 constexpr std::uint32_t getregMode = 0xb9141801;
 constexpr std::uint32_t vAddF32 = 0x06000300;
+constexpr std::uint32_t vMulF32 = 0x10000300;
+constexpr std::uint32_t vFractF32 = 0x7e004000;
 constexpr std::uint32_t vCvtF32I32 = 0x7e000b00;
 constexpr std::uint32_t vCvtF32U32 = 0x7e000d00;
 constexpr std::uint32_t vCvtF32F64 = 0x7e001f00;
@@ -115,12 +129,15 @@ void requireOpcode(std::uint32_t word, RdnaOpcode expected) {
 
 void verifyEncodings() {
     for (const auto& [word, opcode] : {std::pair{vAddF32, RdnaOpcode::VAddF32}, {vCvtF32I32, RdnaOpcode::VCvtF32I32}, {vCvtF32U32, RdnaOpcode::VCvtF32U32},
-                                       {vCvtF16F32, RdnaOpcode::VCvtF16F32}, {vAddF16, RdnaOpcode::VAddF16}, {roundMode(8), RdnaOpcode::SRoundMode}}) {
+                                       {vCvtF16F32, RdnaOpcode::VCvtF16F32}, {vAddF16, RdnaOpcode::VAddF16}, {vMulF32, RdnaOpcode::VMulF32},
+                                       {vFractF32, RdnaOpcode::VFractF32}, {roundMode(8), RdnaOpcode::SRoundMode}}) {
         const std::array<std::uint32_t, 2> code{word, endProgram};
         const auto decoded = RdnaInstructionDecoder{}.Decode(code);
         require(decoded.instructions.front().op == opcode, "test encoding " + std::to_string(word) + " does not decode to the expected opcode");
     }
     requireOpcode(0xba801801, RdnaOpcode::SSetregImm32B32);
+    const std::array<std::uint32_t, 3> fma{0xd54b000eu, 0x041a0b04u, endProgram};
+    require(RdnaInstructionDecoder{}.Decode(fma).instructions.front().op == RdnaOpcode::VFmaF32, "v_fma_f32 encoding does not decode");
     const std::array<std::uint32_t, 2> denorm{denormMode(12), endProgram};
     require(RdnaInstructionDecoder{}.Decode(denorm).instructions.front().op == RdnaOpcode::SDenormMode, "s_denorm_mode encoding does not decode");
     const std::array<std::uint32_t, 2> sgpr{0xb9800001, endProgram};
@@ -350,11 +367,44 @@ void verifyUntouchedFieldsStayAccepted() {
 
 void verifyUnmodelledDirectedRounding() {
     for (std::uint32_t directed = 1; directed < 4; ++directed) {
-        const std::array<std::uint32_t, 3> f32{roundMode(directed), vAddF32, endProgram};
+        const std::array<std::uint32_t, 3> f32{roundMode(directed), vFractF32, endProgram};
         expectRejected(f32, ShaderFloatMode{0xc0}, "does not model directed rounding", 4);
         const std::array<std::uint32_t, 3> f16{roundMode(directed << 2u), vAddF16, endProgram};
         expectRejected(f16, ShaderFloatMode{0xc0}, "does not model directed rounding", 4);
     }
+}
+
+void verifyDirectedF32Arithmetic() {
+    for (const auto instruction : {vAddF32, vMulF32}) {
+        std::vector<std::vector<std::uint32_t>> modesByRounding;
+        for (std::uint32_t rounding = 1; rounding < 4; ++rounding) {
+            const std::array<std::uint32_t, 3> runtime{roundMode(rounding), instruction, endProgram};
+            const std::array<std::uint32_t, 2> declared{instruction, endProgram};
+            const auto lowered = translate(runtime, ShaderFloatMode{0xc0});
+            const auto directed = translate(declared, ShaderFloatMode{0xc0u | rounding});
+            require(opcodeSequence(lowered) == opcodeSequence(directed), "runtime f32 rounding does not match the declared rounding");
+            require(interpolationModes(lowered) == interpolationModes(directed), "runtime f32 rounding emits different interpolation mode constants than the declared rounding");
+            require(opcodeSequence(lowered) != opcodeSequence(translate(declared, ShaderFloatMode{0xc0})), "runtime f32 rounding did not change the arithmetic");
+            require(!interpolationModes(directed).empty(), "declared directed f32 rounding emits no interpolation mode constant");
+            modesByRounding.push_back(interpolationModes(directed));
+        }
+        require(modesByRounding[0] != modesByRounding[1] && modesByRounding[1] != modesByRounding[2] && modesByRounding[0] != modesByRounding[2],
+                "the interpolation mode constants do not follow the declared f32 rounding");
+    }
+    std::vector<std::vector<std::uint32_t>> fmaModesByRounding;
+    for (std::uint32_t rounding = 1; rounding < 4; ++rounding) {
+        const std::array<std::uint32_t, 4> runtime{roundMode(rounding), 0xd54b000eu, 0x041a0b04u, endProgram};
+        const std::array<std::uint32_t, 3> declared{0xd54b000eu, 0x041a0b04u, endProgram};
+        const auto lowered = translate(runtime, ShaderFloatMode{0xc0});
+        const auto directed = translate(declared, ShaderFloatMode{0xc0u | rounding});
+        require(opcodeSequence(lowered) == opcodeSequence(directed), "runtime f32 fma rounding does not match the declared rounding");
+        require(interpolationModes(lowered) == interpolationModes(directed), "runtime f32 fma rounding emits different interpolation mode constants than the declared rounding");
+        require(opcodeSequence(lowered) != opcodeSequence(translate(declared, ShaderFloatMode{0xc0})), "runtime f32 fma rounding did not change the arithmetic");
+        require(!interpolationModes(directed).empty(), "declared directed f32 fma rounding emits no interpolation mode constant");
+        fmaModesByRounding.push_back(interpolationModes(directed));
+    }
+    require(fmaModesByRounding[0] != fmaModesByRounding[1] && fmaModesByRounding[1] != fmaModesByRounding[2] && fmaModesByRounding[0] != fmaModesByRounding[2],
+            "the fma interpolation mode constants do not follow the declared f32 rounding");
 }
 
 void verifyDirectedF16Conversion() {
@@ -486,14 +536,14 @@ int main() {
         const char* name;
         void (*run)();
     };
-    constexpr std::array<Check, 23> checks{{
+    constexpr std::array<Check, 24> checks{{
         {"encodings", verifyEncodings}, {"reads", verifyReads}, {"dynamicWrites", verifyDynamicWrites},
         {"partialOverwrite", verifyDynamicWriteSurvivesPartialOverwrite}, {"immediateWrites", verifyImmediateWrites},
         {"denormalImmediateWrites", verifyDenormalImmediateWrites}, {"roundInstruction", verifyRoundInstruction},
         {"denormInstruction", verifyDenormInstruction}, {"unsupportedReads", verifyUnsupportedReads}, {"branch", verifyBranch},
         {"diamond", verifyDiamond}, {"directed32", verifyRoundingBeforeDirected32Use}, {"restored", verifyRoundingRestoredBeforeUse},
         {"untouchedFields", verifyUntouchedFieldsStayAccepted}, {"unmodelled", verifyUnmodelledDirectedRounding},
-        {"directedF16", verifyDirectedF16Conversion}, {"denormBeforeUse", verifyDenormBeforeUse}, {"denormDiamond", verifyDenormDiamond},
+        {"directedF16", verifyDirectedF16Conversion}, {"directedF32", verifyDirectedF32Arithmetic}, {"denormBeforeUse", verifyDenormBeforeUse}, {"denormDiamond", verifyDenormDiamond},
         {"loop", verifyRoundingInLoop}, {"propagation", verifyRecompilePropagation}, {"denormalAfterRounding", verifyDenormalReadsAfterRoundingWrites},
         {"outputModifierRounding", verifyOutputModifierRounding},
         {"statusBitfields", verifyStatusBitfieldReads},
