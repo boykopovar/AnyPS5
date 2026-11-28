@@ -23732,10 +23732,6 @@ int APS5_VABI _ZNK7WebCore11CachedImage20imageSizeForRendererEPKNS_13RenderEleme
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK7WebCore11EventRegioneqERKS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK7WebCore11FontCascadeeqERKS0_() {
     NotImplemented_nid_no_patch(__func__);
 }

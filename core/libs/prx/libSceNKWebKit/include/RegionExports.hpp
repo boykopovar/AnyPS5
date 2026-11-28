@@ -616,6 +616,13 @@ static_assert(offsetof(Region, m_shape) == 16);
 static_assert(sizeof(Region::Span) == 16);
 static_assert(sizeof(Region::Shape) == 416);
 
+struct EventRegion {
+    Region m_region;
+};
+
+static_assert(sizeof(EventRegion) == 24);
+static_assert(offsetof(EventRegion, m_region) == 0);
+
 }  // namespace WebCore
 
 extern "C" {
@@ -643,6 +650,7 @@ void APS5_VABI _ZN7WebCore6RegionD1Ev(WebCore::Region* self);
 void APS5_VABI _ZN7WebCore6RegionD2Ev(WebCore::Region* self);
 WebCore::Region& APS5_VABI _ZN7WebCore6RegionaSEOS0_(WebCore::Region* self, WebCore::Region&& other);
 WebCore::Region& APS5_VABI _ZN7WebCore6RegionaSERKS0_(WebCore::Region* self, const WebCore::Region& other);
+bool APS5_VABI _ZNK7WebCore11EventRegioneqERKS0_(const WebCore::EventRegion* self, const WebCore::EventRegion& other);
 bool APS5_VABI _ZNK7WebCore6Region10intersectsERKS0_(const WebCore::Region* self, const WebCore::Region& other);
 WTF::Vector<WebCore::IntRect, 1> APS5_VABI _ZNK7WebCore6Region5rectsEv(const WebCore::Region* self);
 bool APS5_VABI _ZNK7WebCore6Region8containsERKNS_8IntPointE(const WebCore::Region* self, const WebCore::IntPoint& point);

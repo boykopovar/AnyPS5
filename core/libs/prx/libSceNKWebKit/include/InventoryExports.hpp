@@ -4446,7 +4446,6 @@ int APS5_VABI _ZNK7WebCore10ScrollView42documentScrollPositionRelativeToViewOrig
 int APS5_VABI _ZNK7WebCore10StorageMap6lengthEv();
 int APS5_VABI _ZNK7WebCore11CSSPageRule12selectorTextEv();
 int APS5_VABI _ZNK7WebCore11CachedImage20imageSizeForRendererEPKNS_13RenderElementENS0_8SizeTypeE();
-int APS5_VABI _ZNK7WebCore11EventRegioneqERKS0_();
 int APS5_VABI _ZNK7WebCore11FontCascadeeqERKS0_();
 int APS5_VABI _ZNK7WebCore11FontChanges18createEditingStyleEv();
 int APS5_VABI _ZNK7WebCore11FrameLoader10isCompleteEv();
