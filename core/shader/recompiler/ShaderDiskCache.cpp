@@ -88,9 +88,9 @@ namespace ShaderRecompiler::ShaderDiskCache {
 
 #if defined(__linux__) && defined(__x86_64__) && defined(__GLIBCXX__)
 static_assert(sizeof(CompiledShaderArtifact) == 296, "CompiledShaderArtifact changed: update the artifact encoder");
-static_assert(sizeof(ShaderInvocation) == 216, "ShaderInvocation changed: update the invocation encoder");
+static_assert(sizeof(ShaderInvocation) == 240, "ShaderInvocation changed: update the invocation encoder");
 #if defined(__cpp_lib_atomic_shared_ptr)
-static_assert(sizeof(RecompileResult) == 568, "RecompileResult changed: update EncodeResult and DecodeResult");
+static_assert(sizeof(RecompileResult) == 592, "RecompileResult changed: update EncodeResult and DecodeResult");
 #endif
 static_assert(sizeof(DescriptorBinding) == 944, "DescriptorBinding changed: update the binding encoder");
 static_assert(sizeof(VertexAttribute) == 32, "VertexAttribute changed: update the attribute encoder");
@@ -735,6 +735,11 @@ void encodeInvocation(Writer& writer, const ShaderInvocation& invocation) {
             rangeWriter.Value(range.second);
         });
     });
+    writer.List(invocation.imageTableRecords, [](Writer& out, const ImageTableRecordLayout& layout) {
+        out.Value(layout.start);
+        out.Value(layout.stride);
+        out.Value(layout.bytes);
+    });
     writer.Value(invocation.imageTableShader);
     writer.Value(invocation.imageTableFaults);
 }
@@ -775,6 +780,11 @@ void decodeInvocation(Reader& reader, ShaderInvocation& invocation) {
             rangeReader.Value(range.first);
             rangeReader.Value(range.second);
         });
+    });
+    reader.List(invocation.imageTableRecords, 16, [](Reader& in, ImageTableRecordLayout& layout) {
+        in.Value(layout.start);
+        in.Value(layout.stride);
+        in.Value(layout.bytes);
     });
     reader.Value(invocation.imageTableShader);
     reader.Value(invocation.imageTableFaults);
