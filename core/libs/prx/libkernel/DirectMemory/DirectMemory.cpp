@@ -83,6 +83,63 @@ static void CommitArenaRange(void* addr, size_t len, DWORD winProt) {
     GuestArena::GuestArenaCommit_nid_postfix(addr, len, winProt, PS5_PAGE_SIZE);
 }
 
+static std::mutex g_pastEndLock;
+static std::map<std::uintptr_t, std::uintptr_t> g_pastEnd;
+static std::atomic<bool> g_pastEndUsed{false};
+
+static void ErasePastEndLocked(std::uintptr_t start, std::uintptr_t end) {
+    auto it = g_pastEnd.lower_bound(start);
+    if (it != g_pastEnd.begin() && std::prev(it)->second > start) --it;
+    while (it != g_pastEnd.end() && it->first < end) {
+        const auto rangeStart = it->first;
+        const auto rangeEnd = it->second;
+        it = g_pastEnd.erase(it);
+        if (rangeStart < start) g_pastEnd.emplace(rangeStart, start);
+        if (rangeEnd > end) it = g_pastEnd.emplace(end, rangeEnd).first;
+    }
+}
+
+static void ErasePastEnd(const void* addr, size_t len) {
+    if (!g_pastEndUsed.load(std::memory_order_acquire)) return;
+    const auto start = reinterpret_cast<std::uintptr_t>(addr);
+    std::lock_guard lock(g_pastEndLock);
+    ErasePastEndLocked(start, start + len);
+}
+
+static std::vector<std::pair<std::uintptr_t, std::uintptr_t>> OutsidePastEnd(std::uintptr_t start, std::uintptr_t end) {
+    std::vector<std::pair<std::uintptr_t, std::uintptr_t>> pieces;
+    if (!g_pastEndUsed.load(std::memory_order_acquire)) {
+        pieces.emplace_back(start, end);
+        return pieces;
+    }
+    std::lock_guard lock(g_pastEndLock);
+    auto cursor = start;
+    auto it = g_pastEnd.lower_bound(start);
+    if (it != g_pastEnd.begin() && std::prev(it)->second > start) --it;
+    for (; it != g_pastEnd.end() && it->first < end; ++it) {
+        if (it->first > cursor) pieces.emplace_back(cursor, it->first);
+        cursor = std::max(cursor, it->second);
+    }
+    if (cursor < end) pieces.emplace_back(cursor, end);
+    return pieces;
+}
+
+void MarkFileMappingPastEnd(void* addr, size_t len) {
+    GuestArena::GuestArenaReset_nid_postfix(addr, len);
+    const auto start = reinterpret_cast<std::uintptr_t>(addr);
+    std::lock_guard lock(g_pastEndLock);
+    ErasePastEndLocked(start, start + len);
+    g_pastEnd.emplace(start, start + len);
+    g_pastEndUsed.store(true, std::memory_order_release);
+}
+
+bool FileMappingPastEnd(std::uintptr_t address) {
+    if (!g_pastEndUsed.load(std::memory_order_acquire)) return false;
+    std::lock_guard lock(g_pastEndLock);
+    const auto it = g_pastEnd.upper_bound(address);
+    return it != g_pastEnd.begin() && std::prev(it)->second > address;
+}
+
 static void* mmap_aligned(size_t len, int prot, size_t alignment, std::uintptr_t hint = 0) {
     auto& arena = KernelArena::Get();
     void* result = GuestArena::GuestArenaAllocateFromHint_nid_postfix(hint, len, alignment);
@@ -121,6 +178,7 @@ static void* mmap(void* addr, size_t len, int prot, int flags, int, int) {
 }
 
 static int munmap(void* addr, size_t len) {
+    ErasePastEnd(addr, len);
     auto& arena = KernelArena::Get();
     if (arena.Contains(addr, len)) GuestArena::GuestArenaReset_nid_postfix(addr, len);
     else if (!VirtualFree(addr, len, MEM_DECOMMIT)) throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "VirtualFree decommit failed");
@@ -175,22 +233,25 @@ static int mprotect(void* addr, size_t len, int prot) {
         ~TrapFence() { GuestWriteWatch::GuestWriteWatchEndHostWrite_nid_postfix(addr, len); }
     } const fence(addr, len);
     GuestArena::GuestArenaSetProtection_nid_postfix(reinterpret_cast<std::uintptr_t>(addr), len, WinProtFromPosix(prot));
-    if (prot != PROT_NONE && KernelArena::Get().Owns(addr, len)) CommitArenaRange(addr, len, WinProtFromPosix(prot));
-    auto cursor = reinterpret_cast<std::uintptr_t>(addr);
-    const auto end = cursor + len;
-    while (cursor < end) {
-        MEMORY_BASIC_INFORMATION memory{};
-        if (VirtualQuery(reinterpret_cast<void*>(cursor), &memory, sizeof(memory)) != sizeof(memory))
-            throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "VirtualQuery failed");
-        const auto regionEnd = std::min(end, reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize);
-        if (memory.State == MEM_COMMIT) {
-            DWORD old;
-            if (!VirtualProtect(reinterpret_cast<void*>(cursor), regionEnd - cursor, WinProtFromPosix(prot), &old))
-                throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "VirtualProtect failed");
-        } else if (prot != PROT_NONE) {
-            throw std::runtime_error("mprotect of uncommitted memory outside the guest arena");
+    const auto start = reinterpret_cast<std::uintptr_t>(addr);
+    for (const auto& [pieceStart, end] : OutsidePastEnd(start, start + len)) {
+        auto* piece = reinterpret_cast<void*>(pieceStart);
+        if (prot != PROT_NONE && KernelArena::Get().Owns(piece, end - pieceStart)) CommitArenaRange(piece, end - pieceStart, WinProtFromPosix(prot));
+        auto cursor = pieceStart;
+        while (cursor < end) {
+            MEMORY_BASIC_INFORMATION memory{};
+            if (VirtualQuery(reinterpret_cast<void*>(cursor), &memory, sizeof(memory)) != sizeof(memory))
+                throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "VirtualQuery failed");
+            const auto regionEnd = std::min(end, reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize);
+            if (memory.State == MEM_COMMIT) {
+                DWORD old;
+                if (!VirtualProtect(reinterpret_cast<void*>(cursor), regionEnd - cursor, WinProtFromPosix(prot), &old))
+                    throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "VirtualProtect failed");
+            } else if (prot != PROT_NONE) {
+                throw std::runtime_error("mprotect of uncommitted memory outside the guest arena");
+            }
+            cursor = regionEnd;
         }
-        cursor = regionEnd;
     }
     return 0;
 }
@@ -1051,6 +1112,8 @@ bool RemapFixedIntoRegistered(GuestAllocations::Mutation& mutation, void* addr, 
         const auto address = reinterpret_cast<std::uintptr_t>(addr);
 #if defined(__linux__)
         ForgetFlexibleFiles(address, address + len);
+#elif defined(_WIN32)
+        ErasePastEnd(addr, len);
 #endif
         std::lock_guard lock(g_directLock);
         if (physStart >= 0) {
@@ -1559,42 +1622,49 @@ int DoMapFileBacked_nid_no_patch(void** addr, size_t len, int prot, int flags, i
     LARGE_INTEGER fileBytes{};
     if (!GetFileSizeEx(file, &fileBytes)) throw std::system_error(EBADF, std::generic_category(), "map file: read the file size");
     const auto fileEnd = static_cast<std::uint64_t>(fileBytes.QuadPart);
-    if (offset + len >= fileEnd + PS5_PAGE_SIZE) throw std::system_error(ENOTSUP, std::generic_category(), "map file: a shared mapping of a whole page past the end of the file is not implemented on Windows");
+    const auto filePages = offset < fileEnd ? static_cast<std::size_t>(std::min<std::uint64_t>(len, (fileEnd - offset + PS5_PAGE_SIZE - 1) & ~static_cast<std::uint64_t>(PS5_PAGE_SIZE - 1))) : std::size_t{0};
     const int access = WindowsDescriptorAccess_nid_no_patch(file, descriptor, "mmap");
     if (access == 1) throw std::system_error(ENOTSUP, std::generic_category(), "map file: a shared mapping of a write-only descriptor is not implemented on Windows");
     if (access == 0 && (prot & PROT_WRITE) != 0) throw std::system_error(EACCES, std::generic_category(), "map file: a writable shared mapping of a read-only descriptor");
     const bool execute = (prot & PROT_EXEC) != 0;
     const DWORD viewProtection = execute ? (access == 2 ? PAGE_EXECUTE_READWRITE : PAGE_EXECUTE_READ) : (access == 2 ? PAGE_READWRITE : PAGE_READONLY);
-    const HANDLE source = execute ? ReOpenFile(file, GENERIC_READ | GENERIC_EXECUTE | (access == 2 ? GENERIC_WRITE : 0), FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0) : file;
-    if (source == INVALID_HANDLE_VALUE) {
-        const DWORD error = GetLastError();
-        throw std::system_error(error == ERROR_ACCESS_DENIED ? EACCES : EIO, std::generic_category(), "map file: reopen the file with execute access");
+    HANDLE section = nullptr;
+    if (filePages != 0) {
+        const HANDLE source = execute ? ReOpenFile(file, GENERIC_READ | GENERIC_EXECUTE | (access == 2 ? GENERIC_WRITE : 0), FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0) : file;
+        if (source == INVALID_HANDLE_VALUE) {
+            const DWORD error = GetLastError();
+            throw std::system_error(error == ERROR_ACCESS_DENIED ? EACCES : EIO, std::generic_category(), "map file: reopen the file with execute access");
+        }
+        section = CreateFileMappingW(source, nullptr, viewProtection, 0, 0, nullptr);
+        const DWORD sectionError = GetLastError();
+        if (source != file) CloseHandle(source);
+        if (section == nullptr) throw std::system_error(sectionError == ERROR_ACCESS_DENIED ? EACCES : EIO, std::generic_category(), "map file: create the file section");
     }
-    const HANDLE section = CreateFileMappingW(source, nullptr, viewProtection, 0, 0, nullptr);
-    const DWORD sectionError = GetLastError();
-    if (source != file) CloseHandle(source);
-    if (section == nullptr) throw std::system_error(sectionError == ERROR_ACCESS_DENIED ? EACCES : EIO, std::generic_category(), "map file: create the file section");
+    const auto closeSection = [&] {
+        if (section == nullptr) return;
+        GuestArena::GuestArenaForgetSection_nid_postfix(section);
+        CloseHandle(section);
+    };
     GuestAllocations::Mutation mutation;
     const int placementFlags = flags & (GuestMapFixedFlag | 0x80 | 0x400000);
     flags = PlaceHintInReservation(*addr, len, placementFlags);
     void* mapped = nullptr;
     try {
         if (FixedNoOverwriteConflict(mutation, *addr, len, flags)) {
-            CloseHandle(section);
+            closeSection();
             return SCE_KERNEL_ERROR_ENOMEM;
         }
         ReplaceFixedOverlap(mutation, *addr, len, flags);
         mapped = MapPlaced(*addr, len, PROT_NONE, flags, alignment);
-        GuestArena::GuestArenaMapFile_nid_postfix(mapped, len, section, offset, WinProtFromPosix(LinuxProtFromSce(prot)), viewProtection, static_cast<std::size_t>(std::min<std::uint64_t>(len, fileEnd - offset)));
+        if (filePages != 0) GuestArena::GuestArenaMapFile_nid_postfix(mapped, filePages, section, offset, WinProtFromPosix(LinuxProtFromSce(prot)), viewProtection, static_cast<std::size_t>(std::min<std::uint64_t>(filePages, fileEnd - offset)));
+        if (filePages != len) MarkFileMappingPastEnd(static_cast<unsigned char*>(mapped) + filePages, len - filePages);
         mutation.Add(mapped, len, (prot & 3) != 0, (prot & 2) != 0, false);
     } catch (...) {
         if (mapped != nullptr) Unmap(mapped, len);
-        GuestArena::GuestArenaForgetSection_nid_postfix(section);
-        CloseHandle(section);
+        closeSection();
         throw;
     }
-    GuestArena::GuestArenaForgetSection_nid_postfix(section);
-    CloseHandle(section);
+    closeSection();
     *addr = mapped;
     EraseReservations(mapped, len);
     RecordProtection(mapped, len, prot);

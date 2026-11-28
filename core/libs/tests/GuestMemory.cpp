@@ -4170,10 +4170,23 @@ static void CheckRegularFileMapping() {
     for (std::size_t at = page + tail; at < page + 2 * hostPage; ++at) Require(rounded[at] == 0);
 #ifdef _WIN32
     for (std::size_t at = page + 2 * hostPage; at < page * 2; ++at) Require(rounded[at] == 0);
-    *__error_nid_postfix() = 0;
-    Require(mmap_nid_postfix(nullptr, page * 3, 1, 0x1, partial, 0) == reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1)) && *__error_nid_postfix() == 45);
 #endif
     Require(munmap_nid_postfix(const_cast<unsigned char*>(rounded), page * 2) == 0);
+    for (const int kind : {0x1, 0x2}) {
+        auto* longer = static_cast<volatile unsigned char*>(mmap_nid_postfix(nullptr, page * 3, 1, kind, partial, 0));
+        Require(longer != reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1)));
+        Require(longer[5] == 0x77 && longer[page + tail - 1] == 0x22 && longer[page + tail] == 0);
+        Require(mprotect_nid_postfix(const_cast<unsigned char*>(longer), page * 3, kind == 0x1 ? 1 : 3) == 0);
+#ifdef _WIN32
+        MEMORY_BASIC_INFORMATION pastEnd{};
+        Require(VirtualQuery(const_cast<unsigned char*>(longer) + page * 2, &pastEnd, sizeof(pastEnd)) == sizeof(pastEnd));
+        Require(pastEnd.State == MEM_RESERVE && reinterpret_cast<std::uintptr_t>(pastEnd.BaseAddress) + pastEnd.RegionSize >= reinterpret_cast<std::uintptr_t>(longer) + page * 3);
+#endif
+        Require(munmap_nid_postfix(const_cast<unsigned char*>(longer), page * 3) == 0);
+    }
+    auto* beyond = mmap_nid_postfix(nullptr, page, 1, 0x1, partial, page * 4);
+    Require(beyond != reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1)));
+    Require(munmap_nid_postfix(beyond, page) == 0);
     Require(sceKernelClose(partial) == 0);
     Require(std::filesystem::file_size(path) == page + tail);
     const int partialWritable = sceKernelOpen(path.string().c_str(), SCE_KERNEL_O_RDWR, 0);

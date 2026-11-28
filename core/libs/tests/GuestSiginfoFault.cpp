@@ -2,12 +2,18 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/AsmMacros.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libkernel/File/include/FileFlags.hpp"
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <string>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -205,6 +211,29 @@ static void TestReadNoAccess() {
     Require(calls.load() == 1);
 }
 
+static void TestReadPastEndOfFile() {
+    constexpr std::size_t guestPage = 0x4000;
+    const auto path = std::filesystem::path("anyps5-siginfo-past-end-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".bin");
+    {
+        std::ofstream stream(path, std::ios::binary);
+        stream.write("past", 4);
+    }
+    const int fd = sceKernelOpen(path.string().c_str(), SCE_KERNEL_O_RDWR, 0);
+    Require(fd >= 0);
+    for (const int kind : {0x1, 0x2}) {
+        void* mapped = mmap_nid_postfix(nullptr, guestPage * 2, 3, kind, fd, 0);
+        Require(mapped != reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1)));
+        const auto address = reinterpret_cast<std::uintptr_t>(mapped) + guestPage + 0x10;
+        calls.store(0);
+        expected = {SegvAccerr, address, reinterpret_cast<std::uintptr_t>(&SiginfoTestReadSite), reinterpret_cast<std::uintptr_t>(&SiginfoTestReadResume), 0, false};
+        Require(SiginfoTestRead(address) == Resumed);
+        Require(calls.load() == 1);
+        Require(munmap_nid_postfix(mapped, guestPage * 2) == 0);
+    }
+    Require(sceKernelClose(fd) == 0);
+    Require(std::filesystem::remove(path));
+}
+
 static void TestContextMask() {
     std::uint32_t original[4]{};
     Require(sigprocmask_nid_postfix(GuestSigblock, nullptr, original) == 0);
@@ -224,6 +253,7 @@ int main() {
     TestWriteToReadOnly();
     TestWriteToUntouchedReadOnly();
     TestReadNoAccess();
+    TestReadPastEndOfFile();
     TestContextMask();
     GuestSigaction reset{};
     Require(sigaction_nid_postfix(GuestSigsegv, &reset, nullptr) == 0);

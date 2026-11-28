@@ -65,5 +65,9 @@ void ForgetJitSharedMemory(int descriptor);
 void DuplicateJitSharedMemory(int from, int to);
 bool IsJitSharedMemory(int descriptor);
 void GuestPageTableUsage(std::uint64_t granularity, std::uint64_t* cpu_entries, std::uint64_t* gpu_entries);
+#ifdef _WIN32
+void MarkFileMappingPastEnd(void* addr, size_t len);
+bool FileMappingPastEnd(std::uintptr_t address);
+#endif
 
 #endif

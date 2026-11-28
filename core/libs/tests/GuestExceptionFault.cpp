@@ -3,19 +3,24 @@
 #include "prx/libc/include/general/AsmMacros.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libkernel/File/include/FileFlags.hpp"
 #include <atomic>
+#include <chrono>
 #include <climits>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <thread>
+#include <vector>
 #ifdef _WIN32
 #include <windows.h>
 #else
-#include <chrono>
 #include <csignal>
 #include <spawn.h>
 #include <sys/mman.h>
@@ -418,6 +423,61 @@ static void TestNonCanonical() {
     Require(calls.load() == 1);
 }
 
+static void TestFilePastEnd() {
+    constexpr std::size_t guestPage = 0x4000;
+    constexpr std::size_t fileBytes = 0x100;
+    const auto failed = reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1));
+    const auto path = std::filesystem::path("anyps5-fault-past-end-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".bin");
+    {
+        std::ofstream stream(path, std::ios::binary);
+        const std::vector<char> seed(fileBytes, 0x5a);
+        stream.write(seed.data(), static_cast<std::streamsize>(seed.size()));
+    }
+    const int fd = sceKernelOpen(path.string().c_str(), SCE_KERNEL_O_RDWR, 0);
+    Require(fd >= 0);
+    for (const int kind : {0x1, 0x2}) {
+        auto* mapped = static_cast<unsigned char*>(mmap_nid_postfix(nullptr, guestPage * 3, 3, kind, fd, 0));
+        Require(mapped != failed);
+        const auto base = reinterpret_cast<std::uintptr_t>(mapped);
+        Require(FaultTestRead(base) == 0x5a5a5a5a5a5a5a5aULL);
+        Require(FaultTestRead(base + 0x1000 - 8) == 0);
+        for (const auto offset : {guestPage, guestPage * 2 + 0x1238}) {
+            Arm(Mode::Resume, {GUEST_SIGSEGV, T_PAGEFLT, base + offset, Address(FaultTestReadSite), Address(FaultTestReadResume)});
+            Require(FaultTestRead(base + offset) == Resumed);
+            Require(calls.load() == 1);
+            Require((observedErr & (PGEX_U | PGEX_W | PGEX_P)) == PGEX_U);
+            Arm(Mode::Resume, {GUEST_SIGSEGV, T_PAGEFLT, base + offset, Address(FaultTestWriteSite), Address(FaultTestWriteResume)});
+            Require(FaultTestWrite(base + offset, 1) == Resumed);
+            Require(calls.load() == 1);
+            Require((observedErr & (PGEX_U | PGEX_W | PGEX_P)) == (PGEX_U | PGEX_W));
+        }
+        Require(mprotect_nid_postfix(mapped, guestPage * 3, 1) == 0);
+        Require(mprotect_nid_postfix(mapped, guestPage * 3, 3) == 0);
+        Arm(Mode::Resume, {GUEST_SIGSEGV, T_PAGEFLT, base + guestPage * 2, Address(FaultTestWriteSite), Address(FaultTestWriteResume)});
+        Require(FaultTestWrite(base + guestPage * 2, 2) == Resumed);
+        Require(calls.load() == 1);
+        Require(FaultTestWrite(base + 8, 0x1111) == 0 && FaultTestRead(base + 8) == 0x1111);
+        Require(munmap_nid_postfix(mapped, guestPage * 3) == 0);
+        Require(mmap_nid_postfix(mapped, guestPage * 3, 3, 0x1000 | 0x10 | 0x2, -1, 0) == mapped);
+        Require(FaultTestWrite(base + guestPage * 2, 3) == 0 && FaultTestRead(base + guestPage * 2) == 3);
+        Require(mprotect_nid_postfix(mapped, guestPage * 3, 0) == 0);
+        Arm(Mode::Resume, {GUEST_SIGSEGV, T_PAGEFLT, base + guestPage * 2, Address(FaultTestReadSite), Address(FaultTestReadResume)});
+        Require(FaultTestRead(base + guestPage * 2) == Resumed);
+        Require(calls.load() == 1);
+        Require(munmap_nid_postfix(mapped, guestPage * 3) == 0);
+    }
+    auto* beyond = static_cast<unsigned char*>(mmap_nid_postfix(nullptr, guestPage, 1, 0x1, fd, guestPage * 2));
+    Require(beyond != failed);
+    const auto beyondBase = reinterpret_cast<std::uintptr_t>(beyond);
+    Arm(Mode::Resume, {GUEST_SIGSEGV, T_PAGEFLT, beyondBase + 16, Address(FaultTestReadSite), Address(FaultTestReadResume)});
+    Require(FaultTestRead(beyondBase + 16) == Resumed);
+    Require(calls.load() == 1);
+    Require(munmap_nid_postfix(beyond, guestPage) == 0);
+    Require(sceKernelClose(fd) == 0);
+    std::error_code removed;
+    std::filesystem::remove(path, removed);
+}
+
 static void TestRegisters() {
     RegisterState state{};
     for (std::size_t i = 0; i < sizeof(state.vectorIn); ++i) state.vectorIn[i] = static_cast<std::uint8_t>(0xa0 + i);
@@ -626,6 +686,7 @@ int main(int argc, char** argv) {
     TestDivide();
     TestSimdDivide();
     TestNonCanonical();
+    TestFilePastEnd();
     TestRegisters();
     TestNested();
     TestJumpOut();
