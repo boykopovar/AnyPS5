@@ -4,6 +4,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <iterator>
 #include <map>
 #include <mutex>
@@ -20,6 +21,7 @@ constexpr uint64_t kPoolBytes = static_cast<uint64_t>(DIRECT_MEMORY_SIZE);
 constexpr size_t kNumPages = static_cast<size_t>(kPoolBytes / kPage);
 
 static_assert(kPage != 0 && (kPage & (kPage - 1)) == 0, "PS5_PAGE_SIZE must be a power of two");
+static_assert(sizeof(bool) == 1, "the free-page search scans the page flags as bytes");
 static_assert(kPoolBytes % kPage == 0, "DIRECT_MEMORY_SIZE must be a multiple of PS5_PAGE_SIZE");
 
 bool RoundUp(uint64_t v, uint64_t a, uint64_t& out) {
@@ -246,7 +248,8 @@ private:
     }
 
     size_t _nextFreePage(size_t first, size_t limit) const {
-        return static_cast<size_t>(std::find(_used + first, _used + limit, false) - _used);
+        const void* hit = std::memchr(_used + first, 0, limit - first);
+        return hit != nullptr ? static_cast<size_t>(static_cast<const bool*>(hit) - _used) : limit;
     }
 
     bool _allUsed(size_t first, size_t count) const {

@@ -126,6 +126,21 @@ void alloc_exhaustion_and_gap_reuse() {
     DirectMemoryFree(0, kPool);
 }
 
+void alloc_past_a_long_used_run() {
+    const uint64_t prefix = 96 * 1024 * kPage;
+    int64_t a, b, c, d;
+    CHECK(DirectMemoryAlloc(0, kPool, prefix, 0, 1, &a) == 0 && a == 0);
+    CHECK(DirectMemoryAlloc(0, kPool, kPage, 0, 1, &b) == 0 && b == static_cast<int64_t>(prefix));
+    CHECK(DirectMemoryAlloc(0, kPool, prefix, 0, 1, &c) == 0 && c == static_cast<int64_t>(prefix + kPage));
+    DirectMemoryFree(b, kPage);
+    CHECK(DirectMemoryAlloc(0, kPool, 2 * kPage, 0, 1, &d) == 0 && d == static_cast<int64_t>(2 * prefix + kPage));
+    CHECK(DirectMemoryAlloc(0, static_cast<int64_t>(prefix), kPage, 0, 1, &d) == SCE_KERNEL_ERROR_EAGAIN);
+    CHECK(DirectMemoryAlloc(0, static_cast<int64_t>(2 * prefix + kPage), 2 * kPage, 0, 1, &d) == SCE_KERNEL_ERROR_EAGAIN);
+    CHECK(DirectMemoryAlloc(0, kPool, kPage, 0, 1, &d) == 0 && d == static_cast<int64_t>(prefix));
+    DirectMemoryFree(0, kPool);
+    CHECK(PoolEmpty());
+}
+
 void free_out_of_range_is_ignored() {
     int64_t a;
     CHECK(DirectMemoryAlloc(0, kPool, 4 * kPage, 0, 7, &a) == 0 && a == 0);
@@ -467,6 +482,7 @@ const Case kCases[] = {
     {"alloc_rounding_alignment_and_clamping", alloc_rounding_alignment_and_clamping},
     {"alloc_non_power_of_two_alignment", alloc_non_power_of_two_alignment},
     {"alloc_exhaustion_and_gap_reuse", alloc_exhaustion_and_gap_reuse},
+    {"alloc_past_a_long_used_run", alloc_past_a_long_used_run},
     {"free_out_of_range_is_ignored", free_out_of_range_is_ignored},
     {"retype_out_of_range_is_ignored", retype_out_of_range_is_ignored},
     {"free_partial_and_spanning", free_partial_and_spanning},
