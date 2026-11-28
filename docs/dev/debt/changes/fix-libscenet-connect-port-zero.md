@@ -1,0 +1,5 @@
+# libkernel
+
+## change and on a connected datagram socket it disconnects first
+
+- [connect](../../../core/libs/prx/libkernel/Socket/src/Udp.cpp) (libkernel) - `connect` to port 0 on an `AF_INET` or `AF_INET6` stream or datagram socket fails with `EADDRNOTAVAIL` (49), and on a connected datagram socket it disconnects first, as on a PS5 (firmware 13.60) and in FreeBSD 11.4's `soconnect()`. A connected stream socket keeps its host `EISCONN` answer. Known gap: `sendto` and `sendmsg` to port 0 on an `AF_INET` datagram socket fail with 49 (measured for an unbound socket) unless the socket is bound to a specific address and port and the destination is neither `INADDR_ANY` nor `INADDR_BROADCAST`, which is the path where `udp_output()` skips `in_pcbconnect_setup()` and FreeBSD sends to port 0. There the call returns the length without the host, as Linux's `udp_sendmsg` refuses port 0 with `EINVAL`; an `AF_INET6` socket still goes to the host. [sceNetConnect](../../../core/libs/prx/libSceNet/Export.cpp) does the same
