@@ -842,6 +842,7 @@ set(ICU_RECOVERED_SOURCES
     LocaleDisplayNames.cpp
     NumberFormat.cpp
     NumberFormatter.cpp
+    NumberFormatterBackend.cpp
     NumberingSystem.cpp
     PluralRules.cpp
     RelativeDateTimeFormatter.cpp
