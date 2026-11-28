@@ -2,6 +2,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/SyncTrace.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -17,8 +18,13 @@ KernelSemaPrivate::KernelSemaPrivate(std::int32_t initCount, std::int32_t maxCou
 }
 
 static bool TraceSync() {
- static const bool enabled = std::getenv("APS5_TRACE_SYNC") != nullptr;
+ static const bool enabled = std::getenv("APS5_TRACE_SYNC") != nullptr && SyncTraceRingMode_nid_no_patch() == 0;
  return enabled;
+}
+
+static bool TraceRing() {
+ static const unsigned mode = SyncTraceRingMode_nid_no_patch();
+ return mode != 0;
 }
 
 extern "C" {
@@ -46,6 +52,7 @@ int APS5_VABI sceKernelCreateSema(KernelSema* sem, const char* name, uint32_t at
   if (!GuestCopyOut_nid_no_patch(sem, &handle, sizeof(handle))) return SCE_KERNEL_ERROR_EFAULT;
   semaphore.release();
   if (TraceSync()) std::fprintf(stderr, "[sema] create %p '%s' attr=0x%x init=%d max=%d\n", static_cast<void*>(handle), nameCopy.c_str(), attr, init, max);
+  if (TraceRing()) SyncTraceRecord_nid_no_patch(SyncTraceCreate, handle, nameCopy.c_str(), static_cast<std::uint32_t>(init) | (static_cast<std::uint64_t>(attr) << 32), static_cast<std::uint64_t>(static_cast<std::uint32_t>(max)));
  } catch (const std::bad_alloc&) {
   return SCE_KERNEL_ERROR_ENOMEM;
  }
@@ -61,10 +68,13 @@ int APS5_VABI sceKernelPollSema(KernelSema sem, int need) {
  }
 
  std::lock_guard<std::mutex> lock(sem->mutex);
+ const int have = sem->tokenCount;
  if (sem->tokenCount < need) {
+  if (TraceRing()) SyncTraceRecord_nid_no_patch(SyncTracePoll, sem, sem->name.c_str(), static_cast<std::uint32_t>(need) | (static_cast<std::uint64_t>(static_cast<std::uint32_t>(have)) << 32), SCE_KERNEL_ERROR_EBUSY);
   return SCE_KERNEL_ERROR_EBUSY;
  }
  sem->tokenCount -= need;
+ if (TraceRing()) SyncTraceRecord_nid_no_patch(SyncTracePoll, sem, sem->name.c_str(), static_cast<std::uint32_t>(need) | (static_cast<std::uint64_t>(static_cast<std::uint32_t>(have)) << 32), KERNEL_SEMA_OK);
  return KERNEL_SEMA_OK;
 }
 
@@ -83,6 +93,7 @@ int APS5_VABI sceKernelSignalSema(KernelSema sem, int count) {
  const auto before = sem->tokenCount;
  sem->tokenCount += count;
  if (TraceSync()) std::fprintf(stderr, "[sema] signal %p '%s' count=%d have=%d->%d\n", static_cast<void*>(sem), sem->name.c_str(), count, before, sem->tokenCount);
+ if (TraceRing()) SyncTraceRecord_nid_no_patch(SyncTraceSignal, sem, sem->name.c_str(), static_cast<std::uint32_t>(count), static_cast<std::uint32_t>(before) | (static_cast<std::uint64_t>(static_cast<std::uint32_t>(sem->tokenCount)) << 32));
  for (auto it = sem->queue.begin(); it != sem->queue.end();) {
   KernelSemaWaiter* waiter = *it;
   if (waiter->need > sem->tokenCount) break;
@@ -105,8 +116,10 @@ int APS5_VABI sceKernelWaitSema(KernelSema sem, int need, KernelUseconds* time) 
  std::unique_lock<std::mutex> lock(sem->mutex);
  const void* caller = __builtin_return_address(0);
  if (TraceSync()) std::fprintf(stderr, "[sema] wait begin %p '%s' need=%d have=%d timeout=%lld caller=%p\n", static_cast<void*>(sem), sem->name.c_str(), need, sem->tokenCount, time ? static_cast<long long>(*time) : -1LL, caller);
+ if (TraceRing()) SyncTraceRecord_nid_no_patch(SyncTraceWaitBegin, sem, sem->name.c_str(), static_cast<std::uint32_t>(need) | (static_cast<std::uint64_t>(static_cast<std::uint32_t>(sem->tokenCount)) << 32), time != nullptr ? static_cast<std::uint64_t>(*time) : ~std::uint64_t{0});
  const auto traceSyncWaitEnd = [&](int result) {
   if (TraceSync()) std::fprintf(stderr, "[sema] wait end %p '%s' result=0x%x have=%d caller=%p\n", static_cast<void*>(sem), sem->name.c_str(), result, sem->tokenCount, caller);
+  if (TraceRing()) SyncTraceRecord_nid_no_patch(SyncTraceWaitEnd, sem, sem->name.c_str(), static_cast<std::uint32_t>(result), static_cast<std::uint64_t>(static_cast<std::uint32_t>(sem->tokenCount)));
  };
  if (sem->deleted) {
   traceSyncWaitEnd(SCE_KERNEL_ERROR_EACCES);
@@ -191,6 +204,7 @@ int APS5_VABI sceKernelCancelSema(KernelSema sem, int count, int* threads) {
  sem->queue.clear();
  ++sem->cancelGeneration;
  sem->condition.NotifyAll();
+ if (TraceRing()) SyncTraceRecord_nid_no_patch(SyncTraceCancel, sem, sem->name.c_str(), static_cast<std::uint64_t>(static_cast<std::int64_t>(count)), KERNEL_SEMA_OK);
  return KERNEL_SEMA_OK;
 }
 
@@ -201,6 +215,7 @@ int APS5_VABI sceKernelDeleteSema(KernelSema sem) {
 
  std::unique_lock<std::mutex> lock(sem->mutex);
  sem->deleted = true;
+ if (TraceRing()) SyncTraceRecord_nid_no_patch(SyncTraceDelete, sem, sem->name.c_str(), 0, 0);
  sem->condition.NotifyAll();
  sem->condition.Wait(lock, [&] { return sem->waiterCount == 0; });
  lock.unlock();

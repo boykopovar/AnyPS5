@@ -3,6 +3,7 @@
 #include <tlhelp32.h>
 #include "prx/libc/include/CallTrace.hpp"
 #include "prx/libc/include/FailureReport.hpp"
+#include "prx/libc/include/SyncTrace.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/HostFault.hpp"
 #include "prx/libc/include/LogFile.hpp"
@@ -491,6 +492,7 @@ LONG WINAPI ReportCrash(EXCEPTION_POINTERS* info) {
     ReportCallTrace();
     std::fflush(stderr);
     ReportAllThreads();
+    SyncTraceReportRing_nid_no_patch();
     LibcRunFailureReports_nid_no_patch();
     std::fflush(stderr);
     return EXCEPTION_CONTINUE_SEARCH;
@@ -669,6 +671,7 @@ void ReportBacktrace(const char* what, bool reportThreads) {
     }
     ReportStackCandidates(reinterpret_cast<std::uint64_t>(__builtin_frame_address(0)), 32, 0x4000);
     ReportCallTrace();
+    SyncTraceReportRing_nid_no_patch();
     if (reportThreads) ReportAllThreads();
     std::fflush(stderr);
 }
