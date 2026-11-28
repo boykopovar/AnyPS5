@@ -489,8 +489,8 @@ def build_parser():
                 "on the first-parent history."),
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--repo", type=Path, default=Path.cwd(), help="Git repository to bisect")
-    parser.add_argument("--good", required=True, help="known-good commit")
-    parser.add_argument("--bad", required=True, help="known-bad commit")
+    parser.add_argument("--good", required=True, help="known-good commit (use --good=-name when it begins with -)")
+    parser.add_argument("--bad", required=True, help="known-bad commit (use --bad=-name when it begins with -)")
     parser.add_argument("--recipe", required=True, type=Path, help="JSON build and title-run recipe")
     parser.add_argument("--output", type=Path, help="write the measured bracket as JSON")
     parser.add_argument("--checkpoint", type=Path, help="save completed measurements to this file")

@@ -493,6 +493,8 @@ class CliParserTests(unittest.TestCase):
     def test_help_explains_recipe_safety_and_bisect_assumptions(self):
         help_text = performance_bisect.build_parser().format_help()
         self.assertIn("--good", help_text)
+        self.assertIn("--good=-name", help_text)
+        self.assertIn("--bad=-name", help_text)
         self.assertIn("without a shell", help_text)
         self.assertIn("monotonic regression", help_text)
         self.assertIn("max_spread_pct", help_text)
