@@ -24,6 +24,9 @@ struct KeyDomain {
     std::uint32_t offset = 0;
     std::uint32_t stride = 4;
     bool value = false;
+    bool child = false;
+    std::uint32_t shift = 0;
+    std::uint32_t mask = 0xffffffffu;
 
     bool operator==(const KeyDomain& other) const = default;
 };
