@@ -368,7 +368,30 @@ static void TestWeekNumbers() {
     Require(tmYearZeroWeek0.tm_yday == 0);
     Require(tmYearZeroWeek0.tm_wday == 6);
 
+    GuestTm tmU53Valid{};
+    rem = strptime_nid_postfix("2023-53-0", "%Y-%U-%w", &tmU53Valid);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmU53Valid.tm_year == 123);
+    Require(tmU53Valid.tm_mon == 11);
+    Require(tmU53Valid.tm_mday == 31);
+    Require(tmU53Valid.tm_yday == 364);
+    Require(tmU53Valid.tm_wday == 0);
+
+    GuestTm tmUWeek0NoWday{};
+    rem = strptime_nid_postfix("2024-00", "%Y-%U", &tmUWeek0NoWday);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmUWeek0NoWday.tm_year == 124);
+    Require(tmUWeek0NoWday.tm_mon == 0);
+    Require(tmUWeek0NoWday.tm_mday == 1);
+    Require(tmUWeek0NoWday.tm_yday == 0);
+    Require(tmUWeek0NoWday.tm_wday == 1);
+
     Require(strptime_nid_postfix("2023-00-0", "%Y-%U-%w", &tmU) == nullptr);
+    Require(strptime_nid_postfix("2023-00", "%Y-%U", &tmU) == nullptr);
+    Require(strptime_nid_postfix("2023-53-1", "%Y-%U-%w", &tmU) == nullptr);
+    Require(strptime_nid_postfix("2026-53", "%Y-%U", &tmU) == nullptr);
+    Require(strptime_nid_postfix("2026-53-0", "%Y-%U-%w", &tmU) == nullptr);
+    Require(strptime_nid_postfix("2024-53-3", "%Y-%W-%u", &tmW) == nullptr);
     Require(strptime_nid_postfix("2026-00-1", "%Y-%U-%w", &tmU) == nullptr);
     Require(strptime_nid_postfix("2024-00-1", "%Y-%W-%u", &tmW) == nullptr);
     Require(strptime_nid_postfix("54", "%U", &tmU) == nullptr);
@@ -432,6 +455,18 @@ static void TestIsoWeekDate() {
     Require(tmYearZeroIso.tm_yday == 2);
     Require(tmYearZeroIso.tm_wday == 1);
 
+    GuestTm tmIsoWeek53Valid{};
+    rem = strptime_nid_postfix("2026-W53-4", "%G-W%V-%u", &tmIsoWeek53Valid);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmIsoWeek53Valid.tm_year == 126);
+    Require(tmIsoWeek53Valid.tm_mon == 11);
+    Require(tmIsoWeek53Valid.tm_mday == 31);
+    Require(tmIsoWeek53Valid.tm_yday == 364);
+    Require(tmIsoWeek53Valid.tm_wday == 4);
+
+    Require(strptime_nid_postfix("2021-W53-1", "%G-W%V-%u", &tmPrevYear) == nullptr);
+    Require(strptime_nid_postfix("2019-W53", "%G-W%V", &tmPrevYear) == nullptr);
+    Require(strptime_nid_postfix("0000-W53-1", "%G-W%V-%u", &tmPrevYear) == nullptr);
     Require(strptime_nid_postfix("2026-W00-1", "%G-W%V-%u", &tmPrevYear) == nullptr);
     Require(strptime_nid_postfix("2026-W54-1", "%G-W%V-%u", &tmPrevYear) == nullptr);
 }

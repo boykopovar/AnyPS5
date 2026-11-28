@@ -133,6 +133,11 @@ int CalculateDayOfWeek(std::int64_t y, int m, int d) {
     return static_cast<int>((y + y / 4 - y / 100 + y / 400 + t[m - 1] + d) % 7);
 }
 
+int IsoWeeksInYear(std::int64_t isoYear) {
+    const int jan1IsoWday = (CalculateDayOfWeek(isoYear, 1, 1) + 6) % 7;
+    return (jan1IsoWday == 3 || (jan1IsoWday == 2 && IsLeapYear(isoYear))) ? 53 : 52;
+}
+
 std::int64_t DaysFromJan1(int year) {
     const std::int64_t y = static_cast<std::int64_t>(year) - 1;
     const std::int64_t era = (y >= 0 ? y : y - 399) / 400;
@@ -537,7 +542,13 @@ const char* ParseInternal(const char* buf, const char* format, GuestTm& tm, Pars
                 daysOffset = 0;
                 tmpwday = fwo;
             }
-            if (!ApplyDaysOffset(fullYear, daysOffset, tmpwday, tm)) {
+            const int daysInYear = IsLeapYear(fullYear) ? 366 : 365;
+            if (daysOffset >= daysInYear || !ApplyDaysOffset(fullYear, daysOffset, tmpwday, tm)) {
+                return nullptr;
+            }
+            const int resolvedWeekDay = (state.weekBase == 0 ? tm.tm_wday : (tm.tm_wday + 6) % 7);
+            const int resolvedWeek = (tm.tm_yday + 7 - resolvedWeekDay) / 7;
+            if (tm.tm_year + 1900 != fullYear || resolvedWeek != state.weekNumber) {
                 return nullptr;
             }
         } else if (state.isoWeek > 0 && !state.hasYday && !(state.hasMon && state.hasMday) &&
@@ -545,6 +556,9 @@ const char* ParseInternal(const char* buf, const char* format, GuestTm& tm, Pars
             const int isoYear = state.hasIsoYear
                 ? state.isoYearFull
                 : (state.isoYearTwoDigit >= 0 ? ResolveTwoDigitYear(state.isoYearTwoDigit, state.century) : tm.tm_year + 1900);
+            if (state.isoWeek > IsoWeeksInYear(isoYear)) {
+                return nullptr;
+            }
             const int jan4IsoWday = (CalculateDayOfWeek(isoYear, 1, 4) + 6) % 7;
             const int isoWday = state.hasWday ? (tm.tm_wday + 6) % 7 : 0;
             const int daysOffset = 3 - jan4IsoWday + (state.isoWeek - 1) * 7 + isoWday;
