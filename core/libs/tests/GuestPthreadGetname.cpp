@@ -81,9 +81,10 @@ int main() {
     }
     Require(scePthreadRename(self, "SceRenamed") == 0);
     RequireName(self, "SceRenamed");
-    Require(scePthreadRename(self, nullptr) == SCE_KERNEL_ERROR_EINVAL);
-    Require(scePthreadRename(nullptr, "Unused") == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadRename(nullptr, "Unused") == SCE_KERNEL_ERROR_ESRCH);
     RequireName(self, "SceRenamed");
+    Require(scePthreadRename(self, nullptr) == 0);
+    RequireName(self, "");
     Pthread worker = nullptr;
     Require(scePthreadCreate(&worker, nullptr, Unnamed, nullptr, nullptr) == 0);
     Require(scePthreadJoin(worker, nullptr) == 0);
