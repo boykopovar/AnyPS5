@@ -1,0 +1,5 @@
+# libSceAgcDriver
+
+## add Functional
+
+- [Indexed draws whose INDEX_COUNT exceeds MAX_SIZE](../../../core/libs/prx/libSceAgcDriver/Execution/src/Pm4.cpp) (libSceAgcDriver, DRAW_INDEX_2 0x27 and DRAW_INDEX_OFFSET_2 0x35) drop the indices past MAX_SIZE, which the hardware reads as 0 instead ([Mesa 26.2.2 RADV](https://gitlab.freedesktop.org/mesa/mesa/-/blob/mesa-26.2.2/src/amd/vulkan/radv_cmd_buffer.c#L11354-L11360)), so a triangle that straddles MAX_SIZE, or the extra points of a point list, are not drawn as on the console. AMD PAL [c5e80007](https://github.com/GPUOpen-Drivers/pal/blob/c5e800072a32f68b6ccc4422936d96167c6e0728/src/core/hw/gfxip/gfx9/gfx9UniversalCmdBuffer.cpp#L3040-L3051) writes MAX_SIZE as the indices left in the bound buffer from the draw's first index and INDEX_COUNT as the draw's own count. The CPU indirect path ([Draw.cpp](../../../core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp)) clamps a record past INDEX_BUFFER_SIZE the same way. Not measured on a console.
