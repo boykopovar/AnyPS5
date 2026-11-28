@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "ControlFlow/RequestSerializer.hpp"
 #include "Optimization/ResourceProgram.hpp"
+#include "Optimization/TessellationLowering.hpp"
 #include <charconv>
 #include <atomic>
 #include <chrono>
@@ -81,6 +82,8 @@ std::shared_ptr<const ShaderRecompiler::SourceHandle> PrepareShaderWithDiagnosti
     }
     try {
         std::rethrow_exception(failure);
+    } catch (const ShaderRecompiler::TessellationConstantsRequired&) {
+        throw;
     } catch (const std::exception& error) {
         std::ostringstream where;
         where << "shader 0x" << std::hex << request.shader.codeAddress << " stage " << static_cast<unsigned>(request.shader.stage);
