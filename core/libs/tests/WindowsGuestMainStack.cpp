@@ -1,5 +1,6 @@
 #define _WIN32_WINNT 0x0602
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestCpu.hpp"
 #include "prx/libc/include/GuestStacks.hpp"
 #include <cstdint>
 #include <cstdio>
@@ -21,6 +22,7 @@ static void APS5_VABI OnGuestStack(void* arguments) {
     Require(arguments == &originalThread);
     Require((reinterpret_cast<std::uintptr_t>(&local) & 0xffffffffc0000000ull) != 0);
     Require(GuestArena::GuestArenaContains_nid_postfix(&local, sizeof(local)));
+    Require(GuestCpu::X87Control() == 0x037f && (GuestCpu::X87Status() & 0xff) == 0);
     Require(GetCurrentThreadId() == originalThread && &tlsValue == originalTls && tlsValue == 0x123456789abcdef0ull);
     ULONG_PTR low = 0;
     ULONG_PTR high = 0;
@@ -49,14 +51,17 @@ static void APS5_VABI OnGuestStack(void* arguments) {
     } catch (const std::runtime_error&) {
         Require(destroyed);
     }
+    GuestCpu::SetX87Control(0x027f);
+    GuestCpu::SetX87Status(0x0001);
     try {
         GuestStacks::EnterGuestMainStack_nid_no_patch(&originalThread, OnGuestStack);
         std::abort();
     } catch (const std::runtime_error&) {
     }
+    Require(GuestCpu::X87Control() == 0x027f && (GuestCpu::X87Status() & 0xff) == 0x0001);
     void* frames[16]{};
     Require(CaptureStackBackTrace(0, 16, frames, nullptr) != 0);
-    std::puts("Guest main stack: placement, TLS, bounds, guard, unwind and duplicate-entry checks passed");
+    std::puts("Guest main stack: placement, TLS, x87 control and status words, bounds, guard, unwind and duplicate-entry checks passed");
     std::exit(0);
 }
 
@@ -70,11 +75,14 @@ int main(int argc, char**) {
     const auto deallocation = *reinterpret_cast<std::uintptr_t*>(reinterpret_cast<unsigned char*>(tib) + 0x1478);
     originalCapacity = base - deallocation;
     if (argc > 1) OnGuestStack(&originalThread);
+    GuestCpu::SetX87Control(0x027f);
+    GuestCpu::SetX87Status(0x0001);
     try {
         GuestStacks::EnterGuestMainStack_nid_no_patch(&originalThread, nullptr);
         std::abort();
     } catch (const std::invalid_argument&) {
     }
     Require(reinterpret_cast<std::uintptr_t>(tib->StackBase) == base);
+    Require(GuestCpu::X87Control() == 0x027f && (GuestCpu::X87Status() & 0xff) == 0x0001);
     GuestStacks::EnterGuestMainStack_nid_no_patch(&originalThread, OnGuestStack);
 }
