@@ -20,7 +20,6 @@ namespace {
 constexpr int SignedOut = static_cast<int>(0x80550006u);
 constexpr int InvalidArgument = static_cast<int>(0x80550704u);
 constexpr int TooManyObjects = static_cast<int>(0x80550706u);
-constexpr int Aborted = static_cast<int>(0x80550707u);
 constexpr int InsufficientArgument = static_cast<int>(0x8055070Cu);
 constexpr int InvalidId = static_cast<int>(0x8055070Eu);
 constexpr int InvalidAlignment = static_cast<int>(0x80550714u);
@@ -132,9 +131,10 @@ void CheckRequests() {
     Require(sceNpScorePollAsync(req, &result) == PollRunning && result == 7, "sceNpScorePollAsync", "an unstarted request was not running");
     Require(sceNpScoreAbortRequest(req + 100) == InvalidId, "sceNpScoreAbortRequest", "an unknown request was taken");
     Require(sceNpScoreAbortRequest(req) == 0, "sceNpScoreAbortRequest", "aborting failed");
-    Require(sceNpScorePollAsync(req, nullptr) == PollFinished, "sceNpScorePollAsync", "a null result was not accepted");
-    Require(sceNpScorePollAsync(req, &result) == PollFinished && result == Aborted, "sceNpScoreAbortRequest", "an aborted request did not finish with ABORTED");
-    Require(sceNpScoreRecordScore(req, 1, 5, nullptr, nullptr, nullptr, nullptr, nullptr) == Aborted, "sceNpScoreRecordScore", "an aborted request did not return ABORTED");
+    Require(sceNpScorePollAsync(req, nullptr) == PollRunning, "sceNpScoreAbortRequest", "aborting finished a request with no operation started");
+    Require(sceNpScorePollAsync(req, &result) == PollRunning && result == 7, "sceNpScoreAbortRequest", "aborting a request with no operation started wrote a result");
+    Require(sceNpScoreRecordScore(req, 1, 5, nullptr, nullptr, nullptr, nullptr, nullptr) == SignedOut, "sceNpScoreRecordScore", "a request aborted before its operation started did not run it");
+    Require(sceNpScorePollAsync(req, &result) == PollFinished && result == SignedOut, "sceNpScoreRecordScore", "a request aborted before its operation started did not finish with SIGNED_OUT");
     sceNpScoreDeleteRequest(req);
 
     req = NewRequest();
@@ -145,7 +145,8 @@ void CheckRequests() {
     Require(sceNpScoreWaitAsync(req, reinterpret_cast<int*>(0x10)) == InvalidArgument, "sceNpScoreWaitAsync", "an unwritable result was not refused with INVALID_ARGUMENT");
     Require(errno == 71, "sceNpScoreWaitAsync", "errno was not preserved");
     Require(sceNpScoreAbortRequest(req) == 0, "sceNpScoreAbortRequest", "aborting a finished request failed");
-    Require(sceNpScorePollAsync(req, &result) == PollFinished && result == SignedOut, "sceNpScoreAbortRequest", "aborting a finished request changed its result");
+    Require(sceNpScorePollAsync(req, nullptr) == PollFinished, "sceNpScorePollAsync", "a null result was not accepted");
+    Require(sceNpScorePollAsync(req, &result) == PollFinished && result == SignedOut, "sceNpScoreAbortRequest", "aborting a request whose operation started changed its result");
     Require(sceNpScoreRecordScore(req, 1, 5, nullptr, nullptr, nullptr, nullptr, nullptr) == SignedOut, "sceNpScoreRecordScore", "a finished request was not reused");
     sceNpScoreDeleteRequest(req);
 
@@ -361,30 +362,32 @@ void CheckContextsAndWaiting() {
     sceNpScoreDeleteRequest(req);
     const int aborted = NewRequest();
     Require(sceNpScoreAbortRequest(aborted) == 0, "sceNpScoreAbortRequest", "aborting a request before waiting failed");
+    Require(sceNpScorePollAsync(aborted, nullptr) == PollRunning, "sceNpScoreAbortRequest", "aborting a request before waiting finished it");
+    Require(sceNpScoreRecordScoreAsync(aborted, 1, 5, nullptr, nullptr, nullptr, nullptr, nullptr) == SignedOut, "sceNpScoreRecordScoreAsync", "valid arguments did not return SIGNED_OUT");
     result = 0;
-    Require(waitAsync(aborted, &result) == 0 && result == Aborted, "sceNpScoreWaitAsync", "an aborted request did not report ABORTED");
+    Require(waitAsync(aborted, &result) == 0 && result == SignedOut, "sceNpScoreWaitAsync", "a request aborted before its operation started did not report the operation's result");
     sceNpScoreDeleteRequest(aborted);
 }
 
 void CheckBlockingWait() {
     const auto waitAsync = Resolve<WaitAsyncFn>("sceNpScoreWaitAsync");
-    for (const bool abort : {false, true}) {
-        const int req = NewRequest();
-        std::atomic<bool> returned = false;
-        int status = 1;
-        int result = 0;
-        std::thread waiter([&] {
-            status = waitAsync(req, &result);
-            returned = true;
-        });
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        Require(!returned, "sceNpScoreWaitAsync", "a request with no operation started did not block");
-        if (abort) Require(sceNpScoreAbortRequest(req) == 0, "sceNpScoreAbortRequest", "aborting a waited request failed");
-        else Require(sceNpScoreRecordScoreAsync(req, 1, 5, nullptr, nullptr, nullptr, nullptr, nullptr) == SignedOut, "sceNpScoreRecordScoreAsync", "valid arguments did not return SIGNED_OUT");
-        waiter.join();
-        Require(status == 0 && result == (abort ? Aborted : SignedOut), "sceNpScoreWaitAsync", "a blocked wait did not report the request's result");
-        sceNpScoreDeleteRequest(req);
-    }
+    const int req = NewRequest();
+    std::atomic<bool> returned = false;
+    int status = 1;
+    int result = 0;
+    std::thread waiter([&] {
+        status = waitAsync(req, &result);
+        returned = true;
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    Require(!returned, "sceNpScoreWaitAsync", "a request with no operation started did not block");
+    Require(sceNpScoreAbortRequest(req) == 0, "sceNpScoreAbortRequest", "aborting a waited request failed");
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    Require(!returned, "sceNpScoreAbortRequest", "aborting released a wait on a request with no operation started");
+    Require(sceNpScoreRecordScoreAsync(req, 1, 5, nullptr, nullptr, nullptr, nullptr, nullptr) == SignedOut, "sceNpScoreRecordScoreAsync", "valid arguments did not return SIGNED_OUT");
+    waiter.join();
+    Require(status == 0 && result == SignedOut, "sceNpScoreWaitAsync", "a blocked wait did not report the request's result");
+    sceNpScoreDeleteRequest(req);
 }
 
 void CheckCrossSave() {

@@ -211,13 +211,7 @@ extern "C" {
 
 int APS5_VABI sceNpScoreAbortRequest(int reqId) {
     std::lock_guard lock(scoreMutex);
-    const auto request = requests.find(reqId);
-    if (request == requests.end()) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
-    if (!request->second.result) {
-        request->second.result = SCE_NP_COMMUNITY_ERROR_ABORTED;
-        requestFinished.notify_all();
-    }
-    return 0;
+    return requests.contains(reqId) ? 0 : SCE_NP_COMMUNITY_ERROR_INVALID_ID;
 }
 
 int APS5_VABI sceNpScoreCreateNpTitleCtx(std::uint32_t serviceLabel, const void* selfNpId) {
