@@ -129,7 +129,7 @@ bool ProvidesSubgroup(const ShaderRecompiler::SpirvTarget& target) {
     return target.tessellation.has_value() && target.mesh.has_value();
 }
 
-ShaderRecompiler::RecompileResult Compile(const ShaderRecompiler::SpirvTarget& target, ShaderStage stage, std::span<const std::uint32_t> code, std::uint32_t& pushCursor, bool geometry, std::uint32_t wave) {
+ShaderRecompiler::RecompileResult Compile(const ShaderRecompiler::SpirvTarget& target, ShaderStage stage, std::span<const std::uint32_t> code, std::uint32_t& pushCursor, bool geometry, std::uint32_t wave, const ShaderRecompiler::MeshConfiguration& subgroup = Subgroup) {
     static const std::array<std::uint32_t, 8> domainUserData{};
     static const std::array<std::uint32_t, 8> mergedUserData{};
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
@@ -149,7 +149,7 @@ ShaderRecompiler::RecompileResult Compile(const ShaderRecompiler::SpirvTarget& t
         pixel = info;
     } else {
         vertex = ShaderRecompiler::ShaderVertexStageInfo{};
-        graphics = ShaderRecompiler::GraphicsCompileContext{firstUser, {}, merged ? std::optional(Subgroup) : std::nullopt, Patches, {reinterpret_cast<std::uintptr_t>(Indices.data()), static_cast<std::uint32_t>(Indices.size()), 2, 1}};
+        graphics = ShaderRecompiler::GraphicsCompileContext{firstUser, {}, merged ? std::optional(subgroup) : std::nullopt, Patches, {reinterpret_cast<std::uintptr_t>(Indices.data()), static_cast<std::uint32_t>(Indices.size()), 2, 1}};
     }
     auto layout = stage == ShaderStage::Fragment ? PixelPushLayout(pushCursor, target) : ShaderRecompiler::BindingLayout{0, 0, pushCursor, AgcDriver::Graphics::PipelinePushSlotBytes - pushCursor};
     if (layout.pushConstantOffsetBytes < AgcDriver::Graphics::PipelinePushSlotBytes) layout.pushConstantSizeBytes = (geometry ? ShaderRecompiler::MeshDrawPushOffsetBytes : ShaderRecompiler::TessellationLevelPushOffsetBytes) - layout.pushConstantOffsetBytes;
@@ -175,12 +175,12 @@ AgcDriver::Graphics::ColorTarget LinearTarget() {
     return {reinterpret_cast<std::uintptr_t>(Pixels.data()), {Width, Height}, VK_FORMAT_R8G8B8A8_UNORM, Pixels.size(), 0xe4u};
 }
 
-AgcDriver::Graphics::State PatchState(AgcDriver::Graphics::ShaderPath path, VkCullModeFlags cull, std::uint32_t wave, const AgcDriver::Graphics::ColorTarget& color, float maxLevel) {
+AgcDriver::Graphics::State PatchState(AgcDriver::Graphics::ShaderPath path, VkCullModeFlags cull, std::uint32_t wave, const AgcDriver::Graphics::ColorTarget& color, float maxLevel, const ShaderRecompiler::MeshConfiguration& subgroup = Subgroup) {
     AgcDriver::Graphics::State state{};
     const auto wave32 = wave == 32u ? 0x00600000u : 0u;
     state.stages = {path, (path == AgcDriver::Graphics::ShaderPath::Tessellation ? 0x0200210du : 0x0000212du) | wave32, wave, 64, std::nullopt, Patches};
     state.stages.hullWaveSize = wave;
-    if (path == AgcDriver::Graphics::ShaderPath::TessellationGeometry) state.stages.tessellationGeometry = Subgroup;
+    if (path == AgcDriver::Graphics::ShaderPath::TessellationGeometry) state.stages.tessellationGeometry = subgroup;
     state.stages.maxTessellationLevel = maxLevel;
     state.color = color;
     state.colors = {state.color};
@@ -221,15 +221,20 @@ void DrawReference(AgcDriver::VulkanDevice& device, const ShaderRecompiler::Spir
     if (wait) device.WaitIdle();
 }
 
-void DrawThroughGeometry(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target, VkCullModeFlags cull, std::uint32_t wave, const AgcDriver::Graphics::ColorTarget& color, std::span<const std::uint16_t> indices = Indices, float maxLevel = 64.0f, bool wait = true) {
+void DrawThroughGeometry(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target, VkCullModeFlags cull, std::uint32_t wave, const AgcDriver::Graphics::ColorTarget& color, std::span<const std::uint16_t> indices = Indices, float maxLevel = 64.0f, bool wait = true, std::uint32_t registerItems = Subgroup.esgsItemSize) {
     std::uint32_t cursor = 0;
+    auto subgroup = Subgroup;
+    subgroup.esgsItemSize = registerItems;
     const std::span<const std::uint32_t> merged = wave == 32u ? std::span<const std::uint32_t>(Wave32DomainGeometryCode) : std::span<const std::uint32_t>(DomainGeometryCode);
     const auto local = Compile(target, ShaderStage::Local, LocalCode, cursor, true, wave);
     const auto hull = Compile(target, ShaderStage::TessellationControl, HullCode, cursor, true, wave);
-    const auto domain = Compile(target, ShaderStage::TessellationEvaluation, merged, cursor, true, wave);
-    const auto mesh = Compile(target, ShaderStage::Mesh, merged, cursor, true, wave);
+    const auto domain = Compile(target, ShaderStage::TessellationEvaluation, merged, cursor, true, wave, subgroup);
+    Require(domain.geometryItemDwords == Subgroup.esgsItemSize, "the domain half's measured ESGS item is " + std::to_string(domain.geometryItemDwords) + " dwords, not the " + std::to_string(Subgroup.esgsItemSize) + " it writes");
+    auto measured = subgroup;
+    measured.esgsItemSize = domain.geometryItemDwords;
+    const auto mesh = Compile(target, ShaderStage::Mesh, merged, cursor, true, wave, measured);
     const auto fragment = Compile(target, ShaderStage::Fragment, PixelCode, cursor, true, wave);
-    const auto capture = ShaderRecompiler::BuildTessellationCaptureGeometryShader(Subgroup, target, device.GeometryLimits());
+    const auto capture = ShaderRecompiler::BuildTessellationCaptureGeometryShader(measured, target, device.GeometryLimits());
     std::uint32_t offsets = 0;
     const std::array<AgcDriver::Graphics::CompiledShader, 6> shaders{{
         {ShaderStage::Local, &local, Offset(local, offsets)},
@@ -239,7 +244,7 @@ void DrawThroughGeometry(AgcDriver::VulkanDevice& device, const ShaderRecompiler
         {ShaderStage::Mesh, &mesh, Offset(mesh, offsets)},
         {ShaderStage::Fragment, &fragment, PixelPushOffset(offsets, target)},
     }};
-    device.Draw(PatchState(AgcDriver::Graphics::ShaderPath::TessellationGeometry, cull, wave, color, maxLevel), {reinterpret_cast<std::uintptr_t>(indices.data()), static_cast<std::uint32_t>(indices.size()), 2, 1, 0, true, 0, 0}, shaders);
+    device.Draw(PatchState(AgcDriver::Graphics::ShaderPath::TessellationGeometry, cull, wave, color, maxLevel, subgroup), {reinterpret_cast<std::uintptr_t>(indices.data()), static_cast<std::uint32_t>(indices.size()), 2, 1, 0, true, 0, 0}, shaders);
     if (wait) device.WaitIdle();
 }
 
@@ -447,6 +452,14 @@ int main() {
         ClearPixels();
         DrawThroughGeometry(*device, target, VK_CULL_MODE_NONE, 64u, LinearTarget(), levelFive, 5.0f);
         RequireSameImage(fullLevel, Pixels, "a level-5 triangle patch alone at VGT_HOS_MAX_TESS_LEVEL 5");
+        for (const auto wave : {64u, 32u}) {
+            ClearPixels();
+            DrawReference(*device, target, VK_CULL_MODE_NONE, wave, LinearTarget());
+            const std::vector<std::byte> reference(Pixels.begin(), Pixels.end());
+            ClearPixels();
+            DrawThroughGeometry(*device, target, VK_CULL_MODE_NONE, wave, LinearTarget(), Indices, 64.0f, true, Subgroup.esgsItemSize / 2u);
+            RequireSameImage(reference, Pixels, "wave" + std::to_string(wave) + " patches whose VGT_ESGS_RING_ITEMSIZE is smaller than the domain half's ESGS item");
+        }
         RequireRecordedTarget(*device, target);
         RequireBatchedAfterOrdinaryDraw(*device, target);
         device.reset();

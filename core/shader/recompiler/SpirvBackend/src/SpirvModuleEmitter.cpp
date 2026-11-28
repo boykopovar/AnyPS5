@@ -1263,7 +1263,7 @@ void DefineTessellationInterfaces(SpirvEmitterState& state) {
         } else if (instance) {
             type = kind == TessellationAttribute::InstanceInput ? array(TypeU32(state), tess.inputControlPoints) : TypeU32(state);
         } else if (kind == TessellationAttribute::GeometryOutput) {
-            type = array(TypeU32Vector(state, 4u), (tess.geometryItemDwords + 3u) / 4u);
+            type = array(TypeU32Vector(state, 4u), ((state.program.Metadata().tessellationGeometryItemDwords != 0u ? state.program.Metadata().tessellationGeometryItemDwords : tess.geometryItemDwords) + 3u) / 4u);
         } else if (patch) {
             type = array(TypeU32Vector(state, 4u), (state.program.Metadata().tessellationPatchStride + 15u) / 16u);
         } else {
