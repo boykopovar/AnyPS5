@@ -28,6 +28,8 @@
 bool AudioOut2TraceEnabled();
 // Seconds since the first AudioOut2 call, for the trace.
 double AudioOut2TraceSeconds();
+bool AudioOut2TraceOccurrence(std::atomic<std::uint64_t>& occurrences);
+bool AudioOutTraceOccurrence(std::atomic<std::uint64_t>& occurrences);
 bool AudioOut2IsInitialized_nid_no_patch();
 void AudioOut2MarkInitialized_nid_no_patch();
 bool AudioOut2TryInitialize_nid_no_patch();

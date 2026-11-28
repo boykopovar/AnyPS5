@@ -100,6 +100,9 @@ int APS5_VABI sceAudioOutMasteringGetState(AudioOut2MasteringStatesHeader* state
         !ClearMasteringMeter(state, AUDIO_OUT_MASTERING_LIMITER_INPUT_PEAK_OFFSET, 32) ||
         !ClearMasteringMeter(state, AUDIO_OUT_MASTERING_LIMITER_OUTPUT_PEAK_OFFSET, 32) ||
         !ClearMasteringMeter(state, AUDIO_OUT_MASTERING_LIMITER_GAIN_PEAK_OFFSET, 32)) APS5_INVALID_ARG_EX;
+    static std::atomic<std::uint64_t> queries{0};
+    if (AudioOutTraceOccurrence(queries))
+        std::fprintf(stderr, "[audioout] MasteringGetState: compressor and limiter meters zeroed; there is no mastering stage to measure (query %llu)\n", static_cast<unsigned long long>(queries.load()));
     return 0;
 }
 
@@ -109,6 +112,9 @@ int APS5_VABI sceAudioOutMasteringSetParam(const AudioOut2MasteringParamsHeader*
     std::uint32_t id = 0;
     if (!ReadMasteringId(param, id)) APS5_INVALID_ARG_EX;
     if (id != AUDIO_OUT_MASTERING_PARAMS_ID_DEFAULT) NotImplemented_nid_no_patch(__func__);
+    static std::atomic<std::uint64_t> calls{0};
+    if (AudioOutTraceOccurrence(calls))
+        std::fprintf(stderr, "[audioout] MasteringSetParam: parameters accepted and ignored; there is no mastering stage to apply them to (call %llu)\n", static_cast<unsigned long long>(calls.load()));
     return 0;
 }
 
@@ -162,15 +168,21 @@ int APS5_VABI sceAudioOut2MasteringGetState(AudioOut2MasteringStatesHeader* stat
             return SCE_AUDIO_OUT2_ERROR_MASTERING_INVALID_STATES_ID;
     }
     errno = savedErrno;
-    return copied ? 0 : SCE_AUDIO_OUT2_ERROR_INVALID_POINTER;
+    if (!copied) return SCE_AUDIO_OUT2_ERROR_INVALID_POINTER;
+    static std::atomic<std::uint64_t> queries{0};
+    if (AudioOut2TraceOccurrence(queries))
+        AUDIOOUT2_TRACE("t=%.3f MasteringGetState states id %u: compressor and limiter states zeroed; there is no mastering stage to measure (query %llu)\n", AudioOut2TraceSeconds(), id, static_cast<unsigned long long>(queries.load()));
+    return 0;
 }
 
 int APS5_VABI sceAudioOut2MasteringSetParam(const AudioOut2MasteringParamsHeader* param, uint32_t output, uint32_t flags) {
-    (void)output;
     if (!AudioOut2IsInitialized_nid_no_patch()) return SCE_AUDIO_OUT2_ERROR_NOT_INITIALIZED;
     if (!g_masteringInitialized.load()) return SCE_AUDIO_OUT2_ERROR_MASTERING_NOT_INITIALIZED;
     if (param == nullptr) return SCE_AUDIO_OUT2_ERROR_MASTERING_INVALID_API_PARAM;
     if (flags > AUDIO_OUT2_MASTERING_SET_PARAM_FLAGS_MAX) return SCE_AUDIO_OUT2_ERROR_MASTERING_INVALID_FLAG;
+    static std::atomic<std::uint64_t> calls{0};
+    if (AudioOut2TraceOccurrence(calls))
+        AUDIOOUT2_TRACE("t=%.3f MasteringSetParam output %u flags %u: parameters accepted and ignored; there is no mastering stage to apply them to (call %llu)\n", AudioOut2TraceSeconds(), output, flags, static_cast<unsigned long long>(calls.load()));
     return 0;
 }
 

@@ -38,6 +38,7 @@
 #include <system_error>
 #include <iterator>
 #include <map>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <mutex>
@@ -47,6 +48,12 @@
 extern "C" std::uint64_t GuestImageSegmentBytes_nid_no_patch();
 
 namespace {
+
+void TraceTruncatedQuery(const char* function, std::atomic<std::uint64_t>& truncations, std::uint64_t requested, std::size_t full) {
+    static const bool trace = std::getenv("APS5_TRACE_MEMORY") != nullptr;
+    if (!trace || requested >= full || !std::has_single_bit(++truncations)) return;
+    std::fprintf(stderr, "[memory] %s: info_size 0x%llx is below the 0x%zx-byte result; copied the first 0x%llx bytes (truncation %llu)\n", function, static_cast<unsigned long long>(requested), full, static_cast<unsigned long long>(requested), static_cast<unsigned long long>(truncations.load()));
+}
 
 size_t _configuredFlexibleSize() {
     static const size_t size = [] {
@@ -353,6 +360,8 @@ int APS5_VABI sceKernelDirectMemoryQuery(int64_t offset, int flags, void* info, 
  DirectMemoryQueryInfo q{};
  if (!DirectMemoryFind(offset, (flags & SCE_KERNEL_DMQ_FIND_NEXT) != 0, &q.start, &q.end, &q.memory_type)) return SCE_KERNEL_ERROR_EACCES;
  if (!GuestCopyOut_nid_no_patch(info, &q, std::min(info_size, sizeof(q)))) return SCE_KERNEL_ERROR_EFAULT;
+ static std::atomic<std::uint64_t> truncations{0};
+ TraceTruncatedQuery(__func__, truncations, info_size, sizeof(q));
  return 0;
 }
 
@@ -591,6 +600,8 @@ int APS5_VABI sceKernelVirtualQuery(const void* addr, int flags, VirtualQueryInf
  if (result != 0) return result;
  const auto bytes = std::min<std::uint64_t>(info_size, sizeof(found));
  if (bytes != 0 && !GuestCopyOut_nid_no_patch(info, &found, bytes)) return SCE_KERNEL_ERROR_EFAULT;
+ static std::atomic<std::uint64_t> truncations{0};
+ TraceTruncatedQuery(__func__, truncations, info_size, sizeof(found));
  return 0;
 }
 

@@ -214,7 +214,11 @@ int APS5_VABI sceAudioOut2GetSpeakerInfo(AudioOut2SpeakerInfo* info, uint32_t fl
     const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(info, &result, sizeof(result));
     errno = savedErrno;
-    return copied ? 0 : ErrorInvalidPointer;
+    if (!copied) return ErrorInvalidPointer;
+    static std::atomic<std::uint64_t> queries{0};
+    if (AudioOut2TraceOccurrence(queries))
+        AUDIOOUT2_TRACE("t=%.3f GetSpeakerInfo flags %u: reported a stereo television at +30 and -30 degrees; the host speaker layout is not read (query %llu)\n", AudioOut2TraceSeconds(), flags, static_cast<unsigned long long>(queries.load()));
+    return 0;
 }
 
 }
