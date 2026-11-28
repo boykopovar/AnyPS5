@@ -82,7 +82,10 @@ def debt_files(root, libraries=None):
 def entries(root, libraries=None):
     found = []
     for path in debt_files(root, libraries):
-        text = path.read_text(encoding="utf-8")
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeError as error:
+            raise ValueError(f"{path}: {error}") from error
         rel = path.relative_to(root).as_posix()
         headings = [(number, line[4:].strip()) for number, line in enumerate(text.split("\n"), 1) if line.startswith("### ")]
         heading_index = 0
@@ -275,6 +278,9 @@ def report(root, libraries=None):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Label technical debt entries: who can close them (console, firmware, gpu, title or code), no-test when no test names what they name, stale? when they link a file that no longer exists, and the platforms they name. A Labels: trailer on an entry replaces the inferred labels of its family. A valid report exits 0 even when no entries match.")
     parser.add_argument("libraries", nargs="*", help="debt file names without .md, such as libkernel or TechnicalDebt (default: all)")
     report_labels = {"stale?"} | {label for family in DEBT_LABELS.values() for label in family if label != "tested"}
@@ -286,7 +292,10 @@ def main(argv=None):
     missing = [name for name in args.libraries if name not in known]
     if missing:
         parser.error(f"no debt file: {', '.join(missing)}")
-    rows = [row for row in report(ROOT, set(args.libraries) or None) if all(label in row["labels"] for label in args.label)]
+    try:
+        rows = [row for row in report(ROOT, set(args.libraries) or None) if all(label in row["labels"] for label in args.label)]
+    except (OSError, ValueError) as error:
+        parser.error(str(error))
     if args.json:
         print(json.dumps(rows, indent=2))
         return 0

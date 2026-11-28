@@ -3111,6 +3111,17 @@ bool settleFirstUseTests(const Device& device) {
     return true;
 }
 
+PFN_vkGetDeviceProcAddr settleFenceResolve = nullptr;
+
+VKAPI_ATTR VkResult VKAPI_CALL settleFenceNotReady(VkDevice, VkFence) {
+    return VK_NOT_READY;
+}
+
+PFN_vkVoidFunction VKAPI_CALL settleFenceHeldProc(VkDevice device, const char* name) {
+    if (std::strcmp(name, "vkGetFenceStatus") == 0) return reinterpret_cast<PFN_vkVoidFunction>(settleFenceNotReady);
+    return settleFenceResolve(device, name);
+}
+
 bool settleEarlierImportTests(const Device& device) {
     using namespace AgcDriver::GuestMemory;
     const auto& context = device.GetContext();
@@ -3151,7 +3162,11 @@ bool settleEarlierImportTests(const Device& device) {
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
         CopyBuffer(context, commands, earlier->buffer, 0, scratch.Handle(), 0, unit);
     }
-    const auto* whole = HostImportFor(context, address + unit - 16, 32);
+    settleFenceResolve = context.deviceProc;
+    auto unsettled = context;
+    unsettled.deviceProc = settleFenceHeldProc;
+    unsettled.functions = nullptr;
+    const auto* whole = HostImportFor(unsettled, address + unit - 16, 32);
     Require(whole != nullptr && whole->base == address && whole->bytes == 2 * unit && whole->unwatched, "(e) an access across the windows did not replace the first window's import");
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     while (!Watched(address, 2 * unit) && std::chrono::steady_clock::now() < deadline) {
@@ -7037,7 +7052,7 @@ bool DmaBufDeviceOpens() {
 void vertexWindowMirrorTests(const Device& device) {
     using namespace AgcDriver::GuestMemory;
     using Use = Recorder::SnapshotUse;
-    if (!Recorder::DrawInputMirrors() || !WriteWatched()) return;
+    if (!Recorder::DrawInputMirrors() || !device.GetContext().HostMemoryType(~0u) || !WriteWatched()) return;
     if (SkipOnCpuVulkan(device, "a kept vertex window was not mirrored in device memory")) return;
     constexpr std::size_t bytes = 65536;
     void* block = AllocateWatched(bytes, 65536);
@@ -7103,7 +7118,7 @@ void drawInputMirrorTests(const Device& device) {
     const auto registry = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
     const auto generation = CollectWrites(address, bytes);
     Require(generation != 0, "the watched block has no generation");
-    const bool mirrors = Recorder::DrawInputMirrors();
+    const bool mirrors = Recorder::DrawInputMirrors() && context.HostMemoryType(~0u);
     State plain;
     State mesh;
     mesh.stages.mesh.emplace();
@@ -7128,7 +7143,7 @@ void drawInputMirrorTests(const Device& device) {
     cache.KeepDrawSnapshot(second, half, generation, registry, secondHost, Use::Vertex);
     const auto firstMirror = reuse(first);
     if (!mirrors) {
-        Require(firstMirror == firstHost && reuse(second) == secondHost && use(2 * half + 4096, 0), "a draw input was mirrored with APS5_NO_INPUT_MIRRORS set");
+        Require(firstMirror == firstHost && reuse(second) == secondHost && use(2 * half + 4096, 0), "a draw input was mirrored with APS5_NO_INPUT_MIRRORS set or on a device whose memory is all device-local");
         Require(drawInputHolds(context, cache, firstMirror, first, held), "a reused draw input lost the bytes of its snapshot");
         cache.Sync();
         return;
@@ -7202,7 +7217,7 @@ void drawInputReuseTests(const Device& device, Recorder& recorder) {
         const auto contents = copy.buffer->Bytes();
         return contents.size() == size && std::memcmp(contents.data(), block, size) == 0;
     };
-    const bool mirrors = Recorder::DrawInputMirrors();
+    const bool mirrors = Recorder::DrawInputMirrors() && context.HostMemoryType(~0u);
     const auto servedFrom = [&](const DrawInputCopy& copy, const std::shared_ptr<Buffer>& host, std::uint64_t at, std::size_t read) {
         const bool kind = mirrors ? copy.buffer != host && !copy.buffer->Mapped() : copy.buffer == host;
         return copy.reused && kind && drawInputHolds(context, recorder, copy.buffer, at, read);
@@ -7374,6 +7389,50 @@ void drawInputInPlaceTests(const Device& device, Recorder& recorder, bool copied
         Require(read.has_value() && read->kind == Recorder::ReadKind::DrawInput, "a vertex input bound in place behind a GPU write did not note its read");
         recorder.Sync();
         Require(!recorder.PendingReadOverlaps(vertices, 256), "an in-place vertex input's read outlived its batch");
+        if (std::getenv("APS5_LARGE_INPUT_IN_PLACE_MIB") != nullptr) {
+            std::cout << "APS5_LARGE_INPUT_IN_PLACE_MIB is set: large draw inputs not tested\n";
+            return;
+        }
+        constexpr std::size_t largeBytes = std::size_t{8} << 20;
+        void* largeBlock = AllocateWatched(largeBytes + 65536, 65536);
+        struct ReleaseLarge {
+            void* block;
+            ~ReleaseLarge() { ReleaseWatched(block, largeBytes + 65536); }
+        } releaseLarge{largeBlock};
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Add(largeBlock, largeBytes + 65536, true, true, true);
+        }
+        struct UnregisterLarge {
+            const Context& context;
+            void* block;
+            ~UnregisterLarge() {
+                {
+                    GuestAllocations::Mutation mutation;
+                    mutation.Remove(block);
+                }
+                HostImportFor(context, reinterpret_cast<std::uint64_t>(block), largeBytes + 65536);
+            }
+        } unregisterLarge{context, largeBlock};
+        const auto largeAddress = reinterpret_cast<std::uint64_t>(largeBlock);
+        if (HostImportFor(context, largeAddress, largeBytes + 65536) == nullptr) {
+            std::cout << "host import of the large watched block refused: large draw inputs not tested\n";
+            return;
+        }
+        const auto largeVertices = largeAddress + 4096;
+        recorder.Sync();
+        behind = false;
+        Require(InPlaceDrawInput(context, largeVertices, largeBytes - 65536, 4, &behind) == nullptr && !behind, "a draw input just below the large input size was bound in place where draw inputs are copied");
+        Require(!recorder.PendingReadOverlaps(largeVertices, largeBytes - 65536), "a copied draw input below the large input size noted an in-place read");
+        const auto* largeImport = InPlaceDrawInput(context, largeVertices, largeBytes, 4, &behind);
+        Require(largeImport != nullptr && largeImport->base <= largeVertices && largeVertices + largeBytes <= largeImport->base + largeImport->bytes, "a large vertex input free of pending GPU writes was copied where draw inputs are copied");
+        Require(!behind, "a large vertex input free of pending GPU writes was marked as ordered behind one");
+        Require(recorder.PendingReadOverlaps(largeVertices, largeBytes), "a large vertex input bound in place did not note its read");
+        recorder.Sync();
+        Require(!recorder.PendingReadOverlaps(largeVertices, largeBytes), "a large in-place vertex input's read outlived its batch");
+        recorder.NotePendingWrite(largeVertices, 16);
+        const auto* largeBehindImport = InPlaceDrawInput(context, largeVertices, largeBytes, 4, &behind);
+        Require(largeBehindImport != nullptr && behind && recorder.PendingWriteOverlaps(largeVertices, largeBytes), "a large vertex input under a pending GPU write was not bound in place behind it where draw inputs are copied");
         return;
     }
     const auto* import = InPlaceDrawInput(context, vertices, 256, 4);
@@ -12218,6 +12277,152 @@ private:
     std::vector<VkImageView> destroyedViews;
     static inline StorageUploadProbe* active = nullptr;
 };
+
+class DetilerReleaseProbe {
+public:
+    explicit DetilerReleaseProbe(Context& context) : context(context), resolver(context.deviceProc) {
+        Require(active == nullptr, "nested detiler release probe");
+        active = this;
+        context.deviceProc = resolve;
+    }
+    ~DetilerReleaseProbe() {
+        context.deviceProc = resolver;
+        active = nullptr;
+    }
+    std::uint64_t Released() const { return released; }
+
+private:
+    template<typename TFunction>
+    TFunction function(VkDevice device, const char* name) const { return reinterpret_cast<TFunction>(resolver(device, name)); }
+    static VKAPI_ATTR void VKAPI_CALL destroyPipeline(VkDevice device, VkPipeline pipeline, const VkAllocationCallbacks* callbacks) {
+        if (pipeline != VK_NULL_HANDLE) ++active->released;
+        active->function<PFN_vkDestroyPipeline>(device, "vkDestroyPipeline")(device, pipeline, callbacks);
+    }
+    static VKAPI_ATTR void VKAPI_CALL destroyPool(VkDevice device, VkDescriptorPool pool, const VkAllocationCallbacks* callbacks) {
+        if (pool != VK_NULL_HANDLE) ++active->released;
+        active->function<PFN_vkDestroyDescriptorPool>(device, "vkDestroyDescriptorPool")(device, pool, callbacks);
+    }
+    static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL resolve(VkDevice device, const char* name) {
+        if (std::strcmp(name, "vkDestroyPipeline") == 0) return reinterpret_cast<PFN_vkVoidFunction>(destroyPipeline);
+        if (std::strcmp(name, "vkDestroyDescriptorPool") == 0) return reinterpret_cast<PFN_vkVoidFunction>(destroyPool);
+        return active->resolver(device, name);
+    }
+    Context& context;
+    PFN_vkGetDeviceProcAddr resolver;
+    std::uint64_t released = 0;
+    static inline DetilerReleaseProbe* active = nullptr;
+};
+
+void detilerRetirementTests(const Device& device, Recorder& previous) {
+    auto context = device.GetContext();
+    DetilerReleaseProbe probe(context);
+    constexpr std::uint32_t side = 64;
+    const auto layout = ComputeMipLayout(TextureTileMode::kLinear, 56, side, side, 1).front();
+    Require(layout.pitchBytes == side * 4u && layout.tiledSize == layout.linearSize, "the linear detile fixture has a padded pitch");
+    const auto bytes = static_cast<std::size_t>(layout.linearSize);
+    Buffer source(context, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    Buffer destination(context, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    Buffer otherSource(context, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    Buffer otherDestination(context, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    for (std::size_t index = 0; index < bytes; ++index) {
+        source.Bytes()[index] = static_cast<std::byte>((index * 7u + 3u) & 0xffu);
+        otherSource.Bytes()[index] = static_cast<std::byte>((index * 13u + 5u) & 0xffu);
+    }
+    constexpr int rounds = 4;
+    const auto initial = probe.Released();
+    std::uint64_t perDetiler = 0;
+    {
+        Recorder recorder(context);
+        recorder.Activate();
+        {
+            std::lock_guard gpu(GpuMutex());
+            const auto before = probe.Released();
+            {
+                TextureDetiler measured(context);
+                measured.BeginBatch();
+                const auto commands = recorder.Commands();
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+                measured.Dispatch(commands, TextureTileMode::kLinear, 4, source.Handle(), 0, destination.Handle(), 0, layout);
+                recorder.Sync();
+            }
+            perDetiler = probe.Released() - before;
+        }
+        Require(perDetiler != 0, "a detiler destroyed while its recorder was idle released no pipeline or descriptor pool");
+        for (int round = 0; round < rounds; ++round) {
+            std::memset(destination.Bytes().data(), 0, bytes);
+            std::memset(otherDestination.Bytes().data(), 0, bytes);
+            const auto record = [&](TextureDetiler& detiler, const Buffer& from, const Buffer& to) {
+                detiler.BeginBatch();
+                const auto commands = recorder.Commands();
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+                detiler.Dispatch(commands, TextureTileMode::kLinear, 4, from.Handle(), 0, to.Handle(), 0, layout);
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+            };
+            const auto before = probe.Released();
+            {
+                std::lock_guard gpu(GpuMutex());
+                {
+                    TextureDetiler retired(context);
+                    record(retired, source, destination);
+                }
+                Require(recorder.Recording(), "the recorded detile was submitted before its detiler was destroyed");
+                Require(probe.Released() == before, "a destroyed detiler released its pipeline or descriptor pool while its recorded detile was unsubmitted");
+                TextureDetiler live(context);
+                record(live, otherSource, otherDestination);
+                Require(probe.Released() == before, "recording after a detiler was destroyed released its objects early");
+                recorder.Sync();
+            }
+            Require(std::memcmp(source.Bytes().data(), destination.Bytes().data(), bytes) == 0, "a detile recorded by a destroyed detiler did not run with its own descriptors");
+            Require(std::memcmp(otherSource.Bytes().data(), otherDestination.Bytes().data(), bytes) == 0, "a detile recorded after another detiler was destroyed lost its descriptors");
+        }
+        std::memset(destination.Bytes().data(), 0, bytes);
+        {
+            std::lock_guard gpu(GpuMutex());
+            const auto before = probe.Released();
+            {
+                TextureDetiler switched(context);
+                switched.BeginBatch();
+                const auto commands = recorder.Commands();
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+                switched.Dispatch(commands, TextureTileMode::kLinear, 4, source.Handle(), 0, destination.Handle(), 0, layout);
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+                previous.Activate();
+            }
+            Require(probe.Released() == before, "a detiler destroyed while another recorder was active released objects its own recorder's open batch still uses");
+            recorder.Activate();
+            recorder.Sync();
+        }
+        Require(std::memcmp(source.Bytes().data(), destination.Bytes().data(), bytes) == 0, "a detile recorded before another recorder was activated did not run with its own descriptors");
+        std::memset(destination.Bytes().data(), 0, bytes);
+        std::memset(otherDestination.Bytes().data(), 0, bytes);
+        {
+            std::lock_guard gpu(GpuMutex());
+            const auto before = probe.Released();
+            {
+                TextureDetiler shared(context);
+                shared.BeginBatch();
+                auto commands = recorder.Commands();
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+                shared.Dispatch(commands, TextureTileMode::kLinear, 4, source.Handle(), 0, destination.Handle(), 0, layout);
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+                previous.Activate();
+                commands = previous.Commands();
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+                shared.Dispatch(commands, TextureTileMode::kLinear, 4, otherSource.Handle(), 0, otherDestination.Handle(), 0, layout);
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+                previous.Sync();
+            }
+            Require(probe.Released() == before, "a detiler that recorded under two recorders released objects the first recorder's open batch still uses once the second recorder was idle");
+            recorder.Activate();
+            recorder.Sync();
+        }
+        Require(std::memcmp(source.Bytes().data(), destination.Bytes().data(), bytes) == 0, "a detile recorded under the first of two recorders did not run with its own descriptors");
+        Require(std::memcmp(otherSource.Bytes().data(), otherDestination.Bytes().data(), bytes) == 0, "a detile recorded under the second of two recorders did not run with its own descriptors");
+    }
+    Require(probe.Released() - initial == perDetiler * (2u * rounds + 3u), "the destroyed detilers' pipelines and descriptor pools were not all released exactly once after their batches completed");
+    previous.Activate();
+    std::cout << "Detiler retirement: passed\n";
+}
 
 void storageUploadLifetimeTests(const Device& device, Recorder& previous, bool failView) {
     auto context = device.GetContext();
@@ -17492,7 +17697,7 @@ bool vertexTargetRangeTests(const Device& device, Recorder& recorder, bool impor
         check(24);
         vertex.vertexAttributes = {attributeFor(address, 16, fetchIndex)};
         auto indirect = draw;
-        indirect.indirect.emplace();
+        indirect.indirect = AgcDriver::Pm4::DrawParameters::IndirectDraw{};
         reject([&] { Draw(context, consumer, indirect, shaders); }, "vertex buffer aliases the render target");
         if (fetchIndex == 0) {
             const std::array<std::uint16_t, 3> indices{0, 1, 2};
@@ -18065,7 +18270,7 @@ int pipelineCacheFileTests(const Device& device) {
 
 void descriptorPoolTests(const Device& device) {
     DescriptorCache cache(device.GetContext());
-    const VkDescriptorSetLayoutBinding binding{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 32, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
+    const VkDescriptorSetLayoutBinding binding{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, std::min(32u, device.GetContext().limits.maxPerStageDescriptorStorageBuffers), VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
     const std::array<std::uint32_t, 4> key{binding.binding, binding.descriptorType, binding.descriptorCount, binding.stageFlags};
     const auto layout = cache.Layout(key, std::span(&binding, 1));
     const VkDescriptorPoolSize size{binding.descriptorType, binding.descriptorCount};
@@ -19574,6 +19779,38 @@ void smallElementDetileTests(Device& device) {
     std::cout << "small element detile tests passed\n";
 }
 
+void dataRunAccessTests(const Device& device, Recorder& recorder) {
+    const auto& context = device.GetContext();
+    std::unique_lock gpu(GpuMutex());
+    ShaderRecompiler::RecompileResult program;
+    ShaderRecompiler::DescriptorBinding binding;
+    binding.kind = ShaderRecompiler::DescriptorKind::StorageBuffer;
+    binding.role = ShaderRecompiler::DescriptorRole::FlattenedSrt;
+    binding.descriptorSet = 0;
+    binding.binding = 0;
+    binding.count = 1;
+    binding.guestDescriptor = {1, 2, 3, 4};
+    program.bindings.push_back(binding);
+    const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+    ShaderResources resources(context, shader);
+    std::vector<std::array<std::uint64_t, 3>> accesses;
+    resources.RunAccesses(accesses);
+    const auto refreshed = std::count_if(accesses.begin(), accesses.end(), [](const auto& access) { return (access[2] & Recorder::RunAccessBuffer) != 0 && (access[2] & Recorder::RunAccessWritten) != 0; });
+    Require(refreshed == 1, "the template's data buffer is missing from its run accesses");
+    int firstDispatch = 0;
+    int secondDispatch = 0;
+    const void* firstOwner = &firstDispatch;
+    const void* secondOwner = &secondDispatch;
+    static_cast<void>(recorder.Commands());
+    recorder.DeferDispatchBarrier(1, std::span<const void* const>(&firstOwner, 1), accesses);
+    bool overlapped = true;
+    static_cast<void>(recorder.OverlapCommands(1, std::span<const void* const>(&secondOwner, 1), accesses, nullptr, overlapped));
+    Require(!overlapped, "a dispatch rewriting the template's data joined a run whose earlier dispatch still reads it");
+    recorder.Submit();
+    recorder.Sync();
+    std::cout << "data run accesses checked\n";
+}
+
 int main(int argc, char** argv) {
     _ZSt13set_terminatePFvvE_nid_postfix([] {
         std::fflush(nullptr);
@@ -19823,6 +20060,10 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--benchmark-pending-write-snapshot") {
             pendingWriteSnapshotBenchmark(recorder);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--detiler-retirement-only") {
+            detilerRetirementTests(device, recorder);
             return 0;
         }
         if (argc == 2 && (std::string_view(argv[1]) == "--storage-upload-lifetime-only" || std::string_view(argv[1]) == "--storage-upload-failure-only")) {
@@ -20280,6 +20521,10 @@ int main(int argc, char** argv) {
                 std::cout << "skipped, host imports are unavailable: /dev/udmabuf cannot be opened\n";
                 return 77;
             }
+            if (Recorder::DrawInputMirrors() && !device.GetContext().HostMemoryType(~0u)) {
+                std::cout << "skipped, the device has no memory type outside its device-local heaps, so draw inputs get no device-local mirror\n";
+                return 77;
+            }
             drawInputMirrorTests(device);
             if (Recorder::DrawInputMirrors()) vertexWindowMirrorTests(device);
             drawInputReuseTests(device, recorder);
@@ -20403,6 +20648,7 @@ int main(int argc, char** argv) {
         importWindowTests(device, recorder);
         dataWordPositionsTests();
         dataRefreshTests(device, recorder);
+        dataRunAccessTests(device, recorder);
         imageMemoTests(device, recorder);
         minLodTests(device, recorder);
         uploadScratchReuseTests(device, recorder);
