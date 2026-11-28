@@ -690,7 +690,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         static const bool dumpShaders = std::getenv("APS5_DUMP_SHADERS") != nullptr;
         try {
             const BackgroundWaitScope backgroundWait;
-            auto invocation = InvocationFor(snapshot, codeOffset, request, AsyncDrawCompile(), &linking);
+            auto invocation = InvocationFor(snapshot, codeOffset, request, false, &linking);
             timing.Mark("prepared_invocation");
 
             const auto waitedBefore = traceCapSync() ? Graphics::Recorder::ThreadWaitedMs() : 0.0;
