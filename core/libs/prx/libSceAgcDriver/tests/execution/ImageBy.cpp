@@ -13,6 +13,7 @@
 #include <iostream>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -160,12 +161,46 @@ void Refused(AgcDriver::VulkanDevice& device, std::uint32_t opcode, std::uint32_
     Require(refused, "image BY opcode " + std::to_string(opcode) + " format " + std::to_string(format) + " was not refused");
 }
 
+void RefuseExtraBase(AgcDriver::VulkanDevice& device) {
+    for (const auto opcode : {0x42u, 0x43u, 0x4au, 0x4bu}) {
+        const auto code = Code(opcode, (opcode & 1u) != 0u ? 0xfu : 0x3u);
+        std::vector<std::uint32_t> userData(16, 0u);
+        const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
+        auto descriptor = Descriptor(R8UInt, 0xfacu);
+        descriptor[1] = (descriptor[1] & 0x3fffffffu) | (3u << 30u);
+        descriptor[2] = (511u >> 2u) | (255u << 14u);
+        descriptor[3] = 0xfacu | (10u << 12u) | (10u << 16u) | (9u << 28u);
+        descriptor[5] = 11u << 4u;
+        const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(sizeof(Input)));
+        std::copy(output.begin(), output.end(), userData.begin());
+        std::copy(descriptor.begin(), descriptor.end(), userData.begin() + 4);
+        std::copy(input.begin(), input.end(), userData.begin() + 12);
+        const std::span<const std::uint32_t> words(code);
+        const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(words)}}};
+        const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
+        ShaderRecompiler::RecompileRequest request{
+            {ShaderRecompiler::ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), words, 0, {}},
+            {32, 0, userData, compute, std::nullopt, std::nullopt, memory}, device.Target(), {0, 0, 0, 128}};
+        request.useCache = false;
+        bool refused = false;
+        try { static_cast<void>(ShaderRecompiler::Recompile(request)); }
+        catch (const std::exception& error) { refused = std::string_view(error.what()).find("an image_load at a base level past the chain") != std::string_view::npos; }
+        Require(refused, "BY image opcode " + std::to_string(opcode) + " did not refuse an extra-base sampled load");
+    }
+    std::cout << "BY2/BY4 extra-base compiler refusals passed (no dispatch)\n";
 }
 
-int main() {
+}
+
+int main(int argc, char** argv) {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        Require(argc == 1 || (argc == 2 && std::string_view(argv[1]) == "--extra-base"), "unknown image BY test mode");
+        if (argc == 2) {
+            RefuseExtraBase(*device);
+            return 0;
+        }
         GuestAllocations::Mutation().Add(Texels.data(), Bytes, true, true, true);
         constexpr Format r8{R8UInt, 1u, 1u};
         constexpr Format r16{R16UInt, 2u, 1u};

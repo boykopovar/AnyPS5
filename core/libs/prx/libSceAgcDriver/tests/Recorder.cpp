@@ -12158,6 +12158,7 @@ public:
     std::uint32_t Dispatches() const { return dispatches; }
     std::uint32_t ReadyBarriers() const { return readyBarriers; }
     std::uint32_t UnorderedDispatches() const { return unorderedDispatches; }
+    bool Complete() const { return !pending && consumedCopies == copies; }
 
 private:
     template<typename TFunction>
@@ -12191,6 +12192,7 @@ private:
         if (active->recording && active->copies != 0) {
             ++active->dispatches;
             if (active->pending) ++active->unorderedDispatches;
+            else active->consumedCopies = active->copies;
         }
         active->function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, x, y, z);
     }
@@ -12210,6 +12212,7 @@ private:
     std::uint32_t dispatches = 0;
     std::uint32_t readyBarriers = 0;
     std::uint32_t unorderedDispatches = 0;
+    std::uint32_t consumedCopies = 0;
     static inline StorageReadyProbe* active = nullptr;
 };
 
@@ -12285,7 +12288,7 @@ bool storageHoleCopyBarrierTests(const Device& device, Recorder& previous) {
     Require(retiled, "storage hole-copy test did not retile into a slab");
     Require(probe.Copies() != 0 && probe.Dispatches() != 0, "storage hole-copy test did not record import-to-slab hole copies followed by a retile dispatch");
     std::cout << "storage hole-copy barrier: " << probe.Copies() << " hole copies, " << probe.Dispatches() << " retile dispatches, " << probe.ReadyBarriers() << " ready barriers, " << probe.UnorderedDispatches() << " unordered dispatches" << std::endl;
-    Require(probe.ReadyBarriers() != 0 && probe.UnorderedDispatches() == 0, "storage retile reads slab hole copies without a following ready barrier");
+    Require(probe.ReadyBarriers() != 0 && probe.UnorderedDispatches() == 0 && probe.Complete(), "storage retile leaves a hole copy without its following ready barrier and dispatch");
     return true;
 }
 

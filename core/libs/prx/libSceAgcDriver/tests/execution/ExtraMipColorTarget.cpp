@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -24,6 +25,7 @@
 #include <iostream>
 #include <mutex>
 #include <optional>
+#include <random>
 #include <vector>
 
 namespace AgcDriver {
@@ -416,6 +418,26 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL ReadbackDeviceProc(VkDevice device, con
 }
 
 void CheckReadback(AgcDriver::VulkanDevice& device) {
+    struct Directory {
+        std::filesystem::path previous = std::filesystem::current_path();
+        std::filesystem::path base = std::filesystem::canonical(std::filesystem::temp_directory_path());
+        std::filesystem::path path = base / ("anyps5-extra-mip-readback-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" + std::to_string(std::random_device{}()));
+        Directory() {
+            Require(path.parent_path() == base && path != base, "extra-mip temporary directory escaped its base");
+            Require(std::filesystem::create_directory(path), "cannot create a fresh extra-mip readback directory");
+            try { std::filesystem::current_path(path); }
+            catch (...) {
+                std::error_code error;
+                std::filesystem::remove_all(path, error);
+                throw;
+            }
+        }
+        ~Directory() {
+            std::error_code error;
+            std::filesystem::current_path(previous, error);
+            std::filesystem::remove_all(path, error);
+        }
+    } directory;
     auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
     readbackDeviceProc = context.deviceProc;
     readbackCopyImageToBuffer = context.Function<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer");

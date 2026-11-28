@@ -61,6 +61,7 @@ struct MockDevice {
     std::map<VkImage, VkDeviceMemory> imageMemories;
     VkDeviceSize imageRequirementBytes = 65536u;
     bool failExtraMipAllocation = false;
+    bool requireLastPhysicalMip = false;
     std::uint32_t imageAllocationFailures = 0;
     std::vector<bool> imageReclaims;
 };
@@ -77,6 +78,7 @@ THandle newHandle() {
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL createImage(VkDevice, const VkImageCreateInfo* info, const VkAllocationCallbacks*, VkImage* image) {
+    Require(!mock.requireLastPhysicalMip || (info->flags & VK_IMAGE_CREATE_SPARSE_RESIDENCY_BIT) == 0u, "sparse upload omitted the last exposed physical mip");
     *image = newHandle<VkImage>();
     mock.images[*image] = *info;
     return VK_SUCCESS;
@@ -222,6 +224,7 @@ VKAPI_ATTR void VKAPI_CALL cmdResetQueryPool(VkCommandBuffer, VkQueryPool, std::
 VKAPI_ATTR void VKAPI_CALL cmdCopyQueryPoolResults(VkCommandBuffer, VkQueryPool, std::uint32_t, std::uint32_t, VkBuffer, VkDeviceSize, VkDeviceSize, VkQueryResultFlags) {}
 
 VKAPI_ATTR void VKAPI_CALL cmdCopyBufferToImage(VkCommandBuffer, VkBuffer, VkImage image, VkImageLayout, std::uint32_t count, const VkBufferImageCopy* regions) {
+    Require(count != 0u, "an image upload recorded no copy regions");
     for (std::uint32_t index = 0; index < count; ++index) {
         mock.copies.emplace_back(image, regions[index].imageSubresource);
         mock.uploads.emplace_back(image, regions[index].imageSubresource);
@@ -350,6 +353,16 @@ PFN_vkVoidFunction VKAPI_CALL deviceProc(VkDevice, const char* name) {
 void formatProperties(VkPhysicalDevice, VkFormat, VkFormatProperties* properties) {
     *properties = {};
     properties->optimalTilingFeatures = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_TRANSFER_SRC_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL imageFormatProperties(VkPhysicalDevice, VkFormat, VkImageType, VkImageTiling, VkImageUsageFlags, VkImageCreateFlags, VkImageFormatProperties* properties) {
+    *properties = {{16384u, 16384u, 2048u}, 16u, 2048u, VK_SAMPLE_COUNT_1_BIT, VkDeviceSize{1} << 32u};
+    return VK_SUCCESS;
+}
+
+VKAPI_ATTR void VKAPI_CALL sparseImageFormatProperties(VkPhysicalDevice, VkFormat, VkImageType, VkSampleCountFlagBits, VkImageUsageFlags, VkImageTiling, std::uint32_t* count, VkSparseImageFormatProperties* properties) {
+    if (properties != nullptr && *count != 0u) properties[0] = {VK_IMAGE_ASPECT_COLOR_BIT, {1u, 1u, 1u}, 0u};
+    *count = 1u;
 }
 
 Context mockContext() {
@@ -695,8 +708,12 @@ void TestStorageLevelsPastTheFullChain(const Context& context, TextureDetiler& d
             const auto& created = mock.images.at(extra);
             Require(created.extent.width == 1 && created.extent.height == 1 && created.mipLevels == 1 && created.arrayLayers == layers, "an extra guest mip is not backed by a legal 1x1 image");
             Require(std::count_if(mock.copies.begin(), mock.copies.end(), [&](const auto& copy) { return copy.first == extra && copy.second.mipLevel == 0; }) == layers, "every layer of an extra guest mip must be uploaded once");
+            const auto storageViews = mock.views.size();
             static_cast<void>(texture->StorageView(level, false));
+            Require(mock.views.size() == storageViews + 1u && mock.views.back().first == extra && mock.views.back().second.baseMipLevel == 0u, "a storage view did not name its requested extra backing");
+            const auto attachmentViews = mock.views.size();
             static_cast<void>(texture->AttachmentView(VK_FORMAT_R8G8B8A8_UNORM, level));
+            Require(mock.views.size() == attachmentViews + 1u && mock.views.back().first == extra && mock.views.back().second.baseMipLevel == 0u, "an attachment view did not name its requested extra backing");
             checkInsideImage(extra, created, "28x1 extra storage mip");
         }
         requireThrows([&] { static_cast<void>(texture->StorageView(10, false)); }, "storage texture mip level is outside the texture", "a storage view outside the guest chain");
@@ -843,6 +860,26 @@ void TestMinLodPastPhysicalChain() {
         }
     }
     std::printf("MIN_LOD physical-chain residency checks: %u\n", checked);
+}
+
+void TestUnmappedLastPhysicalMip() {
+    auto context = mockContext();
+    context.imageFormatProperties = imageFormatProperties;
+    context.sparseImageFormatProperties = sparseImageFormatProperties;
+    context.sparseResidencyImage2D = true;
+    context.imageViewMinLod = true;
+    auto descriptor = storageSurface(1u, 1u, 4u);
+    descriptor.tileMode = TextureTileMode::kLinear;
+    descriptor.baseAddress = 0x10f0000000u;
+    descriptor.minLod = 256u;
+    const std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    Require(AgcDriver::GuestMemory::CommittedRanges(descriptor.baseAddress, static_cast<std::size_t>(DescribeSurface(descriptor).guestBytes), false).empty(), "unmapped physical-mip fixture overlaps committed guest memory");
+    TextureDetiler detiler(context);
+    mock.requireLastPhysicalMip = true;
+    const auto info = upload(context, detiler, descriptor, "unmapped last physical mip");
+    mock.requireLastPhysicalMip = false;
+    Require(info.mipLevels == 1u && copiesOfLevel(0u) == 1u, "the last exposed physical mip was not initialized from its full snapshot");
+    std::printf("unmapped last physical mip: full-snapshot upload retained\n");
 }
 
 void TestStorageFullChainIsUnchanged(const Context& context, TextureDetiler& detiler) {
@@ -1015,6 +1052,7 @@ void TestShaderLevelsPastTheView(const Context& context, TextureDetiler& detiler
 void RunTextureMipChainTests() {
     Require(Recorder::Active() == nullptr, "the texture mip chain tests record into their own command batches");
     mock = MockDevice{};
+    TestUnmappedLastPhysicalMip();
     const auto context = mockContext();
     {
         TextureDetiler detiler(context);
