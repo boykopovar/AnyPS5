@@ -16,10 +16,16 @@ namespace {
 constexpr int ErrorParam = static_cast<int>(0x8A760000);
 constexpr int ErrorNotInit = static_cast<int>(0x8A760002);
 constexpr int ErrorCameraOpen = static_cast<int>(0x8A760015);
+constexpr int CameraErrorInvalidCategory = static_cast<int>(0x802E0011u);
 
 using NoArgumentFn = int (APS5_VABI*)();
 using HandleFn = int (APS5_VABI*)(std::int32_t);
 using OpenFn = int (APS5_VABI*)(std::int32_t, std::int32_t, std::int32_t, void*);
+
+struct UsageInfoStub {
+    std::uint32_t sizeThis;
+    std::uint32_t payload[3];
+};
 
 void Require(bool condition, const char* message) {
     if (condition) return;
@@ -55,6 +61,31 @@ int main() {
         Require(static_cast<bool>(param), "param.json could not be written");
     }
 
+    std::int32_t vrCapture = static_cast<std::int32_t>(0xA5A5A5A5u);
+    Require(sceCameraIsVrCaptureEnable(nullptr) == SCE_CAMERA_ERROR_PARAM, "sceCameraIsVrCaptureEnable accepted null");
+    Require(sceCameraIsVrCaptureEnable(&vrCapture) == 0 && vrCapture == 0, "sceCameraIsVrCaptureEnable did not report disabled");
+
+    UsageInfoStub usageTooSmall{11, {}};
+    UsageInfoStub usageTooLarge{17, {}};
+    Require(sceCameraGetUsageInfo(0xFF, nullptr) == SCE_CAMERA_ERROR_PARAM, "sceCameraGetUsageInfo accepted null");
+    Require(sceCameraGetUsageInfo(0xFF, &usageTooSmall) == SCE_CAMERA_ERROR_PARAM, "sceCameraGetUsageInfo accepted sizeThis 11");
+    Require(sceCameraGetUsageInfo(0xFF, &usageTooLarge) == SCE_CAMERA_ERROR_PARAM, "sceCameraGetUsageInfo accepted sizeThis 17");
+    Require(sceCameraGetUsageInfoWithoutCountProcess(0xFF, nullptr) == SCE_CAMERA_ERROR_PARAM, "sceCameraGetUsageInfoWithoutCountProcess accepted null");
+    Require(sceCameraGetUsageInfoWithoutCountProcess(0xFF, &usageTooSmall) == SCE_CAMERA_ERROR_PARAM, "sceCameraGetUsageInfoWithoutCountProcess accepted sizeThis 11");
+    Require(sceCameraGetUsageInfoWithoutCountProcess(0xFF, &usageTooLarge) == SCE_CAMERA_ERROR_PARAM, "sceCameraGetUsageInfoWithoutCountProcess accepted sizeThis 17");
+
+    Require(sceCameraOpenByModuleIdWithMode(0xFE, 0, 0, nullptr, 0, 0) == SCE_CAMERA_ERROR_PARAM, "sceCameraOpenByModuleIdWithMode accepted non-system user");
+    Require(sceCameraOpenByModuleIdWithMode(0xFF, 1, 0, nullptr, 0, 0) == SCE_CAMERA_ERROR_PARAM, "sceCameraOpenByModuleIdWithMode accepted nonzero type");
+    Require(sceCameraOpenByModuleIdWithMode(0xFF, 0, 1, nullptr, 0, 0) == SCE_CAMERA_ERROR_PARAM, "sceCameraOpenByModuleIdWithMode accepted nonzero index");
+    Require(sceCameraSetForceDriverMode(1) == CameraErrorInvalidCategory, "sceCameraSetForceDriverMode did not reject default app category");
+
+    std::uint8_t unknownOut[16]{};
+    Require(libSceCameraUnknown_AnqFx_minus_nAxZM_nid_no_patch() == SCE_CAMERA_ERROR_NOT_INIT, "AnqFx-nAxZM did not require open camera");
+    Require(libSceCameraUnknown_azeU8qML4VM_nid_no_patch(nullptr) == SCE_CAMERA_ERROR_PARAM, "azeU8qML4VM accepted null");
+    Require(libSceCameraUnknown_azeU8qML4VM_nid_no_patch(unknownOut) == SCE_CAMERA_ERROR_NOT_INIT, "azeU8qML4VM did not require open camera");
+    Require(libSceCameraUnknown_kgRnfleNYNo_nid_no_patch(nullptr) == SCE_CAMERA_ERROR_PARAM, "kgRnfleNYNo accepted null");
+    Require(libSceCameraUnknown_kgRnfleNYNo_nid_no_patch(unknownOut) == SCE_CAMERA_ERROR_NOT_INIT, "kgRnfleNYNo did not require open camera");
+
     const auto initialize = As<NoArgumentFn>(&sceCamera2Initialize);
     const auto finalize = As<NoArgumentFn>(&sceCamera2Finalize);
     const auto open = As<OpenFn>(&sceCamera2Open);
@@ -85,6 +116,8 @@ int main() {
 
     const int camera = sceCameraOpen(0xFF, 0, 0, nullptr);
     Require(camera > 0, "sceCameraOpen failed");
+    Require(libSceCameraUnknown_azeU8qML4VM_nid_no_patch(nullptr) == SCE_CAMERA_ERROR_PARAM, "azeU8qML4VM accepted null while camera was open");
+    Require(libSceCameraUnknown_kgRnfleNYNo_nid_no_patch(nullptr) == SCE_CAMERA_ERROR_PARAM, "kgRnfleNYNo accepted null while camera was open");
     Require(finalize() == ErrorCameraOpen, "sceCamera2Finalize ran while a camera was open");
     Require(sceCameraClose(camera) == 0, "sceCameraClose failed");
     Require(finalize() == 0, "sceCamera2Finalize failed after the camera closed");
