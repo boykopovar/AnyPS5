@@ -356,6 +356,14 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     const auto remappedFormat = storage ? RemapStorageTextureFormat(format) : RemapTextureFormat(format);
     const bool alphaFloat = format == IrBufferFormat::Format6E4Float;
     decoded.conversionFormat = remappedFormat != format && !nativeRepacked ? format : IrBufferFormat::Invalid;
+    if (IsConvertedSignedTextureFormat(format)) {
+        if (!base.srgbDecodeCompatible || base.depthCompare || table || base.packed || base.byElements != 0u) return rejectImage(PoisonReason::Conversion, "converted signed images require direct unpacked image loads or stores");
+        if (format != IrBufferFormat::Format2_10_10_10SNorm && format != IrBufferFormat::Format2_10_10_10SInt) {
+            for (std::uint32_t component = 0u; component < 4u; ++component) {
+                if (((descriptorImageSwizzle(descriptor) >> (component * 3u)) & 7u) == 7u) return rejectImage(PoisonReason::Conversion, "selects a channel the converted image format does not have");
+            }
+        }
+    }
     if (IsConvertedUnormTextureFormat(format) || alphaFloat || ((format == IrBufferFormat::Format10_11_11Float || format == IrBufferFormat::Format11_11_10Float) && !nativeRepacked)) {
         const bool floating = alphaFloat || format == IrBufferFormat::Format10_11_11Float || format == IrBufferFormat::Format11_11_10Float;
         if (alphaFloat && (base.written || base.packed)) return rejectImage(PoisonReason::Conversion, "writes or packs a 10_10_10_2 float image, which is not implemented");
@@ -2396,6 +2404,7 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
         mode.mipCount = mode.mipMode == ImageMipMode::DynamicStorage ? RuntimeAbi::StorageMipSlots : 1u;
         mode.shaderSwizzle = ShaderImageIdentitySwizzle;
         if (conversion == IrBufferFormat::Format11_11_10UNorm || conversion == IrBufferFormat::Format10_11_11UNorm || conversion == IrBufferFormat::Format11_11_10Float || conversion == IrBufferFormat::Format10_11_11Float) mode.shaderSwizzle = 0x2acu;
+        if (IsConvertedSignedTextureFormat(conversion) && conversion != IrBufferFormat::Format2_10_10_10SNorm && conversion != IrBufferFormat::Format2_10_10_10SInt) mode.shaderSwizzle = 0x2acu;
         modes.push_back(mode);
         if (GcnGuestShaders()) {
             if (depth || conversion == FmaskExpansion || packed != IrBufferFormat::Invalid || image.byElements != 0u) return;
@@ -2543,6 +2552,11 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
                 append(IrTextureNumericClass::Uint, IrBufferFormat::Format11_11_10Float, IrBufferFormat::Invalid, false, false);
                 append(IrTextureNumericClass::Uint, IrBufferFormat::Format10_11_11Float, IrBufferFormat::Invalid, false, false);
                 if (!image.written) append(IrTextureNumericClass::Uint, IrBufferFormat::Format6E4Float, IrBufferFormat::Invalid, false, false);
+                if (!table && image.byElements == 0u) {
+                    for (const auto format : {IrBufferFormat::Format11_11_10SNorm, IrBufferFormat::Format11_11_10SInt, IrBufferFormat::Format10_11_11SNorm, IrBufferFormat::Format10_11_11SInt, IrBufferFormat::Format2_10_10_10SNorm, IrBufferFormat::Format2_10_10_10SInt}) {
+                        append(IrTextureNumericClass::Uint, format, IrBufferFormat::Invalid, false, false);
+                    }
+                }
             }
             if (storage) {
                 for (const auto format : {IrBufferFormat::Format5_6_5UNorm, IrBufferFormat::Format5_5_5_1UNorm, IrBufferFormat::Format1_5_5_5UNorm, IrBufferFormat::Format4_4_4_4UNorm}) {
