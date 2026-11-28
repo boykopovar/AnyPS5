@@ -49,6 +49,8 @@ def main():
     require("count=1" in first_signal and "have=0->1" in first_signal, f"signal record malformed: {first_signal}")
     for line in lines:
         require(" tid=" in line and " t=" in line and " seq=" in line, f"record missing metadata: {line}")
+    live = [line for line in traced.stderr.splitlines() if "[sema]" in line and " seq=" not in line and "sync ring dump" not in line]
+    require(live == [], f"ring mode wrote live trace lines: {live[:2]}")
     header = next((line for line in traced.stderr.splitlines() if "sync ring dump" in line), "")
     require("8 records" in header, f"dump header malformed: {header!r}")
     sequences = [int(line.rsplit(" seq=", 1)[1]) for line in lines]

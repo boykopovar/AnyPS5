@@ -101,16 +101,17 @@ void NoteName(const void* object, const char* name) {
     for (std::size_t probe = 0; probe < NameProbeLimit; ++probe) {
         NameSlot& slot = g_names[(home + probe) % NameCapacity];
         const std::uint64_t existing = slot.object.load(std::memory_order_acquire);
-        if (existing == key) return;
-        if (existing != 0) continue;
-        std::uint64_t expected = 0;
-        if (!slot.object.compare_exchange_strong(expected, key, std::memory_order_acq_rel)) {
-            if (expected == key) return;
-            continue;
+        if (existing != 0 && existing != key) continue;
+        if (existing == 0) {
+            std::uint64_t expected = 0;
+            if (!slot.object.compare_exchange_strong(expected, key, std::memory_order_acq_rel) && expected != key) continue;
         }
         char copy[NameBytes]{};
         std::strncpy(copy, name, NameBytes - 1);
-        std::memcpy(slot.text, copy, NameBytes);
+        if (std::memcmp(slot.text, copy, NameBytes) != 0) {
+            slot.ready.store(0, std::memory_order_release);
+            std::memcpy(slot.text, copy, NameBytes);
+        }
         slot.ready.store(1, std::memory_order_release);
         return;
     }
