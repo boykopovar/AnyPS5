@@ -1,6 +1,13 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/FmaskTexture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
@@ -8,10 +15,24 @@
 #include <bit>
 #include <cstdint>
 #include <cstring>
+#include <cstdlib>
 #include <iostream>
 #include <span>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
+
+namespace AgcDriver {
+
+struct VulkanDeviceTestAccess {
+    static Graphics::Context ContextOf(const VulkanDevice& device) { return device.graphicsContext(); }
+};
+
+}
 
 namespace {
 
@@ -233,12 +254,271 @@ void RunNarrow(AgcDriver::VulkanDevice& device, const NarrowFmask& fmask, bool l
     }
 }
 
+struct StandalonePlane {
+    StandalonePlane(std::size_t size, bool watch) : bytes((size + 65535u) & ~std::size_t{65535u}), watched(watch) {
+#ifdef _WIN32
+        if (watched) {
+            data = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, 65536u));
+            GuestArena::GuestArenaCommit_nid_postfix(data, bytes, PAGE_READWRITE, bytes);
+        } else data = static_cast<std::byte*>(VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+#else
+        data = static_cast<std::byte*>(std::aligned_alloc(65536u, bytes));
+        if (watched && data != nullptr) GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(data, bytes);
+#endif
+        Require(data != nullptr, "cannot allocate standalone FMASK fixture");
+        std::memset(data, 0, bytes);
+        GuestAllocations::Mutation mutation;
+        mutation.Add(data, bytes, true, true, true);
+        Require(!watched || AgcDriver::GuestMemory::Watched(Address(), bytes), "standalone FMASK fixture is not watched");
+    }
+    ~StandalonePlane() {
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Remove(data);
+        }
+#ifdef _WIN32
+        if (watched) {
+            GuestArena::GuestArenaReset_nid_postfix(data, bytes);
+            GuestArena::GuestArenaRelease_nid_postfix(data, bytes);
+        } else VirtualFree(data, 0, MEM_RELEASE);
+#else
+        if (watched) GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(data, bytes);
+        std::free(data);
+#endif
+    }
+    StandalonePlane(const StandalonePlane&) = delete;
+    StandalonePlane& operator=(const StandalonePlane&) = delete;
+    std::uint64_t Address() const { return reinterpret_cast<std::uintptr_t>(data); }
+    std::size_t bytes;
+    bool watched;
+    std::byte* data = nullptr;
+};
+
+struct FlushProbe {
+    static inline FlushProbe* active = nullptr;
+    FlushProbe(StandalonePlane& metadata, std::byte* changed, bool race) : metadata(metadata), changed(changed), race(race), previous(AgcDriver::GuestMemory::CurrentFlushHook()) {
+        active = this;
+        AgcDriver::GuestMemory::SetFlushHook([](std::uint64_t address, std::size_t bytes) {
+            auto& probe = *active;
+            if (probe.previous != nullptr) probe.previous(address, bytes);
+            if (address != probe.metadata.Address()) return;
+            ++probe.calls;
+            if (!probe.race && probe.calls == 1u) std::memset(probe.metadata.data, 0xee, probe.metadata.bytes);
+            if (probe.race && probe.calls == 2u) *probe.changed ^= std::byte{0xff};
+        });
+    }
+    ~FlushProbe() {
+        AgcDriver::GuestMemory::SetFlushHook(previous);
+        active = nullptr;
+    }
+    StandalonePlane& metadata;
+    std::byte* changed;
+    bool race;
+    void (*previous)(std::uint64_t, std::size_t);
+    std::uint32_t calls = 0;
+};
+
+void CheckStandaloneDescriptorChanges(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, 8>& image, const ShaderRecompiler::RecompileResult& original, const StandalonePlane& fmask, const StandalonePlane& cmask, bool registration) {
+    const auto savedInput = Input;
+    const std::vector<std::byte> savedFmask(fmask.data, fmask.data + fmask.bytes);
+    const std::vector<std::byte> savedCmask(cmask.data, cmask.data + cmask.bytes);
+    const auto key = [](const ShaderRecompiler::RecompileResult& shader) {
+        return ShaderResources::ContentKey(CompiledShader{ShaderRecompiler::ShaderStage::Compute, &shader, 0u}, false, true);
+    };
+    const auto originalKey = key(original);
+    const auto texture = [&](const std::array<std::uint32_t, 8>& descriptor) {
+        const auto component = [&](std::uint32_t index) {
+            const auto selector = (descriptor[3] >> (index * 3u)) & 7u;
+            return selector == 4u ? VK_COMPONENT_SWIZZLE_R : selector == 1u ? VK_COMPONENT_SWIZZLE_ONE : VK_COMPONENT_SWIZZLE_ZERO;
+        };
+        return StandaloneFmaskTexture_nid_no_patch(AgcDriver::VulkanDeviceTestAccess::ContextOf(device), DecodeTextureResource(descriptor), {component(0u), component(1u), component(2u), component(3u)});
+    };
+    const auto originalTexture = texture(image);
+    Require(originalTexture->HasReuseLookup() && originalTexture->RefreshedPerUse() && originalTexture->ReuseLookupHolds(), "standalone fixture did not exercise its captured view's reuse callback");
+    const auto dispatch = [&](const std::array<std::uint32_t, 8>& descriptor, const ShaderRecompiler::RecompileResult& shader) {
+        const auto resource = DecodeTextureResource(descriptor);
+        const auto geometry = DescribeSurface(resource);
+        const auto& mip = geometry.mips.front();
+        const auto block = ThinBlockLayout(resource.tileMode, 1u);
+        const auto* equation = FindTextureSwizzleEquation(24u, 1u);
+        Require(equation != nullptr, "descriptor reuse fixture lacks its swizzle equation");
+        for (std::uint32_t lane = 0u; lane < Threads; ++lane) {
+            Input[lane * 4u] = lane == 0u ? resource.width - 1u : (lane * 79u) % resource.width;
+            Input[lane * 4u + 1u] = lane == 0u ? resource.height - 1u : (lane * 43u) % resource.height;
+        }
+        Output.fill(Sentinel);
+        Texture::TakeReuseLookupCounts();
+        device.Dispatch(shader, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(Code.data()));
+        device.WaitIdle();
+        const auto lookups = Texture::TakeReuseLookupCounts();
+        Require(lookups.held == 0u && lookups.changed == 0u, "a standalone per-use texture unexpectedly entered the resource cache");
+        for (std::uint32_t lane = 0u; lane < Threads; ++lane) {
+            const auto x = Input[lane * 4u], y = Input[lane * 4u + 1u];
+            const auto tile = mip.tail ? 0u : (static_cast<std::uint64_t>(y / block[2]) * mip.blocksPerRow + x / block[1]) * block[0];
+            const auto offset = mip.tiledOffset + tile + (EquationOffset(*equation, x + (mip.tail ? mip.tailX : 0u), y + (mip.tail ? mip.tailY : 0u), 0u) ^ resource.pipeBankXor);
+            Require(offset < savedFmask.size(), "descriptor reuse fixture exceeds its unchanged FMASK plane");
+            const auto expanded = Expanded(NarrowFormats[5], FmaskWord{std::to_integer<std::uint32_t>(savedFmask[offset]), 0u});
+            for (std::uint32_t component = 0u; component < 4u; ++component) {
+                const auto selector = (descriptor[3] >> (component * 3u)) & 7u;
+                const auto expected = selector == 4u ? expanded : selector == 1u ? 1u : 0u;
+                Require(Output[lane * 4u + component] == expected, "a changed standalone descriptor retained stale geometry or selectors");
+            }
+        }
+        Require(std::all_of(Output.begin() + Threads * 4u, Output.end(), [](auto word) { return word == Sentinel; }), "descriptor reuse fixture overran its output");
+    };
+    dispatch(image, original);
+    const auto resource = DecodeTextureResource(image);
+    for (const auto mode : {0u, 1u, 2u, 3u}) {
+        auto changed = image;
+        const auto width = mode == 0u || mode == 3u ? resource.width / 2u : resource.width;
+        const auto height = mode == 1u || mode == 3u ? resource.height / 2u : resource.height;
+        changed[1] = (changed[1] & ~(3u << 30u)) | (((width - 1u) & 3u) << 30u);
+        changed[2] = ((width - 1u) >> 2u) | ((height - 1u) << 14u);
+        if (mode >= 2u) changed[3] = (changed[3] & ~0xfffu) | (4u << 3u) | (1u << 6u) | (4u << 9u);
+        const auto shader = Compile(device, Code, changed, registration);
+        Require(shader.variantId == original.variantId, "descriptor reuse fixture changed its shader artifact");
+        Require(key(shader) != originalKey, "resource content key ignored a changed standalone FMASK descriptor");
+        const auto changedTexture = texture(changed);
+        Require(changedTexture != originalTexture && changedTexture->View() != originalTexture->View(), "a changed standalone descriptor received the prior texture or view");
+        Require(changedTexture->HasReuseLookup() && changedTexture->RefreshedPerUse() && changedTexture->ReuseLookupHolds() && originalTexture->ReuseLookupHolds(), "a standalone callback did not retain its own unchanged descriptor");
+        dispatch(changed, shader);
+        dispatch(changed, shader);
+        dispatch(image, original);
+    }
+    Require(std::equal(savedFmask.begin(), savedFmask.end(), fmask.data) && std::equal(savedCmask.begin(), savedCmask.end(), cmask.data), "descriptor reuse fixture modified its source planes");
+    Input = savedInput;
+    std::cout << "standalone FMASK descriptor changes passed: width, height, selectors and combined views use distinct resource keys and textures; callbacks retain their own view; snapshots remain per-use; both source planes unchanged\n";
 }
 
-int main() {
+void RunStandalone(AgcDriver::VulkanDevice& device, bool tiled, bool watched, bool registration, std::uint32_t pipeXor, bool descriptorChanges = false) {
+    const std::uint32_t width = tiled ? 1152u : 128u;
+    const std::uint32_t height = tiled ? 576u : 64u;
+    StandalonePlane fmask(2u * 1024u * 1024u, watched);
+    StandalonePlane cmask(65536u, watched);
+    const auto base = (fmask.Address() | pipeXor) >> 8u;
+    const auto meta = cmask.Address() >> 8u;
+    const std::array<std::uint32_t, 8> image{
+        static_cast<std::uint32_t>(base), static_cast<std::uint32_t>(base >> 32u) | (161u << 20u) | (((width - 1u) & 3u) << 30u),
+        ((width - 1u) >> 2u) | ((height - 1u) << 14u), 4u | (1u << 3u) | (4u << 6u) | (24u << 20u) | (9u << 28u),
+        0u, 0u, (1u << 19u) | (1u << 21u) | (static_cast<std::uint32_t>(meta) << 24u), static_cast<std::uint32_t>(meta >> 8u)};
+    const auto resource = DecodeTextureResource(image);
+    const auto geometry = DescribeSurface(resource);
+    const auto& mip = geometry.mips.front();
+    Require(geometry.guestBytes <= fmask.bytes && (tiled ? geometry.guestBytes > 65536u : geometry.guestBytes == 65536u), "standalone FMASK fixture does not cover its intended layout");
+    const auto block = ThinBlockLayout(resource.tileMode, 1u);
+    const auto* equation = FindTextureSwizzleEquation(24u, 1u);
+    Require(equation != nullptr, "standalone FMASK fixture lacks its equation");
+    const auto offset = [&](std::uint32_t x, std::uint32_t y) {
+        const auto tile = mip.tail ? 0u : (static_cast<std::uint64_t>(y / block[2]) * mip.blocksPerRow + x / block[1]) * block[0];
+        return mip.tiledOffset + tile + (EquationOffset(*equation, x + (mip.tail ? mip.tailX : 0u), y + (mip.tail ? mip.tailY : 0u), 0u) ^ pipeXor);
+    };
+    const auto mapping = [](std::uint32_t x, std::uint32_t y) { return static_cast<std::byte>((x * 37u + y * 19u) & 255u); };
+    for (std::uint32_t y = 0; y < height; ++y) for (std::uint32_t x = 0; x < width; ++x) fmask.data[offset(x, y)] = mapping(x, y);
+    const CmaskLayout layout(width, height);
+    const auto nibble = [&](std::uint32_t x, std::uint32_t y) { return layout.Nibble(x / 8u, y / 8u) ^ ((pipeXor & 0xf00u) << 1u); };
+    const auto setCode = [&](std::uint32_t x, std::uint32_t y, std::uint32_t code) {
+        const auto n = nibble(x, y);
+        const auto old = std::to_integer<std::uint32_t>(cmask.data[n / 2u]);
+        cmask.data[n / 2u] = static_cast<std::byte>((old & ~(15u << ((n & 1u) * 4u))) | (code << ((n & 1u) * 4u)));
+    };
+    for (std::uint32_t lane = 0; lane < Threads; ++lane) {
+        Input[lane * 4u] = lane == 0u ? width - 1u : (lane * 79u) % width;
+        Input[lane * 4u + 1u] = lane == 0u ? height - 1u : (lane * 43u) % height;
+        Input[lane * 4u + 2u] = Input[lane * 4u + 3u] = 0u;
+    }
+    const auto program = Compile(device, Code, image, registration);
+    const auto codeAddress = reinterpret_cast<std::uintptr_t>(Code.data());
+    const auto check = [&] {
+        for (std::uint32_t lane = 0; lane < Threads; ++lane) {
+            const auto x = Input[lane * 4u], y = Input[lane * 4u + 1u];
+            const auto n = nibble(x, y);
+            const auto code = (std::to_integer<std::uint32_t>(cmask.data[n / 2u]) >> ((n & 1u) * 4u)) & 15u;
+            const auto packed = code == 12u ? 0u : std::to_integer<std::uint32_t>(fmask.data[offset(x, y)]);
+            const auto expected = Expanded(NarrowFormats[5], FmaskWord{packed, 0u});
+            Require(Output[lane * 4u] == expected && Output[lane * 4u + 1u] == 1u && Output[lane * 4u + 2u] == expected && Output[lane * 4u + 3u] == 0u, "standalone FMASK returned the wrong mapping or selectors");
+        }
+        Require(std::all_of(Output.begin() + Threads * 4u, Output.end(), [](auto word) { return word == Sentinel; }), "standalone FMASK overran its output");
+    };
+    for (const auto code : {0xccu, 0xeeu}) {
+        std::memset(cmask.data, code, cmask.bytes);
+        Output.fill(Sentinel);
+        std::shared_ptr<const AgcDriver::Recipe> recipe;
+        device.Dispatch(program, 1u, 1u, 1u, {}, codeAddress, nullptr, &recipe);
+        device.WaitIdle();
+        check();
+        Require(recipe == nullptr, "standalone FMASK emitted a recipe without a two-plane proof");
+    }
+    if (descriptorChanges) CheckStandaloneDescriptorChanges(device, image, program, fmask, cmask, registration);
+    for (std::uint32_t y = 0; y < height; y += 8u) for (std::uint32_t x = 0; x < width; x += 8u) setCode(x, y, ((x / 8u + 3u * (y / 8u)) & 1u) ? 12u : 14u);
+    setCode(Input[0], Input[1], 14u);
+    const auto prepared = device.PrepareDispatch(program, {}, Threads, codeAddress);
+    Require(prepared != nullptr, "standalone FMASK did not prepare a deferred dispatch");
+    Output.fill(Sentinel);
+    device.Dispatch(program, 1u, 1u, 1u, {}, codeAddress, prepared);
+    device.WaitIdle();
+    check();
+    fmask.data[offset(Input[0], Input[1])] = std::byte{0xe4};
+    Output.fill(Sentinel);
+    device.Dispatch(program, 1u, 1u, 1u, {}, codeAddress, prepared);
+    device.WaitIdle();
+    check();
+    Require(Output[0] == 0x32103210u, "prepared standalone FMASK reused stale packed data");
+    const auto preparedMetadata = device.PrepareDispatch(program, {}, Threads, codeAddress);
+    setCode(Input[0], Input[1], 12u);
+    Output.fill(Sentinel);
+    device.Dispatch(program, 1u, 1u, 1u, {}, codeAddress, preparedMetadata);
+    device.WaitIdle();
+    check();
+    Require(Output[0] == 0u, "prepared standalone FMASK reused stale CMASK");
+    const auto preparedInvalid = device.PrepareDispatch(program, {}, Threads, codeAddress);
+    setCode(Input[0], Input[1], 15u);
+    Output.fill(Sentinel);
+    std::string refusal;
+    try {
+        device.Dispatch(program, 1u, 1u, 1u, {}, codeAddress, preparedInvalid);
+        device.WaitIdle();
+    } catch (const std::runtime_error& error) { refusal = error.what(); }
+    Require(refusal.find("standalone FMASK CMASK compression code is not implemented") != std::string::npos, "unsupported standalone CMASK was not refused: " + refusal);
+    Require(std::all_of(Output.begin(), Output.end(), [](auto word) { return word == Sentinel; }), "rejected standalone FMASK wrote output");
+    setCode(Input[0], Input[1], 12u);
+    {
+        FlushProbe pending(cmask, nullptr, false);
+        Output.fill(Sentinel);
+        device.Dispatch(program, 1u, 1u, 1u, {}, codeAddress);
+        device.WaitIdle();
+        Require(pending.calls != 0u && Output[0] == 0x32103210u, "standalone FMASK captured CMASK before its pending store landed");
+        check();
+    }
+    {
+        FlushProbe race(cmask, fmask.data + offset(Input[0], Input[1]), true);
+        Output.fill(Sentinel);
+        refusal.clear();
+        try {
+            device.Dispatch(program, 1u, 1u, 1u, {}, codeAddress);
+            device.WaitIdle();
+        } catch (const std::runtime_error& error) { refusal = error.what(); }
+        Require(race.calls >= 2u && refusal.find("guest writes raced standalone FMASK import") != std::string::npos, "standalone FMASK missed a write during capture: " + refusal);
+        Require(std::all_of(Output.begin(), Output.end(), [](auto word) { return word == Sentinel; }), "raced standalone FMASK wrote output");
+    }
+    std::cout << "standalone four-sample FMASK passed: " << width << 'x' << height << ", watched=" << watched << ", registration=" << registration << ", XOR=" << pipeXor << '\n';
+}
+
+}
+
+int main(int argc, char** argv) {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (argc == 2) {
+            const std::string mode = argv[1];
+            Require(mode == "--standalone4-small" || mode == "--standalone4-tiled" || mode == "--standalone4-watched" || mode == "--standalone4-descriptor-reuse", "unknown FMASK test mode");
+            if (mode == "--standalone4-descriptor-reuse") {
+                for (const bool registration : {false, true}) for (const auto pipeXor : {0u, 0xcf00u}) RunStandalone(*device, true, true, registration, pipeXor, true);
+                return 0;
+            }
+            for (const bool registration : {false, true}) for (const auto pipeXor : {0u, 0xcf00u}) RunStandalone(*device, mode != "--standalone4-small", mode == "--standalone4-watched", registration, pipeXor);
+            return 0;
+        }
         for (const bool registration : {false, true}) {
             for (const bool layered : {false, true}) {
                 for (const auto pipeXor : {0u, 0xf00u}) Run(*device, layered, registration, pipeXor);

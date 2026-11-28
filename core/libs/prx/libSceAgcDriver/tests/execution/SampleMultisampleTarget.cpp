@@ -2266,8 +2266,8 @@ void InitialTextureDcc(AgcDriver::VulkanDevice& device, std::uint32_t samples) {
 void NativeFmask(std::unique_ptr<AgcDriver::VulkanDevice>& device, std::uint32_t samples) {
     using namespace AgcDriver::Graphics;
     const auto shift = static_cast<std::uint32_t>(std::countr_zero(samples));
-    const std::uint32_t format = samples == 2u ? 159u : 166u;
-    const std::uint32_t expandedIndices = samples == 2u ? 0x10u : 0x76543210u;
+    const std::uint32_t format = samples == 2u ? 159u : samples == 4u ? 161u : 166u;
+    const std::uint32_t expandedIndices = samples == 2u ? 0x10u : samples == 4u ? 0x32103210u : 0x76543210u;
     Block colorMemory(4u * BlockBytes, true);
     Block dcc(BlockBytes, true);
     Block cmask(BlockBytes, true);
@@ -2499,7 +2499,7 @@ int main(int argc, char** argv) {
         }
         if (argc == 3 && std::string_view(argv[1]) == "--cold-native-fmask") {
             const auto samples = static_cast<std::uint32_t>(std::stoul(argv[2]));
-            Require(samples == 2u || samples == 8u, "the cold native FMASK probe requires two or eight samples");
+            Require(samples == 2u || samples == 4u || samples == 8u, "the cold native FMASK probe requires two, four or eight samples");
             const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
             if (!context.storageImageMultisample || (context.limits.framebufferColorSampleCounts & samples) == 0u) {
                 std::printf("cold native FMASK skipped, the device does not render or store %u-sample color\n", samples);
