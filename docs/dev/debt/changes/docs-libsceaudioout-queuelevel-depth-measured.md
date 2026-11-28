@@ -1,0 +1,5 @@
+# libSceAudioOut
+
+## change [sceAudioOut2ContextGetQueueLevel]
+
+- [sceAudioOut2ContextGetQueueLevel](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Context.cpp) (libSceAudioOut) with an SDL device counts the grains that `sceAudioOut2ContextAdvance` completed and no push has consumed as queued, together with the pushed grains beyond the 40 ms cushion, up to `queue_depth`. Whether the console counts them is unknown. A PS5 (firmware 11.60, payload process; a title process may differ) reported level depth + 1, available 0 and `0x80268008` after depth + 1 Advance and Push(ctx, 0) rounds (depths 1, 5, 2 assumed; two runs); AnyPS5 caps it at `queue_depth`. Pushes that fill the cushion leave the level at 0, so PPSA23226's Wwise sink, which passes the available count to the sound engine as the number of frames to render, advances once per frame and pushes on a separate thread, rendered a full queue again after each push and exceeded 16 completed grains. Counted, completed grains keep such a title at most `queue_depth` grains ahead of its pushes.
