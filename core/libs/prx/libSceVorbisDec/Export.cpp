@@ -1,12 +1,15 @@
 #include "prx/libSceVorbisDec/include/Api.hpp"
 #include "prx/libSceVorbisDec/include/GuestVorbisFile.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 #include <vorbis/vorbisfile.h>
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -37,12 +40,28 @@ struct Handle {
     void* datasource = nullptr;
     GuestCallbacks callbacks{};
     std::vector<GuestInfo> infos;
+    void* floatArena = nullptr;
+    std::size_t floatArenaBytes = 0;
+    std::vector<float*> floatChannelPtrs;
+    std::vector<float> floatSamples;
 
     ~Handle() {
+        if (floatArena) {
+            GuestArena::GuestArenaReset_nid_postfix(floatArena, floatArenaBytes);
+            GuestArena::GuestArenaRelease_nid_postfix(floatArena, floatArenaBytes);
+        }
         file.datasource = nullptr;
         ov_clear(&file);
     }
 };
+
+void ReleaseFloatArena(Handle& handle) {
+    if (!handle.floatArena) return;
+    GuestArena::GuestArenaReset_nid_postfix(handle.floatArena, handle.floatArenaBytes);
+    GuestArena::GuestArenaRelease_nid_postfix(handle.floatArena, handle.floatArenaBytes);
+    handle.floatArena = nullptr;
+    handle.floatArenaBytes = 0;
+}
 
 struct Table {
     std::mutex mutex;
@@ -130,6 +149,51 @@ void RunFilter(float** pcm, long channels, long samples, void* context) {
     filter->filter(pcm, channels, samples, filter->param);
 }
 
+bool CopyGuestIn(void* destination, const void* source, std::size_t size) {
+    const int saved = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(destination, source, size);
+    errno = saved;
+    return ok;
+}
+
+bool CopyGuestOut(void* destination, const void* source, std::size_t size) {
+    const int saved = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(destination, source, size);
+    errno = saved;
+    return ok;
+}
+
+bool WritableGuest(void* destination, std::size_t size) {
+    if (size == 0) return true;
+    const int saved = errno;
+    const GuestArena::HostWrite guard(destination, size);
+    const bool ok = guard.Open() && GuestWritable_nid_no_patch(destination, size);
+    errno = saved;
+    return ok;
+}
+
+template <typename TCall>
+std::int64_t ReadPcm(void* vf, const char* function, char* buffer, int length, int* bitstream, TCall call) {
+    RequireFile(vf, function);
+    if (bitstream && !WritableGuest(bitstream, sizeof(*bitstream))) return OV_EFAULT;
+    if (length > 0 && (!buffer || !WritableGuest(buffer, static_cast<std::size_t>(length)))) return OV_EFAULT;
+    std::vector<char> hostBuffer;
+    char* target = buffer;
+    if (length > 0) {
+        hostBuffer.resize(static_cast<std::size_t>(length));
+        target = hostBuffer.data();
+    }
+    int localBitstream = 0;
+    const std::int64_t result = WithHandle(vf, function, [&](Handle& handle) -> std::int64_t {
+        return call(handle, target, bitstream ? &localBitstream : nullptr);
+    });
+    if (result > 0) {
+        if (buffer && !CopyGuestOut(buffer, hostBuffer.data(), static_cast<std::size_t>(result))) return OV_EFAULT;
+        if (bitstream && !CopyGuestOut(bitstream, &localBitstream, sizeof(localBitstream))) return OV_EFAULT;
+    }
+    return result;
+}
+
 }
 
 extern "C" {
@@ -138,6 +202,11 @@ int APS5_VABI sceVorbisDecOpenCallbacks(void* datasource, void* vf, const char* 
     RequireFile(vf, __func__);
     if (initial && (ibytes < std::numeric_limits<long>::min() || ibytes > std::numeric_limits<long>::max())) {
         throw std::runtime_error(std::string(__func__) + ": an initial byte count outside the host long range is not implemented");
+    }
+    std::vector<char> initialCopy;
+    if (initial && ibytes > 0) {
+        initialCopy.resize(static_cast<std::size_t>(ibytes));
+        if (!CopyGuestIn(initialCopy.data(), initial, initialCopy.size())) return OV_EFAULT;
     }
     Take(vf).reset();
     auto handle = std::make_unique<Handle>();
@@ -149,7 +218,8 @@ int APS5_VABI sceVorbisDecOpenCallbacks(void* datasource, void* vf, const char* 
         callbacks.close_func ? CloseSource : nullptr,
         nullptr,
     };
-    const int headers = ov_test_callbacks(datasource ? handle.get() : nullptr, &handle->file, initial, initial ? static_cast<long>(ibytes) : 0, host);
+    const char* initialBytes = initial ? (ibytes > 0 ? initialCopy.data() : initial) : nullptr;
+    const int headers = ov_test_callbacks(datasource ? handle.get() : nullptr, &handle->file, initialBytes, initial ? static_cast<long>(ibytes) : 0, host);
     if (headers != 0) return headers;
     const int result = anyps5_ov_test_open64(&handle->file, callbacks.tell_func ? TellSource : nullptr);
     if (result != 0) return result;
@@ -265,20 +335,85 @@ std::int64_t APS5_VABI sceVorbisDecRawTotal(void* vf, int link) {
 }
 
 std::int64_t APS5_VABI sceVorbisDecRead(void* vf, char* buffer, int length, int bigEndian, int word, int isSigned, int* bitstream) {
-    return WithHandle(vf, __func__, [&](Handle& handle) -> std::int64_t {
-        return ov_read(&handle.file, buffer, length, bigEndian, word, isSigned, bitstream);
+    return ReadPcm(vf, __func__, buffer, length, bitstream, [&](Handle& handle, char* target, int* targetBitstream) -> std::int64_t {
+        return ov_read(&handle.file, target, length, bigEndian, word, isSigned, targetBitstream);
     });
 }
 
 std::int64_t APS5_VABI sceVorbisDecReadFilter(void* vf, char* buffer, int length, int bigEndian, int word, int isSigned, int* bitstream, GuestFilter filter, void* filterParam) {
     FilterContext context{filter, filterParam};
-    return WithHandle(vf, __func__, [&](Handle& handle) -> std::int64_t {
-        return ov_read_filter(&handle.file, buffer, length, bigEndian, word, isSigned, bitstream, filter ? RunFilter : nullptr, &context);
+    return ReadPcm(vf, __func__, buffer, length, bitstream, [&](Handle& handle, char* target, int* targetBitstream) -> std::int64_t {
+        return ov_read_filter(&handle.file, target, length, bigEndian, word, isSigned, targetBitstream, filter ? RunFilter : nullptr, &context);
     });
 }
 
 std::int64_t APS5_VABI sceVorbisDecReadFloat(void* vf, float*** pcmChannels, int samples, int* bitstream) {
-    return WithHandle(vf, __func__, [&](Handle& handle) -> std::int64_t { return ov_read_float(&handle.file, pcmChannels, samples, bitstream); });
+    RequireFile(vf, __func__);
+    if (pcmChannels && !WritableGuest(pcmChannels, sizeof(*pcmChannels))) return OV_EFAULT;
+    if (bitstream && !WritableGuest(bitstream, sizeof(*bitstream))) return OV_EFAULT;
+    float** guestChannels = nullptr;
+    int localBitstream = 0;
+    bool copyOutFailed = false;
+    const std::int64_t result = WithHandle(vf, __func__, [&](Handle& handle) -> std::int64_t {
+        float** localChannels = nullptr;
+        const std::int64_t decoded = ov_read_float(&handle.file, pcmChannels ? &localChannels : nullptr, samples, bitstream ? &localBitstream : nullptr);
+        if (decoded <= 0 || !pcmChannels || !localChannels) return decoded;
+        const vorbis_info* info = ov_info(&handle.file, -1);
+        if (!info || info->channels <= 0) return OV_EINVAL;
+        const auto channelCount = static_cast<std::size_t>(info->channels);
+        const auto sampleCount = static_cast<std::size_t>(decoded);
+        const std::size_t ptrBytes = channelCount * sizeof(float*);
+        const std::size_t totalBytes = ptrBytes + channelCount * sampleCount * sizeof(float);
+        if (GuestArena::GuestArenaAvailable_nid_postfix()) {
+            constexpr std::uint32_t ReadWriteProtection = 0x04;
+            constexpr std::size_t ArenaGranularity = 65536;
+            const std::size_t arenaBytes = (totalBytes + ArenaGranularity - 1) & ~(ArenaGranularity - 1);
+            if (handle.floatArenaBytes < totalBytes) {
+                ReleaseFloatArena(handle);
+                void* const allocated = GuestArena::GuestArenaAllocate_nid_postfix(arenaBytes, alignof(float*));
+                if (!allocated) throw std::bad_alloc();
+                try {
+                    GuestArena::GuestArenaCommit_nid_postfix(allocated, arenaBytes, ReadWriteProtection, arenaBytes);
+                } catch (...) {
+                    GuestArena::GuestArenaReset_nid_postfix(allocated, arenaBytes);
+                    GuestArena::GuestArenaRelease_nid_postfix(allocated, arenaBytes);
+                    throw;
+                }
+                handle.floatArena = allocated;
+                handle.floatArenaBytes = arenaBytes;
+            }
+            auto* const guestBase = static_cast<std::uint8_t*>(handle.floatArena);
+            std::vector<float*> ptrs(channelCount);
+            for (std::size_t channel = 0; channel < channelCount; ++channel) {
+                ptrs[channel] = reinterpret_cast<float*>(guestBase + ptrBytes + channel * sampleCount * sizeof(float));
+                if (!CopyGuestOut(ptrs[channel], localChannels[channel], sampleCount * sizeof(float))) {
+                    copyOutFailed = true;
+                    return OV_EFAULT;
+                }
+            }
+            if (!CopyGuestOut(guestBase, ptrs.data(), ptrBytes)) {
+                copyOutFailed = true;
+                return OV_EFAULT;
+            }
+            guestChannels = reinterpret_cast<float**>(guestBase);
+        } else {
+            handle.floatSamples.resize(channelCount * sampleCount);
+            handle.floatChannelPtrs.resize(channelCount);
+            for (std::size_t channel = 0; channel < channelCount; ++channel) {
+                float* const destination = handle.floatSamples.data() + channel * sampleCount;
+                std::memcpy(destination, localChannels[channel], sampleCount * sizeof(float));
+                handle.floatChannelPtrs[channel] = destination;
+            }
+            guestChannels = handle.floatChannelPtrs.data();
+        }
+        return decoded;
+    });
+    if (copyOutFailed) return OV_EFAULT;
+    if (result > 0) {
+        if (pcmChannels && !CopyGuestOut(pcmChannels, &guestChannels, sizeof(guestChannels))) return OV_EFAULT;
+        if (bitstream && !CopyGuestOut(bitstream, &localBitstream, sizeof(localBitstream))) return OV_EFAULT;
+    }
+    return result;
 }
 
 std::int64_t APS5_VABI sceVorbisDecSeekable(void* vf) {
