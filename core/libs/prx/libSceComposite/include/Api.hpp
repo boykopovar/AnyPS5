@@ -40,7 +40,7 @@ int APS5_VABI sceCompositorMemoryPoolDecommit();
 int APS5_VABI sceCompositorPrivacyMaskPushArea();
 int APS5_VABI sceCompositorQuit();
 int APS5_VABI sceCompositorReleaseCommandBuffer();
-int APS5_VABI sceCompositorReleaseIndex();
+void APS5_VABI sceCompositorReleaseIndex(std::uint32_t index);
 int APS5_VABI sceCompositorReleaseLocalStall();
 int APS5_VABI sceCompositorReserveCommandBuffer();
 int APS5_VABI sceCompositorResetZoomCommand();
