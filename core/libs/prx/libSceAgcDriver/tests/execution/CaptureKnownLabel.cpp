@@ -141,7 +141,8 @@ void AppendFill(std::vector<std::uint32_t>& commands, std::uint64_t address, std
 }
 
 void AppendOpeningFill(std::vector<std::uint32_t>& commands, std::uint64_t base) {
-    AppendFill(commands, base + OpeningFillOffset, 0, OpeningFillBytes);
+    static std::uint32_t openingFills = 0;
+    AppendFill(commands, base + OpeningFillOffset, ++openingFills, OpeningFillBytes);
 }
 
 void AppendConstantPointer(std::vector<std::uint32_t>& commands, std::uint64_t constant) {
@@ -247,7 +248,7 @@ int CheckSubmittedBeforeWait(const GuestBlock& block) {
     bool reached = false;
     std::thread holder([&] {
         const auto recordDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-        while (!(recorded = AgcDriver::Graphics::Recorder::StoreCounts().stores != storesBefore) && std::chrono::steady_clock::now() < recordDeadline) std::this_thread::yield();
+        while (!(recorded = AgcDriver::Graphics::Recorder::StoreCounts().stores != storesBefore) && landed.load(std::memory_order_acquire) != label && std::chrono::steady_clock::now() < recordDeadline) std::this_thread::yield();
         auto& gpu = AgcDriver::GuestMemory::GpuMutex();
         const auto holdDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
         while (recorded && !(reached = landed.load(std::memory_order_acquire) == label) && std::chrono::steady_clock::now() < holdDeadline) {
