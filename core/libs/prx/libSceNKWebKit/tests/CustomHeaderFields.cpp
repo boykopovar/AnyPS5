@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -9,6 +10,15 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 using NKWebKit::WebCoreAbi::CustomHeaderFields;
 using NKWebKit::WebCoreAbi::HTTPHeaderField;
@@ -180,11 +190,179 @@ static void MatchesThirdPartyDomains() {
     Require(ThrowsInvalidArgument([&] { _ZNK7WebCore18CustomHeaderFields22thirdPartyDomainsMatchERKN3WTF3URLE(&unreadable, &sub.url); }));
 }
 
+struct GuardedPages {
+    unsigned char* base{nullptr};
+    std::size_t pageSize{0};
+
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(base + pageSize, pageSize, PAGE_READONLY, &previous) != 0);
+        Require(VirtualProtect(base + pageSize * 2, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0);
+        pageSize = static_cast<std::size_t>(size);
+        void* mapped = mmap(nullptr, pageSize * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        base = static_cast<unsigned char*>(mapped);
+        Require(mprotect(base + pageSize, pageSize, PROT_READ) == 0);
+        Require(mprotect(base + pageSize * 2, pageSize, PROT_NONE) == 0);
+#endif
+    }
+
+    ~GuardedPages() {
+        if (!base) return;
+#ifdef _WIN32
+        Require(VirtualFree(base, 0, MEM_RELEASE) != 0);
+#else
+        Require(munmap(base, pageSize * 3) == 0);
+#endif
+    }
+
+    unsigned char* ReadOnly() const { return base + pageSize; }
+    unsigned char* Guard() const { return base + pageSize * 2; }
+};
+
+template <typename Action>
+static bool ThrowsNotImplemented(Action action, const char* symbol) {
+    try {
+        action();
+    } catch (const std::runtime_error& error) {
+        return std::string(error.what()) == std::string(symbol) + " not implemented";
+    }
+    return false;
+}
+
+static void GuestPointers() {
+    GuardedPages pages;
+    auto* readOnly = reinterpret_cast<CustomHeaderFields*>(pages.ReadOnly());
+    auto* guard = reinterpret_cast<CustomHeaderFields*>(pages.Guard());
+    auto* dangling = reinterpret_cast<CustomHeaderFields*>(0x10);
+    unsigned char* split = pages.ReadOnly() - 16;
+
+    std::memset(split, 0x5A, 16);
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore18CustomHeaderFieldsC1Ev(readOnly); }, "_ZN7WebCore18CustomHeaderFieldsC1Ev"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore18CustomHeaderFieldsC2Ev(guard); }, "_ZN7WebCore18CustomHeaderFieldsC2Ev"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore18CustomHeaderFieldsC1Ev(reinterpret_cast<CustomHeaderFields*>(split)); }, "_ZN7WebCore18CustomHeaderFieldsC1Ev"));
+    for (std::size_t i = 0; i < 16; ++i) Require(split[i] == 0x5A);
+
+    CustomHeaderFields validSource;
+    Fill(validSource);
+    const unsigned refBefore = validSource.fields.buffer[0].name.impl->refCount;
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore18CustomHeaderFieldsC1ERKS0_(readOnly, &validSource); }, "_ZN7WebCore18CustomHeaderFieldsC1ERKS0_"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore18CustomHeaderFieldsC2ERKS0_(reinterpret_cast<CustomHeaderFields*>(split), &validSource); }, "_ZN7WebCore18CustomHeaderFieldsC2ERKS0_"));
+    for (std::size_t i = 0; i < 16; ++i) Require(split[i] == 0x5A);
+    Require(validSource.fields.buffer[0].name.impl->refCount == refBefore);
+
+    alignas(CustomHeaderFields) unsigned char destRaw[sizeof(CustomHeaderFields)]{};
+    std::memset(destRaw, 0x3C, sizeof(destRaw));
+    auto* dest = reinterpret_cast<CustomHeaderFields*>(destRaw);
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore18CustomHeaderFieldsC1ERKS0_(dest, dangling); }, "_ZN7WebCore18CustomHeaderFieldsC1ERKS0_"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore18CustomHeaderFieldsC2ERKS0_(dest, guard); }, "_ZN7WebCore18CustomHeaderFieldsC2ERKS0_"));
+    for (unsigned char byte : destRaw) Require(byte == 0x3C);
+
+    alignas(CustomHeaderFields) unsigned char badSourceRaw[sizeof(CustomHeaderFields)]{};
+    void* badBuf = pages.Guard();
+    unsigned one = 1;
+    std::memcpy(badSourceRaw, &badBuf, sizeof(badBuf));
+    std::memcpy(badSourceRaw + 8, &one, sizeof(one));
+    std::memcpy(badSourceRaw + 12, &one, sizeof(one));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore18CustomHeaderFieldsC1ERKS0_(dest, reinterpret_cast<const CustomHeaderFields*>(badSourceRaw)); }, "_ZN7WebCore18CustomHeaderFieldsC1ERKS0_"));
+
+    CustomHeaderFields target;
+    Fill(target);
+    const auto targetBeforeCount = target.thirdPartyDomains.size;
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore18CustomHeaderFieldsaSERKS0_(readOnly, &validSource); }, "_ZN7WebCore18CustomHeaderFieldsaSERKS0_"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore18CustomHeaderFieldsaSERKS0_(readOnly, readOnly); }, "_ZN7WebCore18CustomHeaderFieldsaSERKS0_"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore18CustomHeaderFieldsaSERKS0_(guard, guard); }, "_ZN7WebCore18CustomHeaderFieldsaSERKS0_"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore18CustomHeaderFieldsaSERKS0_(&target, guard); }, "_ZN7WebCore18CustomHeaderFieldsaSERKS0_"));
+    Require(target.thirdPartyDomains.size == targetBeforeCount);
+
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore18CustomHeaderFieldsD2Ev(readOnly); }, "_ZN7WebCore18CustomHeaderFieldsD2Ev"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore18CustomHeaderFieldsD2Ev(guard); }, "_ZN7WebCore18CustomHeaderFieldsD2Ev"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore18CustomHeaderFieldsD2Ev(reinterpret_cast<CustomHeaderFields*>(badSourceRaw)); }, "_ZN7WebCore18CustomHeaderFieldsD2Ev"));
+
+    const auto url = MakeURL("https", "sub.example.com");
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore18CustomHeaderFields22thirdPartyDomainsMatchERKN3WTF3URLE(guard, &url.url); },
+        "_ZNK7WebCore18CustomHeaderFields22thirdPartyDomainsMatchERKN3WTF3URLE"));
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore18CustomHeaderFields22thirdPartyDomainsMatchERKN3WTF3URLE(&validSource, reinterpret_cast<const URL*>(pages.Guard())); },
+        "_ZNK7WebCore18CustomHeaderFields22thirdPartyDomainsMatchERKN3WTF3URLE"));
+    URL badUrl = url.url;
+    badUrl.impl = reinterpret_cast<NKWebKit::WtfAbi::StringImpl*>(pages.Guard());
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore18CustomHeaderFields22thirdPartyDomainsMatchERKN3WTF3URLE(&validSource, &badUrl); },
+        "_ZNK7WebCore18CustomHeaderFields22thirdPartyDomainsMatchERKN3WTF3URLE"));
+
+    alignas(CustomHeaderFields) unsigned char badDomainsRaw[sizeof(CustomHeaderFields)]{};
+    NKWebKit::WtfAbi::StringImpl* badDomainPtr = reinterpret_cast<NKWebKit::WtfAbi::StringImpl*>(pages.Guard());
+    void* domainBuf = &badDomainPtr;
+    std::memcpy(badDomainsRaw + 16, &domainBuf, sizeof(domainBuf));
+    std::memcpy(badDomainsRaw + 24, &one, sizeof(one));
+    std::memcpy(badDomainsRaw + 28, &one, sizeof(one));
+    Require(ThrowsNotImplemented([&] { _ZNK7WebCore18CustomHeaderFields22thirdPartyDomainsMatchERKN3WTF3URLE(reinterpret_cast<const CustomHeaderFields*>(badDomainsRaw), &url.url); },
+        "_ZNK7WebCore18CustomHeaderFields22thirdPartyDomainsMatchERKN3WTF3URLE"));
+
+    CustomHeaderFields emptyFields;
+    Require(!_ZNK7WebCore18CustomHeaderFields22thirdPartyDomainsMatchERKN3WTF3URLE(&emptyFields, reinterpret_cast<const URL*>(pages.Guard())));
+
+    struct FakeSubstringImpl {
+        NKWebKit::WtfAbi::StringImpl header;
+        NKWebKit::WtfAbi::StringImpl* owner;
+    };
+    const char sampleChars[] = "abcd";
+    FakeSubstringImpl aliasedSubstring{{4, 4, sampleChars, 4u | 2u}, reinterpret_cast<NKWebKit::WtfAbi::StringImpl*>(pages.Guard())};
+    NKWebKit::WtfAbi::StringImpl* aliasedEntries[2] = {&aliasedSubstring.header, &aliasedSubstring.header};
+    alignas(CustomHeaderFields) unsigned char aliasedRaw[sizeof(CustomHeaderFields)]{};
+    void* aliasedBuf = aliasedEntries;
+    unsigned two = 2;
+    std::memcpy(aliasedRaw + 16, &aliasedBuf, sizeof(aliasedBuf));
+    std::memcpy(aliasedRaw + 24, &two, sizeof(two));
+    std::memcpy(aliasedRaw + 28, &two, sizeof(two));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore18CustomHeaderFieldsD2Ev(reinterpret_cast<CustomHeaderFields*>(aliasedRaw)); },
+        "_ZN7WebCore18CustomHeaderFieldsD2Ev"));
+    Require(aliasedSubstring.header.refCount == 4);
+    unsigned char aliasedBefore[sizeof(CustomHeaderFields)]{};
+    std::memcpy(aliasedBefore, aliasedRaw, sizeof(aliasedRaw));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore18CustomHeaderFieldsaSERKS0_(reinterpret_cast<CustomHeaderFields*>(aliasedRaw), &validSource); },
+        "_ZN7WebCore18CustomHeaderFieldsaSERKS0_"));
+    Require(aliasedSubstring.header.refCount == 4);
+    Require(std::memcmp(aliasedBefore, aliasedRaw, sizeof(aliasedRaw)) == 0);
+
+    NKWebKit::WtfAbi::StringImpl invalidFlagsImpl{2, 4, sampleChars, 4u | 16u};
+    NKWebKit::WtfAbi::StringImpl* invalidFlagsBuf = &invalidFlagsImpl;
+    alignas(CustomHeaderFields) unsigned char invalidFlagsRaw[sizeof(CustomHeaderFields)]{};
+    void* invalidFlagsPtr = &invalidFlagsBuf;
+    std::memcpy(invalidFlagsRaw + 16, &invalidFlagsPtr, sizeof(invalidFlagsPtr));
+    std::memcpy(invalidFlagsRaw + 24, &one, sizeof(one));
+    std::memcpy(invalidFlagsRaw + 28, &one, sizeof(one));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore18CustomHeaderFieldsD2Ev(reinterpret_cast<CustomHeaderFields*>(invalidFlagsRaw)); },
+        "_ZN7WebCore18CustomHeaderFieldsD2Ev"));
+    Require(invalidFlagsImpl.refCount == 2);
+    invalidFlagsImpl.hashAndFlags = 4u | 3u;
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore18CustomHeaderFieldsaSERKS0_(reinterpret_cast<CustomHeaderFields*>(invalidFlagsRaw), &validSource); },
+        "_ZN7WebCore18CustomHeaderFieldsaSERKS0_"));
+    Require(invalidFlagsImpl.refCount == 2);
+
+    alignas(CustomHeaderFields) unsigned char zeroSizeBadBufRaw[sizeof(CustomHeaderFields)]{};
+    std::memcpy(zeroSizeBadBufRaw, &badBuf, sizeof(badBuf));
+    std::memcpy(zeroSizeBadBufRaw + 8, &one, sizeof(one));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore18CustomHeaderFieldsD2Ev(reinterpret_cast<CustomHeaderFields*>(zeroSizeBadBufRaw)); },
+        "_ZN7WebCore18CustomHeaderFieldsD2Ev"));
+    Require(ThrowsNotImplemented([&] { _ZN7WebCore18CustomHeaderFieldsaSERKS0_(reinterpret_cast<CustomHeaderFields*>(zeroSizeBadBufRaw), &validSource); },
+        "_ZN7WebCore18CustomHeaderFieldsaSERKS0_"));
+}
+
 int main() {
     ConstructsEmpty();
     CopiesIndependently();
     AssignsAndRefuses();
     MatchesThirdPartyDomains();
+    GuestPointers();
     std::puts("CustomHeaderFields passed");
     return 0;
 }
