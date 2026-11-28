@@ -18,7 +18,7 @@ Set a switch before starting the emulator. Unless noted, any value enables it. M
 | `APS5_TRACE_MEMORY` | Direct-memory allocation, mapping and protection operations. |
 | `APS5_TRACE_PREPARATION_WAIT` | Shader preparation tasks moved to the front of the queue to satisfy a waiting caller. |
 | `APS5_TRACE_SSE4A` | Each emulated SSE4A instruction once per guest instruction address (Windows). |
-| `APS5_TRACE_SYNC` | Event-flag and semaphore operations and their wait and wake results. |
+| `APS5_TRACE_SYNC` | Event-flag and semaphore operations and their wait and wake results. The value `ring` records semaphore operations into a memory ring of the last 65,536 operations instead of logging them one by one; the ring is written out only by the crash and abort reports, as the operation, object, name, thread, microsecond time and per-operation values of each record. `ring:<name>` narrows the records to the signals and wait ends of the semaphore of that name. |
 | `APS5_TRACE_TIMERS` | Timing measurements for the host wait primitives used by the emulator. |
 | `APS5_TRACE_UDS` | Universal Data System events posted to a context, and the trophy title data it cannot find. |
 | `APS5_TRACE_USLEEP` | Every 2,000 `sceKernelUsleep` calls, the call sites that sleep most, with their call counts and requested delays. Calls made through `sceNetUsleep` and by the `APS5_TRACE_TIMERS` measurement on Windows are counted too, under a libSceNet or libkernel address. Guest `usleep` calls are not counted. |
