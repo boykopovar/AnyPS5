@@ -2,7 +2,7 @@
 
 ## change [sceAgcDriverSetSubmitValidationMode, sceAgcDriverGetSubmitValidationMode, sceAgcDriverSetSubmitValidationConfig, sceAgcDriverGetSubmitValidationConfig, sceAgcDriverSetValidationErrorOutputFrequency, sceAgcDriverGetShaderDebuggingStatus]
 
-- [sceAgcDriverSetSubmitValidationMode, sceAgcDriverGetSubmitValidationMode, sceAgcDriverSetSubmitValidationConfig, sceAgcDriverGetSubmitValidationConfig, sceAgcDriverSetValidationErrorOutputFrequency, sceAgcDriverGetShaderDebuggingStatus](../../../core/libs/prx/libSceAgcDriver/Unimplemented.cpp) (libSceAgcDriver) - the five validation calls return `0x8A6C1000` without reading arguments or writing caller memory, and `sceAgcDriverGetShaderDebuggingStatus` returns 1, matching [OpenAGC](https://github.com/OpenAGC/OpenAGC/blob/3c7e8072f0d7684e930454794fd5c02056946d73/src/game_compat.c#L250-L291): in Sony's `libSceAgcDriver.sprx` (Dragon Quest VII Reimagined, `0x7bb0-0x7bf0`) each validation export is `mov eax, 0x8a6c1000; ret`, and debugging status is 1 on firmware 5.50 (`0x6740`). Parameter types follow OpenAGC and are ignored; later firmware and title usage are unverified
+- [sceAgcDriverSetSubmitValidationMode, ...](../../../core/libs/prx/libSceAgcDriver/Unimplemented.cpp) (libSceAgcDriver) - the five validation calls return `0x8A6C1000` without reading args or writing caller memory, and `sceAgcDriverGetShaderDebuggingStatus` returns 1, matching [OpenAGC](https://github.com/OpenAGC/OpenAGC/blob/3c7e8072f0d7684e930454794fd5c02056946d73/src/game_compat.c#L250-L291): in Sony's `libSceAgcDriver.sprx` (`0x7bb0-0x7bf0`) each validation export is `mov eax, 0x8a6c1000; ret`, and debugging status is 1 on FW 5.50 (`0x6740`). Parameter types follow OpenAGC and are ignored; later FW and title usage are unverified.
 
 ## change [PM4 submission rings]
 
@@ -56,7 +56,7 @@
 
 ## change [sceHttpCacheSystemInit and sceHttpCacheSystemClearAll]
 
-- [sceHttpCacheSystemInit and sceHttpCacheSystemClearAll](../../../core/libs/prx/libSceHttpCache/Export.cpp) - wrappers at `0x2d570` and `0x2d680` in firmware 11.00 `libSceHttpCache.sprx` (SHA-256 `0d825d639b642a73b3ae7d7e0217f602104609d388cf8e0ae83ba50a8a2c2fd1`) validate a non-null path <= 0x400 bytes (`0x817a0012` on failure) and return 0 ignoring delegate status. Host copies via `CopyGuestString_nid_no_patch` (bad pointers/unterminated strings return `0x817a0012`); `SystemInit` returns 0 without storing, `SystemClearAll` throws via `NotImplemented_nid_no_patch`. Path conversion and disk layout are unmodeled; `SystemShutdown`, `SystemTerm`, and `SystemSendStatistics` return 0.
+- [sceHttpCacheSystemInit and sceHttpCacheSystemClearAll](../../../core/libs/prx/libSceHttpCache/Export.cpp) - wrappers at `0x2d570` and `0x2d680` in FW 11.00 `libSceHttpCache.sprx` validate a non-null path <= 0x400 bytes (`0x817a0012` on failure) and return 0 ignoring delegate status. Host copies via `CopyGuestString_nid_no_patch` (bad/unterminated return `0x817a0012`); `SystemInit` returns 0 without storing, `SystemClearAll` throws via `NotImplemented_nid_no_patch`. Path conversion and disk layout are unmodeled; `SystemShutdown`, `SystemTerm`, and `SystemSendStatistics` return 0.
 
 # libSceImeDialog
 
@@ -74,7 +74,7 @@
 
 ## change [NGS2 ATRAC9 streaming]
 
-- [NGS2 ATRAC9 streaming](../../../core/libs/prx/libSceNgs2.native/src/Atrac9.cpp) keeps duration/skip counts across compressed blocks. `APPEND` (2, `ONLY_DATA` in reference) ignores continuation sample/skip/repeat counts per [KytyPS5](https://github.com/KytyPS5/KytyPS5/blob/bb98f26433fa9e711c219aac1711fe8ecba5bf3a/src/libs/ngs2.cpp) (PPSA03747 sends 262044 bytes with 11310532 samples, then 16384-byte flags-3 blocks). Partial superframes buffer across blocks; completion callbacks allow refills, with the last waveform callback waiting for PCM drain. Buffering, callback timing, decoded-byte accounting, and starvation silence are unverified on hardware. Early-closed streams throw; fragmented repeats are unsupported; PCM retains existing behaviour.
+- [NGS2 ATRAC9 streaming](../../../core/libs/prx/libSceNgs2.native/src/Atrac9.cpp) keeps duration/skip counts across compressed blocks. `APPEND` (2, `ONLY_DATA` in ref) ignores continuation sample/skip/repeat counts per [KytyPS5](https://github.com/KytyPS5/KytyPS5/blob/bb98f26433fa9e711c219aac1711fe8ecba5bf3a/src/libs/ngs2.cpp). Partial superframes buffer across blocks; completion callbacks allow refills, with the last callback waiting for PCM drain. Buffering, callback timing, decoded-byte accounting, and starvation silence are unverified on hardware. Early-closed streams throw; fragmented repeats are unsupported; PCM retains existing behaviour.
 
 # libSceNpCppWebApi
 
