@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "ExecutionHelpers.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -55,17 +56,6 @@ constexpr std::array<std::uint32_t, Results> Expected{
     0x00000001u, 0x00000001u, 0x00000001u, 0x00000021u, 0xf8000000u, 0xffffffffu, 0x08000000u, 0x00000000u,
     0xfffffffdu, 0xffffffffu, 0xfffffffdu, 0x00000000u, 0xf8000000u, 0xffffffffu, 0xffff8000u, 0xffffffffu,
 };
-
-std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
-    const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
-}
-
-std::string Hex(std::uint32_t value) {
-    char text[16];
-    std::snprintf(text, sizeof(text), "0x%08x", value);
-    return text;
-}
 
 void Run(AgcDriver::VulkanDevice& device) {
     Input.fill(0u);
