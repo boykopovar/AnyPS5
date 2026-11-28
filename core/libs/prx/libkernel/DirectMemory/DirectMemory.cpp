@@ -1083,8 +1083,12 @@ bool RemapFixedIntoRegistered(GuestAllocations::Mutation& mutation, void* addr, 
             GuestArena::GuestArenaCommit_nid_postfix(addr, len, 0x04, PS5_PAGE_SIZE);
 #else
             const bool unwatched = nativeProtection == PROT_NONE && InMapperWindow(addr, len);
-            if (unwatched) GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(addr, len);
-            if (::mmap(addr, len, nativeProtection, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) == MAP_FAILED) throw std::system_error(errno, std::generic_category(), "remap anonymous memory");
+            const bool watched = unwatched && GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(addr, len);
+            if (::mmap(addr, len, nativeProtection, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) == MAP_FAILED) {
+                const int error = errno;
+                if (watched) GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(addr, len);
+                throw std::system_error(error, std::generic_category(), "remap anonymous memory");
+            }
             if (!unwatched) GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(addr, len);
 #if defined(__linux__)
             if (t_mapFlexible && !zero) BackFlexibleMapping(addr, len, prot);
