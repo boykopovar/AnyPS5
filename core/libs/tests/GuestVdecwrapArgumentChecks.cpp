@@ -1,4 +1,5 @@
 #include "prx/libSceVdecwrap/libSceVdecwrap.hpp"
+#include "prx/libSceVdecCore/include/Api.hpp"
 #include <array>
 #include <cerrno>
 #include <cstdint>
@@ -58,6 +59,77 @@ static void CheckConfigCalls(std::uint64_t infoSize, int (*call)(const void*, vo
     }
 }
 
+static void CheckFrameBufferInfoQuery() {
+    std::array<unsigned char, 0x28> config{};
+    std::array<unsigned char, 0x18> info{};
+    Put64(config.data(), 0, config.size());
+    Put32(config.data(), 8, 1);
+    Put32(config.data(), 0x14, 1280);
+    Put32(config.data(), 0x18, 720);
+    Put32(config.data(), 0x1c, 3);
+    Put32(config.data(), 0x20, 256);
+    Put64(info.data(), 0, info.size());
+    std::memset(info.data() + 8, 0xa5, info.size() - 8);
+
+    VdecCoreConfigInfo coreConfig{};
+    coreConfig.codecType = 0;
+    coreConfig.maxFrameWidth = 1280;
+    coreConfig.maxFrameHeight = 720;
+    coreConfig.maxDpbFrameCount = 3;
+    coreConfig.horizontalAlign = 256;
+    VdecCoreFrameBufferInfo expected{};
+    Require(sceVdecCoreQueryFrameBufferInfo(&coreConfig, &expected) == 0, "Core frame-buffer query succeeds");
+
+    Require(sceVdecwrapQueryFrameBufferInfo(config.data(), info.data()) == 0, "Wrapper frame-buffer query succeeds");
+    Require(std::memcmp(info.data() + 8, &expected, 4 * sizeof(std::uint32_t)) == 0,
+            "The wrapper returns the four firmware-exposed frame-buffer fields");
+    Require(info[0] == 0x18 && info[1] == 0 && info[2] == 0 && info[3] == 0,
+            "The caller-provided output structure size is preserved");
+}
+
+static void CheckDecoderMemoryInfoQuery() {
+    std::array<unsigned char, 0x28> config{};
+    std::array<unsigned char, 0x38> info{};
+    Put64(config.data(), 0, config.size());
+    Put32(config.data(), 8, 2);
+    Put32(config.data(), 0x14, 1280);
+    Put32(config.data(), 0x18, 720);
+    Put32(config.data(), 0x1c, 3);
+    Put32(config.data(), 0x20, 256);
+    Put64(info.data(), 0, info.size());
+    Put64(info.data(), 0x10, 0xaaaaaaaaaaaaaaaaull);
+    Put64(info.data(), 0x20, 0xbbbbbbbbbbbbbbbbull);
+    Put64(info.data(), 0x30, 0xccccccccccccccccull);
+
+    VdecCoreConfigInfo coreConfig{};
+    coreConfig.codecType = 1;
+    coreConfig.maxFrameWidth = 1280;
+    coreConfig.maxFrameHeight = 720;
+    coreConfig.maxDpbFrameCount = 3;
+    coreConfig.horizontalAlign = 256;
+    std::uint64_t instanceSize = 0;
+    std::uint64_t computeSize = 0;
+    std::uint64_t reservedSize = 0;
+    Require(sceVdecCoreQueryInstanceSize(&coreConfig, &instanceSize, &computeSize, &reservedSize) == 0,
+            "Core memory-size query succeeds");
+
+    Require(sceVdecwrapQueryDecoderMemoryInfo(config.data(), info.data()) == 0,
+            "Wrapper memory-size query succeeds");
+    std::uint64_t value = 0;
+    std::memcpy(&value, info.data() + 8, sizeof(value));
+    Require(value == instanceSize + 0x60000, "The wrapper adds its decoder overhead to instance memory");
+    std::memcpy(&value, info.data() + 0x18, sizeof(value));
+    Require(value == computeSize, "The core compute size is returned");
+    std::memcpy(&value, info.data() + 0x28, sizeof(value));
+    Require(value == reservedSize, "The core reserved size is returned");
+    std::memcpy(&value, info.data() + 0x10, sizeof(value));
+    Require(value == 0xaaaaaaaaaaaaaaaaull, "The first reserved output field is preserved");
+    std::memcpy(&value, info.data() + 0x20, sizeof(value));
+    Require(value == 0xbbbbbbbbbbbbbbbbull, "The second reserved output field is preserved");
+    std::memcpy(&value, info.data() + 0x30, sizeof(value));
+    Require(value == 0xccccccccccccccccull, "The trailing reserved output field is preserved");
+}
+
 int main() {
     unsigned char decoder[0x40]{};
     unsigned char block[0x60]{};
@@ -97,6 +169,8 @@ int main() {
     CheckConfigCalls(0x38, [](const void* c, void* i, void* d) { return sceVdecwrapCreateDecoder(c, i, d); });
     CheckConfigCalls(0x38, [](const void* c, void* i, void*) { return sceVdecwrapQueryDecoderMemoryInfo(c, i); });
     CheckConfigCalls(0x18, [](const void* c, void* i, void*) { return sceVdecwrapQueryFrameBufferInfo(c, i); });
+    CheckFrameBufferInfoQuery();
+    CheckDecoderMemoryInfoQuery();
 
     unsigned char output[0x40]{};
     for (const std::uint64_t size : {0ull, 0x37ull, 0x39ull, 0x18ull}) {
