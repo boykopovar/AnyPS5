@@ -181,9 +181,13 @@ std::int64_t localOffsetSeconds(std::uint64_t utcTick) {
         }
         if (!converted) throw std::runtime_error("sceRtc: the host cannot convert this tick to local time");
     }
+#ifndef _WIN32
+    return local.tm_gmtoff;
+#else
     const std::int64_t localSeconds = (daysFromCivil(local.tm_year + 1900, static_cast<unsigned>(local.tm_mon + 1), static_cast<unsigned>(local.tm_mday)) - UNIX_EPOCH_DAYS) * 86400
         + local.tm_hour * 3600 + local.tm_min * 60 + local.tm_sec;
     return localSeconds - static_cast<std::int64_t>(seconds);
+#endif
 }
 
 constexpr const char* WEEKDAY_NAMES[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
