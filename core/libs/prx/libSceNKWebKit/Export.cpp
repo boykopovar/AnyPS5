@@ -1659,10 +1659,6 @@ int APS5_VABI _ZN7WebCore8Gradient6createEON3WTF7VariantIJNS0_10LinearDataENS0_1
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3PAL13SleepDisablerC1EPKcNS0_4TypeE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore13SleepDisablerC2EPKcN3PAL13SleepDisabler4TypeE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -2149,10 +2145,6 @@ int APS5_VABI _ZN7WebCore11JSDOMMatrix6createEPN3JSC9StructureEPNS_17JSDOMGlobal
 }
 
 int APS5_VABI _ZN7WebCore14SocketProviderC1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore19sleepDisablerClientEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -3252,10 +3244,6 @@ int APS5_VABI _ZN7WebCore17PageConsoleClient10addMessageEN3JSC13MessageSourceENS
 }
 
 int APS5_VABI _ZN7WebCore15JSSVGSVGElement6createEPN3JSC9StructureEPNS_17JSDOMGlobalObjectEON3WTF3RefINS_13SVGSVGElementENS6_13DumbPtrTraitsIS8_EEEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3PAL13SleepDisablerC2EPKcNS0_4TypeE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -11397,10 +11385,6 @@ int APS5_VABI _ZN3JSC9StructureC2ERNS_2VMEPNS_14JSGlobalObjectENS_7JSValueERKNS_
 }
 
 int APS5_VABI _ZN3JSC9constructEPNS_14JSGlobalObjectENS_7JSValueERKNS_8CallDataERKNS_7ArgListES2_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3PAL13SleepDisablerD0Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
