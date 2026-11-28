@@ -8,6 +8,7 @@
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <new>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -608,17 +609,16 @@ bool CollectConstructedString(std::span<const unsigned char>& input, bool indefi
             return false;
         }
         if (header.constructed) {
-            if (header.indefinite) {
-                if (!CollectConstructedString(input, true, depth + 1, collected)) return false;
-            } else {
-                std::span<const unsigned char> child = input.first(header.length);
-                input = input.subspan(header.length);
-                if (!CollectConstructedString(child, false, depth + 1, collected)) return false;
-            }
+            if (!CollectConstructedString(input, header.indefinite, depth + 1, collected)) return false;
             continue;
         }
         const std::span<const unsigned char> chunk = input.first(header.length);
-        collected.insert(collected.end(), chunk.begin(), chunk.end());
+        try {
+            collected.insert(collected.end(), chunk.begin(), chunk.end());
+        } catch (const std::bad_alloc&) {
+            PutError(MallocFailure);
+            return false;
+        }
         input = input.subspan(header.length);
     }
     if (indefinite) {
@@ -720,15 +720,8 @@ LibreSslGeneralName* NewGeneralName(std::span<const unsigned char>& input) {
         const std::int32_t stringType = header.tag == IpAddressTag ? OctetStringType : Ia5StringType;
         if (header.constructed) {
             std::vector<unsigned char> collected;
-            bool collectedOk = false;
-            if (header.indefinite) {
-                collectedOk = CollectConstructedString(input, true, 0, collected);
-            } else {
-                std::span<const unsigned char> content = input.first(header.length);
-                input = input.subspan(header.length);
-                collectedOk = CollectConstructedString(content, false, 0, collected);
-            }
-            if (collectedOk) name->value = NewString(stringType, collected);
+            if (CollectConstructedString(input, header.indefinite, 0, collected))
+                name->value = NewString(stringType, collected);
         } else {
             name->value = NewString(stringType, input.first(header.length));
             input = input.subspan(header.length);
