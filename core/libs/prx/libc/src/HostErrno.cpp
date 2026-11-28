@@ -166,6 +166,21 @@ constexpr HostErrnoMapping HostErrnoMap[] = {
 #ifdef EOWNERDEAD
     {EOWNERDEAD, 96},
 #endif
+#ifdef ENODATA
+    {ENODATA, 1040},
+#endif
+#ifdef ENOSR
+    {ENOSR, 1050},
+#endif
+#ifdef ENOSTR
+    {ENOSTR, 1051},
+#endif
+#ifdef EOTHER
+    {EOTHER, 1062},
+#endif
+#ifdef ETIME
+    {ETIME, 1074},
+#endif
 };
 
 }
