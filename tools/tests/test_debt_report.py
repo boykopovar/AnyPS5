@@ -239,6 +239,30 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual([row["line"] for row in json.loads(output)], [7])
 
+    def test_broken_pipe_exits_cleanly_without_traceback(self):
+        import os
+        import subprocess
+        script = Path(debt_report.__file__).resolve()
+        read_fd, write_fd = os.pipe()
+        os.close(read_fd)
+        try:
+            process = subprocess.Popen(
+                [sys.executable, str(script), "libkernel"],
+                stdout=write_fd,
+                stderr=subprocess.PIPE,
+            )
+        finally:
+            os.close(write_fd)
+        try:
+            _, stderr_bytes = process.communicate(timeout=15)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            _, stderr_bytes = process.communicate()
+            raise
+        stderr = stderr_bytes.decode("utf-8", errors="replace")
+        self.assertEqual(process.returncode, 0)
+        self.assertEqual(stderr, "")
+
 
 class DebtFilesTests(unittest.TestCase):
     def tree(self, root):
