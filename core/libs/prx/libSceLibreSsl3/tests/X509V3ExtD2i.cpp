@@ -405,16 +405,15 @@ void TestAuthorityKeyIssuer() {
         RequireQueue({});
     }
 
-    for (const auto& [bytes, queue] : {
-             std::pair<std::initializer_list<unsigned char>, std::initializer_list<int>>{
-                 {0x30, 0x06, 0xa1, 0x04, 0xa2, 0x02, 0x00, 0x00}, {159, 58, 58, 58}},
-             std::pair<std::initializer_list<unsigned char>, std::initializer_list<int>>{
-                 {0x30, 0x04, 0xa1, 0x02, 0xa2, 0x80}, {137, 58, 58, 58}}}) {
+    const auto checkMalformedConstructed = [](std::initializer_list<unsigned char> bytes,
+                                              std::initializer_list<int> queue) {
         Fixture malformedConstructed(90, bytes);
         Require(X509V3_EXT_d2i_nid_postfix(&malformedConstructed.extension) == nullptr);
         Require(allocations.empty());
         RequireQueue(queue);
-    }
+    };
+    checkMalformedConstructed({0x30, 0x06, 0xa1, 0x04, 0xa2, 0x02, 0x00, 0x00}, {159, 58, 58, 58});
+    checkMalformedConstructed({0x30, 0x04, 0xa1, 0x02, 0xa2, 0x80}, {137, 58, 58, 58});
 
     for (const auto bytes : std::initializer_list<std::initializer_list<unsigned char>>{
              {0x30, 0x02, 0x81, 0x00},
@@ -1033,15 +1032,12 @@ void TestGeneralNames() {
     RequireString(GeneralNameAt(names, 0, 2)->value, 22, {});
     RequireString(GeneralNameAt(names, 1, 2)->value, 22, {'x'});
     FreeGeneralNames(names);
-    names = DecodeGeneralNames(85, FromHex("3008a203040161820162"));
-    Require(sk_num_nid_postfix(names) == 2);
-    RequireString(GeneralNameAt(names, 0, 2)->value, 22, {'a'});
-    RequireString(GeneralNameAt(names, 1, 2)->value, 22, {'b'});
-    FreeGeneralNames(names);
-    names = DecodeGeneralNames(85, FromHex("300da2802404040261620401630000"));
-    Require(sk_num_nid_postfix(names) == 1);
-    RequireString(GeneralNameAt(names, 0, 2)->value, 22, {'a', 'b', 'c'});
-    FreeGeneralNames(names);
+    for (const std::string_view hex : {"3008a203040161820162", "3008a206240304026162"}) {
+        names = DecodeGeneralNames(85, FromHex(hex));
+        Require(sk_num_nid_postfix(names) == 1);
+        RequireString(GeneralNameAt(names, 0, 2)->value, 22, {'a', 'b'});
+        FreeGeneralNames(names);
+    }
     names = DecodeGeneralNames(85, FromHex("3004a1028000"));
     Require(sk_num_nid_postfix(names) == 1);
     RequireString(GeneralNameAt(names, 0, 1)->value, 22, {});
@@ -1081,7 +1077,7 @@ void TestGeneralNames() {
         {FromHex("3004a2020000"), {159, 58, 58, 58}},
         {FromHex("3002a280"), {137, 58, 58, 58}},
         {FromHex("3005a203040561"), {155, 58, 58, 58, 58}},
-        {FromHex("3008a206240304026162"), {155, 58, 58, 58, 58}},
+        {FromHex("300da2802404040261620401630000"), {159, 58, 58, 58}},
         {FromHex("3003a2011f"), {102, 58, 58, 58, 58}},
         {FromHex("3010a20e240c240a24082406240424020400"), {197, 58, 58, 58}},
         {FromHex("3003830161"), {156, 58, 58, 58}},
