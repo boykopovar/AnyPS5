@@ -443,6 +443,10 @@ CURLMcode Wait_nid_no_patch(CURLM* multi, guest_curl_waitfd* extra, unsigned cou
                 descriptor = static_cast<curl_socket_t>(socket);
                 held.push_back(std::move(owner));
             } else {
+#ifdef __APPLE__
+                struct stat charStatus{};
+                if (::fstat(extra[index].fd, &charStatus) == 0 && S_ISCHR(charStatus.st_mode)) NotImplemented_nid_no_patch(__func__);
+#endif
                 GuestPollDescriptor probe{extra[index].fd, static_cast<short>(extra[index].events & 7), 0};
                 if (poll_nid_postfix(&probe, 1, 0) < 0) NotImplemented_nid_no_patch("libcurl: extra descriptor probe failure");
                 if (probe.revents & 0x20) {
