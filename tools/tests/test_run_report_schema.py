@@ -8,7 +8,15 @@ from importlib import metadata
 from pathlib import Path
 import unittest
 
-import jsonschema
+try:
+    import jsonschema
+except ModuleNotFoundError:
+    jsonschema = None
+
+
+def setUpModule():
+    if jsonschema is None:
+        raise unittest.SkipTest("jsonschema not installed (see tools/requirements-run-report.txt)")
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = json.loads((ROOT / "docs/run-report.schema.json").read_text(encoding="utf-8"))

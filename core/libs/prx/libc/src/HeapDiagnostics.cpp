@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
+#include <string>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -69,7 +70,9 @@ void LibcHeapTraceInfo_nid_no_patch(LibcHeapInfo* info) {
 }
 
 void APS5_VABI sceLibcInternalBacktraceForGame_nid_postfix(const char* heapName) {
-    std::fprintf(stderr, "[%s] backtrace requested from guest 0x%llx\n", heapName ? heapName : "",
+    std::string name;
+    if (heapName != nullptr && CopyGuestString_nid_no_patch(heapName, 65536, name) != 0) name.clear();
+    std::fprintf(stderr, "[%s] backtrace requested from guest 0x%llx\n", name.c_str(),
         static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(__builtin_return_address(0))));
 }
 
@@ -78,7 +81,8 @@ void APS5_VABI sceLibcInternalHeapErrorReportForGame_nid_postfix(void* heap, voi
     const auto* state = static_cast<const char*>(heap);
     std::uint32_t number = 0;
     std::memcpy(&number, state + MspaceNumberOffset, sizeof(number));
-    if (_Stdout_nid_postfix.IsOpen()) {
+    const FileStreamOperation_nid_no_patch operation(&_Stdout_nid_postfix);
+    if (operation.Open()) {
         std::FILE* output = GuestStandardOutputFile_nid_no_patch();
         std::fprintf(output, "[SceLibc] A heap error is detected.\n[SceLibc] -- Mspace Name --\n[SceLibc] %s", state + MspaceNameOffset);
         if (number != 0) std::fprintf(output, " (%2u)", number);

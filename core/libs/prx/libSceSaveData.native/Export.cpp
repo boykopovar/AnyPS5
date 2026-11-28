@@ -229,6 +229,67 @@ static void flush_path(const std::string& path, bool directory) {
 #endif
 }
 
+static void require_no_error(const std::error_code& error, const char* what, const std::filesystem::path& path) {
+    if (error) throw std::filesystem::filesystem_error(what, path, error);
+}
+
+static void require_no_error(const std::error_code& error, const char* what, const std::filesystem::path& from, const std::filesystem::path& to) {
+    if (error) throw std::filesystem::filesystem_error(what, from, to, error);
+}
+
+static bool path_exists(const std::filesystem::path& path) {
+    std::error_code error;
+    const bool exists = std::filesystem::exists(path, error);
+    require_no_error(error, "SaveData: cannot read the status of", path);
+    return exists;
+}
+
+static void make_directories(const std::filesystem::path& path) {
+    std::error_code error;
+    std::filesystem::create_directories(path, error);
+    require_no_error(error, "SaveData: cannot create the directories", path);
+}
+
+static void rename_path(const std::filesystem::path& from, const std::filesystem::path& to) {
+    std::error_code error;
+    std::filesystem::rename(from, to, error);
+    require_no_error(error, "SaveData: cannot rename", from, to);
+}
+
+static bool path_is_directory(const std::filesystem::path& path) {
+    std::error_code error;
+    const auto status = std::filesystem::status(path, error);
+    if (status.type() == std::filesystem::file_type::not_found) return false;
+    if (error) throw std::filesystem::filesystem_error("SaveData: cannot check for a directory", path, error);
+    return std::filesystem::is_directory(status);
+}
+
+static bool entry_is_directory(const std::filesystem::directory_entry& entry) {
+    std::error_code error;
+    const bool directory = entry.is_directory(error);
+    return error ? path_is_directory(entry.path()) : directory;
+}
+
+static std::filesystem::path canonical_location(const std::filesystem::path& path) {
+    std::error_code error;
+    const auto absolutePath = std::filesystem::absolute(path, error);
+    require_no_error(error, "SaveData: cannot make absolute", path);
+    const auto canonicalPath = std::filesystem::weakly_canonical(absolutePath, error);
+    require_no_error(error, "SaveData: cannot resolve", absolutePath);
+    return canonicalPath;
+}
+
+template <typename TIterator, typename TVisit>
+static void for_each_entry(const std::filesystem::path& path, TVisit&& visit) {
+    std::error_code error;
+    TIterator entries(path, error);
+    while (!error && entries != TIterator()) {
+        visit(*entries);
+        entries.increment(error);
+    }
+    require_no_error(error, "SaveData: cannot list", path);
+}
+
 namespace {
 
 // Save-data memory: one blob per user and slot, kept next to the save directory (_sd_mem/u<user>/slot<n>.bin),
@@ -415,7 +476,7 @@ std::string param_path(const std::string& real_path) {
 }
 
 bool read_param_file(const std::string& path, SaveDataParam* param) {
-    if (!std::filesystem::exists(path)) {
+    if (!path_exists(path)) {
         return false;
     }
     std::vector<char> bytes;
@@ -488,6 +549,24 @@ int traceLimit() {
             std::fflush(stderr); \
         } \
     } while (0)
+
+template <typename T>
+bool readGuest(const T* source, T& destination) {
+    if (source == nullptr) return false;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&destination, source, sizeof(destination));
+    errno = savedErrno;
+    return copied;
+}
+
+bool writeGuest(void* destination, const void* source, std::size_t bytes) {
+    if (destination == nullptr) return false;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return copied;
+}
+
 }  // namespace
 
 extern "C" {
@@ -545,7 +624,7 @@ static bool copy_mount_point(const SaveDataMountPoint* mount_point, SaveDataMoun
     if (mount_point == nullptr || out == nullptr) {
         return false;
     }
-    if (!GuestCopyIn_nid_no_patch(out, mount_point, sizeof(*out))) {
+    if (!readGuest(mount_point, *out)) {
         return false;
     }
     return std::memchr(out->data, '\0', sizeof(out->data)) != nullptr;
@@ -617,14 +696,14 @@ static void require_plain_tree(const std::string& path) {
     if (plain_type(path) != std::filesystem::file_type::directory) {
         return;
     }
-    for (const auto& entry : std::filesystem::directory_iterator(path)) {
+    for_each_entry<std::filesystem::directory_iterator>(path, [](const std::filesystem::directory_entry& entry) {
         require_plain_tree(entry.path().string());
-    }
+    });
 }
 
 static void require_inside(const std::string& root, const std::string& path) {
-    const auto base = std::filesystem::weakly_canonical(std::filesystem::absolute(root));
-    const auto target = std::filesystem::weakly_canonical(std::filesystem::absolute(path));
+    const auto base = canonical_location(root);
+    const auto target = canonical_location(path);
     const auto [inBase, inTarget] = std::mismatch(base.begin(), base.end(), target.begin(), target.end());
     if (inBase != base.end() || inTarget == target.end()) {
         throw std::filesystem::filesystem_error("SaveData: a save path leaves its root", path, root, std::make_error_code(std::errc::operation_not_permitted));
@@ -636,13 +715,17 @@ static void copy_file_step(const char* step, const std::string& from, const std:
         throw std::filesystem::filesystem_error("SaveData: not a plain file", from, std::make_error_code(std::errc::operation_not_permitted));
     }
     file_step(step, to);
-    std::filesystem::copy_file(from, to);
+    std::error_code error;
+    std::filesystem::copy_file(from, to, error);
+    require_no_error(error, "SaveData: cannot copy", from, to);
 }
 
 static void copy_tree(const char* step, const std::string& from, const std::string& to) {
     file_step(step, to);
-    std::filesystem::create_directory(to);
-    for (const auto& entry : std::filesystem::directory_iterator(from)) {
+    std::error_code error;
+    std::filesystem::create_directory(to, error);
+    require_no_error(error, "SaveData: cannot create the directory", to);
+    for_each_entry<std::filesystem::directory_iterator>(from, [&](const std::filesystem::directory_entry& entry) {
         const std::string source = entry.path().string();
         const std::string target = to + "/" + entry.path().filename().string();
         if (plain_type(source) == std::filesystem::file_type::directory) {
@@ -650,21 +733,27 @@ static void copy_tree(const char* step, const std::string& from, const std::stri
         } else {
             copy_file_step(step, source, target);
         }
-    }
+    });
 }
 
 static std::map<std::string, std::uintmax_t> tree_sizes(const std::string& root) {
     std::map<std::string, std::uintmax_t> sizes;
-    for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
-        sizes[entry.path().lexically_relative(root).generic_string()] = entry.is_directory() ? std::numeric_limits<std::uintmax_t>::max() : entry.file_size();
-    }
+    for_each_entry<std::filesystem::recursive_directory_iterator>(root, [&](const std::filesystem::directory_entry& entry) {
+        std::uintmax_t size = std::numeric_limits<std::uintmax_t>::max();
+        if (!entry_is_directory(entry)) {
+            std::error_code error;
+            size = entry.file_size(error);
+            require_no_error(error, "SaveData: cannot read the size of", entry.path());
+        }
+        sizes[entry.path().lexically_relative(root).generic_string()] = size;
+    });
     return sizes;
 }
 
 static void flush_tree(const std::string& root) {
-    for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
-        flush_path(entry.path().string(), entry.is_directory());
-    }
+    for_each_entry<std::filesystem::recursive_directory_iterator>(root, [](const std::filesystem::directory_entry& entry) {
+        flush_path(entry.path().string(), entry_is_directory(entry));
+    });
     flush_path(root, true);
 }
 
@@ -673,7 +762,7 @@ struct FileSwap {
 
     void move(const char* step, const std::string& from, const std::string& to) {
         file_step(step, to);
-        std::filesystem::rename(from, to);
+        rename_path(from, to);
         moved.emplace_back(from, to);
         flush_path(std::filesystem::path(from).parent_path().string(), true);
         flush_path(std::filesystem::path(to).parent_path().string(), true);
@@ -683,7 +772,7 @@ struct FileSwap {
         while (!moved.empty()) {
             const auto [from, to] = moved.back();
             file_step(step, from);
-            std::filesystem::rename(to, from);
+            rename_path(to, from);
             moved.pop_back();
             flush_path(std::filesystem::path(from).parent_path().string(), true);
             flush_path(std::filesystem::path(to).parent_path().string(), true);
@@ -713,16 +802,23 @@ static void require_plain_paths(const std::string& dirName, std::initializer_lis
 }
 
 static bool parse_dir_name(const SceSaveDataDirName* name, std::string* dirName) {
-    const auto* nameEnd = static_cast<const char*>(std::memchr(name->data, '\0', sizeof(name->data)));
+    SceSaveDataDirName localName{};
+    if (!readGuest(name, localName)) {
+        return false;
+    }
+    const auto* nameEnd = static_cast<const char*>(std::memchr(localName.data, '\0', sizeof(localName.data)));
     if (nameEnd == nullptr) {
         return false;
     }
-    dirName->assign(name->data, static_cast<std::size_t>(nameEnd - name->data));
+    dirName->assign(localName.data, static_cast<std::size_t>(nameEnd - localName.data));
     return !dirName->empty() && *dirName != "." && *dirName != ".." && dirName->find_first_of("/\\:") == std::string::npos;
 }
 
 static bool running_title(const SceSaveDataTitleId* titleId) {
-    return titleId == nullptr || std::strncmp(titleId->data, GetAppTitleId_nid_postfix().value, sizeof(titleId->data)) == 0;
+    if (titleId == nullptr) return true;
+    SceSaveDataTitleId localTitle{};
+    if (!readGuest(titleId, localTitle)) return false;
+    return std::strncmp(localTitle.data, GetAppTitleId_nid_postfix().value, sizeof(localTitle.data)) == 0;
 }
 
 static int read_backup_entry(const std::string& entry, SaveDataParam* param) {
@@ -743,15 +839,19 @@ static int read_backup_entry(const std::string& entry, SaveDataParam* param) {
     if (blocks != std::filesystem::file_type::not_found && blocks != std::filesystem::file_type::regular) {
         return SAVE_DATA_ERROR_INTERNAL;
     }
-    if (param != nullptr) {
-        *param = stored;
+    if (param != nullptr && !writeGuest(param, &stored, sizeof(stored))) {
+        return SAVE_DATA_ERROR_PARAMETER;
     }
     return SAVE_DATA_OK;
 }
 
 static void move_backup(const char* step, const std::string& from, const std::string& to, bool* moved = nullptr) {
     file_step(step, to);
-    std::filesystem::rename(from, to);
+    std::error_code error;
+    std::filesystem::rename(from, to, error);
+    if (error) {
+        throw std::filesystem::filesystem_error("SaveData: cannot move the backup", from, to, error);
+    }
     if (moved != nullptr) *moved = true;
     file_step("backup.flush", to);
     flush_path(std::filesystem::path(to).parent_path().string(), true);
@@ -788,7 +888,7 @@ static void recover_backup(const std::string& dirName) {
         if (read_backup_entry(old, nullptr) != SAVE_DATA_OK) {
             throw std::filesystem::filesystem_error("SaveData: the previous backup is incomplete", old, std::make_error_code(std::errc::io_error));
         }
-        std::filesystem::create_directories(BACKUP_DIR);
+        make_directories(BACKUP_DIR);
         flush_path(".", true);
         move_backup("backup.recover", old, entry);
     }
@@ -812,7 +912,7 @@ static void backupSave(const std::string& dirName) {
     const std::string old = backup_entry(BACKUP_OLD_DIR, dirName);
     require_plain_paths(dirName, {SAVE_DIR, BACKUP_DIR, BACKUP_STAGING_DIR, BACKUP_OLD_DIR});
     recover_backup(dirName);
-    std::filesystem::create_directories(staged);
+    make_directories(staged);
     flush_path(BACKUP_STAGING_DIR, true);
     flush_path(".", true);
     bool displaced = false;
@@ -823,14 +923,14 @@ static void backupSave(const std::string& dirName) {
         if (!store_param(entry_save(staged), load_param(source))) {
             throw std::filesystem::filesystem_error("SaveData: cannot write the backup's param file", param_path(entry_save(staged)), std::make_error_code(std::errc::io_error));
         }
-        if (std::filesystem::exists(blocks_path(source))) {
+        if (path_exists(blocks_path(source))) {
             copy_file_step("backup.copy", blocks_path(source), blocks_path(entry_save(staged)));
         }
         flush_tree(staged);
-        std::filesystem::create_directories(BACKUP_DIR);
+        make_directories(BACKUP_DIR);
         flush_path(".", true);
-        if (std::filesystem::exists(entry)) {
-            std::filesystem::create_directories(BACKUP_OLD_DIR);
+        if (path_exists(entry)) {
+            make_directories(BACKUP_OLD_DIR);
             flush_path(".", true);
             move_backup("backup.aside", entry, old, &displaced);
         }
@@ -859,13 +959,13 @@ static void restoreSave(const std::string& dirName) {
     require_plain_paths(dirName, {SAVE_DIR, BACKUP_DIR, RESTORE_STAGING_DIR, RESTORE_OLD_DIR});
     RemoveTree(stagedEntry);
     RemoveTree(oldEntry);
-    std::filesystem::create_directories(stagedEntry);
-    std::filesystem::create_directories(oldEntry);
+    make_directories(stagedEntry);
+    make_directories(oldEntry);
     FileSwap swap;
     try {
         copy_tree("restore.copy", backup, staged);
         copy_file_step("restore.copy", param_path(backup), param_path(staged));
-        if (std::filesystem::exists(blocks_path(backup))) {
+        if (path_exists(blocks_path(backup))) {
             copy_file_step("restore.copy", blocks_path(backup), blocks_path(staged));
         }
         if (tree_sizes(stagedEntry) != tree_sizes(backupEntry)) {
@@ -874,13 +974,13 @@ static void restoreSave(const std::string& dirName) {
         flush_tree(stagedEntry);
         swap.move("restore.aside", live, old);
         for (const auto& [from, to] : {std::pair{param_path(live), param_path(old)}, std::pair{blocks_path(live), blocks_path(old)}}) {
-            if (std::filesystem::exists(from)) {
+            if (path_exists(from)) {
                 swap.move("restore.aside", from, to);
             }
         }
         swap.move("restore.place", staged, live);
         swap.move("restore.place", param_path(staged), param_path(live));
-        if (std::filesystem::exists(blocks_path(staged))) {
+        if (path_exists(blocks_path(staged))) {
             swap.move("restore.place", blocks_path(staged), blocks_path(live));
         }
     } catch (...) {
@@ -895,14 +995,16 @@ static void restoreSave(const std::string& dirName) {
     RemoveTree(stagedEntry, ignored);
 }
 
-static int deleteSave(const SaveDataDelete* del) {
-    if (del == nullptr || del->dir_name == nullptr) {
+static int deleteSave(const SaveDataDelete* del, std::string* traceDir) {
+    SaveDataDelete localDel{};
+    if (!readGuest(del, localDel) || localDel.dir_name == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     std::string dirName;
-    if (!parse_dir_name(del->dir_name, &dirName)) {
+    if (!parse_dir_name(localDel.dir_name, &dirName)) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
+    if (traceDir != nullptr) *traceDir = dirName;
     const std::string path = save_root() + "/" + dirName;
     std::lock_guard lock(g_slots_mutex);
     std::error_code error;
@@ -910,7 +1012,7 @@ static int deleteSave(const SaveDataDelete* del) {
     if (error) return SAVE_DATA_ERROR_INTERNAL;
     try {
         require_plain_paths(dirName, {BACKUP_DIR, BACKUP_STAGING_DIR, BACKUP_OLD_DIR});
-        if (std::filesystem::is_directory(path)) {
+        if (path_is_directory(path)) {
             RemoveTree(path);
         }
         std::error_code ec;
@@ -928,8 +1030,9 @@ static int deleteSave(const SaveDataDelete* del) {
 }
 
 int APS5_VABI sceSaveDataDelete(const SaveDataDelete* del) {
-    const int rc = deleteSave(del);
-    SAVEDATA_TRACE("delete dir=%.*s -> 0x%08x", static_cast<int>(sizeof(SceSaveDataDirName::data)), del != nullptr && del->dir_name != nullptr ? del->dir_name->data : "(null)", static_cast<unsigned>(rc));
+    std::string dir = "(null)";
+    const int rc = deleteSave(del, &dir);
+    SAVEDATA_TRACE("delete dir=%s -> 0x%08x", dir.c_str(), static_cast<unsigned>(rc));
     return rc;
 }
 
@@ -951,10 +1054,13 @@ static FreeSpaceMode free_space_mode() {
 }
 
 static std::uint64_t default_free_space(const std::string& path) {
-    std::filesystem::path probe = std::filesystem::absolute(path);
     std::error_code error;
+    std::filesystem::path probe = std::filesystem::absolute(path, error);
+    require_no_error(error, "SaveData: cannot make absolute", path);
     while (!std::filesystem::exists(probe, error) && probe.has_relative_path()) probe = probe.parent_path();
-    return static_cast<std::uint64_t>(std::filesystem::space(probe).available);
+    const auto space = std::filesystem::space(probe, error);
+    require_no_error(error, "SaveData: cannot read the free space of", probe);
+    return static_cast<std::uint64_t>(space.available);
 }
 
 static SaveDataFreeSpaceSource g_free_space_source = default_free_space;
@@ -1075,7 +1181,7 @@ static int dirNameSearch(const SaveDataDirNameSearchCond* cond, SaveDataDirNameS
     }
     const char* pattern = (localCond.dir_name != nullptr) ? localName.data : nullptr;
     const std::string root = save_root();
-    if (!std::filesystem::is_directory(root)) {
+    if (!path_is_directory(root)) {
         return SAVE_DATA_OK;
     }
     struct Match {
@@ -1086,20 +1192,20 @@ static int dirNameSearch(const SaveDataDirNameSearchCond* cond, SaveDataDirNameS
     };
     const bool sortByParam = key == SAVE_DATA_SORT_KEY_USER_PARAM || key == SAVE_DATA_SORT_KEY_MTIME;
     std::vector<Match> matches;
-    for (const auto& entry : std::filesystem::directory_iterator(root)) {
-        if (!entry.is_directory()) {
-            continue;
+    for_each_entry<std::filesystem::directory_iterator>(root, [&](const std::filesystem::directory_entry& entry) {
+        if (!entry_is_directory(entry)) {
+            return;
         }
         const std::string name = entry.path().filename().string();
         if (!dir_name_match(name.c_str(), pattern)) {
-            continue;
+            return;
         }
         Match match{name, entry.path().string(), {}, search_info(entry.path().string())};
         if (sortByParam) {
             match.param = load_param(match.path);
         }
         matches.push_back(std::move(match));
-    }
+    });
     std::sort(matches.begin(), matches.end(), [](const Match& a, const Match& b) { return a.name < b.name; });
     if (key == SAVE_DATA_SORT_KEY_USER_PARAM) {
         std::stable_sort(matches.begin(), matches.end(), [](const Match& a, const Match& b) { return a.param.user_param < b.param.user_param; });
@@ -1375,23 +1481,26 @@ int APS5_VABI sceSaveDataLoadIcon(const SaveDataMountPoint* mount_point, SaveDat
     return SAVE_DATA_OK;
 }
 
-static int mount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result) {
-    if (mount == nullptr || mount_result == nullptr || mount->dir_name == nullptr) {
+static int mount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result, SaveDataMount3* traceMount = nullptr, std::string* traceDir = nullptr, SaveDataMountResult* traceResult = nullptr) {
+    SaveDataMount3 localMount{};
+    if (!readGuest(mount, localMount) || mount_result == nullptr || localMount.dir_name == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
+    if (traceMount != nullptr) *traceMount = localMount;
     const FreeSpaceMode freeSpace = free_space_mode();
-    const bool create = (mount->mount_mode & SAVE_DATA_MOUNT_MODE_CREATE) != 0;
-    const bool create2 = (mount->mount_mode & SAVE_DATA_MOUNT_MODE_CREATE2) != 0;
-    const bool rdonly = (mount->mount_mode & SAVE_DATA_MOUNT_MODE_RDONLY) != 0;
-    const bool rdwr = (mount->mount_mode & SAVE_DATA_MOUNT_MODE_RDWR) != 0;
+    const bool create = (localMount.mount_mode & SAVE_DATA_MOUNT_MODE_CREATE) != 0;
+    const bool create2 = (localMount.mount_mode & SAVE_DATA_MOUNT_MODE_CREATE2) != 0;
+    const bool rdonly = (localMount.mount_mode & SAVE_DATA_MOUNT_MODE_RDONLY) != 0;
+    const bool rdwr = (localMount.mount_mode & SAVE_DATA_MOUNT_MODE_RDWR) != 0;
     const bool open = !create && !create2 && (rdonly || rdwr);
     if (!create && !create2 && !open) {
         throw std::runtime_error("sceSaveDataMount3: unknown mount_mode");
     }
     std::string dirName;
-    if (!parse_dir_name(mount->dir_name, &dirName)) {
+    if (!parse_dir_name(localMount.dir_name, &dirName)) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
+    if (traceDir != nullptr) *traceDir = dirName;
     const std::string real_path = save_root() + "/" + dirName;
     std::lock_guard lock(g_slots_mutex);
     std::error_code error;
@@ -1411,17 +1520,18 @@ static int mount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result
         return SAVE_DATA_ERROR_MOUNT_FULL;
     }
     if (!exists && (create || create2) && freeSpace == FreeSpaceMode::Host) {
-        const std::uint64_t blocks = mount->blocks == 0 ? SAVE_DATA_BLOCKS_MAX : std::min(mount->blocks, SAVE_DATA_BLOCKS_MAX);
+        const std::uint64_t blocks = localMount.blocks == 0 ? SAVE_DATA_BLOCKS_MAX : std::min(localMount.blocks, SAVE_DATA_BLOCKS_MAX);
         const std::uint64_t required = blocks * SAVE_DATA_BLOCK_BYTES;
         std::uint64_t available = 0;
         if (host_free_bytes(real_path, available) && available < required) {
-            std::memset(mount_result, 0, sizeof(*mount_result));
-            mount_result->required_blocks = (required - available + SAVE_DATA_BLOCK_BYTES - 1) / SAVE_DATA_BLOCK_BYTES;
+            SaveDataMountResult noSpaceResult{};
+            noSpaceResult.required_blocks = (required - available + SAVE_DATA_BLOCK_BYTES - 1) / SAVE_DATA_BLOCK_BYTES;
+            if (!writeGuest(mount_result, &noSpaceResult, sizeof(noSpaceResult))) return SAVE_DATA_ERROR_PARAMETER;
             return SAVE_DATA_ERROR_NO_SPACE_FS;
         }
     }
-    bool keepSize = mount->blocks != 0 && (create || (create2 && !exists));
-    if (mount->blocks != 0 && !keepSize) {
+    bool keepSize = localMount.blocks != 0 && (create || (create2 && !exists));
+    if (localMount.blocks != 0 && !keepSize) {
         keepSize = !std::filesystem::exists(blocks_path(real_path), error);
         if (error) return SAVE_DATA_ERROR_INTERNAL;
     }
@@ -1429,7 +1539,7 @@ static int mount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result
     if (error) return SAVE_DATA_ERROR_INTERNAL;
     const bool created = (create || create2) && std::filesystem::create_directories(real_path, error);
     if (error) return SAVE_DATA_ERROR_INTERNAL;
-    if (keepSize && !keep_save_blocks(real_path, mount->blocks)) {
+    if (keepSize && !keep_save_blocks(real_path, localMount.blocks)) {
         if (created) {
             std::error_code ignored;
             std::filesystem::remove(real_path, ignored);
@@ -1439,55 +1549,76 @@ static int mount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result
     // The title gets a short mount point (16 bytes on the PS5) and opens files under it; the
     // path resolver maps it to the save directory, whose name may be far longer.
     const std::string mountPoint = "/savedata" + std::to_string(slot);
+    SaveDataMountResult localResult{};
+    std::memcpy(localResult.mount_point.data, mountPoint.c_str(), mountPoint.size() + 1);
+    localResult.required_blocks = 0;
+    localResult.mount_status = (create || (create2 && !exists)) ? 1u : 0u;
+    if (!writeGuest(mount_result, &localResult, sizeof(localResult))) {
+        if (created) {
+            std::error_code ignored;
+            RemoveTree(real_path, ignored);
+        }
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
     AddPathAlias_nid_no_patch(mountPoint.c_str(), absolutePath.c_str());
-    std::memset(mount_result, 0, sizeof(*mount_result));
     g_slots[slot].used = true;
-    g_slots[slot].user_id = mount->user_id;
+    g_slots[slot].user_id = localMount.user_id;
     g_slots[slot].mount_point = mountPoint;
     g_slots[slot].real_path = real_path;
-    std::memcpy(mount_result->mount_point.data, mountPoint.c_str(), mountPoint.size() + 1);
-    mount_result->required_blocks = 0;
-    mount_result->mount_status = (create || (create2 && !exists)) ? 1u : 0u;
+    if (traceResult != nullptr) *traceResult = localResult;
     return SAVE_DATA_OK;
 }
 
 int APS5_VABI sceSaveDataMount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result) {
-    const int rc = mount3(mount, mount_result);
-    SAVEDATA_TRACE("mount3 user=%d dir=%.*s mode=0x%x blocks=%llu -> 0x%08x point=%.*s status=%u", mount != nullptr ? mount->user_id : -1, static_cast<int>(sizeof(SceSaveDataDirName::data)), mount != nullptr && mount->dir_name != nullptr ? mount->dir_name->data : "(null)", mount != nullptr ? mount->mount_mode : 0u, mount != nullptr ? static_cast<unsigned long long>(mount->blocks) : 0ull, static_cast<unsigned>(rc), static_cast<int>(sizeof(SaveDataMountPoint::data)), rc == SAVE_DATA_OK && mount_result != nullptr ? mount_result->mount_point.data : "", rc == SAVE_DATA_OK && mount_result != nullptr ? mount_result->mount_status : 0u);
+    SaveDataMount3 traceMount{};
+    traceMount.user_id = -1;
+    std::string traceDir = "(null)";
+    SaveDataMountResult traceResult{};
+    const int rc = mount3(mount, mount_result, &traceMount, &traceDir, &traceResult);
+    SAVEDATA_TRACE("mount3 user=%d dir=%s mode=0x%x blocks=%llu -> 0x%08x point=%.*s status=%u", traceMount.user_id, traceDir.c_str(), traceMount.mount_mode, static_cast<unsigned long long>(traceMount.blocks), static_cast<unsigned>(rc), static_cast<int>(sizeof(SaveDataMountPoint::data)), rc == SAVE_DATA_OK ? traceResult.mount_point.data : "", rc == SAVE_DATA_OK ? traceResult.mount_status : 0u);
     return rc;
 }
 
-static int mount2(const SaveDataMount2* mount, SaveDataMountResult* mount_result) {
-    if (mount == nullptr || mount_result == nullptr) {
+static int mount2(const SaveDataMount2* mount, SaveDataMountResult* mount_result, SaveDataMount3* traceMount = nullptr, std::string* traceDir = nullptr, SaveDataMountResult* traceResult = nullptr) {
+    SaveDataMount2 localMount{};
+    if (!readGuest(mount, localMount) || mount_result == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     if (g_initializations == 0) {
         return SAVE_DATA_ERROR_NOT_INITIALIZED;
     }
-    if (mount->user_id == -1 || mount->user_id == 0) {
+    if (localMount.user_id == -1 || localMount.user_id == 0) {
         return SAVE_DATA_ERROR_INVALID_LOGIN_USER;
     }
-    const bool creates = (mount->mount_mode & SAVE_DATA_MOUNT_MODE_CREATE) != 0;
-    if (mount->mount_mode == 0 || (creates && mount->blocks < SAVE_DATA_BLOCKS_MIN2)) {
+    const bool creates = (localMount.mount_mode & SAVE_DATA_MOUNT_MODE_CREATE) != 0;
+    if (localMount.mount_mode == 0 || (creates && localMount.blocks < SAVE_DATA_BLOCKS_MIN2)) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
-    if (mount->dir_name != nullptr) {
-        const std::string_view name(mount->dir_name->data, sizeof(mount->dir_name->data));
+    if (localMount.dir_name != nullptr) {
+        SceSaveDataDirName localDirName{};
+        if (!readGuest(localMount.dir_name, localDirName)) {
+            return SAVE_DATA_ERROR_PARAMETER;
+        }
+        const std::string_view name(localDirName.data, sizeof(localDirName.data));
         if (name.substr(0, name.find('\0')).find('_') != std::string_view::npos) {
             return SAVE_DATA_ERROR_PARAMETER;
         }
     }
     SaveDataMount3 converted{};
-    converted.user_id = mount->user_id;
-    converted.dir_name = mount->dir_name;
-    converted.blocks = mount->blocks;
-    converted.mount_mode = mount->mount_mode;
-    return mount3(&converted, mount_result);
+    converted.user_id = localMount.user_id;
+    converted.dir_name = localMount.dir_name;
+    converted.blocks = localMount.blocks;
+    converted.mount_mode = localMount.mount_mode;
+    return mount3(&converted, mount_result, traceMount, traceDir, traceResult);
 }
 
 int APS5_VABI sceSaveDataMount2(const SaveDataMount2* mount, SaveDataMountResult* mount_result) {
-    const int rc = mount2(mount, mount_result);
-    SAVEDATA_TRACE("mount2 user=%d dir=%.*s mode=0x%x blocks=%llu -> 0x%08x point=%.*s status=%u", mount != nullptr ? mount->user_id : -1, static_cast<int>(sizeof(SceSaveDataDirName::data)), mount != nullptr && mount->dir_name != nullptr ? mount->dir_name->data : "(null)", mount != nullptr ? mount->mount_mode : 0u, mount != nullptr ? static_cast<unsigned long long>(mount->blocks) : 0ull, static_cast<unsigned>(rc), static_cast<int>(sizeof(SaveDataMountPoint::data)), mount_result != nullptr ? mount_result->mount_point.data : "", mount_result != nullptr ? mount_result->mount_status : 0u);
+    SaveDataMount3 traceMount{};
+    traceMount.user_id = -1;
+    std::string traceDir = "(null)";
+    SaveDataMountResult traceResult{};
+    const int rc = mount2(mount, mount_result, &traceMount, &traceDir, &traceResult);
+    SAVEDATA_TRACE("mount2 user=%d dir=%s mode=0x%x blocks=%llu -> 0x%08x point=%.*s status=%u", traceMount.user_id, traceDir.c_str(), traceMount.mount_mode, static_cast<unsigned long long>(traceMount.blocks), static_cast<unsigned>(rc), static_cast<int>(sizeof(SaveDataMountPoint::data)), rc == SAVE_DATA_OK ? traceResult.mount_point.data : "", rc == SAVE_DATA_OK ? traceResult.mount_status : 0u);
     return rc;
 }
 
@@ -1938,35 +2069,22 @@ int APS5_VABI sceSaveDataTransferringMountPs4(const SaveDataTransferringMount* m
     return rc;
 }
 
-static int dirNameSearchPs4(const SaveDataDirNameSearchCond* cond, SaveDataDirNameSearchResult* result, int* traceUser) {
-    if (cond == nullptr || result == nullptr) {
-        return SAVE_DATA_ERROR_PARAMETER;
-    }
+static int dirNameSearchPs4(const SaveDataDirNameSearchCond* cond, SaveDataDirNameSearchResult* result, std::int32_t* traceUser) {
     SaveDataDirNameSearchCond localCond{};
     SaveDataDirNameSearchResult localResult{};
-    const int savedErrno = errno;
-    const bool copiedCond = GuestCopyIn_nid_no_patch(&localCond, cond, sizeof(localCond));
-    const bool copiedResultIn = GuestCopyIn_nid_no_patch(&localResult, result, sizeof(localResult));
-    errno = savedErrno;
-    if (!copiedCond || !copiedResultIn) {
+    if (!readGuest(cond, localCond) || !readGuest(result, localResult)) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     if (traceUser != nullptr) *traceUser = localCond.user_id;
     localResult.hit_num = 0;
     localResult.set_num = 0;
-    const int savedCopyErrno = errno;
-    const bool copiedResultOut = GuestCopyOut_nid_no_patch(result, &localResult, sizeof(localResult));
-    errno = savedCopyErrno;
-    if (!copiedResultOut) {
-        return SAVE_DATA_ERROR_PARAMETER;
-    }
-    return SAVE_DATA_OK;
+    return writeGuest(result, &localResult, sizeof(localResult)) ? SAVE_DATA_OK : SAVE_DATA_ERROR_PARAMETER;
 }
 
 int APS5_VABI sceSaveDataDirNameSearchPs4(const SaveDataDirNameSearchCond* cond, SaveDataDirNameSearchResult* result) {
-    int user = -1;
-    const int rc = dirNameSearchPs4(cond, result, &user);
-    SAVEDATA_TRACE("dirNameSearchPs4 user=%d -> 0x%08x", user, static_cast<unsigned>(rc));
+    std::int32_t traceUser = -1;
+    const int rc = dirNameSearchPs4(cond, result, &traceUser);
+    SAVEDATA_TRACE("dirNameSearchPs4 user=%d -> 0x%08x", traceUser, static_cast<unsigned>(rc));
     return rc;
 }
 
@@ -1989,7 +2107,7 @@ static int convert(const SaveDataConvert* param, std::string* traceDir, int* tra
     }
     if (traceDir != nullptr) *traceDir = dirName;
     if (traceUser != nullptr) *traceUser = localConvert.user_id;
-    if (!std::filesystem::is_directory(save_root() + "/" + dirName)) {
+    if (!path_is_directory(save_root() + "/" + dirName)) {
         return SAVE_DATA_ERROR_NOT_FOUND;
     }
     g_convertProgress = 1.0f;
@@ -2030,7 +2148,7 @@ static int getConvertProgress(float* progress) {
 
 int APS5_VABI sceSaveDataGetConvertProgress(float* progress) {
     const int rc = getConvertProgress(progress);
-    SAVEDATA_TRACE("getConvertProgress -> 0x%08x progress=%.2f", static_cast<unsigned>(rc), progress != nullptr && rc == SAVE_DATA_OK ? *progress : 0.0f);
+    SAVEDATA_TRACE("getConvertProgress -> 0x%08x progress=%.2f", static_cast<unsigned>(rc), rc == SAVE_DATA_OK ? g_convertProgress.load() : 0.0f);
     return rc;
 }
 
@@ -2117,18 +2235,20 @@ int APS5_VABI sceSaveDataChangeInternal(void) {
     return 0;
 }
 
-static int checkBackupData(const SaveDataCheckBackupData* check) {
+static int checkBackupData(const SaveDataCheckBackupData* check, std::string* traceDir) {
     if (g_initializations == 0) {
         return SAVE_DATA_ERROR_NOT_INITIALIZED;
     }
-    if (check == nullptr || check->dir_name == nullptr) {
+    SaveDataCheckBackupData localCheck{};
+    if (!readGuest(check, localCheck) || localCheck.dir_name == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     std::string dirName;
-    if (!parse_dir_name(check->dir_name, &dirName)) {
+    if (!parse_dir_name(localCheck.dir_name, &dirName)) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
-    if (!running_title(check->title_id)) {
+    if (traceDir != nullptr) *traceDir = dirName;
+    if (!running_title(localCheck.title_id)) {
         return SAVE_DATA_ERROR_NOT_FOUND;
     }
     std::lock_guard lock(g_slots_mutex);
@@ -2137,12 +2257,13 @@ static int checkBackupData(const SaveDataCheckBackupData* check) {
         return SAVE_DATA_ERROR_BUSY;
     }
     if (error) return SAVE_DATA_ERROR_INTERNAL;
-    return read_backup(dirName, check->param);
+    return read_backup(dirName, localCheck.param);
 }
 
 int APS5_VABI sceSaveDataCheckBackupData(const SaveDataCheckBackupData* check) {
-    const int rc = checkBackupData(check);
-    SAVEDATA_TRACE("checkBackupData dir=%.*s -> 0x%08x", static_cast<int>(sizeof(SceSaveDataDirName::data)), check != nullptr && check->dir_name != nullptr ? check->dir_name->data : "(null)", static_cast<unsigned>(rc));
+    std::string dir = "(null)";
+    const int rc = checkBackupData(check, &dir);
+    SAVEDATA_TRACE("checkBackupData dir=%s -> 0x%08x", dir.c_str(), static_cast<unsigned>(rc));
     return rc;
 }
 
@@ -2487,18 +2608,20 @@ int APS5_VABI sceSaveDataRegisterEventCallback(SaveDataEventCallback callback, v
     return SAVE_DATA_OK;
 }
 
-static int restoreBackupData(const SaveDataRestoreBackupData* restore) {
+static int restoreBackupData(const SaveDataRestoreBackupData* restore, std::string* traceDir) {
     if (g_initializations == 0) {
         return SAVE_DATA_ERROR_NOT_INITIALIZED;
     }
-    if (restore == nullptr || restore->dir_name == nullptr) {
+    SaveDataRestoreBackupData localRestore{};
+    if (!readGuest(restore, localRestore) || localRestore.dir_name == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     std::string dirName;
-    if (!parse_dir_name(restore->dir_name, &dirName)) {
+    if (!parse_dir_name(localRestore.dir_name, &dirName)) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
-    if (!running_title(restore->title_id)) {
+    if (traceDir != nullptr) *traceDir = dirName;
+    if (!running_title(localRestore.title_id)) {
         return SAVE_DATA_ERROR_NOT_FOUND;
     }
     const std::string target = save_root() + "/" + dirName;
@@ -2512,10 +2635,10 @@ static int restoreBackupData(const SaveDataRestoreBackupData* restore) {
     if (backup != SAVE_DATA_OK) {
         return backup;
     }
-    if (!std::filesystem::is_directory(target)) {
-        return SAVE_DATA_ERROR_INTERNAL;
-    }
     try {
+        if (!path_is_directory(target)) {
+            return SAVE_DATA_ERROR_INTERNAL;
+        }
         restoreSave(dirName);
     } catch (const std::filesystem::filesystem_error&) {
         return SAVE_DATA_ERROR_INTERNAL;
@@ -2524,8 +2647,9 @@ static int restoreBackupData(const SaveDataRestoreBackupData* restore) {
 }
 
 int APS5_VABI sceSaveDataRestoreBackupData(const SaveDataRestoreBackupData* restore) {
-    const int rc = restoreBackupData(restore);
-    SAVEDATA_TRACE("restoreBackupData dir=%.*s -> 0x%08x", static_cast<int>(sizeof(SceSaveDataDirName::data)), restore != nullptr && restore->dir_name != nullptr ? restore->dir_name->data : "(null)", static_cast<unsigned>(rc));
+    std::string dir = "(null)";
+    const int rc = restoreBackupData(restore, &dir);
+    SAVEDATA_TRACE("restoreBackupData dir=%s -> 0x%08x", dir.c_str(), static_cast<unsigned>(rc));
     return rc;
 }
 

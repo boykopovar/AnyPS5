@@ -27,8 +27,9 @@ constexpr int sceBusy = static_cast<int>(0x80020010u);
 constexpr int sceTimedOut = static_cast<int>(0x8002003cu);
 constexpr std::int32_t posixFailure = -1;
 constexpr int posixAgain = 35;
+constexpr int posixInvalid = 22;
+constexpr std::size_t MaxObjectNameBytes = 32;
 constexpr int posixFault = 14;
-constexpr std::size_t maxMutexName = 1024;
 std::mutex& InitializationMutex() {
     static std::mutex mutex;
     return mutex;
@@ -216,15 +217,24 @@ int APS5_VABI scePthreadMutexattrSettype(PthreadMutexattr* attr, int type) {
 int APS5_VABI scePthreadMutexInit(PthreadMutex* mutex, const PthreadMutexattr* attr, const char*) {
     if (!mutex)
         throw std::invalid_argument("Mutex pointer is null");
-    if (attr && *attr && ((*attr)->type < MutexType::ErrorCheck || (*attr)->type > MutexType::Adaptive))
+    PthreadMutexattr handle = nullptr;
+    if (attr && !GuestCopyIn_nid_no_patch(&handle, attr, sizeof(handle)))
+        return SCE_KERNEL_ERROR_EFAULT;
+    PthreadMutexattrPrivate attributes{};
+    if (handle && !GuestCopyIn_nid_no_patch(&attributes, handle, sizeof(attributes)))
+        return SCE_KERNEL_ERROR_EFAULT;
+    if (handle && (attributes.type < MutexType::ErrorCheck || attributes.type > MutexType::Adaptive))
         return SCE_KERNEL_ERROR_EINVAL;
     auto replacement = std::make_unique<PthreadMutexPrivate>();
-    if (attr && *attr) {
-        replacement->SetType((*attr)->type);
-        replacement->_protocol = (*attr)->protocol;
-        replacement->_ceiling = (*attr)->ceiling;
+    if (handle) {
+        replacement->SetType(attributes.type);
+        replacement->_protocol = attributes.protocol;
+        replacement->_ceiling = attributes.ceiling;
     }
     std::lock_guard lock(InitializationMutex());
+    PthreadMutex current = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&current, mutex, sizeof(current)) || !GuestCopyOut_nid_no_patch(mutex, &current, sizeof(current)))
+        return SCE_KERNEL_ERROR_EFAULT;
     std::atomic_ref<PthreadMutex>(*mutex).store(replacement.release(), std::memory_order_release);
     return 0;
 }
@@ -380,13 +390,13 @@ int APS5_VABI pthread_mutex_setname_np_nid_postfix(PthreadMutex* mutex, const ch
         throw std::invalid_argument("pthread_mutex_setname_np: mutex is statically initialized or destroyed");
     if (current->_named)
         return posixAgain;
-    if (name) {
-        std::string copy;
-        if (const int error = CopyGuestString_nid_no_patch(name, maxMutexName, copy))
-            return error;
-        current->_name = std::move(copy);
-        current->_named = true;
-    }
+    if (!name)
+        return posixInvalid;
+    std::string copy;
+    if (const int error = CopyGuestString_nid_no_patch(name, MaxObjectNameBytes, copy))
+        return error;
+    current->_name = std::move(copy);
+    current->_named = true;
     return 0;
 }
 

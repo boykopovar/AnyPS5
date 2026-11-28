@@ -14,6 +14,7 @@
 #include <optional>
 #include <thread>
 #include <span>
+#include <unordered_map>
 #include <string>
 #include <utility>
 #include <vector>
@@ -56,7 +57,7 @@ public:
     void Enqueue(CommitKind kind, Commit commit, std::vector<Range> writes, std::uint64_t labelAddress = 0, std::vector<std::byte> labelBytes = {}, std::vector<Range> reads = {}, bool draw = false);
     void EnqueueStore(Commit commit, std::uint64_t address, std::vector<std::byte> bytes);
     static void NoteDrawKey(std::uint64_t key, std::uint64_t shape);
-    void Drain(DrainReason reason, std::uint32_t opcode = 0x100);
+    void Drain(DrainReason reason, std::uint32_t opcode = 0x100, const char* site = nullptr);
     void Stop();
     void ReleaseRetired();
     static std::uint64_t DrainRequestsByOpcode(std::uint32_t opcode);
@@ -74,8 +75,11 @@ public:
     std::uint64_t DrainWaits() const { return drainWaits.load(std::memory_order_acquire); }
     void NoteDecodeDrain() { decodeDrains.fetch_add(1, std::memory_order_relaxed); }
     std::uint64_t DecodeDrains() const { return decodeDrains.load(std::memory_order_relaxed); }
+    void NoteDecodeDrainSkip() { decodeDrainSkips.fetch_add(1, std::memory_order_relaxed); }
+    std::uint64_t DecodeDrainSkips() const { return decodeDrainSkips.load(std::memory_order_relaxed); }
     std::optional<std::uint64_t> PendingLabel(std::uint64_t address, std::size_t bytes);
     static bool HeldReads(std::uint64_t address, std::size_t bytes);
+    std::uint64_t CommitterThread() const { return committerThread.load(std::memory_order_acquire); }
     static std::uint64_t HeldReadQueries();
     void ReleaseRunningReads();
     QueuedWrite StoredBytes(std::uint64_t address, std::size_t bytes, std::span<std::byte> out);
@@ -83,6 +87,7 @@ public:
     static bool MetadataPassesPipelined();
     static void CountPipelinedMetadataPass();
     static std::uint64_t PipelinedMetadataPasses();
+    static std::uint64_t CommitClockReads();
 private:
     struct Item {
         Commit commit;
@@ -114,11 +119,14 @@ private:
     std::atomic<std::uint64_t> countedLookups{0};
     std::exception_ptr failure;
     std::atomic<std::size_t> outstanding{0};
+    std::atomic<std::uint64_t> committerThread{0};
     std::atomic<std::uint64_t> retiredItems{0};
     std::atomic<std::uint64_t> producerWaits{0};
     std::atomic<std::uint64_t> drainWaits{0};
     std::atomic<std::uint64_t> decodeDrains{0};
+    std::atomic<std::uint64_t> decodeDrainSkips{0};
     std::uint64_t reportedDecodeDrains = 0;
+    std::uint64_t reportedDecodeDrainSkips = 0;
     std::uint32_t producersWaiting = 0;
     std::uint32_t drainersWaiting = 0;
     bool committerWaiting = false;
@@ -154,7 +162,15 @@ public:
         std::vector<Range> writes;
         std::uint64_t labelAddress = 0;
         std::vector<std::byte> labelBytes;
+        bool countedUnknown = false;
+        std::vector<Range> countedWrites;
     };
+    struct PendingBlockCounts {
+        std::uint64_t answered = 0, verified = 0;
+    };
+    static bool PendingWriteBlocks();
+    static bool VerifyPendingWriteBlocks();
+    static PendingBlockCounts PendingBlockTotals();
     enum class LabelLookup : std::uint8_t { NotHeld, Value, Unknown };
     static bool Overlap();
     bool PendingOverlaps(std::uint64_t begin, std::uint64_t end);
@@ -184,6 +200,12 @@ private:
     std::condition_variable idle;
     std::deque<Job> jobs;
     std::deque<Pending> pending;
+    void countPendingWrites(Pending& held);
+    void uncountPendingWrites(Pending& held);
+    bool pendingBlocksClear(std::span<const Range> ranges) const;
+    std::unordered_map<std::uint64_t, std::uint32_t> pendingWriteBlocks;
+    std::size_t pendingUnknownJobs = 0;
+    std::size_t pendingWideRanges = 0;
     std::vector<Job> ran;
     std::exception_ptr failure;
     bool running = false;

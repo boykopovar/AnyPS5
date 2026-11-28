@@ -138,23 +138,17 @@ LibreSslCtxInternal& Internal(LibreSslCtx* ctx, const char* function) {
 }
 
 void CopyGuestBytesInPreservingErrno(void* hostAddress, const void* guestAddress, std::size_t size, const char* caller) {
-    const int savedErrno = errno;
     const bool ok = GuestCopyIn_nid_no_patch(hostAddress, guestAddress, size);
-    errno = savedErrno;
     if (!ok) NotImplementedAt_nid_no_patch(caller, __FILE__, __LINE__);
 }
 
 void CopyGuestBytesOutPreservingErrno(void* guestAddress, const void* hostAddress, std::size_t size, const char* caller) {
-    const int savedErrno = errno;
     const bool ok = GuestCopyOut_nid_no_patch(guestAddress, hostAddress, size);
-    errno = savedErrno;
     if (!ok) NotImplementedAt_nid_no_patch(caller, __FILE__, __LINE__);
 }
 
 void RequireGuestWritablePreservingErrno(void* guestAddress, std::size_t size, const char* caller) {
-    const int savedErrno = errno;
     const bool ok = GuestWritable_nid_no_patch(guestAddress, size);
-    errno = savedErrno;
     if (!ok) NotImplementedAt_nid_no_patch(caller, __FILE__, __LINE__);
 }
 

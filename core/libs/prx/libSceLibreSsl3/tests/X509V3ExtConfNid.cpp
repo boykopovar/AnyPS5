@@ -13,6 +13,7 @@
 #include <initializer_list>
 #include <source_location>
 #include <stdexcept>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -92,7 +93,7 @@ LibreSsl3X509Extension* Conf(int nid, const char* value, void* conf = nullptr) {
 }
 
 void CheckValue(LibreSsl3X509Extension* extension, int nid, int critical,
-    std::initializer_list<unsigned char> expected) {
+    const std::vector<unsigned char>& expected) {
     Require(extension != nullptr);
     Require(extension->object != nullptr);
     Require(OBJ_obj2nid_nid_postfix(extension->object) == nid);
@@ -101,8 +102,7 @@ void CheckValue(LibreSsl3X509Extension* extension, int nid, int critical,
     Require(value != nullptr);
     Require(value->type == 4);
     Require(value->length == static_cast<std::int32_t>(expected.size()));
-    const std::vector<unsigned char> bytes(expected);
-    if (!bytes.empty()) Require(std::memcmp(value->data, bytes.data(), bytes.size()) == 0);
+    if (!expected.empty()) Require(std::memcmp(value->data, expected.data(), expected.size()) == 0);
     X509_EXTENSION_free_nid_postfix(extension);
     Require(allocations.empty());
 }
@@ -114,6 +114,12 @@ void TestDer() {
     CheckValue(Conf(103, "DER:3000"), 103, 0, {0x30, 0x00});
     CheckValue(Conf(83, "critical,DER:0500"), 83, 1, {0x05, 0x00});
     CheckValue(Conf(83, "critical,  DER:0A0B"), 83, 1, {0x0a, 0x0b});
+}
+
+void TestUnmappedValue() {
+    Require(Conf(83, reinterpret_cast<const char*>(0x10)) == nullptr);
+    Require(allocations.empty());
+    CheckValue(Conf(83, "DER:0500"), 83, 0, {0x05, 0x00});
 }
 
 void TestAsn1() {
@@ -324,6 +330,57 @@ void TestSequenceContext() {
     Require(allocations.empty());
 }
 
+void TestWraps() {
+    CheckValue(Conf(83, "ASN1:SEQWRAP,UTF8:x"), 83, 0, {0x30, 0x03, 0x0c, 0x01, 'x'});
+    CheckValue(Conf(83, "ASN1:SETWRAP,INT:5"), 83, 0, {0x31, 0x03, 0x02, 0x01, 0x05});
+    CheckValue(Conf(83, "ASN1:BITWRAP,INT:5"), 83, 0, {0x03, 0x04, 0x00, 0x02, 0x01, 0x05});
+    CheckValue(Conf(83, "ASN1:OCTWRAP,INT:5"), 83, 0, {0x04, 0x03, 0x02, 0x01, 0x05});
+    CheckValue(Conf(83, "ASN1:SEQWRAP:x,UTF8:x"), 83, 0, {0x30, 0x03, 0x0c, 0x01, 'x'});
+    CheckValue(Conf(83, "ASN1:OCTWRAP:,INT:5"), 83, 0, {0x04, 0x03, 0x02, 0x01, 0x05});
+    CheckValue(Conf(83, "critical,ASN1: SEQWRAP , INT:5"), 83, 1, {0x30, 0x03, 0x02, 0x01, 0x05});
+    CheckValue(Conf(83, "ASN1:OCTWRAP,SEQWRAP,BITWRAP,SETWRAP,NULL"), 83, 0,
+        {0x04, 0x09, 0x30, 0x07, 0x03, 0x05, 0x00, 0x31, 0x02, 0x05, 0x00});
+    CheckValue(Conf(83, "ASN1:FORMAT:HEX,SEQWRAP,OCT:0102"), 83, 0, {0x30, 0x04, 0x04, 0x02, 0x01, 0x02});
+    CheckValue(Conf(83, "ASN1:BITWRAP,FORMAT:BITLIST,BITSTRING:1"), 83, 0,
+        {0x03, 0x05, 0x00, 0x03, 0x02, 0x06, 0x40});
+    CheckValue(Conf(83, "ASN1:SEQWRAP,UTF8:a,b"), 83, 0, {0x30, 0x05, 0x0c, 0x03, 'a', ',', 'b'});
+    std::vector<unsigned char> octets{0x04, 0x81, 0xcb, 0x04, 0x81, 0xc8};
+    octets.insert(octets.end(), 200, 'x');
+    CheckValue(Conf(83, ("ASN1:OCTWRAP,OCT:" + std::string(200, 'x')).c_str()), 83, 0, octets);
+    std::string nested = "ASN1:";
+    std::vector<unsigned char> sequences{0x02, 0x01, 0x01};
+    for (int depth = 0; depth < 20; ++depth) {
+        nested += "SEQWRAP,";
+        sequences.insert(sequences.begin(), {0x30, static_cast<unsigned char>(sequences.size())});
+    }
+    CheckValue(Conf(83, (nested + "INT:1").c_str()), 83, 0, sequences);
+    ERR_clear_error_nid_postfix();
+    RequireQueue(Conf(83, (nested + "SEQWRAP,INT:1").c_str()), {0x0dfff0ae, 0x22fff074});
+    RequireQueue(Conf(83, (nested + "OCTWRAP,NOPE:1").c_str()), {0x0dfff0ae, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:SEQWRAP"), {0x22fff074});
+    RequireQueue(Conf(83, "ASN1:SEQWRAP:x"), {0x22fff074});
+    RequireQueue(Conf(83, "ASN1:seqwrap,INT:5"), {0x0dfff0c2, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:SEQWRAP,"), {0x0dfff0c2, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:SETWRAP,NOPE:1"), {0x0dfff0c2, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:BITWRAP,INT,x"), {0x0dfff0bd, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:OCTWRAP,INT:x"), {0x22fff064, 0x0dfff0b4, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:SEQWRAP,SEQUENCE"), {0x0dfff0c0, 0x22fff074});
+    RequireQueue(Conf(83, "ASN1:SEQWRAP,IMP,INT:5"), {0x22fff074});
+    RequireQueue(Conf(83, "ASN1:IMP,SEQWRAP,INT:5"), {0x22fff074});
+    RequireNotImplemented([] { Conf(83, "ASN1:SEQWRAP,IMP:1,INT:5"); });
+    RequireNotImplemented([] { Conf(83, "ASN1:SEQWRAP,EXP:1,INT:5"); });
+    ERR_clear_error_nid_postfix();
+    LibreSsl3X509V3Context context{};
+    X509V3_set_ctx_nid_postfix(&context, nullptr, nullptr, nullptr, nullptr, 0);
+    CheckValue(X509V3_EXT_conf_nid_nid_postfix(nullptr, &context, 83, "ASN1:SEQWRAP,SET"), 83, 0,
+        {0x30, 0x02, 0x31, 0x00});
+    CheckValue(X509V3_EXT_conf_nid_nid_postfix(nullptr, &context, 83, "ASN1:BITWRAP,SEQ"), 83, 0,
+        {0x03, 0x03, 0x00, 0x30, 0x00});
+    RequireQueue(X509V3_EXT_conf_nid_nid_postfix(nullptr, &context, 83, "ASN1:SEQWRAP,SEQ:sect"),
+        {0x22fff094, 0x22fff074});
+    Require(allocations.empty());
+}
+
 void TestUnknownNid() {
     Require(Conf(0, "DER:0102") == nullptr);
     Require(Conf(0, "ASN1:INTEGER:5") == nullptr);
@@ -387,6 +444,47 @@ void TestPlainFailures() {
     Require(allocations.empty());
 }
 
+void TestMethodTable() {
+    ERR_clear_error_nid_postfix();
+    for (const int nid : {143, 369, 663}) {
+        RequireQueue(Conf(nid, "NULL"), {0x22fff081});
+        RequireQueue(Conf(nid, ""), {0x22fff081});
+        RequireQueue(Conf(nid, "critical,x"), {0x22fff081});
+        LibreSsl3X509Extension* generic = Conf(nid, "DER:0500");
+        Require(generic != nullptr);
+        Require(X509V3_EXT_d2i_nid_postfix(generic) == nullptr);
+        Require(ERR_get_error_nid_postfix() == 0);
+        CheckValue(generic, nid, 0, {0x05, 0x00});
+    }
+    for (const int nid : {1018, 1021}) {
+        RequireQueue(Conf(nid, "NULL"), {0x22fff067});
+        RequireQueue(Conf(nid, ""), {0x22fff067});
+        RequireQueue(Conf(nid, "critical,"), {0x22fff067});
+        LibreSsl3X509Extension* generic = Conf(nid, "DER:0400");
+        Require(generic != nullptr);
+        RequireNotImplemented([generic] { X509V3_EXT_d2i_nid_postfix(generic); });
+        Require(ERR_get_error_nid_postfix() == 0);
+        CheckValue(generic, nid, 0, {0x04, 0x00});
+    }
+    void* const present = reinterpret_cast<void*>(std::uintptr_t{1});
+    for (const char* value : {"NULL", "", "anything", "@section", "1,2"}) {
+        LibreSsl3X509Extension* poison = Conf(1019, value);
+        Require(poison != nullptr);
+        Require(X509V3_EXT_d2i_nid_postfix(poison) == present);
+        Require(ERR_get_error_nid_postfix() == 0);
+        CheckValue(poison, 1019, 0, {0x05, 0x00});
+    }
+    CheckValue(Conf(1019, "critical,NULL"), 1019, 1, {0x05, 0x00});
+    CheckValue(Conf(1019, "critical,"), 1019, 1, {0x05, 0x00});
+    CheckValue(Conf(1019, "DER:0101ff"), 1019, 0, {0x01, 0x01, 0xff});
+    RequireQueue(Conf(13, "NULL"), {0x22fff081});
+    RequireQueue(Conf(1020, "NULL"), {0x22fff081});
+    RequireQueue(Conf(0, "NULL"), {0x22fff082});
+    CheckValue(Conf(83, "digitalSignature"), 83, 0, {0x03, 0x02, 0x07, 0x80});
+    Require(ERR_get_error_nid_postfix() == 0);
+    Require(allocations.empty());
+}
+
 void TestAllocationFailures() {
     allocationsUntilFailure = 0;
     Require(Conf(83, "DER:0102") == nullptr);
@@ -411,14 +509,17 @@ int main() {
         reinterpret_cast<void*>(UnexpectedPosixAlign_nid_no_patch)};
     ApplicationHeapRegister_nid_no_patch(api.data());
     TestDer();
+    TestUnmappedValue();
     TestAsn1();
     TestMalformed();
     TestErrorQueue();
     TestSequenceContext();
+    TestWraps();
     TestUnknownNid();
     TestPlain();
     TestPlainLineBreaks();
     TestPlainFailures();
+    TestMethodTable();
     TestAllocationFailures();
     Require(allocations.empty());
     std::puts("libSceLibreSsl3 X509V3_EXT_conf_nid tests passed");

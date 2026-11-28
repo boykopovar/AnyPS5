@@ -6,17 +6,13 @@
 #include <mutex>
 #include <utility>
 
-#if defined(__cpp_lib_atomic_shared_ptr)
 template <class T>
-using AtomicSharedPtr = std::atomic<std::shared_ptr<T>>;
-#else
-template <class T>
-class AtomicSharedPtr {
+class AtomicSharedPtrFallback {
 public:
-    AtomicSharedPtr() noexcept = default;
-    AtomicSharedPtr(std::shared_ptr<T> desired) noexcept : value(std::move(desired)) {}
-    AtomicSharedPtr(const AtomicSharedPtr&) = delete;
-    AtomicSharedPtr& operator=(const AtomicSharedPtr&) = delete;
+    AtomicSharedPtrFallback() noexcept = default;
+    AtomicSharedPtrFallback(std::shared_ptr<T> desired) noexcept : value(std::move(desired)) {}
+    AtomicSharedPtrFallback(const AtomicSharedPtrFallback&) = delete;
+    AtomicSharedPtrFallback& operator=(const AtomicSharedPtrFallback&) = delete;
 
     std::shared_ptr<T> load(std::memory_order = std::memory_order_seq_cst) const noexcept {
         std::lock_guard lock(mutex);
@@ -30,13 +26,29 @@ public:
         return std::exchange(value, std::move(desired));
     }
     bool compare_exchange_strong(std::shared_ptr<T>& expected, std::shared_ptr<T> desired, std::memory_order = std::memory_order_seq_cst) noexcept {
-        std::lock_guard lock(mutex);
-        if (value == expected) {
-            value = std::move(desired);
-            return true;
+        std::shared_ptr<T> replaced;
+        bool matched = false;
+        {
+            std::lock_guard lock(mutex);
+            if (value.get() == expected.get() && !value.owner_before(expected) && !expected.owner_before(value)) {
+                replaced = std::move(value);
+                value = std::move(desired);
+                matched = true;
+            } else {
+                replaced = std::move(expected);
+                expected = value;
+            }
         }
-        expected = value;
-        return false;
+        return matched;
+    }
+    bool compare_exchange_strong(std::shared_ptr<T>& expected, std::shared_ptr<T> desired, std::memory_order success, std::memory_order) noexcept {
+        return compare_exchange_strong(expected, std::move(desired), success);
+    }
+    bool compare_exchange_weak(std::shared_ptr<T>& expected, std::shared_ptr<T> desired, std::memory_order order = std::memory_order_seq_cst) noexcept {
+        return compare_exchange_strong(expected, std::move(desired), order);
+    }
+    bool compare_exchange_weak(std::shared_ptr<T>& expected, std::shared_ptr<T> desired, std::memory_order success, std::memory_order failure) noexcept {
+        return compare_exchange_strong(expected, std::move(desired), success, failure);
     }
     operator std::shared_ptr<T>() const noexcept { return load(); }
     void operator=(std::shared_ptr<T> desired) noexcept { store(std::move(desired)); }
@@ -45,6 +57,13 @@ private:
     mutable std::mutex mutex;
     std::shared_ptr<T> value;
 };
+
+#if defined(__cpp_lib_atomic_shared_ptr)
+template <class T>
+using AtomicSharedPtr = std::atomic<std::shared_ptr<T>>;
+#else
+template <class T>
+using AtomicSharedPtr = AtomicSharedPtrFallback<T>;
 #endif
 
 #endif

@@ -21,6 +21,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <stdexcept>
 
 namespace {
 
@@ -33,6 +34,23 @@ constexpr std::size_t MaxDigestSize = 64;
 void Cleanse(unsigned char* data, std::size_t size) {
     volatile unsigned char* bytes = data;
     for (std::size_t i = 0; i < size; ++i) bytes[i] = 0;
+}
+
+struct ScopedCleanse {
+    unsigned char* data;
+    std::size_t size;
+
+    ~ScopedCleanse() {
+        Cleanse(data, size);
+    }
+};
+
+std::size_t RequireDigestSize(const EvpMd* digest) {
+    const int digestLength = EVP_MD_size_nid_postfix(digest);
+    if (digestLength <= 0 || static_cast<std::size_t>(digestLength) > MaxDigestSize) {
+        throw std::invalid_argument("HKDF: invalid digest size");
+    }
+    return static_cast<std::size_t>(digestLength);
 }
 
 int Extract(std::uint8_t* prk, std::size_t* prkLength, const EvpMd* digest, const std::uint8_t* secret, std::size_t secretLength, const std::uint8_t* salt, std::size_t saltLength) {
@@ -54,7 +72,7 @@ int Extract(std::uint8_t* prk, std::size_t* prkLength, const EvpMd* digest, cons
 
 int Expand(std::uint8_t* out, std::size_t outLength, const EvpMd* digest, const std::uint8_t* prk, std::size_t prkLength, const std::uint8_t* info, std::size_t infoLength) {
     if (!out && outLength) APS5_INVALID_ARG_EX;
-    const auto digestLength = static_cast<std::size_t>(EVP_MD_size_nid_postfix(digest));
+    const std::size_t digestLength = RequireDigestSize(digest);
     unsigned char block[MaxDigestSize];
     int result = 0;
     HmacContext hmac;
@@ -92,7 +110,9 @@ int Expand(std::uint8_t* out, std::size_t outLength, const EvpMd* digest, const 
 extern "C" {
 
 int APS5_VABI HKDF_nid_postfix(std::uint8_t* outKey, std::size_t outLength, const EvpMd* digest, const std::uint8_t* secret, std::size_t secretLength, const std::uint8_t* salt, std::size_t saltLength, const std::uint8_t* info, std::size_t infoLength) {
-    std::uint8_t prk[MaxDigestSize];
+    if (digest) RequireDigestSize(digest);
+    std::uint8_t prk[MaxDigestSize] {};
+    const ScopedCleanse cleansePrk {prk, sizeof(prk)};
     std::size_t prkLength = 0;
     if (!Extract(prk, &prkLength, digest, secret, secretLength, salt, saltLength)) return 0;
     return Expand(outKey, outLength, digest, prk, prkLength, info, infoLength);

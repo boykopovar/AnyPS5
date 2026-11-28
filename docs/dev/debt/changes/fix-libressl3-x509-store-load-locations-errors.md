@@ -1,0 +1,5 @@
+# libSceLibreSsl3
+
+## add Functional
+
+- [X509_STORE_load_locations error queue](../../../core/libs/prx/libSceLibreSsl3/src/X509StoreLoadLocations.cpp) (libSceLibreSsl3) - no console check. A `file` load queues what LibreSSL 4.0.0 [X509_load_cert_crl_file](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/x509/by_file.c#L225-L261) queues: the `BIO_new_file` errors and `ERR_R_SYS_LIB`, a PEM reason and `ERR_R_PEM_LIB`, or a cleared queue and `X509_R_NO_CERTIFICATE_OR_CRL_FOUND`; `SSL_CTX_set_default_verify_paths` clears the queue as `X509_STORE_set_default_paths` does. Gaps: the reader is not `PEM_read_bio` (the PEM reason is only `BAD_END_LINE` or `BAD_BASE64_DECODE`, other labels are not decoded); a read error or unreadable path queues nothing; the queue is cleared after the adds, not before; a CRL-only bundle returns 0 with an empty queue; the hash-dir lookup never clears the queue. Closes when: the bundle is read as `PEM_X509_INFO_read_bio` reads it.

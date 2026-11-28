@@ -1,0 +1,5 @@
+# libSceLibreSsl3
+
+## add Functional
+
+- [X509V3_EXT_d2i basicConstraints, extendedKeyUsage and privateKeyUsagePeriod](../../../core/libs/prx/libSceLibreSsl3/src/X509V3ExtD2i.cpp) (libSceLibreSsl3) - not checked on a console. Methods 87, 126 and 84, which the `X509V3_EXT_d2i` entry lists as throwing, decode as LibreSSL 4.0.0 [`tasn_dec.c`](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/tasn_dec.c#L735-L905) does, into the 16-byte `BASIC_CONSTRAINTS` (`ca` is the BOOLEAN content byte), a `STACK_OF(ASN1_OBJECT)` and the 16-byte `PKEY_USAGE_PERIOD` of `x509v3.h`. An indefinite length and a constructed time throw; a length written on more than 8 bytes is refused where LibreSSL reads up to 126. `Field=` and `Type=` error data is not queued. This library implements no `BASIC_CONSTRAINTS_free`, `EXTENDED_KEY_USAGE_free` or `PKEY_USAGE_PERIOD_free` yet: a caller releases the parts itself. Closes when: the BER forms are decoded and the module is measured.

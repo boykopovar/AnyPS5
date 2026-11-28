@@ -77,6 +77,12 @@ int main() {
     Require(errno == 71);
     Require(sceOpusCeltDecDestroy(nullptr) == static_cast<int>(errorBase));
     std::uint32_t context = 0;
+    std::array<std::uint8_t, 640> moduleState{};
+    Require(sceOpusCeltDecCreate(nullptr, 48000, 2) == static_cast<int>(errorBase));
+    Require(sceOpusCeltDecCreate(moduleState.data(), 0, 3) == static_cast<int>(errorBase + 3));
+    Require(sceOpusCeltDecCreate(moduleState.data(), 44100, 2) == static_cast<int>(errorBase + 2));
+    Require(sceOpusCeltDecCreate(moduleState.data(), 24000, 1) == 0);
+    Require(sceOpusCeltDecDestroy(moduleState.data()) == 0);
     Require(sceOpusCeltDecInitialize(&context) == 0);
     std::array<std::uint8_t, 640> invalidState{};
     std::int16_t output = 12345;
@@ -145,6 +151,12 @@ int main() {
                     std::fprintf(stderr, "CELT PCM differs from libopus at %d Hz, %d channels, frame %d\n", rate, channels, frame);
                     std::abort();
                 }
+                std::array<std::int16_t, 1920> concealedExpected{};
+                Require(opus_decode(reference, nullptr, 0, concealedExpected.data(), samples, 0) == samples);
+                tone.fill(12345);
+                Require(sceOpusCeltDecDecode(toneState.data(), nullptr, 0, tone.data() + 1, samples * channels * 2 + 1) == samples * channels * 2);
+                Require(tone[0] == 12345 && tone[samples * channels + 1] == 12345);
+                Require(std::equal(concealedExpected.begin(), concealedExpected.begin() + samples * channels, tone.begin() + 1));
                 if (frame == 1 || frame == 2) RequireTone(tone.data() + 1, samples, channels, rate);
             }
             opus_decoder_destroy(reference);

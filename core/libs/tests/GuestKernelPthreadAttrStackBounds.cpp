@@ -11,7 +11,7 @@ constexpr int SceKernelErrorEinval = static_cast<int>(0x80020016u);
 
 constexpr std::size_t PthreadStackMin = 16384;
 constexpr std::size_t DefaultStackSize = 1048576;
-constexpr std::size_t DefaultGuardSize = 4096;
+constexpr std::size_t DefaultGuardSize = 16384;
 
 void Require(bool condition) {
     if (!condition) {

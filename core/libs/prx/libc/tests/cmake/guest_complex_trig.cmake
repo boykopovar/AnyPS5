@@ -1,0 +1,6 @@
+add_test_executable(guest_complex_trig_tests ${LIBS_INCLUDE_DIR}/tests/GuestComplexTrig.cpp)
+target_include_directories(guest_complex_trig_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(guest_complex_trig_tests PRIVATE libc)
+configure_windows_unwind(guest_complex_trig_tests)
+add_test(NAME guest_complex_trig COMMAND guest_complex_trig_tests)
+set_tests_properties(guest_complex_trig PROPERTIES TIMEOUT 20)

@@ -175,7 +175,8 @@ void AppendPage(std::vector<unsigned char>& out, const ogg_page& page) {
     out.insert(out.end(), page.body, page.body + page.body_len);
 }
 
-void EncodeLink(std::vector<unsigned char>& out, int serial, int channels, long rate, long samples, const char* title) {
+void EncodeLink(std::vector<unsigned char>& out, int serial, int channels, long rate, long samples, const char* title,
+                void (*configureHeader)(vorbis_info&) = nullptr) {
     vorbis_info info;
     vorbis_info_init(&info);
     Require(vorbis_encode_init_vbr(&info, channels, rate, 0.1f) == 0);
@@ -192,7 +193,10 @@ void EncodeLink(std::vector<unsigned char>& out, int serial, int channels, long 
     ogg_packet identification;
     ogg_packet comments;
     ogg_packet codebooks;
-    vorbis_analysis_headerout(&dsp, &comment, &identification, &comments, &codebooks);
+    const vorbis_info encoderInfo = info;
+    if (configureHeader) configureHeader(info);
+    Require(vorbis_analysis_headerout(&dsp, &comment, &identification, &comments, &codebooks) == 0);
+    info = encoderInfo;
     ogg_stream_packetin(&stream, &identification);
     ogg_stream_packetin(&stream, &comments);
     ogg_stream_packetin(&stream, &codebooks);
@@ -374,6 +378,10 @@ void TestWideStreamPositions(const std::vector<unsigned char>& stream, std::size
     void* vf = guest.Get();
     Require(sceVorbisDecOpenCallbacks(&source, vf, nullptr, 0, SeekableCallbacks) == 0);
     Require(sceVorbisDecSeekable(vf) == 1 && sceVorbisDecRawTotal(vf, 0) == wideLastPage);
+    const auto bits = (wideLastPage - reference.dataoffsets[0]) * 8;
+    Require(ov_time_total(&reference, 0) == 1.0);
+    Require(sceVorbisDecBitrate(vf, 0) == bits);
+    Require(sceVorbisDecBitrate(vf, -1) == static_cast<std::int64_t>(static_cast<float>(bits)));
     Require(sceVorbisDecPcmTotal(vf, 0) == FirstSamples);
     Require(RequireSameRead(vf, reference) > 0);
     Require(sceVorbisDecRawSeek(vf, wideLastPage) == 0 && ov_raw_seek(&reference, lastPage) == 0);
@@ -642,6 +650,39 @@ void TestThrowingCallbacks(const std::vector<unsigned char>& stream) {
     Require(guest.Untouched());
 }
 
+void TestStreamingBitrates() {
+    std::vector<unsigned char> stream;
+    EncodeLink(stream, FirstSerial, FirstChannels, FirstRate, FirstSamples, "wide rates", [](vorbis_info& header) {
+        header.rate = 2000000000;
+        header.bitrate_upper = 2000000000;
+        header.bitrate_nominal = 0;
+        header.bitrate_lower = 1500000000;
+    });
+    GuestFile guest;
+    Source source{&stream};
+    Require(sceVorbisDecOpenCallbacks(&source, guest.Get(), nullptr, 0, StreamingCallbacks) == 0);
+    Require(sceVorbisDecBitrate(guest.Get(), 0) == 1750000000);
+    Require(sceVorbisDecBitrate(guest.Get(), -1) == 1750000000);
+
+    Source referenceSource{&stream};
+    OggVorbis_File reference{};
+    Require(ov_open_callbacks(&referenceSource, &reference, nullptr, 0, HostStreamingCallbacks) == 0);
+    bool wide = false;
+    while (RequireSameRead(guest.Get(), reference) > 0) {
+        if (reference.samptrack == 0) continue;
+        const auto expected = static_cast<std::int64_t>(reference.bittrack / reference.samptrack * reference.vi->rate + 0.5);
+        Require(sceVorbisDecBitrateInstant(guest.Get()) == expected);
+        Require(sceVorbisDecBitrateInstant(guest.Get()) == OV_FALSE);
+        if (expected > INT32_MAX) {
+            wide = true;
+            break;
+        }
+        Require(ov_bitrate_instant(&reference) == expected);
+    }
+    Require(wide);
+    Require(sceVorbisDecClear(guest.Get()) == 0 && ov_clear(&reference) == 0);
+}
+
 void TestBitrateHalfTies() {
     constexpr long rate = 8192;
     constexpr long samples = 16 * rate;
@@ -695,6 +736,7 @@ int main() {
     TestNeverOpened();
     TestFailedOpens(stream);
     TestThrowingCallbacks(stream);
+    TestStreamingBitrates();
     TestBitrateHalfTies();
 
     Require(Throws<std::runtime_error>([] { sceVorbisDecGetDecodePriority(); }));

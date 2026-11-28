@@ -277,6 +277,18 @@ int main() {
         }
         errno = 71;
         Require(FT_Load_Sfnt_Table_nid_postfix(face.guest, 0x4D495353u, 0, nullptr, unmappedLength) == FT_Err_Table_Missing && errno == 71);
+        static const std::uint64_t readOnlyZeroLength = 0;
+        errno = 71;
+        Require(FT_Load_Sfnt_Table_nid_postfix(face.guest, 0x54455354u, 0, nullptr, const_cast<std::uint64_t*>(&readOnlyZeroLength)) ==
+                FT_Err_Invalid_Argument && errno == 71 && readOnlyZeroLength == 0);
+        static const unsigned char readOnlyBuffer[4] = {0x11, 0x22, 0x33, 0x44};
+        std::uint64_t fourBytes = 4;
+        errno = 71;
+        Require(FT_Load_Sfnt_Table_nid_postfix(face.guest, 0x54455354u, 0, const_cast<unsigned char*>(readOnlyBuffer), &fourBytes) ==
+                FT_Err_Invalid_Argument && errno == 71 && readOnlyBuffer[0] == 0x11);
+        errno = 71;
+        Require(FT_Load_Sfnt_Table_nid_postfix(face.guest, 0x54455354u, 0, reinterpret_cast<unsigned char*>(std::uintptr_t{0x10}), &fourBytes) ==
+                FT_Err_Invalid_Argument && errno == 71);
         std::array<std::uint64_t, 8> alias{};
         alias.fill(0xA5A5A5A5A5A5A5A5ull);
         alias[0] = 16;

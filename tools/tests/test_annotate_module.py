@@ -120,6 +120,18 @@ def append_dynamic_tags(image, entries):
     return bytes(image)
 
 
+def unwind_image(addresses, encoding=b"\x01\x1b\x03\x3b", **options):
+    image = bytearray(build_module(**options))
+    base = DATA_ADDRESS + 0x500
+    size = 12 + 8 * len(addresses)
+    struct.pack_into("<H", image, 56, 4)
+    struct.pack_into("<IIQQQQQQ", image, 64 + 3 * 56, 0x6474e550, 4, 0x2500, base, base, size, size, 4)
+    struct.pack_into("<4siI", image, 0x2500, encoding, 0xfc, len(addresses))
+    for index, address in enumerate(addresses):
+        struct.pack_into("<ii", image, 0x250c + 8 * index, address - base, 0x110 + index * 16)
+    return image
+
+
 class ImportRelocationTests(unittest.TestCase):
     def test_conflicting_load_mappings_cannot_supply_symbol_tables(self):
         for address in (DATA_ADDRESS + 4, DATA_ADDRESS + 0x58, DATA_ADDRESS + 0x110, DATA_ADDRESS + 0x288):
@@ -370,7 +382,7 @@ class ImportRelocationTests(unittest.TestCase):
 
 
 class ObjdumpDiscoveryTests(unittest.TestCase):
-    def discover(self, versions, unsupported=()):
+    def discover(self, versions, unsupported=(), false_success=()):
         def which(name):
             return "/bin/" + name if name in versions else None
 
@@ -379,7 +391,9 @@ class ObjdumpDiscoveryTests(unittest.TestCase):
             if command[1] == "--version":
                 return subprocess.CompletedProcess(command, 0, versions[name], "")
             self.assertIn("i386:x86-64", command)
-            return subprocess.CompletedProcess(command, int(name in unsupported), "", "")
+            instruction = "64-bit address is disabled" if name in false_success else "ret"
+            output = f"   0:\t{instruction}\n"
+            return subprocess.CompletedProcess(command, int(name in unsupported), output, "")
 
         annotate_module.gnu_objdump.cache_clear()
         self.addCleanup(annotate_module.gnu_objdump.cache_clear)
@@ -395,6 +409,11 @@ class ObjdumpDiscoveryTests(unittest.TestCase):
         found = self.discover({"objdump": version, "x86_64-linux-gnu-objdump": version}, unsupported=("objdump",))
         self.assertEqual(found, "/bin/x86_64-linux-gnu-objdump")
         self.assertIsNone(self.discover({"objdump": version}, unsupported=("objdump",)))
+
+    def test_32_bit_objdump_that_exits_successfully_is_skipped(self):
+        version = "GNU objdump (GNU Binutils) 2.28\n"
+        found = self.discover({"objdump": version, "gobjdump": version}, false_success=("objdump",))
+        self.assertEqual(found, "/bin/gobjdump")
 
     def test_only_llvm_objdump_is_refused_by_name(self):
         self.assertIsNone(self.discover({"objdump": "Apple LLVM version 21.0.0\n"}))
@@ -455,6 +474,33 @@ class AnnotateModuleTests(unittest.TestCase):
         for mnemonic in ("call", "jmp"):
             self.assertTrue(instruction(listing, mnemonic).endswith("; -> " + names), listing)
 
+    def test_lea_names_exported_callback_and_zero_filled_data_aliases(self):
+        data = DATA_ADDRESS + 0x910
+        symbols = [(EXPORT_NAME, 1, 0x12, CODE_ADDRESS), (SECOND_IMPORT_NAME, 2, 0x11, data),
+                   (IMPORT_NAME, 2, 0x21, data), (TLS_NAME, 2, 0x16, data)]
+        code = bytearray()
+        for opcode, target in ((b"\x48\x8d\x05", CODE_ADDRESS), (b"\x48\x8d\x0d", data),
+                               (b"\x48\x8b\x05", data), (b"\x66\x8d\x05", data), (b"\x48\x8d\x05", data + 1)):
+            code += opcode
+            code += struct.pack("<i", target - (CODE_ADDRESS + len(code) + 4))
+        image = bytearray(build_module(code=code + b"\xc3", symbols=symbols, relocations=()))
+        struct.pack_into("<Q", image, 64 + 56 + 40, 0x920)
+        self.annotate(image)
+        notes = [line.split("; address of ")[1] for line in self.read(".asm").splitlines() if "; address of " in line]
+        self.assertEqual(notes, [EXPORT_NAME, ", ".join(sorted((IMPORT_NAME, SECOND_IMPORT_NAME)))])
+
+    def test_lea_ignores_non_address_exports_and_preserves_import_slots(self):
+        for section, kind, target in ((0xfff1, 0x11, DATA_ADDRESS), (0xfff2, 0x11, DATA_ADDRESS),
+                                      (1, 0x16, DATA_ADDRESS), (0, 0x11, DATA_ADDRESS), (1, 0x11, 0x9000),
+                                      (1, 0x12, DATA_ADDRESS), (1, 0x11, SLOT)):
+            with self.subTest(section=section, kind=kind, target=target):
+                code = b"\x48\x8d\x05" + struct.pack("<i", target - CODE_ADDRESS - 7) + b"\xc3"
+                symbols = [(IMPORT_NAME, 0, 0x12, 0), (EXPORT_NAME, section, kind, target)]
+                self.annotate(build_module(code=code, symbols=symbols))
+                line = instruction(self.read(".asm").splitlines(), "lea")
+                self.assertNotIn("; address of", line)
+                self.assertEqual("; GOT " + IMPORT_NAME in line, target == SLOT)
+
     def test_direct_branch_target_requires_a_defined_function_in_executable_code(self):
         for section, kind, target in ((1, 0x11, EXPORT_ADDRESS), (1, 0x16, EXPORT_ADDRESS),
                                       (0, 0x12, EXPORT_ADDRESS), (0xfff2, 0x12, EXPORT_ADDRESS),
@@ -463,6 +509,52 @@ class AnnotateModuleTests(unittest.TestCase):
                 code = b"\xe8" + struct.pack("<i", target - CODE_ADDRESS - 5) + bytes(6) + b"\xc3"
                 self.annotate(build_module(code=code, symbols=[(EXPORT_NAME, section, kind, target)], relocations=()))
                 self.assertNotIn("; ->", instruction(self.read(".asm").splitlines(), "call"))
+
+    def test_listing_names_calls_and_jumps_to_unnamed_unwind_ranges(self):
+        private = CODE_ADDRESS + 10
+        code = b"\xe8\x05\x00\x00\x00\xe9\x00\x00\x00\x00\x90\xc3"
+        self.annotate(unwind_image([private, private, EXPORT_ADDRESS, DATA_ADDRESS], code=code, relocations=()))
+        listing = self.read(".asm").splitlines()
+        self.assertEqual([line for line in listing if line.startswith("; ===== unwind")], ["; ===== unwind range unwind_100a"])
+        for mnemonic in ("call", "jmp"):
+            self.assertTrue(instruction(listing, mnemonic).endswith("; -> unwind_100a"), listing)
+        self.assertEqual(listing[listing.index("; ===== unwind range unwind_100a") + 1], instruction(listing, "nop"))
+        self.assertIn("; ===== export " + EXPORT_NAME, listing)
+        self.assertNotIn("unwind_", self.read(".exports.txt"))
+
+    def test_unwind_range_at_import_stub_keeps_import_name(self):
+        self.annotate(unwind_image([CODE_ADDRESS]))
+        listing = self.read(".asm").splitlines()
+        self.assertFalse(any("unwind_" in line for line in listing))
+        self.assertTrue(instruction(listing, "call").endswith("; -> " + IMPORT_NAME))
+
+    def test_linker_values_cannot_name_a_branch_or_hide_an_unwind_range(self):
+        symbols = [(IMPORT_NAME, 0xfff1, 0x12, EXPORT_ADDRESS), (SECOND_IMPORT_NAME, 0xfff2, 0x11, EXPORT_ADDRESS),
+                   (EXPORT_NAME, 1, 0x12, CODE_ADDRESS)]
+        code = b"\xe8\x06\x00\x00\x00" + b"\x90" * 6 + b"\xc3"
+        self.annotate(unwind_image([EXPORT_ADDRESS], code=code, symbols=symbols, relocations=()))
+        listing = self.read(".asm").splitlines()
+        self.assertEqual([line for line in listing if line.startswith("; ===== export")], ["; ===== export " + EXPORT_NAME])
+        self.assertIn("; ===== unwind range unwind_100b", listing)
+        self.assertTrue(instruction(listing, "call").endswith("; -> unwind_100b"))
+        inventory = self.read(".exports.txt")
+        for name in (IMPORT_NAME, SECOND_IMPORT_NAME):
+            self.assertIn(f"{EXPORT_ADDRESS:#x} {symbol_name(name)} {name}\n", inventory)
+
+    def test_branch_annotation_requires_a_listed_unwind_target_instruction(self):
+        code = b"\xe8\x01\x00\x00\x00\xb8\x90\x90\x90\x90\xc3"
+        self.annotate(unwind_image([CODE_ADDRESS + 6], code=code, symbols=(), relocations=()))
+        self.assertNotIn("unwind_", self.read(".asm"))
+
+    def test_bad_unwind_entry_omits_partial_labels_but_keeps_the_listing(self):
+        image = unwind_image([CODE_ADDRESS, CODE_ADDRESS + 6], relocations=())
+        struct.pack_into("<i", image, 0x2518, -1)
+        warning = io.StringIO()
+        with contextlib.redirect_stderr(warning):
+            self.annotate(image)
+        self.assertIn("skipping unwind labels", warning.getvalue())
+        self.assertNotIn("unwind_", self.read(".asm"))
+        self.assertIn("; ===== export " + EXPORT_NAME, self.read(".asm"))
 
     def test_endbr64_stubs_name_branches_to_both_entry_addresses(self):
         for address in (0, CODE_ADDRESS, 0x100001000):
@@ -520,6 +612,14 @@ class AnnotateModuleTests(unittest.TestCase):
     def test_no_names_skips_the_database(self):
         self.run_tool(build_module(), "--no-names")
         self.assertIn("; -> " + nid(IMPORT_NAME), self.read(".asm"))
+
+    def test_database_without_nid_records_is_reported(self):
+        db = self.root / "empty.csv"
+        db.write_text("# comment only\n", encoding="utf-8")
+        with self.assertRaises(SystemExit) as raised:
+            self.run_tool(build_module(), "--db", str(db))
+        self.assertEqual(raised.exception.code, "%s: %s: database contains no valid NID records" % (self.root / "module.prx", db))
+        self.assertEqual([], list(self.root.glob("out*")))
 
     def test_a_temporary_directory_outside_the_ansi_code_page_is_disassembled(self):
         temporary = self.root / "тест 界 \U0001f3ae"

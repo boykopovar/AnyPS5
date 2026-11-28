@@ -236,6 +236,15 @@ class Gfx1013ProfileTests(unittest.TestCase):
 
 
 class ScanTests(unittest.TestCase):
+    def test_raw_literals_keep_braces_and_comment_markers_inside_the_string(self):
+        body = 'auto text = u8R"tag(" } // inside\n/* inside */ { \\ )tag"; return 7;'
+        source = f'int first() {{ {body} }} // removed\nint second() {{ return 2; }}'
+        stripped = shader_scan.strip_comments(source)
+        self.assertEqual(len(stripped), len(source))
+        self.assertEqual(shader_scan.function_body(stripped, "first").strip(), body)
+        self.assertEqual(shader_scan.function_body(stripped, "second").strip(), "return 2;")
+        self.assertNotIn("removed", stripped)
+
     def test_digit_separators_keep_following_braces_and_comments_visible(self):
         source = "int first() { return 0xDEAD'BEEF'CAFE'0001; } // removed\nint second() { return 1'000; }"
         stripped = shader_scan.strip_comments(source)
@@ -509,6 +518,67 @@ class ReportTests(unittest.TestCase):
             self.assertEqual(code, 2)
             self.assertEqual(out, "")
             self.assertIn("no SOP1 opcode table", err)
+
+
+class StripCommentsTests(unittest.TestCase):
+    def test_strip_comments_blanks_comments_and_keeps_strings(self):
+        source = 'int a; // gone\n/* gone too */ int b; const char* s = "// kept";\n'
+        cleaned = shader_scan.strip_comments(source)
+        self.assertIn("int a;", cleaned)
+        self.assertIn("int b;", cleaned)
+        self.assertNotIn("gone", cleaned)
+        self.assertIn('"// kept"', cleaned)
+        self.assertEqual(cleaned.count("\n"), source.count("\n"))
+
+
+class SkipLiteralTests(unittest.TestCase):
+    def test_skip_literal_honours_escapes(self):
+        source = 'x"ab\\"c"y'
+        self.assertEqual(source[shader_scan.skip_literal(source, 1)], '"')
+        self.assertEqual(shader_scan.skip_literal(source, 1), len(source) - 2)
+
+
+class FunctionBodyTests(unittest.TestCase):
+    def test_function_body_returns_text_between_braces(self):
+        source = "int f(int x) { return 1; }\nint g() { }\n"
+        self.assertEqual(shader_scan.function_body(source, "f"), " return 1; ")
+        self.assertIsNone(shader_scan.function_body(source, "missing"))
+
+
+class ArrayAndCaseTests(unittest.TestCase):
+    def test_array_body_and_case_names(self):
+        source = "static const int arr[] = { 1, 2 };"
+        self.assertEqual(shader_scan.array_body(source, "arr"), " 1, 2 ")
+        body = "case Kind::A: case Kind::B: case Other::C:"
+        self.assertEqual(shader_scan.case_names(body, "Kind"), {"A", "B"})
+class ValueHelperTests(unittest.TestCase):
+    def test_need_returns_a_value_and_refuses_none(self):
+        self.assertEqual(shader_scan.need(3, "count"), 3)
+        with self.assertRaisesRegex(shader_scan.ScanError, "no count"):
+            shader_scan.need(None, "count")
+
+    def test_throw_areas_counts_sites_by_first_path_part_most_first(self):
+        sites = [{"file": "a/x.cpp"}, {"file": "a/y.cpp"}, {"file": "b.cpp"}]
+        self.assertEqual(shader_scan.throw_areas(sites),
+                         [{"name": "a", "count": 2}, {"name": "Recompiler", "count": 1}])
+
+    def test_classify_maps_flat_and_own_encoding_tags(self):
+        self.assertEqual(shader_scan.classify("ENC_FLAT_GLBL", "x"), ("GLOBAL", "base"))
+        self.assertEqual(shader_scan.classify("ENC_FLAT_SCRATCH", "x"), ("SCRATCH", "base"))
+        self.assertEqual(shader_scan.classify("ENC_SMEM", "x"), ("SMEM", "base"))
+        self.assertIsNone(shader_scan.classify("OTHER", "x"))
+
+    def test_classify_reads_dpp_forms_of_vector_encodings(self):
+        self.assertEqual(shader_scan.classify("VOP2_VOP_DPP16", "x"), ("VOP2", "dpp16"))
+        self.assertEqual(shader_scan.classify("VOPC_VOP_DPP8", "x"), ("VOPC", "dpp8"))
+class BodyAfterTests(unittest.TestCase):
+    def test_body_after_returns_the_text_between_the_matching_braces(self):
+        self.assertEqual(shader_scan.body_after('int f() { return 1; }', re.compile(r'int f\(\)')), ' return 1; ')
+        self.assertEqual(shader_scan.body_after('int f() { if (a) { b(); } }', re.compile(r'int f\(\)')), ' if (a) { b(); } ')
+
+    def test_body_after_is_none_without_a_header_or_a_body(self):
+        self.assertIsNone(shader_scan.body_after('int g();', re.compile(r'int g\(\)')))
+        self.assertIsNone(shader_scan.body_after('x', re.compile(r'int h\(')))
 
 
 if __name__ == "__main__":

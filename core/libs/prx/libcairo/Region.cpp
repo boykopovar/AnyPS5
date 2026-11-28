@@ -25,9 +25,7 @@ const cairo_region_t* Backend(const CairoRegion* region) {
 template <typename T>
 T ReadGuest(const T* source, const char* caller) {
     T value{};
-    const int savedErrno = errno;
     const bool ok = GuestCopyIn_nid_no_patch(&value, source, sizeof(T));
-    errno = savedErrno;
     if (!ok)
         NotImplemented_nid_no_patch(caller);
     return value;
@@ -35,9 +33,7 @@ T ReadGuest(const T* source, const char* caller) {
 
 template <typename T>
 void WriteGuest(T* destination, const T& value, const char* caller) {
-    const int savedErrno = errno;
     const bool ok = GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
-    errno = savedErrno;
     if (!ok)
         NotImplemented_nid_no_patch(caller);
 }

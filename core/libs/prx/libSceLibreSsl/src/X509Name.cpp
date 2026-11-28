@@ -41,24 +41,18 @@ const LibreSslAsn1Object* ObjectByNid(int nid) {
 template <typename T>
 T CopyGuestInPreservingErrno(const T* source, const char* function) {
     T destination{};
-    const int savedErrno = errno;
     const bool ok = GuestCopyIn_nid_no_patch(&destination, source, sizeof(T));
-    errno = savedErrno;
     if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
     return destination;
 }
 
 void CopyGuestBytesInPreservingErrno(void* destination, const void* source, std::size_t size, const char* function) {
-    const int savedErrno = errno;
     const bool ok = GuestCopyIn_nid_no_patch(destination, source, size);
-    errno = savedErrno;
     if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
 }
 
 void CopyGuestBytesOutPreservingErrno(void* destination, const void* source, std::size_t size, const char* function) {
-    const int savedErrno = errno;
     const bool ok = GuestCopyOut_nid_no_patch(destination, source, size);
-    errno = savedErrno;
     if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
 }
 
