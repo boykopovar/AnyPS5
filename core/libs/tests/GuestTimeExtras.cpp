@@ -11,6 +11,16 @@
 #include <limits>
 #include <random>
 #include <stdexcept>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static void Require(bool value, const char* message) {
     if (!value) {
@@ -195,10 +205,132 @@ static void CheckXtime() {
         "_Xtime_diff_to_ts did not borrow a second for a negative nsec");
 }
 
+static void CheckGuardedGuestPointers() {
+    struct GuardedPages {
+        unsigned char* base = nullptr;
+        std::size_t pageSize = 4096;
+
+        GuardedPages() {
+#ifdef _WIN32
+            SYSTEM_INFO info{};
+            GetSystemInfo(&info);
+            pageSize = info.dwPageSize ? static_cast<std::size_t>(info.dwPageSize) : 4096;
+            base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+            Require(base != nullptr, "allocate guarded pages");
+#else
+            const long size = sysconf(_SC_PAGESIZE);
+            pageSize = size > 0 ? static_cast<std::size_t>(size) : 4096;
+            void* mapped = mmap(nullptr, pageSize * 3, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            Require(mapped != MAP_FAILED, "allocate guarded pages");
+            base = static_cast<unsigned char*>(mapped);
+#endif
+        }
+
+        void Protect() {
+#ifdef _WIN32
+            DWORD oldProtect = 0;
+            Require(VirtualProtect(base + pageSize, pageSize, PAGE_READONLY, &oldProtect) != 0, "protect read-only page");
+            Require(VirtualProtect(base + pageSize * 2, pageSize, PAGE_NOACCESS, &oldProtect) != 0, "protect guard page");
+#else
+            Require(mprotect(base + pageSize, pageSize, PROT_READ) == 0, "protect read-only page");
+            Require(mprotect(base + pageSize * 2, pageSize, PROT_NONE) == 0, "protect guard page");
+#endif
+        }
+
+        ~GuardedPages() {
+            if (!base) return;
+#ifdef _WIN32
+            VirtualFree(base, 0, MEM_RELEASE);
+#else
+            munmap(base, pageSize * 3);
+#endif
+        }
+
+        unsigned char* ReadOnly() const { return base + pageSize; }
+        unsigned char* Guard() const { return base + pageSize * 2; }
+    };
+
+    GuardedPages pages;
+    auto* roTm = reinterpret_cast<GuestTm*>(pages.ReadOnly());
+    *roTm = GuestTm{};
+    roTm->tm_mday = 1;
+    roTm->tm_year = 70;
+    pages.Protect();
+
+    const std::int64_t epoch = 0;
+    GuestTm outTm{};
+    char outBuf[32]{};
+
+    errno = 0;
+    Require(timegm_nid_postfix(nullptr) == -1 && errno == EFAULT, "timegm rejected null with EFAULT");
+    errno = 0;
+    Require(timegm_nid_postfix(reinterpret_cast<GuestTm*>(pages.Guard())) == -1 && errno == EFAULT, "timegm rejected guard page with EFAULT");
+    errno = 0;
+    Require(timegm_nid_postfix(roTm) == -1 && errno == EFAULT, "timegm rejected read-only page with EFAULT");
+
+    errno = 0;
+    Require(gmtime_r_nid_postfix(reinterpret_cast<const std::int64_t*>(pages.Guard()), &outTm) == nullptr && errno == EFAULT,
+        "gmtime_r rejected guard timer with EFAULT");
+    errno = 0;
+    Require(gmtime_r_nid_postfix(&epoch, reinterpret_cast<GuestTm*>(pages.Guard())) == nullptr && errno == EFAULT,
+        "gmtime_r rejected guard result with EFAULT");
+    errno = 0;
+    Require(gmtime_r_nid_postfix(&epoch, roTm) == nullptr && errno == EFAULT,
+        "gmtime_r rejected read-only result with EFAULT");
+
+    errno = 0;
+    Require(localtime_r_nid_postfix(reinterpret_cast<const std::int64_t*>(pages.Guard()), &outTm) == nullptr && errno == EFAULT,
+        "localtime_r rejected guard timer with EFAULT");
+    errno = 0;
+    Require(localtime_r_nid_postfix(&epoch, reinterpret_cast<GuestTm*>(pages.Guard())) == nullptr && errno == EFAULT,
+        "localtime_r rejected guard result with EFAULT");
+    errno = 0;
+    Require(localtime_r_nid_postfix(&epoch, roTm) == nullptr && errno == EFAULT,
+        "localtime_r rejected read-only result with EFAULT");
+
+    errno = 0;
+    Require(ctime_r_nid_postfix(reinterpret_cast<const std::int64_t*>(pages.Guard()), outBuf) == nullptr && errno == EFAULT,
+        "ctime_r rejected guard timer with EFAULT");
+    errno = 0;
+    Require(ctime_r_nid_postfix(&epoch, reinterpret_cast<char*>(pages.Guard())) == nullptr && errno == EFAULT,
+        "ctime_r rejected guard buffer with EFAULT");
+    errno = 0;
+    Require(ctime_r_nid_postfix(&epoch, reinterpret_cast<char*>(pages.ReadOnly())) == nullptr && errno == EFAULT,
+        "ctime_r rejected read-only buffer with EFAULT");
+
+    errno = 71;
+    Require(xtime_get_nid_postfix(reinterpret_cast<Xtime*>(pages.Guard()), 1) == 0 && errno == 71,
+        "xtime_get rejected guard page and preserved errno");
+    Require(xtime_get_nid_postfix(reinterpret_cast<Xtime*>(pages.ReadOnly()), 1) == 0 && errno == 71,
+        "xtime_get rejected read-only page and preserved errno");
+
+    auto throwsInvalid = [](auto fn) {
+        try {
+            fn();
+        } catch (const std::invalid_argument&) {
+            return true;
+        }
+        return false;
+    };
+    const Xtime validXtime{1, 0};
+    errno = 71;
+    Require(throwsInvalid([&] { _Xtime_to_ts_nid_postfix(reinterpret_cast<const Xtime*>(pages.Guard())); }) && errno == 71,
+        "_Xtime_to_ts rejected guard page and preserved errno");
+    Require(throwsInvalid([&] { _Xtime_diff_to_ts_nid_postfix(reinterpret_cast<const Xtime*>(pages.Guard())); }) && errno == 71,
+        "_Xtime_diff_to_ts rejected guard page and preserved errno");
+    Require(throwsInvalid([&] { _ZNSt8__sce_v222_Xtime_diff_to_millis2EPK8timespecS2__nid_postfix(
+        reinterpret_cast<const Xtime*>(pages.Guard()), &validXtime); }) && errno == 71,
+        "_Xtime_diff_to_millis2 rejected guard target and preserved errno");
+    Require(throwsInvalid([&] { _ZNSt8__sce_v222_Xtime_diff_to_millis2EPK8timespecS2__nid_postfix(
+        &validXtime, reinterpret_cast<const Xtime*>(pages.Guard())); }) && errno == 71,
+        "_Xtime_diff_to_millis2 rejected guard now and preserved errno");
+}
+
 int main() {
     Require(setenv_nid_postfix("TZ", "UTC-2", 1) == 0, "Could not set the time zone");
     tzset_nid_postfix();
 
+    CheckGuardedGuestPointers();
     CheckReentrantConversions();
     CheckTimegmCases();
     CheckCtimeR();
