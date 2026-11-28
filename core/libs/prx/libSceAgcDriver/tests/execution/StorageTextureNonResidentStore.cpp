@@ -35,6 +35,7 @@ constexpr std::uint32_t Threads = 64;
 constexpr std::uint32_t Format32UInt = 20;
 constexpr std::uint32_t TileR64KBX = 0x1b;
 constexpr std::uint32_t Type2D = 9;
+constexpr std::uint32_t Type2DArray = 13;
 constexpr std::size_t Block = 0x10000;
 constexpr std::size_t SurfaceBytes = 4 * Block;
 constexpr std::size_t Page = 0x1000;
@@ -50,19 +51,23 @@ alignas(256) constexpr std::array<std::uint32_t, 8> LoadCode{
     0x7e020280, 0xf0001108, 0x00020300, 0x34080082, 0xbf8c3f70, 0xe0701000, 0x80000304, 0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 9> LoadArrayCode{
+    0x7e020280, 0x7e040280, 0xf0001128, 0x00020300, 0x34080082, 0xbf8c3f70, 0xe0701000, 0x80000304, 0xbf810000,
+};
+
 alignas(256) std::array<std::uint32_t, Threads> Output{};
 
 std::uint64_t AddressOf(const void* data) {
     return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(data));
 }
 
-std::array<std::uint32_t, 8> TextureDescriptor(const std::uint32_t* texels) {
+std::array<std::uint32_t, 8> TextureDescriptor(const std::uint32_t* texels, std::uint32_t type = Type2D) {
     const auto address = AddressOf(texels);
     return {
         static_cast<std::uint32_t>(address >> 8u),
         static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (Format32UInt << 20u) | (((Side - 1u) & 3u) << 30u),
         ((Side - 1u) >> 2u) | ((Side - 1u) << 14u),
-        0xfacu | (TileR64KBX << 20u) | (Type2D << 28u),
+        0xfacu | (TileR64KBX << 20u) | (type << 28u),
         0u,
         0u,
         0u,
@@ -75,11 +80,11 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t by
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
-void Dispatch(const std::uint32_t* texels, std::span<const std::uint32_t> code) {
+void Dispatch(const std::uint32_t* texels, std::span<const std::uint32_t> code, std::uint32_t type = Type2D) {
     std::array<std::uint32_t, 16> userData{};
     const auto buffer = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * sizeof(std::uint32_t)));
     std::copy(buffer.begin(), buffer.end(), userData.begin());
-    const auto texture = TextureDescriptor(texels);
+    const auto texture = TextureDescriptor(texels, type);
     std::copy(texture.begin(), texture.end(), userData.begin() + 8);
     std::vector<std::uint32_t> words;
     const auto registers = [&](const std::uint32_t first, const std::span<const std::uint32_t> values) {
@@ -163,9 +168,14 @@ public:
     std::uint32_t* texels;
 };
 
-void Load(const std::uint32_t* texels) {
+void Load(const std::uint32_t* texels, std::uint32_t view = Type2D) {
     Output.fill(Unread);
-    Dispatch(texels, LoadCode);
+    if (view == Type2DArray) Dispatch(texels, LoadArrayCode, view);
+    else Dispatch(texels, LoadCode);
+}
+
+std::string ViewName(std::uint32_t view) {
+    return view == Type2DArray ? " through a one-slice array view" : "";
 }
 
 void Flush() {
@@ -199,33 +209,35 @@ std::array<std::uint32_t, Threads> TexelOffsets() {
     return offsets;
 }
 
-void TestWholeUnit() {
+void TestWholeUnit(std::uint32_t view) {
+    const auto through = ViewName(view);
     Surface surface(Untouched);
     const auto address = AddressOf(surface.texels);
     Protect(surface.texels, 0, Block, false);
     Require(AgcDriver::GuestMemory::CommittedRanges(address, Block).empty(), "non-resident storage store: the decommitted block still has a committed page");
     Require(!AgcDriver::GuestMemory::CommittedRanges(address + Block, SurfaceBytes - Block, true).empty(), "non-resident storage store: the rest of the surface is not committed");
-    Load(surface.texels);
-    RequireTexels(Uniform(0u), "a load from a decommitted block");
+    Load(surface.texels, view);
+    RequireTexels(Uniform(0u), "a load from a decommitted block" + through);
     Dispatch(surface.texels, StoreCode);
-    Load(surface.texels);
-    RequireTexels(Uniform(0u), "the next dispatch after a store to a decommitted block");
-    Load(surface.texels);
-    RequireTexels(Uniform(0u), "a second dispatch after a store to a decommitted block");
+    Load(surface.texels, view);
+    RequireTexels(Uniform(0u), "the next dispatch after a store to a decommitted block" + through);
+    Load(surface.texels, view);
+    RequireTexels(Uniform(0u), "a second dispatch after a store to a decommitted block" + through);
     Flush();
-    Load(surface.texels);
-    RequireTexels(Uniform(0u), "a load after the store was flushed");
+    Load(surface.texels, view);
+    RequireTexels(Uniform(0u), "a load after the store was flushed" + through);
     Dispatch(surface.texels, StoreCode);
     Flush();
-    Load(surface.texels);
-    RequireTexels(Uniform(0u), "a load after a second store was flushed");
+    Load(surface.texels, view);
+    RequireTexels(Uniform(0u), "a load after a second store was flushed" + through);
     Flush();
     Require(AgcDriver::GuestMemory::CommittedRanges(address, Block).empty(), "non-resident storage store: a store committed a page of the decommitted block");
     Protect(surface.texels, 0, Block, true);
     Require(std::all_of(surface.texels, surface.texels + SurfaceBytes / 4u, [](std::uint32_t value) { return value == Untouched; }), "non-resident storage store: a store to a decommitted block reached guest memory");
 }
 
-void TestPartialUnit(const std::array<std::uint32_t, Threads>& offsets) {
+void TestPartialUnit(const std::array<std::uint32_t, Threads>& offsets, std::uint32_t view) {
+    const auto through = ViewName(view);
     const auto page = static_cast<std::size_t>(offsets[0]) & ~(Page - 1u);
     const auto decommitted = [&](std::uint32_t x) { return offsets[x] >= page && offsets[x] < page + Page; };
     std::array<std::uint32_t, Threads> beforeStore{};
@@ -240,14 +252,16 @@ void TestPartialUnit(const std::array<std::uint32_t, Threads>& offsets) {
     const auto address = AddressOf(surface.texels);
     Protect(surface.texels, page, Page, false);
     Require(AgcDriver::GuestMemory::CommittedRanges(address + page, Page).empty(), "non-resident storage store: the decommitted page is still committed");
-    Load(surface.texels);
-    RequireTexels(beforeStore, "a load from a partly decommitted block");
+    Load(surface.texels, view);
+    RequireTexels(beforeStore, "a load from a partly decommitted block" + through);
     Dispatch(surface.texels, StoreCode);
+    Load(surface.texels, view);
+    RequireTexels(afterStore, "the next dispatch after a store to a partly decommitted block" + through);
     Load(surface.texels);
-    RequireTexels(afterStore, "the next dispatch after a store to a partly decommitted block");
+    RequireTexels(afterStore, "a second dispatch after a store to a partly decommitted block" + through);
     Flush();
-    Load(surface.texels);
-    RequireTexels(afterStore, "a load after the store to a partly decommitted block was flushed");
+    Load(surface.texels, view);
+    RequireTexels(afterStore, "a load after the store to a partly decommitted block was flushed" + through);
     Flush();
     Protect(surface.texels, page, Page, true);
     for (std::uint32_t x = 0; x < Threads; ++x) {
@@ -260,8 +274,11 @@ void TestPartialUnit(const std::array<std::uint32_t, Threads>& offsets) {
 }
 
 void Run() {
-    TestWholeUnit();
-    TestPartialUnit(TexelOffsets());
+    const auto offsets = TexelOffsets();
+    for (const auto view : {Type2D, Type2DArray}) {
+        TestWholeUnit(view);
+        TestPartialUnit(offsets, view);
+    }
 }
 
 }
