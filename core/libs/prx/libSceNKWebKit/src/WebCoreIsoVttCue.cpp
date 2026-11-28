@@ -59,10 +59,73 @@
 #include <cmath>
 #include <stdexcept>
 
+#include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <limits>
+#include <type_traits>
+
 namespace {
 
 using NKWebKit::IsoAbi::WebVTTCue;
 using namespace NKWebKit::WtfAbi;
+
+static_assert(std::is_trivially_copyable_v<StringImpl>);
+
+constexpr unsigned kStringImplFlag8Bit = 4u;
+
+void RequireReadableGuestBytes(const void* pointer, std::size_t size, const char* function) {
+    if (!size) return;
+    if (!pointer) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(pointer, size);
+    if (!GuestReadable_nid_no_patch(pointer, size))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+NKWebKit::MediaAbi::MediaTime UnpackMediaTime(const unsigned char* bytes) {
+    std::int64_t rawValue = 0;
+    std::uint32_t scale = 0;
+    std::uint8_t flags = 0;
+    std::memcpy(&rawValue, bytes + offsetof(NKWebKit::MediaAbi::MediaTime, m_timeValue), sizeof(rawValue));
+    std::memcpy(&scale, bytes + offsetof(NKWebKit::MediaAbi::MediaTime, m_timeScale), sizeof(scale));
+    std::memcpy(&flags, bytes + offsetof(NKWebKit::MediaAbi::MediaTime, m_timeFlags), sizeof(flags));
+    if (flags & NKWebKit::MediaAbi::MediaTime::DoubleValue) {
+        double doubleValue = 0.0;
+        std::memcpy(&doubleValue, bytes + offsetof(NKWebKit::MediaAbi::MediaTime, m_timeValueAsDouble), sizeof(doubleValue));
+        NKWebKit::MediaAbi::MediaTime time(0, scale, flags);
+        time.m_timeValueAsDouble = doubleValue;
+        return time;
+    }
+    return NKWebKit::MediaAbi::MediaTime(rawValue, scale, flags);
+}
+
+String CopyGuestString(const StringImpl* guestImpl, const char* function) {
+    if (!guestImpl) return {};
+    StringImpl header{};
+    if (!GuestCopyIn_nid_no_patch(&header, guestImpl, sizeof(header)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if (!header.length) return {};
+    if (!header.data) throw std::invalid_argument("invalid WebCore::ISOWebVTTCue string");
+    const bool is8Bit = (header.hashAndFlags & kStringImplFlag8Bit) != 0;
+    const std::size_t unitSize = is8Bit ? 1u : sizeof(char16_t);
+    if (header.length > std::numeric_limits<std::size_t>::max() / unitSize)
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    const std::size_t byteLength = static_cast<std::size_t>(header.length) * unitSize;
+    RequireReadableGuestBytes(header.data, byteLength, function);
+    void* characters = nullptr;
+    String copy(CreateUninitialized(header.length, is8Bit, characters));
+    if (!GuestCopyIn_nid_no_patch(characters, header.data, byteLength))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return copy;
+}
+
+const StringImpl* UnpackStringImplPointer(const unsigned char* raw, std::size_t fieldOffset) {
+    const StringImpl* pointer = nullptr;
+    std::memcpy(&pointer, raw + fieldOffset, sizeof(pointer));
+    return pointer;
+}
 
 struct JSONBuilder {
     StringBuilder builder{};
@@ -102,16 +165,28 @@ WebCore::FourCC APS5_VABI _ZN7WebCore12ISOWebVTTCue11boxTypeNameEv() {
 String APS5_VABI _ZNK7WebCore12ISOWebVTTCue12toJSONStringEv(const WebVTTCue* self) {
     if (!self) throw std::invalid_argument("null WebCore::ISOWebVTTCue");
 
+    unsigned char raw[sizeof(WebVTTCue)]{};
+    if (!GuestCopyIn_nid_no_patch(raw, self, sizeof(raw)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+
+    const String cueText = CopyGuestString(UnpackStringImplPointer(raw, offsetof(WebVTTCue, cueText)), __func__);
+    const String sourceID = CopyGuestString(UnpackStringImplPointer(raw, offsetof(WebVTTCue, sourceID)), __func__);
+    const String identifier = CopyGuestString(UnpackStringImplPointer(raw, offsetof(WebVTTCue, identifier)), __func__);
+    const String originalStartTime = CopyGuestString(UnpackStringImplPointer(raw, offsetof(WebVTTCue, originalStartTime)), __func__);
+    const String settings = CopyGuestString(UnpackStringImplPointer(raw, offsetof(WebVTTCue, settings)), __func__);
+    const auto presentationTime = UnpackMediaTime(raw + offsetof(WebVTTCue, presentationTime));
+    const auto duration = UnpackMediaTime(raw + offsetof(WebVTTCue, duration));
+
     JSONBuilder json;
     auto& builder = json.builder;
     AppendCharacter(builder, '{');
-    AppendMember(builder, "text", self->cueText);
-    AppendMember(builder, "sourceId", _ZN3WTF28encodeWithURLEscapeSequencesERKNS_6StringE(self->sourceID));
-    AppendMember(builder, "id", _ZN3WTF28encodeWithURLEscapeSequencesERKNS_6StringE(self->identifier));
-    AppendMember(builder, "originalStartTime", _ZN3WTF28encodeWithURLEscapeSequencesERKNS_6StringE(self->originalStartTime));
-    AppendMember(builder, "settings", _ZN3WTF28encodeWithURLEscapeSequencesERKNS_6StringE(self->settings));
-    AppendMember(builder, "presentationTime", self->presentationTime);
-    AppendMember(builder, "duration", self->duration);
+    AppendMember(builder, "text", cueText);
+    AppendMember(builder, "sourceId", _ZN3WTF28encodeWithURLEscapeSequencesERKNS_6StringE(sourceID));
+    AppendMember(builder, "id", _ZN3WTF28encodeWithURLEscapeSequencesERKNS_6StringE(identifier));
+    AppendMember(builder, "originalStartTime", _ZN3WTF28encodeWithURLEscapeSequencesERKNS_6StringE(originalStartTime));
+    AppendMember(builder, "settings", _ZN3WTF28encodeWithURLEscapeSequencesERKNS_6StringE(settings));
+    AppendMember(builder, "presentationTime", presentationTime);
+    AppendMember(builder, "duration", duration);
     AppendCharacter(builder, '}');
     return ToString(builder);
 }
