@@ -230,6 +230,16 @@ int main(int argc, char** argv) {
                 Require(AgcDriver::Graphics::ReleaseTextureCaches(~std::uint64_t{0}) == allocated, "a release did not take the image once its results were stored");
                 Require(StorageTexture::FindLive(base + 3u * Stride, SurfaceBytes) == nullptr, "surface 3 survived a release after its results were stored");
                 Require(AgcDriver::Graphics::ReleaseTextureCaches(held) == 0, "a release from empty caches reported freed bytes");
+                Require(Store(*device, base, 8) != nullptr, "surface 8 is not cached");
+                const auto scansBefore = AgcDriver::Graphics::StorageReclaimScans();
+                Require(AgcDriver::Graphics::ReleaseTextureCaches(~std::uint64_t{0}) == 0, "a release of a clean image used in the current present freed bytes");
+                Require(AgcDriver::Graphics::StorageReclaimScans() == scansBefore + 1u, "the first release in the present did not scan the storage cache");
+                Require(AgcDriver::Graphics::ReleaseTextureCaches(~std::uint64_t{0}) == 0, "a repeated release in the same present freed bytes");
+                Require(AgcDriver::Graphics::StorageReclaimScans() == scansBefore + 1u, "a repeated release in the same present rescanned the all-recent storage cache");
+                AgcDriver::Graphics::Recorder::CountPresent();
+                AgcDriver::Graphics::Recorder::CountPresent();
+                Require(AgcDriver::Graphics::ReleaseTextureCaches(~std::uint64_t{0}) == allocated, "a release two presents later did not evict surface 8");
+                Require(AgcDriver::Graphics::StorageReclaimScans() == scansBefore + 2u, "advancing presents did not rescan the storage cache");
             }
         } catch (...) {
             release();
