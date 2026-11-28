@@ -474,7 +474,10 @@ EcKey* APS5_VABI d2i_ECParameters_nid_postfix(EcKey** key, const unsigned char**
     EcKey* result = created ? created.get() : current;
     if (key != nullptr && !GuestPtr<EcKey*>(key).CopyOut(result)) APS5_INVALID_ARG_EX;
     if (cursor != start && !GuestPtr<const unsigned char*>(in).CopyOut(cursor)) {
-        if (key != nullptr && !GuestPtr<EcKey*>(key).CopyOut(current)) throw std::runtime_error("d2i_ECParameters: the key slot could not be restored");
+        if (key != nullptr && !GuestPtr<EcKey*>(key).CopyOut(current)) {
+            created.release();
+            throw std::runtime_error("d2i_ECParameters: the key slot could not be restored");
+        }
         APS5_INVALID_ARG_EX;
     }
     EC_GROUP_free_nid_postfix(result->group);

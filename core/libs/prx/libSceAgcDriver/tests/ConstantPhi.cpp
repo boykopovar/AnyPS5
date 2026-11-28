@@ -79,6 +79,34 @@ void CheckDiamond(unsigned mode) {
     }
 }
 
+void CheckBranchConditionIdentity() {
+    IrProgram program;
+    for (std::uint32_t id = 0; id < 3u; ++id) {
+        auto& block = program.CreateBlock();
+        program.BlockOrder().push_back(&block);
+        BlockInfo info;
+        info.id = id;
+        info.terminator.kind = TerminatorKind::Return;
+        program.Metadata().blockInfo.push_back(info);
+    }
+    auto& entry = *program.BlockOrder()[0];
+    program.SetEntryBlock(entry);
+    entry.AddBranch(program.BlockOrder()[1]);
+    entry.AddBranch(program.BlockOrder()[2]);
+    auto& entryInfo = program.Metadata().blockInfo[0];
+    entryInfo.terminator.kind = TerminatorKind::ConditionalBranch;
+    entryInfo.terminator.trueBlock = 1u;
+    entryInfo.terminator.falseBlock = 2u;
+    IrBuilder builder(program);
+    builder.SetInsertionPoint(entry);
+    auto& lane = builder.Emit(IrOpcode::LaneId, IrType::U32, {});
+    auto& compare = builder.Emit(IrOpcode::ULessThan32, IrType::Bool, {&lane, &builder.Constant(16u)});
+    auto& condition = builder.Emit(IrOpcode::LogicalAnd, IrType::Bool, {&compare, &builder.ConstantBool(true)});
+    entryInfo.condition = &condition;
+    ConstantFolder{}.Fold(program);
+    Require(entryInfo.condition == &compare, "folding left a branch condition on a replaced value");
+}
+
 void CheckUnobservedPhiCycles() {
     IrProgram empty;
     DeadCodeEliminator{}.EliminateUnobservedPhis(empty);
@@ -198,13 +226,36 @@ void CheckLongAncillaryForwarding() {
     Require(run.error.empty(), "long ancillary forwarding: folding failed");
 }
 
+void CheckSampleBitFoldsInOnePass() {
+    IrProgram program;
+    auto& block = program.CreateBlock();
+    program.BlockOrder().push_back(&block);
+    BlockInfo info;
+    info.id = 0u;
+    info.terminator.kind = TerminatorKind::Return;
+    program.Metadata().blockInfo.push_back(info);
+    program.SetEntryBlock(block);
+    IrBuilder builder(program);
+    builder.SetInsertionPoint(block);
+    auto& ancillary = builder.Emit(IrOpcode::GetBuiltin, IrType::U32, {&builder.Constant(static_cast<std::uint32_t>(StageInputKind::PackedAncillary)), &builder.Constant(0u)});
+    auto& sampleBit = builder.Emit(IrOpcode::BitFieldUExtract, IrType::U32, {&ancillary, &builder.Constant(8u), &builder.Constant(1u)});
+    auto& oddSample = builder.Emit(IrOpcode::IEqual32, IrType::Bool, {&builder.Constant(1u), &sampleBit});
+    auto& selected = builder.Emit(IrOpcode::SelectU32, IrType::U32, {&oddSample, &builder.Constant(7u), &builder.Constant(9u)});
+    auto& reference = builder.Emit(IrOpcode::ReferenceU32, IrType::Void, {&selected});
+    ConstantFolder{}.Fold(program);
+    const IrValue& folded = *reference.Argument(0)->Resolve();
+    Require(folded.HasImmediate() && folded.ImmediateU32() == 9u, "single-sample ancillary: one fold left the users of the sample bit unfolded");
+}
+
 }
 
 int main() {
     try {
         for (unsigned mode = 0; mode < 5u; ++mode) CheckDiamond(mode);
         CheckLongAncillaryForwarding();
+        CheckSampleBitFoldsInOnePass();
         CheckUnobservedPhiCycles();
+        CheckBranchConditionIdentity();
         std::puts("constant phi dominance tests passed");
         return 0;
     } catch (const std::exception& error) {

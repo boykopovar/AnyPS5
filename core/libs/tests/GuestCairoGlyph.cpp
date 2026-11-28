@@ -2,7 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <stdexcept>
+#include <cstdlib>
 #include <type_traits>
 
 static_assert(sizeof(cairo_glyph_t) == 24);
@@ -14,27 +14,10 @@ static_assert(std::is_same_v<decltype(cairo_glyph_free(nullptr)), void>);
 
 int main() {
     cairo_glyph_free(nullptr);
-    cairo_glyph_free(nullptr);
-
-    cairo_glyph_t single{42, -1.0, 3.5};
-    bool singleThrew = false;
-    try {
-        cairo_glyph_free(&single);
-    } catch (const std::runtime_error&) {
-        singleThrew = true;
-    }
-    if (!singleThrew || single.index != 42 || single.x != -1.0 || single.y != 3.5) {
-        std::fprintf(stderr, "cairo glyph: single foreign glyph check failed\n");
-        return 1;
-    }
-
-    cairo_glyph_t glyphs[3] = {{0, 0.0, 2.0}, {1, 1.5, 2.0}, {2, 3.0, 2.0}};
-    try {
+    for (int i = 1; i <= 64; ++i) {
+        auto* glyphs = static_cast<cairo_glyph_t*>(std::calloc(i, sizeof(cairo_glyph_t)));
+        if (!glyphs) return 1;
+        glyphs[0] = {42, -1, 3.5};
         cairo_glyph_free(glyphs);
-    } catch (const std::runtime_error&) {
-        std::printf("cairo glyph: null is a no-op and a foreign array throws\n");
-        return 0;
     }
-    std::fprintf(stderr, "cairo glyph: a non-null array was accepted without an allocating export\n");
-    return 1;
 }

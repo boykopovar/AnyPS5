@@ -21,6 +21,7 @@ import nid_names
 PARENT = 'if .parent then "\\(.parent.owner.login)/\\(.parent.name)" else .nameWithOwner end'
 EXPORT = re.compile(r"^[+-].*\bAPS5_VABI\s+(\w+)\s*\(")
 NID_DISAMBIG = re.compile(r"_nid_disambig[0-9]+$")
+NAME_NOISE = re.compile(r"[\s\x00-\x1f\x7f]")
 DEPENDS = re.compile(r'Depends on:[ \t]*((?:#\d+\b(?:(?:[ \t]*,[ \t]*(?:and[ \t]+)?|[ \t]+and[ \t]+)#\d+\b)*|none\b)?(?:\r?\n[ \t]*[-*][ \t]*#\d+\b[^\r\n]*)*)')
 PLAIN_DEPENDS = re.compile(r'Depends on[ \t]+(#\d+\b(?:(?:[ \t]*,[ \t]*(?:and[ \t]+)?|[ \t]+and[ \t]+)#\d+\b)*)')
 CLOSING = r"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)"
@@ -1202,6 +1203,10 @@ def main(argv=None):
         parser.error("--jobs must be at least 1")
     global REPO
     try:
+        noisy = [name for name in args.names or () if not name or NAME_NOISE.search(name)]
+        if noisy:
+            raise ValueError("--names takes one function name per argument, without whitespace or control characters: "
+                             + ", ".join(map(ascii, noisy)))
         REPO = args.repo or upstream()
         prs = open_prs(args.base)
         BASE_REF = base_commit(args.base)

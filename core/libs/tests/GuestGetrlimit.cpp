@@ -118,6 +118,14 @@ static void CheckOpenFileLimit() {
     Require(limit.rlim_cur <= perProcess);
     RequireDescriptorsEndAt(limit);
 #endif
+    const GuestResourceLimit initialNoFile = GuestLimit(GUEST_RLIMIT_NOFILE);
+    std::int64_t expectedInitialTableSize = std::min(initialNoFile.rlim_cur, GUEST_OPEN_FILES_PER_PROCESS);
+#ifndef _WIN32
+    expectedInitialTableSize = std::min(expectedInitialTableSize, static_cast<std::int64_t>(::getdtablesize()));
+#endif
+    if (expectedInitialTableSize > std::numeric_limits<int>::max())
+        expectedInitialTableSize = std::numeric_limits<int>::max();
+    Require(getdtablesize_nid_postfix() == static_cast<int>(expectedInitialTableSize));
     Require(setrlimit_nid_postfix(GUEST_RLIMIT_NOFILE, &limit) == 0);
     const std::int64_t normalizedMax = std::min(limit.rlim_max, GUEST_OPEN_FILES_PER_PROCESS);
     const std::int64_t normalizedCur = std::min(limit.rlim_cur, normalizedMax);
@@ -217,7 +225,7 @@ int main() {
     RequireError(GUEST_RLIMIT_NPROC, nullptr, GUEST_EFAULT);
     const GuestResourceLimit nofile = GuestLimit(GUEST_RLIMIT_NOFILE);
     const int tableSize = getdtablesize_nid_postfix();
-    std::int64_t expectedTableSize = nofile.rlim_cur;
+    std::int64_t expectedTableSize = std::min(nofile.rlim_cur, GUEST_OPEN_FILES_PER_PROCESS);
 #ifndef _WIN32
     expectedTableSize = std::min(expectedTableSize, static_cast<std::int64_t>(::getdtablesize()));
 #endif

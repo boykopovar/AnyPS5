@@ -33,10 +33,18 @@ DRIVER_QUERIES = ("--version", "--help", "-help", "--help-hidden", "--target-hel
 WITH_VALUE = ("-I", "-L", "-F", "-B", "-D", "-U", "-x", "-include", "--include", "-imacros", "--imacros",
               "--define-macro", "--undefine-macro", "-iquote", "-isystem", "-idirafter", "-iprefix",
               "-iwithprefix", "-iwithprefixbefore", "-isysroot", "--sysroot", "-target", "--target",
-              "-arch", "-std", "-T", "-u", "-e", "--param", "-Xclang", "-Xpreprocessor", "-Xassembler", "-Xlinker")
+              "-arch", "-std", "-T", "-u", "-e", "--param", "-Xclang", "-Xpreprocessor", "-Xassembler", "-Xlinker",
+              "-fdebug-compilation-dir", "-fcoverage-compilation-dir", "-resource-dir", "-working-directory",
+              "-include-pch", "-mllvm", "-fprofile-list", "-fprofile-remapping-file", "-fcrash-diagnostics-dir",
+              "-fpass-plugin", "-fplugin", "-load", "-fprofile-use", "-fprofile-sample-use", "-fprofile-instr-use")
 WITHOUT_VALUE = (*DROP, *PREPROCESSING, "-S", "-fsyntax-only", "-Werror", "-Wall", "-Wextra",
                  "-pedantic", "-pedantic-errors", "-pthread", "-pipe", "-v")
 JOINED_OPTIONS = ("-I", "-L", "-F", "-B", "-D", "-U", "-O", "-g", "-W")
+FORWARDED_SAFE = ("-fno-spell-checking", "-fno-caret-diagnostics", "-fno-color-diagnostics",
+                  "-fno-diagnostics-show-option")
+FORWARDED_SAFE_JOINED = ("-D", "-U", "-I", "-F", "-W", "-include", "--include", "-imacros", "--imacros",
+                         "-isystem", "-iquote", "-idirafter", "-isysroot")
+COMPILER_WRAPPERS = frozenset(("ccache", "sccache", "distcc"))
 MAX_RESPONSE_FILE_DEPTH = 20
 
 
@@ -355,7 +363,9 @@ def preprocessor_arguments(argument):
             continue
         kept.append(option)
         if option in ("-D", "-U", "-I", "-F", "-include", "--include", "-imacros", "--imacros",
-                      "-isystem", "-iquote", "-idirafter", "-isysroot"):
+                      "-isystem", "-iquote", "-idirafter", "-isysroot", "-iprefix", "-iwithprefix",
+                      "-iwithprefixbefore", "-isystem-after", "-iframework", "--define-macro",
+                      "--undefine-macro"):
             value = next(options, None)
             if not value:
                 raise ValueError(f"missing operand for {option} in {argument}")
@@ -366,30 +376,41 @@ def preprocessor_arguments(argument):
 
 
 def launcher_prefix(arguments):
-    if len(arguments) < 3 or PureWindowsPath(arguments[0]).stem.lower() != "cmake" or arguments[1:3] != ["-E", "env"]:
+    if not arguments:
         return []
-    index = 3
-    while index < len(arguments):
-        argument = arguments[index]
-        if argument == "--":
+    executable = PureWindowsPath(arguments[0]).stem.lower()
+    if executable == "cmake":
+        if arguments[1:3] != ["-E", "env"]:
+            return []
+        index = 3
+        while index < len(arguments):
+            argument = arguments[index]
+            if argument == "--":
+                index += 1
+                break
+            if argument == "--modify":
+                if index + 1 == len(arguments):
+                    raise ValueError("missing operand for cmake -E env --modify")
+                index += 2
+                continue
+            if argument.startswith("--unset="):
+                index += 1
+                continue
+            if argument.startswith("-"):
+                raise ValueError(f"unsupported cmake -E env option {argument}")
+            if "=" not in argument:
+                break
             index += 1
-            break
-        if argument == "--modify":
-            if index + 1 == len(arguments):
-                raise ValueError("missing operand for cmake -E env --modify")
-            index += 2
-            continue
-        if argument.startswith("--unset="):
-            index += 1
-            continue
-        if argument.startswith("-"):
-            raise ValueError(f"unsupported cmake -E env option {argument}")
-        if "=" not in argument:
-            break
-        index += 1
-    if index == len(arguments):
-        raise ValueError("cmake -E env launcher has no command")
-    return arguments[:index]
+        if index == len(arguments):
+            raise ValueError("cmake -E env launcher has no command")
+        return arguments[:index]
+    if executable not in COMPILER_WRAPPERS:
+        return []
+    if len(arguments) < 2:
+        raise ValueError(f"{executable} launcher has no command")
+    if arguments[1].startswith("-"):
+        raise ValueError(f"{executable} launcher options are not supported")
+    return arguments[:1]
 
 
 def syntax_arguments(arguments, directory, source):
@@ -420,7 +441,21 @@ def syntax_arguments(arguments, directory, source):
             index += 1
             continue
         if not positional and (argument in ("-Xclang", "-Xpreprocessor") or argument.startswith(("-Xclang=", "-Xpreprocessor="))):
-            raise ValueError(f"unsupported forwarded compiler option {argument}")
+            option, separator, forwarded = argument.partition("=")
+            if not separator:
+                if index + 1 == len(arguments):
+                    raise ValueError(f"missing operand for {argument}")
+                forwarded = arguments[index + 1]
+                step = 2
+            else:
+                step = 1
+            joined = any(forwarded.startswith(prefix) and len(forwarded) > len(prefix)
+                         for prefix in FORWARDED_SAFE_JOINED)
+            if not (forwarded in FORWARDED_SAFE or joined):
+                raise ValueError(f"unsupported forwarded compiler option {forwarded}")
+            trimmed.extend([argument, forwarded] if not separator else [argument])
+            index += step
+            continue
         if not positional and argument in (*DROP_WITH_VALUE, *WITH_VALUE):
             if index + 1 == len(arguments):
                 raise ValueError(f"missing operand for {argument}")
@@ -433,8 +468,9 @@ def syntax_arguments(arguments, directory, source):
                 trimmed.append(forwarded)
             index += 1
             continue
-        if not positional and argument.startswith(("-save-temps=", "--save-temps=")) and argument not in DROP:
-            raise ValueError(f"unsupported saved-temporary mode in {argument}")
+        if not positional and argument.startswith(("-save-temps=", "--save-temps=")):
+            index += 1
+            continue
         if not positional and (argument in (*DROP, *PREPROCESSING) or argument.startswith(("-MT", "-MF", "-MQ", "-MJ"))):
             index += 1
             continue

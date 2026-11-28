@@ -160,12 +160,12 @@ class Trace:
         starts = [ts for ts, _ in self.presents]
         if end is None:
             end = starts[-1] if starts else 0.0
-        bounds = starts + ([end] if not starts or end > starts[-1] else [])
+        bounds = [start for start in starts if start < end] + [end]
         return [(index, bounds[index], bounds[index + 1], self.presents[index][1]) for index in range(len(bounds) - 1)]
 
 
 def load_trace(path):
-    opener = gzip.open if str(path).endswith(".gz") else open
+    opener = gzip.open if str(path).lower().endswith(".gz") else open
     with opener(path, "rt", encoding="utf-8-sig") as handle:
         try:
             document = json.load(handle, object_pairs_hook=unique_json_object)
@@ -224,7 +224,7 @@ def load_summary(path, trace_path):
     label = Path(path) if path else hint
     lines = load_summary_lines(candidate, label=label)
     name = Path(trace_path).name
-    alternate = name[:-3] if name.endswith(".gz") else name + ".gz"
+    alternate = name[:-3] if name.lower().endswith(".gz") else name + ".gz"
     for filename in (name, alternate):
         for line in reversed(lines):
             if line.get("trace") == filename:

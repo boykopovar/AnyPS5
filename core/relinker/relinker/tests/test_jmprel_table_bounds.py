@@ -8,6 +8,7 @@ import tempfile
 DT_NEEDED = 1
 DT_PLTRELSZ = 2
 DT_PLTGOT = 3
+DT_HASH = 4
 DT_STRTAB = 5
 DT_SYMTAB = 6
 DT_RELA = 7
@@ -23,6 +24,7 @@ DT_OS_PLTREL = 0x6100002B
 DT_OS_PLTRELSZ = 0x6100002D
 DT_OS_SYMTAB = 0x61000039
 DT_OS_SYMTABSZ = 0x6100003F
+DT_GNU_HASH = 0x6FFFFEF5
 
 
 TARGET_OPTIONS = {
@@ -82,6 +84,32 @@ def fixture(jmprel=0x700, pltrelsz=24, os_tags=True, target=0x300, symtab=0x620,
     return image
 
 
+def with_hash(image, tag, table):
+    image = bytearray(image)
+    tags = []
+    for position in range(0x400, 0x500, 16):
+        entry = struct.unpack_from("<qQ", image, position)
+        if entry[0] == 0:
+            break
+        tags.append(entry)
+    tags += [(tag, 0x7C0), (0, 0)]
+    for index, entry in enumerate(tags):
+        struct.pack_into("<qQ", image, 0x400 + index * 16, *entry)
+    struct.pack_into("<QQ", image, 120 + 32, len(tags) * 16, len(tags) * 16)
+    image[0x7C0:0x7C0 + len(table)] = table
+    return image
+
+
+def with_sysv_hash(image, chains):
+    return with_hash(image, DT_HASH, struct.pack("<III", 1, chains, 1) + bytes(4 * chains))
+
+
+def with_gnu_hash(image, symbols):
+    chains = [0] * (symbols - 1)
+    chains[-1] = 1
+    return with_hash(image, DT_GNU_HASH, struct.pack("<IIIIQI", 1, 1, 1, 0, 0, 1) + struct.pack(f"<{len(chains)}I", *chains))
+
+
 def run(relinker, work, name, image, expected_error=None, target="windows", filter_level=None):
     source = work / (name + ".elf")
     output = work / (name + ".out")
@@ -115,6 +143,14 @@ def main():
             fixture(symtab=0x780, symbol_bytes=None, sce_size=0x798), "Symbol table entry out of bounds")
         run(relinker, work, "symbol-entry-past-sce-segment-last-byte",
             fixture(symtab=0x780, symbol_bytes=None, sce_size=0x7AF), "Symbol table entry out of bounds")
+        for hash_name, hashed in (("sysv", with_sysv_hash), ("gnu", with_gnu_hash)):
+            for output_target in ("linux", "windows"):
+                for data in (False, True):
+                    options = {"os_tags": False, "symbol_bytes": None, "linux": output_target == "linux", "data_relocations": data}
+                    prefix = f"{hash_name}-hash-{output_target}-{'data' if data else 'plt'}"
+                    run(relinker, work, prefix + "-valid", hashed(fixture(**options), 2), target=output_target)
+                    run(relinker, work, prefix + "-past-chain", hashed(fixture(symbol_index=2, **options), 2),
+                        "Symbol table entry out of bounds", target=output_target)
         run(relinker, work, "symbol-entry-at-sce-segment-end",
             fixture(symtab=0x780, symbol_bytes=0x30, sce_size=0x7B0))
         run(relinker, work, "offset-max-empty-table",
@@ -163,8 +199,12 @@ def main():
                 prefix = f"{output_target}-{'glob-dat' if data else 'jump-slot'}-addend"
                 run(relinker, work, prefix + "-zero", fixture(linux=True, data_relocations=data), target=output_target)
                 for addend in (0x10, -8):
-                    run(relinker, work, f"{prefix}-{addend:x}", fixture(linux=True, data_relocations=data, addend=addend),
-                        "GLOB_DAT/JUMP_SLOT relocation has a nonzero addend (offset 0x300)", target=output_target)
+                    if data:
+                        run(relinker, work, f"{prefix}-{addend:x}", fixture(linux=True, data_relocations=data, addend=addend),
+                            target=output_target)
+                    else:
+                        run(relinker, work, f"{prefix}-{addend:x}", fixture(linux=True, data_relocations=data, addend=addend),
+                            "JUMP_SLOT relocation has a nonzero addend", target=output_target)
     print("Jump relocation table bounds tests passed")
 
 

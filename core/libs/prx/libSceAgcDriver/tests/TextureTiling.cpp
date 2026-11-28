@@ -162,11 +162,12 @@ std::uint64_t referenceGcnAddress(TextureTileMode mode, std::uint32_t bytes, std
     std::uint32_t pixelIndex = 0;
     for (std::uint32_t index = 0; index < 6u; ++index) pixelIndex |= pixel[index] << index;
     std::uint64_t microBytes = 64u * bytes * samples;
-    std::uint64_t elementOffset = (static_cast<std::uint64_t>(pixelIndex) * samples + sample) * bytes;
+    const bool depthOrder = IsGcnDepthTiled(mode);
+    std::uint64_t elementOffset = depthOrder ? (static_cast<std::uint64_t>(pixelIndex) * samples + sample) * bytes : static_cast<std::uint64_t>(pixelIndex) * bytes + static_cast<std::uint64_t>(sample) * (microBytes / samples);
     if (mode == TextureTileMode::kGcnThin1D || mode == TextureTileMode::kGcnDisplay1D) {
         return (static_cast<std::uint64_t>(y / 8u) * (pitch / 8u) + x / 8u) * microBytes + elementOffset;
     }
-    std::uint32_t tileSplit = std::min(1024u, std::max(256u, 2u * static_cast<std::uint32_t>(microBytes)));
+    std::uint32_t tileSplit = std::min(1024u, std::max(256u, 2u * 64u * bytes));
     if (mode >= TextureTileMode::kGcnDepth2D64 && mode <= TextureTileMode::kGcnDepth2D1K) tileSplit = 64u << (static_cast<std::uint32_t>(mode) - static_cast<std::uint32_t>(TextureTileMode::kGcnDepth2D64));
     if (mode == TextureTileMode::kGcnDepthPrt256) tileSplit = 256u;
     if (mode == TextureTileMode::kGcnDepthPrt1K) tileSplit = 1024u;
@@ -618,11 +619,12 @@ void sizeOnlySurfaceTests() {
 void gcnMultisampleTilingTests() {
     using enum TextureTileMode;
     std::uint32_t compared = 0;
-    for (const auto mode : {kGcnDepth2D64, kGcnDepth2D128, kGcnDepth2D256, kGcnDepth2D512, kGcnDepth2D1K, kGcnDepthPrt256, kGcnDepthPrt1K}) {
-        for (std::uint32_t bytes = 1u; bytes <= 8u; bytes <<= 1u) {
+    for (const auto mode : {kGcnDepth2D64, kGcnDepth2D128, kGcnDepth2D256, kGcnDepth2D512, kGcnDepth2D1K, kGcnDepthPrt256, kGcnDepthPrt1K, kGcnDisplay2D, kGcnThin2D}) {
+        const bool depth = IsGcnDepthTiled(mode);
+        for (std::uint32_t bytes = 1u; bytes <= (depth ? 8u : 16u); bytes <<= 1u) {
             for (std::uint32_t samples = 2u; samples <= 8u; samples <<= 1u) {
-                const auto what = "PS4 depth tile mode " + std::to_string(static_cast<int>(mode)) + " at " + std::to_string(bytes) + " bytes and " + std::to_string(samples) + " samples";
-                const auto split = mode == kGcnDepthPrt256 ? 256u : mode == kGcnDepthPrt1K ? 1024u : 64u << (static_cast<std::uint32_t>(mode) - static_cast<std::uint32_t>(kGcnDepth2D64));
+                const auto what = std::string(depth ? "PS4 depth" : "PS4 color") + " tile mode " + std::to_string(static_cast<int>(mode)) + " at " + std::to_string(bytes) + " bytes and " + std::to_string(samples) + " samples";
+                const auto split = !depth ? std::min(1024u, std::max(256u, 2u * 64u * bytes)) : mode == kGcnDepthPrt256 ? 256u : mode == kGcnDepthPrt1K ? 1024u : 64u << (static_cast<std::uint32_t>(mode) - static_cast<std::uint32_t>(kGcnDepth2D64));
                 const auto microBytes = 64u * bytes * samples;
                 if (microBytes / std::min(split, microBytes) > 16u) {
                     reject([&] { GcnTiling(mode, bytes, samples); }, "split into more than 16 slices");
@@ -654,7 +656,12 @@ void gcnMultisampleTilingTests() {
             }
         }
     }
-    Require(compared == 80u, "the PS4 multisampled depth tiling sweep compared " + std::to_string(compared) + " layouts, not 80");
+    Require(compared == 80u + 30u, "the PS4 multisampled tiling sweep compared " + std::to_string(compared) + " layouts, not 80 depth and 30 color ones");
+    Require(GcnTiling(kGcnThin2D, 4u, 2u).equation[15] == 1u << GcnSampleShift && GcnTiling(kGcnDepth2D64, 4u, 2u).equation[2] == 1u << GcnSampleShift, "sample 1 of a 2-sample 32-bit PS4 color tile is 256 bytes past sample 0 (address bit 15, past the pipe and bank bits), and in a depth tile the next element (address bit 2)");
+    const auto fourSamples = GcnTiling(kGcnThin2D, 4u, 4u);
+    Require(fourSamples.splitSlices == 2u && fourSamples.blockWidth == 128u && fourSamples.blockHeight == 64u, "a 4-sample 32-bit PS4 color micro tile (1 KiB) splits at twice the single-sample micro tile, 512 bytes, into two slices of 128x64 macro tiles");
+    const auto eightBytes = GcnTiling(kGcnThin2D, 1u, 8u);
+    Require(eightBytes.splitSlices == 2u && eightBytes.blockWidth == 128u && eightBytes.blockHeight == 64u, "an 8-sample 8-bit PS4 color micro tile (512 bytes) splits at 256 bytes, twice the single-sample micro tile raised to 256, into two slices of 128x64 macro tiles");
 
     GuestTextureResource depth{};
     depth.width = 1600u;
@@ -679,12 +686,25 @@ void gcnMultisampleTilingTests() {
     Require(DescribeSurface(stencil).guestBytes == 1792u * 1920u * 2u, "a 2-sample 8-bit PS4 depth texture of pitch 1792 and height 1800 holds 1792 x 1920 x 2 bytes");
     auto color = depth;
     color.tileMode = kGcnThin2D;
-    reject([&] { DescribeSurface(color); }, "PS4 multisampled textures outside the depth tile modes are not implemented");
-    reject([&] { GcnTiling(kGcnThin2D, 4u, 2u); }, "only modeled for 2, 4 or 8 samples in a depth tile mode");
+    color.gcnPitch = 1664u;
+    const auto describedColor = DescribeSurface(color);
+    Require(describedColor.mips.size() == 1u && describedColor.guestBytes == 1664u * 1856u * 4u * 2u && DescribeSurfaceGuestBytes(color) == describedColor.guestBytes && describedColor.layerBytes == describedColor.guestBytes, "a 2-sample 32-bit PS4 color texture of pitch 1664 and height 1800 pads to 1856 rows of 128x64 macro tiles and holds 1664 x 1856 x 4 bytes x 2 samples");
+    Require(describedColor.mips[0].gcnSplitStride == 0u && describedColor.mips[0].pitchBytes == 1664u * 2u * 4u && describedColor.sliceLinearBytes == 1664u * 1800u * 4u * 2u, "a 2-sample 32-bit PS4 color texture is not split (its 512-byte micro tile is the tile split) and its row holds both samples");
+    auto oneD = color;
+    oneD.tileMode = kGcnThin1D;
+    reject([&] { DescribeSurface(oneD); }, "PS4 multisampled textures outside the depth tile modes and the 2D color tile modes are not implemented");
+    auto linear = color;
+    linear.tileMode = kLinear;
+    reject([&] { DescribeSurface(linear); }, "PS4 multisampled textures outside the depth tile modes and the 2D color tile modes are not implemented");
+    reject([&] { GcnTiling(kGcnThin1D, 4u, 2u); }, "only modeled for 2, 4 or 8 samples in a depth tile mode or a 2D color tile mode");
+    reject([&] { GcnTiling(kGcnThinPrt, 4u, 2u); }, "only modeled for 2, 4 or 8 samples in a depth tile mode or a 2D color tile mode");
+    auto prt = color;
+    prt.tileMode = kGcnThin2DPrt;
+    reject([&] { DescribeSurface(prt); }, "PS4 multisampled textures outside the depth tile modes and the 2D color tile modes are not implemented");
     auto mipped = depth;
     mipped.mipCount = 2u;
     reject([&] { DescribeSurface(mipped); }, "mip levels or array layers are not implemented");
-    reject([&] { ComputeGcnMipLayout(kGcnDepth2D64, 20u, 1792u, 1800u, 1792u, false, 2u, false, 1u, false, 2u); }, "one level and one slice in a depth tile mode");
+    reject([&] { ComputeGcnMipLayout(kGcnDepth2D64, 20u, 1792u, 1800u, 1792u, false, 2u, false, 1u, false, 2u); }, "one level and one slice in a depth tile mode or a 2D color tile mode");
 }
 
 }

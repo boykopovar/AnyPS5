@@ -95,7 +95,7 @@ int APS5_VABI sceVideoRecordingResetRecordedData() {
 }
 
 int APS5_VABI sceVideoRecordingRestModeProcessStop() {
-    NotImplemented_nid_no_patch(__func__);
+    return static_cast<int>(0x80a80002);
 }
 
 int APS5_VABI sceVideoRecordingSetCopyrightImage() {
