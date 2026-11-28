@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <mutex>
 #include <numbers>
@@ -1290,11 +1291,11 @@ int APS5_VABI sceNgs2VoiceRunCommands(uintptr_t voice_handle, const Ngs2VoiceCom
     auto& voice = *found;
     if (voice.rack->system == nullptr && !voice.pendingControls.empty()) voice.ApplyPendingControls();
     try {
+        constexpr std::size_t MAX_VOICE_COMMANDS = 4096;
+        static_assert(MAX_VOICE_COMMANDS <= std::numeric_limits<std::size_t>::max() / sizeof(Ngs2VoiceCommand));
         if (num_commands == 0) return SCE_NGS2_OK;
         if (commands == nullptr) APS5_INVALID_ARG_EX;
-        if (num_commands > std::numeric_limits<std::size_t>::max() / sizeof(Ngs2VoiceCommand)) {
-            return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
-        }
+        if (num_commands > MAX_VOICE_COMMANDS) APS5_INVALID_ARG_EX;
         std::vector<Ngs2VoiceCommand> localCommands(num_commands);
         const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(localCommands.data(), commands, localCommands.size() * sizeof(Ngs2VoiceCommand));
@@ -1522,7 +1523,10 @@ int APS5_VABI sceNgs2VoiceGetMatrixInfo(uintptr_t voice_handle, uint32_t matrix_
         if (!WriteGuest(info, Ngs2VoiceMatrixInfo{})) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
         return SCE_NGS2_OK;
     }
-    if (!WriteGuest(&info->num_levels, static_cast<std::uint32_t>(levels->size())) || !WriteGuestBytes(info->levels, levels->data(), levels->size() * sizeof(info->levels[0]))) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+    Ngs2VoiceMatrixInfo local{};
+    local.num_levels = static_cast<std::uint32_t>(levels->size());
+    std::memcpy(local.levels, levels->data(), levels->size() * sizeof(local.levels[0]));
+    if (!WriteGuestBytes(info, &local, sizeof(std::uint32_t) + levels->size() * sizeof(local.levels[0]))) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     return SCE_NGS2_OK;
 }
 
