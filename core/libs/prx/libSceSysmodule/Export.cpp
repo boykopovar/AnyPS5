@@ -52,9 +52,42 @@ bool isPublicModuleId(const std::uint16_t id) {
     return std::binary_search(std::begin(kPublicModuleIds), std::end(kPublicModuleIds), id);
 }
 
+bool isPs4ModuleId(const std::uint16_t id) {
+    static const bool ps4Process = sceKernelIsPs4Process() != 0;
+    return ps4Process && std::binary_search(std::begin(kPs4ModuleIds), std::end(kPs4ModuleIds), id);
+}
+
+bool isAcceptedModuleId(const std::uint16_t id) {
+    return isPublicModuleId(id) || isPs4ModuleId(id);
+}
+
 std::mutex gMutex;
 std::unordered_map<std::uint32_t, std::int32_t> gLoadCount;
 std::unordered_map<std::uint32_t, KernelModule> gHandles;
+bool gLibcForLibkernelPreloaded = false;
+KernelModule (*gLibcForLibkernelLoader)(const char*) = nullptr;
+const char* (*gLibcForLibkernelSandbox)() = nullptr;
+int (*gLibcForLibkernelPs4)() = nullptr;
+
+void writeLibcHandle(int* handle, int value) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(handle, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) throw std::runtime_error("sceSysmoduleMapLibcForLibkernel: invalid handle pointer");
+}
+
+int loadLibcForLibkernel(const char* path, int* handle, KernelModule (*loader)(const char*)) {
+    const KernelModule loaded = loader != nullptr ? loader(path) : sceKernelLoadStartModule(path, 0, nullptr, 0, nullptr, nullptr);
+    if (loaded < 0) return loaded;
+    if (loaded == 0) throw std::runtime_error("sceSysmoduleMapLibcForLibkernel: loader returned a null handle");
+    try {
+        writeLibcHandle(handle, loaded);
+    } catch (...) {
+        sceKernelStopUnloadModule(loaded, 0, nullptr, 0, nullptr, nullptr);
+        throw;
+    }
+    return 0;
+}
 
 void* openHostModule(const char* name) {
     const std::string relative = std::string("libs/") + name + ".prx";
@@ -196,6 +229,13 @@ bool fillModuleInfoForUnwind(std::uint64_t addr, ModuleInfoForUnwind* info) {
 
 }
 
+void SetSysmoduleLibcForLibkernelSources_nid_no_patch(KernelModule (*loader)(const char*), const char* (*sandbox)(), int (*ps4)()) {
+    std::lock_guard lock(gMutex);
+    gLibcForLibkernelLoader = loader;
+    gLibcForLibkernelSandbox = sandbox;
+    gLibcForLibkernelPs4 = ps4;
+}
+
 extern "C" {
 
 int APS5_VABI sceSysmoduleGetModuleInfoForUnwind(std::uint64_t addr, int flags, ModuleInfoForUnwind* info) {
@@ -259,7 +299,7 @@ int APS5_VABI sceSysmoduleGetModuleHandleInternal(std::uint32_t id, std::int32_t
 }
 
 int APS5_VABI sceSysmoduleIsLoaded(std::uint16_t id) {
-    if (!isPublicModuleId(id)) {
+    if (!isAcceptedModuleId(id)) {
         return SCE_SYSMODULE_ERROR_INVALID_VALUE;
     }
     if (!findModuleName(id)) {
@@ -275,7 +315,7 @@ int APS5_VABI sceSysmoduleIsLoaded(std::uint16_t id) {
 }
 
 int APS5_VABI sceSysmoduleLoadModule(std::uint16_t id) {
-    if (!isPublicModuleId(id)) {
+    if (!isAcceptedModuleId(id)) {
         return SCE_SYSMODULE_ERROR_INVALID_VALUE;
     }
     if (!findModuleName(id)) {
@@ -312,7 +352,7 @@ int APS5_VABI sceSysmoduleLoadModuleInternalWithArg(std::uint32_t id, int argc, 
 }
 
 int APS5_VABI sceSysmoduleUnloadModule(std::uint16_t id) {
-    if (!isPublicModuleId(id)) {
+    if (!isAcceptedModuleId(id)) {
         return SCE_SYSMODULE_ERROR_INVALID_VALUE;
     }
     if (!findModuleName(id)) {
@@ -471,13 +511,56 @@ KernelModule APS5_VABI sceSysmoduleLoadModuleByNameInternal(const char* fname, s
     return result;
 }
 
-int APS5_VABI sceSysmoduleMapLibcForLibkernel() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceSysmoduleMapLibcForLibkernel(int* handle) {
+    const int savedErrno = errno;
+    const bool writable = GuestWritable_nid_no_patch(handle, sizeof(*handle));
+    errno = savedErrno;
+    if (!writable) {
+        throw std::runtime_error("sceSysmoduleMapLibcForLibkernel: invalid handle pointer");
+    }
+    bool preloaded;
+    KernelModule (*loader)(const char*);
+    const char* (*sandboxSource)();
+    int (*ps4Source)();
+    {
+        std::lock_guard lock(gMutex);
+        preloaded = gLibcForLibkernelPreloaded;
+        loader = gLibcForLibkernelLoader;
+        sandboxSource = gLibcForLibkernelSandbox;
+        ps4Source = gLibcForLibkernelPs4;
+    }
+    const bool ps4 = (ps4Source != nullptr ? ps4Source() : sceKernelIsPs4Process()) == 1;
+    if (!ps4 && !preloaded) {
+        writeLibcHandle(handle, -1);
+        return 0x5d;
+    }
+    int result = loadLibcForLibkernel("/app0/sce_module/libc.prx", handle, loader);
+    if (result == 0) return 0;
+    const char* sandbox = sandboxSource != nullptr ? sandboxSource() : sceKernelGetFsSandboxRandomWord();
+    if (sandbox != nullptr) {
+        char path[0x100];
+        std::snprintf(path, sizeof(path), "/%s/common/lib/libc.sprx", sandbox);
+        result = loadLibcForLibkernel(path, handle, loader);
+        if (result == 0) return 0;
+    }
+    result = loadLibcForLibkernel("/system/common/lib/libc.sprx", handle, loader);
+    if (result != 0 && !ps4) writeLibcHandle(handle, -1);
+    return result;
 }
 
 int APS5_VABI sceSysmodulePreloadModuleForLibkernel() {
-    NotImplemented_nid_no_patch(__func__);
+    int (*ps4Source)();
+    {
+        std::lock_guard lock(gMutex);
+        ps4Source = gLibcForLibkernelPs4;
+    }
+    if ((ps4Source != nullptr ? ps4Source() : sceKernelIsPs4Process()) == 1) {
+        NotImplemented_nid_no_patch(__func__);
+    }
+    {
+        std::lock_guard lock(gMutex);
+        gLibcForLibkernelPreloaded = true;
+    }
     return 0;
 }
 

@@ -15,6 +15,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -292,7 +293,10 @@ alignas(256) constexpr std::array<std::uint32_t, 5> PixelCode{0x7e0002f2u, 0x7e0
 
 constexpr std::uint32_t Width = 64;
 constexpr std::uint32_t Height = 32;
-alignas(256) std::array<std::byte, Width * Height * 4> Pixels{};
+struct alignas(256) {
+    std::array<std::uint32_t, 64> vertices{};
+    std::array<std::byte, Width * Height * 4> pixels{};
+} targetMemory;
 alignas(256) std::array<std::uint32_t, 4 * Slots> Output{};
 alignas(256) std::array<std::uint32_t, 65538> VertexSlots{};
 alignas(256) std::array<std::uint32_t, 60000> InstanceSlots{};
@@ -382,7 +386,7 @@ public:
     AgcDriver::Graphics::State State(bool rectList = false, bool restartStrip = false) const {
         AgcDriver::Graphics::State state{};
         state.stages = {AgcDriver::Graphics::ShaderPath::Vertex, 0u, 32u, 32u, std::nullopt, std::nullopt};
-        state.color = {reinterpret_cast<std::uintptr_t>(Pixels.data()), {Width, Height}, VK_FORMAT_R8G8B8A8_UNORM, Pixels.size(), 0xe4u};
+        state.color = {reinterpret_cast<std::uintptr_t>(targetMemory.pixels.data()), {Width, Height}, VK_FORMAT_R8G8B8A8_UNORM, targetMemory.pixels.size(), 0xe4u};
         state.colors = {state.color};
         state.hasColorTarget = true;
         state.renderExtent = {Width, Height};
@@ -398,7 +402,7 @@ public:
         return state;
     }
 
-    void Draw(const ShaderRecompiler::RecompileResult& vertex, const AgcDriver::Pm4::DrawParameters& draw, bool restartStrip = false, bool compactRestart = false, bool quadList = false) {
+    AgcDriver::Graphics::DrawResult Draw(const ShaderRecompiler::RecompileResult& vertex, const AgcDriver::Pm4::DrawParameters& draw, bool restartStrip = false, bool compactRestart = false, bool quadList = false, std::optional<std::uint32_t> indexLimit = std::nullopt) {
         const auto vertexPush = static_cast<std::uint32_t>(vertex.pushConstants.size());
         ShaderRecompiler::ShaderPixelStageInfo pixelInfo{};
         pixelInfo.wave32 = true;
@@ -409,18 +413,23 @@ public:
         const auto pixel = ShaderRecompiler::Recompile(pixelRequest);
         const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderStage::Vertex, &vertex, 0u}, {ShaderStage::Fragment, &pixel, PixelPushOffset(vertexPush, device->Target())}}};
         Output.fill(Unwritten);
-        if (compactRestart) {
+        AgcDriver::Graphics::DrawResult result;
+        if (compactRestart || indexLimit) {
             auto context = device->graphicsContext();
-            context.primitiveListRestart = false;
             auto state = State();
-            state.primitiveRestart = true;
-            AgcDriver::Graphics::Draw(context, state, draw, shaders);
+            if (indexLimit) context.limits.maxDrawIndexedIndexValue = *indexLimit;
+            if (compactRestart) {
+                context.primitiveListRestart = false;
+                state.primitiveRestart = true;
+            }
+            result = AgcDriver::Graphics::Draw(context, state, draw, shaders);
         } else {
             auto state = State(false, restartStrip);
             state.quadList = quadList;
-            device->Draw(state, draw, shaders);
+            result = device->Draw(state, draw, shaders);
         }
         device->WaitIdle();
+        return result;
     }
 
     void Place(std::uint32_t firstVertexFetch, std::span<const std::uint32_t> fetchedVertices, std::uint32_t firstInstanceFetch) {
@@ -540,7 +549,79 @@ std::string RuntimeFetch(Fixture& fixture, std::uint32_t index, bool compactRest
     return std::equal(expected.begin(), expected.end(), Output.begin()) ? "" : "runtime-fetched VertexIndex was changed\n";
 }
 
+void CheckCapturedInputRanges(Fixture& fixture) {
+    using AgcDriver::Graphics::DrawResult;
+    using AgcDriver::Graphics::TakeVkDrawCounts;
+    using AgcDriver::Pm4::DrawArguments;
+    alignas(256) static constexpr auto code = [] {
+        auto words = PostAddCode;
+        words[23] = words[24] = 0xbf800000u;
+        words[28] = 0x1110100au;
+        return words;
+    }();
+    auto vertex = fixture.Vertex(code, fixture.UserData(0, 0));
+    Require(!vertex.vertexAttributes.empty(), "expected a fixed vertex fetch");
+    const AgcDriver::Pm4::DrawParameters direct{0, Vertices, 0, 1, 0, false};
+    auto grouped = direct;
+    auto& args = grouped.indirect.emplace();
+    args.count = 2;
+    args.capturedRecords = std::make_shared<const std::vector<DrawArguments>>(2, DrawArguments{Vertices, 1, 0, 0, 0});
+    for (bool overlaps : {false, true}) {
+        vertex.vertexAttributes.front().resource.fields = SlotDescriptor(targetMemory.vertices.data(), static_cast<std::uint32_t>(targetMemory.vertices.size()) + overlaps);
+        TakeVkDrawCounts();
+        const auto result = fixture.Draw(vertex, grouped);
+        const auto emitted = TakeVkDrawCounts().direct;
+        if (overlaps) {
+            Require(result == DrawResult::NeedsIndividualRecords && emitted == 0, "an unused vertex tail overlapping the color target must fall back before either draw");
+            fixture.Draw(vertex, direct);
+            fixture.Draw(vertex, direct);
+            Require(TakeVkDrawCounts().direct == 2, "both records must accept the disjoint vertex prefix");
+        } else {
+            Require(result == DrawResult::Handled && emitted == 2, "a disjoint vertex descriptor must still group both records");
+        }
+    }
+
+    constexpr std::size_t block = 65536;
+    auto* mapping = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(2 * block, block));
+    Require(mapping != nullptr, "could not reserve the vertex test allocation");
+    constexpr std::uint32_t readWrite = 0x04u;
+    GuestArena::GuestArenaCommit_nid_postfix(mapping, block, readWrite, block);
+    auto* prefix = mapping + block - Vertices * sizeof(std::uint32_t);
+    Require(AgcDriver::GuestMemory::Accessible(prefix, 12) && !AgcDriver::GuestMemory::Accessible(prefix, 16), "expected three readable vertex elements");
+    vertex.vertexAttributes.front().resource.fields = SlotDescriptor(prefix, Vertices + 1);
+    TakeVkDrawCounts();
+    Require(fixture.Draw(vertex, grouped) == DrawResult::NeedsIndividualRecords && TakeVkDrawCounts().direct == 0, "the unreadable vertex tail must fall back before recording a draw");
+    fixture.Draw(vertex, direct);
+    Require(TakeVkDrawCounts().direct == 1, "the individual draw must accept the readable prefix");
+    GuestArena::GuestArenaReset_nid_postfix(mapping, block);
+    GuestArena::GuestArenaRelease_nid_postfix(mapping, 2 * block);
+
+    vertex.vertexAttributes.front().resource.fields = SlotDescriptor(targetMemory.vertices.data(), Vertices);
+    alignas(256) static constexpr std::array<std::uint32_t, 4> indices{0, 1, 2, 16};
+    const auto address = reinterpret_cast<std::uintptr_t>(indices.data());
+    const AgcDriver::Pm4::DrawParameters indexed{address, Vertices, 4, 1, 0, true};
+    auto packet = indexed;
+    packet.indexCount = static_cast<std::uint32_t>(indices.size());
+    packet.indirect = args;
+    packet.indirect->recordBytes = 20;
+    const auto limited = [&](const auto& draw) { return fixture.Draw(vertex, draw, false, false, false, 15); };
+    TakeVkDrawCounts();
+    Require(limited(packet) == DrawResult::NeedsIndividualRecords && TakeVkDrawCounts().indexed == 0, "an excessive index outside the record must fall back");
+    limited(indexed);
+    Require(TakeVkDrawCounts().indexed == 1, "the selected three indices fit the device limit");
+    auto invalid = indexed;
+    invalid.indexCount = packet.indexCount;
+    bool rejected = false;
+    try {
+        limited(invalid);
+    } catch (const std::exception& error) {
+        rejected = std::string_view(error.what()).find("indexed draw limit") != std::string_view::npos;
+    }
+    Require(rejected, "selecting the excessive index must still reject the draw");
+}
+
 std::string Run(Fixture& fixture) {
+    CheckCapturedInputRanges(fixture);
     std::string failures = Analysis(fixture);
     const std::array<std::uint32_t, Vertices> autoIndices{0, 1, 2};
     const std::array<std::uint32_t, Vertices> bufferIndices{Indices[0], Indices[1], Indices[2]};

@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import frame_replay_report as report
+import frame_replay_sweep as sweep
 
 
 COMMIT = "a" * 40
@@ -461,6 +462,12 @@ class FrameReplaySweepTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("Bad: bundle files differ from their pinned manifest", result.stderr)
         self.assertEqual(result.stdout, "")
+
+    def test_escapes_multiline_and_carriage_return_values_in_table_cells(self):
+        self.assertEqual(
+            sweep._markdown_cell("a\r\nb\rc\nd|<tag>"),
+            r"a<br>b<br>c<br>d\|&lt;tag&gt;",
+        )
 
 
 if __name__ == "__main__":
