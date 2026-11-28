@@ -1,0 +1,89 @@
+{
+  "milestone": "M4 — ModR/M arithmetic and flags",
+  "updated": "2026-10-16",
+  "categories": [
+    {
+      "name": "CPU foundations",
+      "items": [
+        [
+          "Registers and execution budget",
+          "implemented"
+        ],
+        [
+          "Branches and comparisons",
+          "implemented"
+        ],
+        [
+          "CALL / RET and stack",
+          "implemented"
+        ],
+        [
+          "Guest memory bounds",
+          "implemented"
+        ],
+        [
+          "Full x86-64 instruction coverage",
+          "planned"
+        ]
+      ]
+    },
+    {
+      "name": "Instruction decoding",
+      "items": [
+        [
+          "MOV register / memory",
+          "implemented"
+        ],
+        [
+          "ModR/M and SIB addressing",
+          "implemented"
+        ],
+        [
+          "32/64-bit MOV variants",
+          "implemented"
+        ],
+        [
+          "RIP-relative addressing",
+          "implemented"
+        ],
+        [
+          "Arithmetic ModR/M instructions",
+          "implemented"
+        ],
+        [
+          "SIMD / AVX instructions",
+          "planned"
+        ]
+      ]
+    },
+    {
+      "name": "Platform integration",
+      "items": [
+        [
+          "Portable C++20 library",
+          "implemented"
+        ],
+        [
+          "Cross-platform CI configured",
+          "implemented"
+        ],
+        [
+          "iOS ARM64 compilation target",
+          "implemented"
+        ],
+        [
+          "iPhone runtime integration",
+          "planned"
+        ],
+        [
+          "PS5 executable loading",
+          "planned"
+        ],
+        [
+          "Graphics and system services",
+          "planned"
+        ]
+      ]
+    }
+  ]
+}
