@@ -78,6 +78,26 @@ class ReportTests(unittest.TestCase):
             path.write_text(text, encoding="utf-8")
             return gate.parse_report(path, {"probe"})
 
+    def test_ctest_failure_status_cannot_pass_without_a_failure_element(self):
+        for status in ("fail", "notrun", "disabled", "None"):
+            with self.subTest(status=status):
+                tests, problems = self.report(
+                    f'<testsuite><testcase name="probe" status="{status}"><system-out>{gate.INSERTED_LAYER}'
+                    '</system-out></testcase></testsuite>')
+                self.assertTrue(tests["probe"]["failed_or_skipped"])
+                self.assertEqual(problems, ["probe"])
+
+    def test_validation_identifier_counts_exclude_prose_and_spec_links(self):
+        tests, problems = self.report(
+            '<testsuite><testcase name="probe"><system-out>' + gate.INSERTED_LAYER + '\n'
+            'Validation Error: [ VUID-Actual-1 ] see VUID-Other-2 and https://example.test/#VUID-Actual-1\n'
+            'VUID-Legacy-3 (ERROR / SPEC): refers to VUID-Other-2\n'
+            'Validation Error: [ SYNC-HAZARD-WRITE_AFTER_WRITE ] related [ UNASSIGNED-Other ]\n'
+            '</system-out></testcase></testsuite>')
+        self.assertEqual(problems, [])
+        self.assertEqual(tests["probe"]["diagnostics"], {
+            "VUID-Actual-1": 1, "VUID-Legacy-3": 1, "SYNC-HAZARD-WRITE_AFTER_WRITE": 1})
+
     def test_test_body_messages_are_distinct_from_configuration_echoes(self):
         text = '<testsuite><testcase name="probe"><system-out>'
         text += 'environment: VK_INSTANCE_LAYERS=VUID-Fake-1\n'
@@ -173,6 +193,29 @@ class ReportTests(unittest.TestCase):
                                iteration("candidate", "probe", {"VUID-A-1": 1})])
         self.assertEqual(report["new_diagnostics"], {"probe": ["VUID-A-1"]})
         self.assertEqual(report["exit_code"], 1)
+
+    def test_nested_runtime_link_cannot_add_an_artifact_outside_the_build(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            build = root / "build"
+            runtime = build / "runtime" / "nested"
+            runtime.mkdir(parents=True)
+            external = root / "external"
+            external.mkdir()
+            (external / "runtime.dll").write_bytes(b"external runtime")
+            internal = runtime / "internal.dll"
+            internal.write_bytes(b"internal runtime")
+            self.assertEqual(set(gate.artifact_hashes(build, [], ["runtime"])), {str(internal)})
+            link = runtime / "linked"
+            if os.name == "nt":
+                junction = subprocess.run(["cmd.exe", "/d", "/c", "mklink", "/J", str(link), str(external)],
+                                          capture_output=True, timeout=10)
+                if junction.returncode:
+                    self.skipTest(f"junctions unavailable: {junction.stderr!r}")
+            else:
+                link.symlink_to(external, target_is_directory=True)
+            with self.assertRaisesRegex(gate.GateError, "linked"):
+                gate.artifact_hashes(build, [], ["runtime"])
 
     def test_relative_executable_follows_the_test_working_directory(self):
         for mode in ("default", "absolute", "relative"):

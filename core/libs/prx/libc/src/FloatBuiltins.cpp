@@ -767,16 +767,6 @@ __complex__ long double APS5_VABI csqrtl_nid_postfix(__complex__ long double z) 
     return MakeComplex(result.real(), result.imag());
 }
 
-__complex__ long double APS5_VABI ctanl_nid_postfix(__complex__ long double z) {
-    const auto result = std::tan(std::complex<long double>(__real__ z, __imag__ z));
-    return MakeComplex(result.real(), result.imag());
-}
-
-__complex__ long double APS5_VABI ctanhl_nid_postfix(__complex__ long double z) {
-    const auto result = std::tanh(std::complex<long double>(__real__ z, __imag__ z));
-    return MakeComplex(result.real(), result.imag());
-}
-
 __complex__ long double APS5_VABI cpowl_nid_postfix(__complex__ long double x, __complex__ long double y) {
     const auto result = std::pow(std::complex<long double>(__real__ x, __imag__ x), std::complex<long double>(__real__ y, __imag__ y));
     return MakeComplex(result.real(), result.imag());
