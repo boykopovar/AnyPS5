@@ -167,7 +167,7 @@ bool sameValue(float left, float right) {
 
 void repackedFormatTests() {
     constexpr std::uint32_t guest = 43u;
-    Require(IsRepackedTextureFormat(guest) && !IsRepackedTextureFormat(36u) && !IsRepackedTextureFormat(20u), "only texture format 43 is sampled through a repacked copy");
+    Require(IsRepackedTextureFormat(guest) && TextureRepackFor(guest) == TextureRepack::Float10_11_11 && !IsRepackedTextureFormat(36u) && !IsRepackedTextureFormat(20u), "texture format 43 must be sampled through a repacked copy and formats 36 and 20 must not");
     Context context{};
     Require(SampledTextureFormat(context, guest) == VK_FORMAT_B10G11R11_UFLOAT_PACK32 && ResolveTextureFormat(guest) == VK_FORMAT_R32_UINT, "format 43 must be sampled as B10G11R11_UFLOAT and stored as R32_UINT");
     Require(SampledTextureFormat(context, 36u) == VK_FORMAT_B10G11R11_UFLOAT_PACK32 && ResolveTextureFormat(36u) == VK_FORMAT_R32_UINT, "format 36 must be sampled as B10G11R11_UFLOAT and stored as R32_UINT");
@@ -196,6 +196,45 @@ void repackedFormatTests() {
     }
     Require(std::isinf(unsignedSmallFloat(0x3e0u, 5u)) && std::isnan(unsignedSmallFloat(0x3e1u, 5u)) && unsignedSmallFloat(0x001u, 6u) == std::ldexp(1.0f, -20), "the reference decode misreads Inf, NaN or a denormal");
     Require(TextureComponentChannel(guest, VK_COMPONENT_SWIZZLE_A) == VK_COMPONENT_SWIZZLE_A && TextureComponentChannel(guest, VK_COMPONENT_SWIZZLE_ZERO) == VK_COMPONENT_SWIZZLE_ZERO, "format 43 keeps alpha and constant selectors");
+}
+
+VkFormat r5g5b5a1Copyable = VK_FORMAT_UNDEFINED;
+
+void packedStorageFormatProperties(VkPhysicalDevice, VkFormat format, VkFormatProperties* properties) {
+    *properties = {};
+    constexpr VkFormatFeatureFlags copyable = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_SRC_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+    if (format == VK_FORMAT_R16_UINT) properties->optimalTilingFeatures = copyable | VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT;
+    if (format == VK_FORMAT_A1R5G5B5_UNORM_PACK16 || format == r5g5b5a1Copyable) properties->optimalTilingFeatures = copyable;
+}
+
+void rotatedFormatTests() {
+    constexpr std::uint32_t guest = 135u;
+    Require(IsRepackedTextureFormat(guest) && TextureRepackFor(guest) == TextureRepack::Rotate1_5_5_5 && !IsRepackedTextureFormat(134u), "texture format 135 must be sampled through a rotated copy and format 134 must not");
+    reject([] { TextureRepackFor(134u); }, "is not sampled through a repacked copy");
+    Context context{};
+    Require(SampledTextureFormat(context, guest) == VK_FORMAT_A1R5G5B5_UNORM_PACK16, "format 135 must be sampled as A1R5G5B5_UNORM, which every Vulkan device samples");
+    Require(ResolveTextureFormat(guest) == VK_FORMAT_R5G5B5A1_UNORM_PACK16 && DccClearTextureFormat(guest) == VK_FORMAT_R5G5B5A1_UNORM_PACK16, "format 135 must keep its guest bit layout for storage images and DCC clear texels");
+    constexpr std::array<int, 4> lowBits{0, 1, 6, 11};
+    constexpr std::array<std::uint32_t, 4> widths{1u, 5u, 5u, 5u};
+    constexpr std::array components{VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A};
+    for (std::uint32_t texel = 0; texel < 0x10000u; ++texel) {
+        const auto neighbour = texel ^ 0xb6d5u;
+        const auto rotated = RotateTextureWord(texel | (neighbour << 16u));
+        for (const auto& [half, original] : std::array{std::pair{rotated & 0xffffu, texel}, std::pair{rotated >> 16u, neighbour}}) {
+            for (std::size_t component = 0; component < components.size(); ++component) {
+                const auto mask = (1u << widths[component]) - 1u;
+                const auto low = channelLowBit(VK_FORMAT_A1R5G5B5_UNORM_PACK16, TextureComponentChannel(guest, components[component]));
+                Require(((half >> low) & mask) == ((original >> lowBits[component]) & mask), "the rotated texel " + std::to_string(half) + " does not read guest component " + std::to_string(component) + " of " + std::to_string(original));
+            }
+        }
+    }
+    context.formatProperties = packedStorageFormatProperties;
+    context.physical = reinterpret_cast<VkPhysicalDevice>(std::uintptr_t{0x1350});
+    Require(HostStorageFormat(context, VK_FORMAT_R5G5B5A1_UNORM_PACK16) == VK_FORMAT_R16_UINT, "a device that cannot copy R5G5B5A1_UNORM must keep 1_5_5_5 storage images in their R16_UINT form");
+    Require(HostStorageFormat(context, VK_FORMAT_A1R5G5B5_UNORM_PACK16) == VK_FORMAT_A1R5G5B5_UNORM_PACK16, "a packed format the device copies must keep its own storage image format");
+    r5g5b5a1Copyable = VK_FORMAT_R5G5B5A1_UNORM_PACK16;
+    context.physical = reinterpret_cast<VkPhysicalDevice>(std::uintptr_t{0x1351});
+    Require(HostStorageFormat(context, VK_FORMAT_R5G5B5A1_UNORM_PACK16) == VK_FORMAT_R5G5B5A1_UNORM_PACK16, "a device that copies R5G5B5A1_UNORM must keep it for 1_5_5_5 storage images");
 }
 
 void gcnBufferFormatTests() {
@@ -340,6 +379,7 @@ void RunTextureFormatTests() {
     optionalFormatTests();
     packedChannelTests();
     repackedFormatTests();
+    rotatedFormatTests();
     Require(ResolveTextureFormat(1) == VK_FORMAT_R8_UNORM, "format 1 must resolve to R8_UNORM");
     Require(ResolveTextureFormat(2) == VK_FORMAT_R8_SNORM, "format 2 must resolve to R8_SNORM");
     Require(BytesPerElement(1) == 1u, "format 1 must be one byte wide");
