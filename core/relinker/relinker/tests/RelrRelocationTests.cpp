@@ -128,6 +128,11 @@ int main() try {
             Require(std::string_view(error.what()).find("Relative relocation target address is negative") != std::string_view::npos);
         }
     }
+    Reject([](auto& input) {
+        const auto address = std::numeric_limits<std::uint64_t>::max() - 7;
+        input.Headers.push_back({1, 6, 0, address, 0, 0, 7, 1});
+        input.SetWords({address});
+    }, "RELR address overflow");
     std::cout << "RELR address, bitmap, bounds, addend and reachability tests passed\n";
 } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';
