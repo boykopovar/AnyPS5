@@ -6447,7 +6447,24 @@ void ShaderResources::addSamplerTable(const ShaderRecompiler::DescriptorBinding&
         const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(first) * 4u, 4u);
         std::string rejected;
         if (first + Abi::SamplerEntryElements > context.samplerTableCapacity) rejected = "the sampler table exceeds the device's capacity of " + std::to_string(context.samplerTableCapacity) + " samplers";
-        for (std::uint32_t element = first; rejected.empty() && element < first + Abi::SamplerEntryElements; ++element) {
+        const float anisotropyLimit = context.limits.maxSamplerAnisotropy;
+        const float lodBiasLimit = context.limits.maxSamplerLodBias;
+        std::string verdictKey(reinterpret_cast<const char*>(&anisotropyLimit), sizeof(anisotropyLimit));
+        verdictKey.append(reinterpret_cast<const char*>(&lodBiasLimit), sizeof(lodBiasLimit));
+        for (const bool capability : {context.samplerAnisotropy, context.samplerFilterMinmax, context.samplerMirrorClampToEdge, context.nonSeamlessCubeMap}) verdictKey.push_back(capability ? '1' : '0');
+        verdictKey.append(reinterpret_cast<const char*>(binding.guestDescriptor.data() + static_cast<std::size_t>(first) * 4u), static_cast<std::size_t>(Abi::SamplerEntryElements) * 4u * sizeof(std::uint32_t));
+        for (std::uint32_t element = first; element < first + Abi::SamplerEntryElements; ++element) verdictKey.push_back(binding.samplerDepthCompare.at(element) ? '1' : '0');
+        static std::mutex verdictMutex;
+        static std::unordered_map<std::string, std::string> verdicts;
+        bool known = false;
+        if (rejected.empty()) {
+            std::lock_guard lock(verdictMutex);
+            if (const auto found = verdicts.find(verdictKey); found != verdicts.end()) {
+                rejected = found->second;
+                known = true;
+            }
+        }
+        for (std::uint32_t element = first; !known && rejected.empty() && element < first + Abi::SamplerEntryElements; ++element) {
             try {
                 const auto elementWords = std::span<const std::uint32_t, 4>(binding.guestDescriptor.data() + static_cast<std::size_t>(element) * 4u, 4u);
                 auto resource = DecodeSamplerResource(elementWords);
@@ -6461,6 +6478,11 @@ void ShaderResources::addSamplerTable(const ShaderRecompiler::DescriptorBinding&
             } catch (const std::runtime_error& error) {
                 rejected = error.what();
             }
+        }
+        if (!known && first + Abi::SamplerEntryElements <= context.samplerTableCapacity) {
+            std::lock_guard lock(verdictMutex);
+            if (verdicts.size() >= 65536u) verdicts.clear();
+            verdicts.emplace(std::move(verdictKey), rejected);
         }
         if (!rejected.empty()) {
             table.samplerRejections.emplace_back(entry, rejectTableElement(table, words, rejected));
