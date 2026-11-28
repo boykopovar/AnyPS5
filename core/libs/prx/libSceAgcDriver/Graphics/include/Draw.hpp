@@ -237,6 +237,8 @@ enum class DrawStopForTest { None = 0, ReturnAfterResolve = 1, ThrowAfterResolve
 void SetSpaceKeepFailuresForTest(std::uint32_t count);
 void SetDrawStopAfterResolveForTest(DrawStopForTest stop);
 void SetPreparedDrawDeviceForTest(PreparedDraw& prepared, VkDevice device);
+const std::vector<std::uint32_t>* PreparedDrawContentKeyForTest(const PreparedDraw& prepared);
+std::vector<std::uint32_t> CommitterContentKeyForTest(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders);
 enum class TargetMemoEvent : std::uint8_t {
     Lookup, Hit, OverlapCached, OverlapComputed, Accept, AcceptWithDepthMiss, DepthHit, AvoidedRefreshLookups,
     Invalid, ThreadChanged, Descriptor, ResidentGone, ResidentEvicted, DepthOverlap, Metadata,

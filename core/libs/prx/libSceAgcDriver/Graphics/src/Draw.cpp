@@ -1819,6 +1819,13 @@ ResourceCache::Key& threadPlanContentKey() {
     return ShaderRecompiler::ThreadOwned(slot);
 }
 
+const ResourceCache::Key& committerContentKey(const Context& context, const State& state, std::span<const CompiledShader> shaders, std::uint64_t indexAddress, std::uint64_t indexBytes) {
+    static const bool trimKey = std::getenv("APS5_NO_DRAW_KEY_TRIM") == nullptr;
+    auto& key = threadPlanContentKey();
+    FillDrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), indexAddress, indexBytes, !trimKey, key);
+    return key;
+}
+
 bool EarlyDrawKeys() {
     static const bool enabled = std::getenv("APS5_NO_EARLY_DRAW_KEY") == nullptr;
     return enabled;
@@ -1829,7 +1836,7 @@ bool KeyForDevice(const std::vector<std::uint32_t>& key, VkDevice device) {
     return key.size() >= 3 && key[0] == 0xffffffffu && key[1] == static_cast<std::uint32_t>(handle) && key[2] == static_cast<std::uint32_t>(handle >> 32u);
 }
 
-DrawPlan planDraw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, const DrawRecipe* recipe, DrawOutcome& outcome, DrawTimer& timer, const std::vector<std::uint32_t>* earlyKey = nullptr, ResourceCache::Key* scratchKey = nullptr) {
+DrawPlan planDraw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, const DrawRecipe* recipe, DrawOutcome& outcome, DrawTimer& timer, const std::vector<std::uint32_t>* earlyKey = nullptr, ResourceCache::Key* scratchKey = nullptr, bool deferKey = false) {
     DrawPlan plan;
     APS5_LOG_OUT_DEBUG("Draw indices=%u instances=%u indexSize=%u flags=%u indexAddress=0x%llx", draw.indexCount, draw.instanceCount, draw.indexSize, draw.flags, static_cast<unsigned long long>(draw.indexAddress));
     APS5_LOG_OUT_DEBUG("State colorTarget=%u render=%ux%u colorAddress=0x%llx colorBytes=%llu colorExtent=%ux%u", state.hasColorTarget ? 1u : 0u, state.renderExtent.width, state.renderExtent.height, static_cast<unsigned long long>(state.color.address), static_cast<unsigned long long>(state.color.bytes), state.color.extent.width, state.color.extent.height);
@@ -1914,7 +1921,7 @@ DrawPlan planDraw(const Context& context, const State& state, const Pm4::DrawPar
     static const bool trimKey = std::getenv("APS5_NO_DRAW_KEY_TRIM") == nullptr;
     plan.candidate = recipe == nullptr && !noDrawResourceCache && !noTextureCache && std::all_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->PipelineVariantId() != 0; });
     plan.keyed = plan.candidate && !ShaderResources::NeverReusable(shaders);
-    if (plan.keyed) {
+    if (plan.keyed && !deferKey) {
         const auto keyStart = timer.profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         if (earlyKey != nullptr && KeyForDevice(*earlyKey, context.device)) {
             plan.contentKey = earlyKey;
@@ -2019,7 +2026,7 @@ PreparedDrawPtr PrepareDraw(const Context& context, const State& state, const Pm
         DrawOutcome outcome;
         DrawTimer timer(false);
         try {
-            prepared->plan.emplace(planDraw(context, state, draw, shaders, nullptr, outcome, timer, nullptr, &prepared->contentKey));
+            prepared->plan.emplace(planDraw(context, state, draw, shaders, nullptr, outcome, timer, nullptr, &prepared->contentKey, !EarlyDrawKeys()));
             prepared->validateMemoized = outcome.validateMemoized;
             prepared->validateHit = outcome.validateHit;
             counters.planned.Add();
@@ -2035,6 +2042,14 @@ PreparedDrawPtr PrepareDraw(const Context& context, const State& state, const Pm
 
 void SetPreparedDrawDeviceForTest(PreparedDraw& prepared, VkDevice device) {
     prepared.device = device;
+}
+
+const std::vector<std::uint32_t>* PreparedDrawContentKeyForTest(const PreparedDraw& prepared) {
+    return prepared.plan.has_value() ? prepared.plan->contentKey : nullptr;
+}
+
+std::vector<std::uint32_t> CommitterContentKeyForTest(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders) {
+    return committerContentKey(context, state, shaders, draw.indexAddress, static_cast<std::uint64_t>(draw.indexCount) * draw.indexSize);
 }
 
 PreparedDrawCounts TakePreparedDrawCounts() {
@@ -2099,7 +2114,7 @@ void requireDrawPlanRepeats(const Context& context, const State& state, const Pm
     const auto sameAttribute = [](const VkVertexInputAttributeDescription& a, const VkVertexInputAttributeDescription& b) { return a.location == b.location && a.binding == b.binding && a.format == b.format && a.offset == b.offset; };
     const auto& layout = plan.VertexLayout();
     const auto& repeated = again.VertexLayout();
-    const bool sameContentKey = (again.contentKey == nullptr && plan.contentKey == nullptr) || (again.contentKey != nullptr && plan.contentKey != nullptr && *again.contentKey == *plan.contentKey);
+    const bool sameContentKey = (plan.keyed && plan.contentKey == nullptr) || (again.contentKey == nullptr && plan.contentKey == nullptr) || (again.contentKey != nullptr && plan.contentKey != nullptr && *again.contentKey == *plan.contentKey);
     Require(again.nothing == plan.nothing && again.indexBytes == plan.indexBytes && again.fragmentOutputs == plan.fragmentOutputs && again.shaderStages == plan.shaderStages && again.meshGroups == plan.meshGroups && again.meshLayers == plan.meshLayers && again.meshLayerStride == plan.meshLayerStride && again.candidate == plan.candidate && again.keyed == plan.keyed && sameContentKey && std::ranges::equal(repeated.bindings, layout.bindings, sameBinding) && std::ranges::equal(repeated.attributes, layout.attributes, sameAttribute), std::string("APS5_VERIFY_DRAW_PLAN: ") + differs);
 }
 
@@ -2614,6 +2629,14 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
     else if (address == AddressStages::ReadOnly && !resolved.cacheable) reuse = AddressDrawReuse::NotSpaceOnly;
     if (resolved.cacheable) {
         resolved.contentKey = plan.contentKey;
+        if (resolved.contentKey == nullptr) {
+            const auto keyStart = timer.profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+            const auto& committerKey = committerContentKey(context, state, shaders, draw.indexAddress, indexBytes);
+            resolved.contentKey = &committerKey;
+            static const bool verify = std::getenv("APS5_VERIFY_EARLY_DRAW_KEY") != nullptr;
+            if (verify) Require(committerKey == DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, indexBytes, !trimKey), "the draw resource key the committer made late differs from a key made again for the draw");
+            timer.charge(PhaseLookup, keyStart);
+        }
         if (auto cached = SharedResourceCache().Find(*resolved.contentKey)) {
             const auto releaseSpace = [](ShaderResources* resources) { static_cast<void>(resources->ReleaseSpace()); };
             std::unique_ptr<ShaderResources, decltype(releaseSpace)> heldSpace(nullptr, releaseSpace);

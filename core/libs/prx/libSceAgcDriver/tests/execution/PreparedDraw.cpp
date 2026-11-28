@@ -10,7 +10,10 @@
 #include <initializer_list>
 #include <iostream>
 #include <memory>
+#include <span>
 #include <string>
+#include <thread>
+#include <vector>
 
 namespace {
 
@@ -154,6 +157,94 @@ void PlansKeepTheirOwnContentKey(AgcDriver::VulkanDevice& device, Scene& scene) 
     Require(counts.planned == 2 && counts.used == 1 && counts.inlinePlans == 0, "prepared draw: the content key check did not take the first plan (" + Counts(counts) + ")");
 }
 
+alignas(256) std::array<std::byte, Extent * Extent * 4u> secondPixels{};
+alignas(256) std::array<std::byte, Extent * Extent * 4u> thirdPixels{};
+
+void PlansPreparedOnAnotherThreadAreCommittedAfterItEnds(AgcDriver::VulkanDevice& device, Scene& scene) {
+    struct Target {
+        std::byte* pixels;
+        AgcDriver::Graphics::State state;
+        AgcDriver::Graphics::PreparedDrawPtr prepared;
+    };
+    std::array<Target, 3> targets{{{pixels.data(), scene.state, nullptr}, {secondPixels.data(), scene.state, nullptr}, {thirdPixels.data(), scene.state, nullptr}}};
+    for (auto& target : targets) {
+        target.state.color.address = reinterpret_cast<std::uintptr_t>(target.pixels);
+        target.state.colors = {target.state.color};
+    }
+    const auto drawTarget = [&](Target& target, bool withPlan, const char* what) {
+        std::fill_n(target.pixels, pixels.size(), std::byte{0});
+        device.Draw(target.state, scene.draw, scene.shaders, {}, nullptr, nullptr, 0, withPlan ? target.prepared.get() : nullptr);
+        device.WaitIdle();
+        Require(target.pixels[0] == std::byte{255} && target.pixels[1] == std::byte{0} && target.pixels[2] == std::byte{0} && target.pixels[3] == std::byte{255}, std::string("prepared draw: ") + what + " did not draw the triangle");
+    };
+    static_cast<void>(AgcDriver::Graphics::TakePreparedDrawCounts());
+    std::thread worker([&] {
+        for (auto& target : targets) target.prepared = device.PrepareDraw(target.state, scene.draw, scene.shaders, true);
+    });
+    worker.join();
+    const bool keyAtPrepare = std::getenv("APS5_NO_EARLY_DRAW_KEY") == nullptr;
+    for (const auto& target : targets) {
+        Require(target.prepared != nullptr && (AgcDriver::Graphics::PreparedDrawContentKeyForTest(*target.prepared) != nullptr) == keyAtPrepare, std::string("prepared draw: a plan prepared on another thread was prepared ") + (keyAtPrepare ? "without" : "with") + " its resource content key");
+    }
+    for (const auto index : {2u, 0u, 1u}) {
+        drawTarget(targets[index], true, "a draw whose plan was prepared on a thread that has ended");
+    }
+    const auto counts = AgcDriver::Graphics::TakePreparedDrawCounts();
+    Require(counts.planned == 3 && counts.used == 3 && counts.inlinePlans == 0, "prepared draw: the committer did not take the three plans prepared on another thread (" + Counts(counts) + ")");
+}
+
+void LateContentKeysEqualEarlyOnesAndTellDrawsApart(AgcDriver::VulkanDevice& device, Scene& scene) {
+    constexpr std::array<std::uint32_t, 5> yellowPixelCode{0x7e0002f2u, 0x7e0202f2u, 0xf800180fu, 0x00010100u, 0xbf810000u};
+    const auto pushBytes = static_cast<std::uint32_t>(scene.vertex.pushConstants.size());
+    ShaderRecompiler::ShaderPixelStageInfo pixelInfo{};
+    pixelInfo.wave32 = true;
+    pixelInfo.targetOutputMode[0] = 9u;
+    pixelInfo.targetExportMapping.fill(0xe4u);
+    ShaderRecompiler::RecompileRequest yellowRequest{{ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(yellowPixelCode.data()), yellowPixelCode, 0, {}}, {32u, 0u, {}, std::nullopt, pixelInfo, std::nullopt, {}}, device.Target(), PixelPushLayout(pushBytes, device.Target())};
+    const auto yellow = ShaderRecompiler::Recompile(yellowRequest);
+    const std::array<AgcDriver::Graphics::CompiledShader, 2> yellowShaders{{{ShaderStage::Vertex, &scene.vertex, 0u}, {ShaderStage::Fragment, &yellow, PixelPushOffset(pushBytes, device.Target())}}};
+    struct Variant {
+        const char* what;
+        AgcDriver::Graphics::State state;
+        AgcDriver::Pm4::DrawParameters draw;
+        std::span<const AgcDriver::Graphics::CompiledShader> shaders;
+    };
+    std::vector<Variant> variants{{"the plain draw", scene.state, scene.draw, scene.shaders}, {"a draw with another fragment shader", scene.state, scene.draw, yellowShaders}};
+    if (std::getenv("APS5_NO_DRAW_KEY_TRIM") != nullptr) {
+        auto other = scene.state;
+        other.color.address = reinterpret_cast<std::uintptr_t>(secondPixels.data());
+        other.colors = {other.color};
+        variants.push_back({"a draw to another render target", other, scene.draw, scene.shaders});
+        auto indexed = scene.draw;
+        indexed.indexed = true;
+        indexed.indexSize = 2u;
+        indexed.indexAddress = reinterpret_cast<std::uintptr_t>(indices.data());
+        indexed.firstVertex = 0u;
+        variants.push_back({"an indexed draw", scene.state, indexed, scene.shaders});
+        auto longer = indexed;
+        longer.indexCount = 4u;
+        variants.push_back({"an indexed draw with more indices", scene.state, longer, scene.shaders});
+    }
+    const auto context = device.graphicsContext();
+    const bool earlyKeys = std::getenv("APS5_NO_EARLY_DRAW_KEY") == nullptr;
+    std::vector<std::vector<std::uint32_t>> late;
+    for (const auto& variant : variants) {
+        late.push_back(AgcDriver::Graphics::CommitterContentKeyForTest(context, variant.state, variant.draw, variant.shaders));
+        Require(late.back().size() > 3u, std::string("prepared draw: the committer made no resource content key for ") + variant.what);
+        if (!earlyKeys) continue;
+        const auto prepared = device.PrepareDraw(variant.state, variant.draw, variant.shaders, true);
+        Require(prepared != nullptr, std::string("prepared draw: ") + variant.what + " was not prepared");
+        const auto* early = AgcDriver::Graphics::PreparedDrawContentKeyForTest(*prepared);
+        Require(early != nullptr && *early == late.back(), std::string("prepared draw: the resource content key the committer makes for ") + variant.what + " differs from the one the finisher made");
+    }
+    for (std::size_t first = 0; first < late.size(); ++first) {
+        for (std::size_t second = first + 1; second < late.size(); ++second) {
+            Require(late[first] != late[second], std::string("prepared draw: ") + variants[first].what + " and " + variants[second].what + " got the same resource content key");
+        }
+    }
+    static_cast<void>(AgcDriver::Graphics::TakePreparedDrawCounts());
+}
+
 void Run(AgcDriver::VulkanDevice& device) {
     Scene scene(device);
     static_cast<void>(AgcDriver::Graphics::TakePreparedDrawCounts());
@@ -165,6 +256,8 @@ void Run(AgcDriver::VulkanDevice& device) {
     scene.Draw(prepared.get(), scene.draw, true, "a draw with its plan");
     auto counts = AgcDriver::Graphics::TakePreparedDrawCounts();
     Require(counts.planned == 1 && counts.used == 1 && counts.inlinePlans == 0 && counts.otherDevice == 0, "prepared draw: the committer did not take the plan (" + Counts(counts) + ")");
+    const bool keyAtPrepare = std::getenv("APS5_NO_EARLY_DRAW_KEY") == nullptr;
+    Require((AgcDriver::Graphics::PreparedDrawContentKeyForTest(*prepared) != nullptr) == keyAtPrepare, std::string("prepared draw: the plan was prepared ") + (keyAtPrepare ? "without" : "with") + " its resource content key");
 
     scene.Draw(nullptr, scene.draw, true, "a draw that was not prepared");
     counts = AgcDriver::Graphics::TakePreparedDrawCounts();
@@ -208,6 +301,9 @@ void Run(AgcDriver::VulkanDevice& device) {
     }
 
     if (std::getenv("APS5_VERIFY_DRAW_PLAN") != nullptr && std::getenv("APS5_NO_DRAW_KEY_TRIM") != nullptr) PlansKeepTheirOwnContentKey(device, scene);
+
+    LateContentKeysEqualEarlyOnesAndTellDrawsApart(device, scene);
+    PlansPreparedOnAnotherThreadAreCommittedAfterItEnds(device, scene);
 
     auto modified = scene.draw;
     modified.flags = 1u;
