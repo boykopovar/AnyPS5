@@ -3828,6 +3828,33 @@ void CheckUniformPlanesWithoutHtile(Context context, std::uint32_t samples) {
     std::printf("Native D32S8 without HTILE, samples=%u: uniform planes imported and sampled, other planes refused\n", samples);
 }
 
+void CheckExpandedWordsOverUniformStencil(Context context, std::uint32_t samples) {
+    constexpr VkExtent2D extent{129u, 67u};
+    const auto depthBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, samples));
+    const auto stencilBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 1u, samples));
+    TargetMemory memory(depthBytes), stencil(stencilBytes);
+    const auto word = std::bit_cast<std::uint32_t>(0.25f);
+    for (std::size_t offset = 0u; offset < depthBytes; offset += 4u) std::memcpy(memory.Data() + offset, &word, 4u);
+    std::memset(stencil.Data(), 0x5a, stencilBytes);
+    DepthTarget target{memory.Address(), stencil.Address(), extent, VK_FORMAT_D32_SFLOAT_S8_UINT, 1.0f, 0u, 0u, false, samples};
+    target.depthSwizzle = 24u;
+    Recorder recorder(context);
+    recorder.Activate();
+    struct Cleanup {
+        Recorder& recorder;
+        Context context;
+        ~Cleanup() { recorder.Sync(); ClearCachedTextures(context.device); ClearDepthSurfaces(context.device); }
+    } cleanup{recorder, context};
+    auto words = DepthSampleWords(target);
+    words[6] &= ~((1u << 19u) | (1u << 21u));
+    Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "the uniform-plane stencil store fixture has no attachment view");
+    Require(DepthSurfaceTexture(context, words, DecodeTextureResource(words), VkComponentMapping{}) != nullptr, "the uniform-plane stencil store fixture was not imported");
+    recorder.Sync();
+    QueueTargetWordFill(context, recorder, target.stencilAddress, stencilBytes, 0xfffc000fu);
+    TargetRefuses([&] { DepthSurfaceTexture(context, words, DecodeTextureResource(words), VkComponentMapping{}); }, "external GPU writes over native multisample depth are not implemented");
+    std::printf("Native D32S8 without HTILE, samples=%u: a GPU store of expanded-HTILE-looking words over the stencil plane was refused\n", samples);
+}
+
 void CheckDemandZeroPlanes(Context context, std::uint32_t samples, bool withStencil, bool race) {
     constexpr VkExtent2D extent{129u, 67u};
     const auto depthBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, samples));
@@ -5497,6 +5524,88 @@ void CheckElidedFillOverArmedClear(Context context, std::uint32_t samples) {
     std::printf("Native D32 with HTILE, samples=%u: a recorded fill superseded an armed clear dispatch while an elided fill kept its pending-write refusal\n", samples);
 }
 
+void CheckExpandedHtileStore(Context context, std::uint32_t samples) {
+    constexpr VkExtent2D extent{5u, 3u};
+    const auto depthBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, samples));
+    const auto metadataBytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    TargetMemory memory(depthBytes), metadata(65536u);
+    std::memset(memory.Data(), 0, depthBytes);
+    constexpr std::uint32_t expanded = 0xfffc000fu;
+    const std::uint32_t pattern = 0xfffffff0u;
+    for (std::size_t offset = 0u; offset + 4u <= metadataBytes; offset += 4u) std::memcpy(metadata.Data() + offset, &pattern, 4u);
+    DepthTarget target{memory.Address(), 0u, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0u, metadata.Address(), false, samples};
+    target.depthSwizzle = 24u;
+    target.iterate256 = target.htilePipeAligned = target.htileDepthOnly = true;
+    Recorder recorder(context);
+    recorder.Activate();
+    struct Cleanup {
+        Recorder& recorder;
+        Context context;
+        ~Cleanup() { recorder.Sync(); ClearCachedTextures(context.device); ClearDepthSurfaces(context.device); }
+    } cleanup{recorder, context};
+    const auto words = DepthSampleWords(target);
+    Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "the expanded HTILE store fixture has no attachment view");
+    auto texture = CachedSampledTexture(context, words);
+    Require(texture != nullptr, "the expanded HTILE store fixture was not imported");
+    recorder.Sync();
+    const auto fetchDepth = [&](const Texture& sampled) {
+        const auto count = extent.width * extent.height * samples;
+        Buffer output(context, (count + 2u) * 16u, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        std::memset(output.Bytes().data(), 0xa5, output.Bytes().size());
+        const Fetch fetch(context, sampled, output, FetchShader(extent.width, extent.height, samples, false, true));
+        CommandBatch batch(context);
+        fetch.Run(batch.Handle(), count);
+        RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        batch.SubmitAndWait();
+        output.Invalidate();
+        std::vector<float> depth(count);
+        for (std::uint32_t index = 0u; index < count; ++index) std::memcpy(&depth[index], output.Bytes().data() + (index + 1u) * 16u, sizeof(float));
+        return depth;
+    };
+    const auto before = fetchDepth(*texture);
+    QueueTargetWordFill(context, recorder, target.htileAddress, metadataBytes, expanded);
+    Require(CachedSampledTexture(context, words) != nullptr, "a GPU store of expanded HTILE words over native depth was refused");
+    Require(DepthSurfaceHolds(context, DecodeTextureResource(words), texture.get()), "a GPU store of expanded HTILE words lost the native depth view");
+    recorder.Sync();
+    const auto kept = CachedSampledTexture(context, words);
+    Require(kept != nullptr, "native depth was refused on the lookup after an accepted expanded HTILE store");
+    Require(fetchDepth(*kept) == before, "an accepted expanded HTILE store changed a native depth sample");
+    QueueTargetWordFill(context, recorder, target.htileAddress, metadataBytes, 0xfffffff0u);
+    TargetRefuses([&] { CachedSampledTexture(context, words); }, "external GPU writes over native multisample depth are not implemented");
+    recorder.Sync();
+    QueueTargetWordFill(context, recorder, target.address, 4u, 0u);
+    TargetRefuses([&] { CachedSampledTexture(context, words); }, "external GPU writes over native multisample depth are not implemented");
+    std::printf("Native D32 with HTILE, samples=%u: a GPU store of expanded HTILE words kept the native depth while other GPU stores over its planes were refused\n", samples);
+}
+
+void CheckExpandedWordsOverDepthPlane(Context context, std::uint32_t samples) {
+    constexpr VkExtent2D extent{5u, 3u};
+    const auto depthBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, samples));
+    const auto metadataBytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    TargetMemory memory(depthBytes), metadata(65536u);
+    std::memset(memory.Data(), 0, depthBytes);
+    constexpr std::uint32_t expanded = 0xfffc000fu;
+    const std::uint32_t pattern = 0xfffffff0u;
+    for (std::size_t offset = 0u; offset + 4u <= metadataBytes; offset += 4u) std::memcpy(metadata.Data() + offset, &pattern, 4u);
+    DepthTarget target{memory.Address(), 0u, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0u, metadata.Address(), false, samples};
+    target.depthSwizzle = 24u;
+    target.iterate256 = target.htilePipeAligned = target.htileDepthOnly = true;
+    Recorder recorder(context);
+    recorder.Activate();
+    struct Cleanup {
+        Recorder& recorder;
+        Context context;
+        ~Cleanup() { recorder.Sync(); ClearCachedTextures(context.device); ClearDepthSurfaces(context.device); }
+    } cleanup{recorder, context};
+    const auto words = DepthSampleWords(target);
+    Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "the expanded depth-plane store fixture has no attachment view");
+    Require(CachedSampledTexture(context, words) != nullptr, "the expanded depth-plane store fixture was not imported");
+    recorder.Sync();
+    QueueTargetWordFill(context, recorder, target.address, depthBytes, expanded);
+    TargetRefuses([&] { CachedSampledTexture(context, words); }, "external GPU writes over native multisample depth are not implemented");
+    std::printf("Native D32 with HTILE, samples=%u: a GPU store of expanded-HTILE-looking words over the depth plane was refused\n", samples);
+}
+
 enum class ReuseCase { VertexRead, IndexRead, StorageTexture, NewDepthTarget, CpuRead, DmaCopy, Rebind, ShaderBufferRead, ShaderBufferWrite, GuestWriteAfterRead, UndecidedShaderBufferWrite, TextureRead, DecidedVertexRead, DecidedNewDepthTarget };
 void CheckReusePublication(Context context, ReuseCase use) {
     constexpr std::uint32_t samples = 4u;
@@ -5902,6 +6011,10 @@ int main(int argc, char** argv) {
                 if (!supported(samples)) { ++unavailable; continue; }
                 CheckStoredRepeatFill(context, samples);
                 if (DepthSupported(context, VK_FORMAT_D32_SFLOAT, samples)) CheckElidedFillOverArmedClear(context, samples);
+                if (DepthSupported(context, VK_FORMAT_D32_SFLOAT, samples)) {
+                    CheckExpandedHtileStore(context, samples);
+                    CheckExpandedWordsOverDepthPlane(context, samples);
+                }
                 ++checked;
             }
             std::printf("Native depth stored repeated HTILE fill cases checked=%u unavailable=%u\n", checked, unavailable);
@@ -5912,6 +6025,7 @@ int main(int argc, char** argv) {
             for (const auto samples : {2u, 4u, 8u}) {
                 if (!DepthSupported(context, HostDepthFormat(context, VK_FORMAT_D32_SFLOAT_S8_UINT), samples)) { ++unavailable; continue; }
                 CheckUniformPlanesWithoutHtile(context, samples);
+                CheckExpandedWordsOverUniformStencil(context, samples);
                 ++checked;
             }
             std::printf("Native depth uniform-plane cases checked=%u unavailable=%u\n", checked, unavailable);
