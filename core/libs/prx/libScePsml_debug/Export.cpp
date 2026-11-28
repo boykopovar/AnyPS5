@@ -148,6 +148,25 @@ void ReleaseMfsrObject(void* handle, MfsrObjectKind kind, const char* function) 
  g_mfsrObjects.erase(found);
 }
 
+class PendingMfsrObject {
+public:
+ explicit PendingMfsrObject(void* handle) : handle(handle) {}
+ ~PendingMfsrObject() {
+  if (handle == nullptr) return;
+  std::lock_guard lock(g_mfsrMutex);
+  const auto found = g_mfsrObjects.find(handle);
+  if (found == g_mfsrObjects.end()) return;
+  delete found->second;
+  g_mfsrObjects.erase(found);
+ }
+ PendingMfsrObject(const PendingMfsrObject&) = delete;
+ PendingMfsrObject& operator=(const PendingMfsrObject&) = delete;
+ void Keep() { handle = nullptr; }
+
+private:
+ void* handle;
+};
+
 std::pair<std::uint32_t, std::uint32_t> MfsrInputDimensions(const MfsrContextParam& param, const char* function) {
  if (param.inputWidth != 0) return {param.inputWidth, param.inputHeight};
  if (param.descriptor0 == nullptr) return {0, 0};
@@ -173,10 +192,9 @@ std::int32_t CreateContextFromParam(void** context, const MfsrContextParam* para
  RequireMfsr(!useSharedResources || guestParam.sharedResources != nullptr, function, "null shared resources handle");
  const auto [inputWidth, inputHeight] = MfsrInputDimensions(guestParam, function);
  void* created = CreateMfsrContext(useSharedResources ? guestParam.sharedResources : nullptr, function, inputWidth, inputHeight);
- if (!CopyOutPreservingErrno(context, &created, sizeof(created))) {
-  ReleaseMfsrObject(created, MfsrObjectKind::Context, function);
-  RequireMfsr(false, function, "unwritable context handle");
- }
+ PendingMfsrObject pending(created);
+ RequireMfsr(CopyOutPreservingErrno(context, &created, sizeof(created)), function, "unwritable context handle");
+ pending.Keep();
  return 0;
 }
 
@@ -244,10 +262,9 @@ std::int32_t APS5_VABI scePsmlMfsrCreateSharedResources(void** sharedResources, 
   g_mfsrObjects.emplace(object, object);
   handle = object;
  }
- if (!CopyOutPreservingErrno(sharedResources, &handle, sizeof(handle))) {
-  ReleaseMfsrObject(handle, MfsrObjectKind::SharedResources, __func__);
-  RequireMfsr(false, __func__, "unwritable shared resources handle");
- }
+ PendingMfsrObject pending(handle);
+ RequireMfsr(CopyOutPreservingErrno(sharedResources, &handle, sizeof(handle)), __func__, "unwritable shared resources handle");
+ pending.Keep();
  return 0;
 }
 
@@ -290,10 +307,9 @@ std::int32_t APS5_VABI scePsmlMfsrCreateContext(void** context, const MfsrMemory
  RequireMfsr(guestParam.type <= 2, __func__, "unknown context type");
  if (guestParam.type != 0) NotImplemented_nid_no_patch(__func__);
  void* created = CreateMfsrContext(nullptr, __func__, Mfsr4KDimensions.first, Mfsr4KDimensions.second);
- if (!CopyOutPreservingErrno(context, &created, sizeof(created))) {
-  ReleaseMfsrObject(created, MfsrObjectKind::Context, __func__);
-  RequireMfsr(false, __func__, "unwritable context handle");
- }
+ PendingMfsrObject pending(created);
+ RequireMfsr(CopyOutPreservingErrno(context, &created, sizeof(created)), __func__, "unwritable context handle");
+ pending.Keep();
  return 0;
 }
 
