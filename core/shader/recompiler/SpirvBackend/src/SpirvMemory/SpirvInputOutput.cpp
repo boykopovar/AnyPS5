@@ -67,7 +67,7 @@ namespace ShaderRecompiler
             const bool flatP10 = flat && !input.perVertex && input.location < readsP10.size() && readsP10[input.location];
             const bool flatP20 = flat && !input.perVertex && input.location < readsP20.size() && readsP20[input.location];
             const bool vertexOrder = input.perVertex && (input.location >= 32u || (program.Metadata().pixelVertexOrderInputs >> input.location & 1u) != 0u);
-            const auto existing = std::find_if(result.begin(), result.end(), [&](const auto& parameter) { return parameter.location == location; });
+            const auto existing = std::find_if(result.begin(), result.end(), [&](const auto& parameter) { return parameter.location == location && parameter.perVertex == input.perVertex; });
             if (existing != result.end()) {
                 existing->flatP10 = existing->flatP10 || flatP10;
                 existing->flatP20 = existing->flatP20 || flatP20;
