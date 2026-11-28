@@ -14428,6 +14428,98 @@ void pipelineDeferredBuildTests() {
     Require(mock.live == 0, "deferred pipeline builds leaked Vulkan objects past ClearCachedPipelines");
 }
 
+void pipelineUnlockedBuildTests() {
+    using namespace AgcDriver::Graphics;
+    mock = MockVulkan{};
+    auto context = mockContext();
+    context.device = makeHandle<VkDevice>();
+    context.graphicsPipelineLibrary = true;
+    context.pipelineLinkTimeOptimization = false;
+    context.limits.framebufferNoAttachmentsSampleCounts = VK_SAMPLE_COUNT_1_BIT;
+    ShaderRecompiler::RecompileResult vertex, fragment;
+    vertex.spirv = makeModule({});
+    fragment.spirv = makeModule({.fragment = true});
+    vertex.variantId = 411;
+    fragment.variantId = 412;
+    const std::array<CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, PipelinePushSlotBytes}}};
+    const std::array<std::uint32_t, 1> mainKey{61};
+    const std::array<std::uint32_t, 1> fragmentKey{62};
+    const PipelineSetLayouts resources{makeHandle<VkDescriptorSetLayout>(), makeHandle<VkDescriptorSetLayout>(), true, mainKey, fragmentKey};
+    const auto layout = [](std::uint32_t stride) {
+        VertexInputLayout input;
+        input.bindings.push_back({0, stride, VK_VERTEX_INPUT_RATE_VERTEX});
+        return input;
+    };
+    const auto build = [&](const VertexInputLayout& input) { return ResidentPipelineOrUnlockedBuild(context, State{}, input, resources, shaders, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, nullptr); };
+    auto& gpu = AgcDriver::GuestMemory::GpuMutex();
+    {
+        const std::lock_guard held(gpu);
+        Require(build(layout(4)) != nullptr, "a draw outside an unlocked build scope did not build its pipeline");
+    }
+    {
+        UnlockedPipelineBuild unlocked;
+        Require(build(layout(8)) != nullptr, "a draw that does not hold the GPU mutex did not build its pipeline");
+        {
+            const std::lock_guard outer(gpu);
+            const std::lock_guard inner(gpu);
+            Require(build(layout(12)) != nullptr, "a draw nested in another hold of the GPU mutex did not build its pipeline");
+        }
+        Require(!unlocked.Build(), "a scope whose draws all built their pipelines had a build left");
+    }
+    {
+        UnlockedPipelineBuild unlocked;
+        const auto created = mock.pipelineCreateCount;
+        std::uint64_t hash = 1;
+        {
+            const std::lock_guard held(gpu);
+            Require(ResidentPipelineOrUnlockedBuild(context, State{}, layout(16), resources, shaders, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, &hash) == nullptr && hash == 0, "a cold pipeline was built under the GPU mutex");
+            Require(build(layout(20)) == nullptr && build(layout(4)) == nullptr, "a later draw of a commit with a build left was recorded, so the retried commit records it again");
+        }
+        Require(mock.pipelineCreateCount == created, "a commit with a build left created a pipeline under the GPU mutex");
+        const auto otherDevice = makeHandle<VkDevice>();
+        std::atomic<bool> cleared = false;
+        std::thread clear([&] {
+            ClearCachedPipelines(otherDevice);
+            cleared = true;
+        });
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        const bool clearedEarly = cleared;
+        const auto beforeBuild = mock.pipelineCreateCount;
+        const bool built = unlocked.Build();
+        clear.join();
+        Require(!clearedEarly, "ClearCachedPipelines returned while an unlocked build was left to run");
+        Require(built && mock.pipelineCreateCount > beforeBuild, "the unlocked build created no pipeline");
+        const auto afterBuild = mock.pipelineCreateCount;
+        const std::lock_guard held(gpu);
+        const auto resident = build(layout(16));
+        Require(resident != nullptr && mock.pipelineCreateCount == afterBuild, "the retried draw did not find the pipeline the unlocked build stored");
+        Require(CachedPipeline(context, State{}, layout(16), resources, shaders) == resident, "the unlocked build stored the pipeline under another key than the draw's");
+        Require(!unlocked.Build(), "a scope built its pipeline twice");
+    }
+    {
+        auto unlocked = std::make_unique<UnlockedPipelineBuild>();
+        {
+            const std::lock_guard held(gpu);
+            Require(build(layout(24)) == nullptr, "a cold pipeline was built under the GPU mutex");
+        }
+        unlocked.reset();
+        UnlockedPipelineBuild next;
+        Require(!next.Build(), "a build left by a scope that ended before building reached the next scope");
+    }
+    {
+        UnlockedPipelineBuild unlocked;
+        UnlockedPipelineBuild::Refuse();
+        const auto created = mock.pipelineCreateCount;
+        {
+            const std::lock_guard held(gpu);
+            Require(build(layout(28)) != nullptr && build(layout(32)) != nullptr && mock.pipelineCreateCount > created, "a multi-pass draw left a sub-draw's pipeline to an unlocked build");
+        }
+        Require(!unlocked.Build(), "a multi-pass draw had a build left");
+    }
+    ClearCachedPipelines(context.device);
+    Require(mock.live == 0, "unlocked pipeline builds leaked Vulkan objects past ClearCachedPipelines");
+}
+
 // The pipeline store's bound without a GPU: 1536 configurations cycled through the default 1024
 // entries keep coming back after their eviction, so the bound doubles and a later pass finds every
 // pipeline resident; a bound set with APS5_PIPELINE_STORE_ENTRIES never moves.
@@ -15854,6 +15946,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--pipeline-store-growth") {
             pipelineStoreGrowthTests(std::getenv("APS5_PIPELINE_STORE_ENTRIES") != nullptr);
             std::cout << "pipeline store bound follows the evicted pipelines that come back\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--pipeline-unlocked-build") {
+            pipelineUnlockedBuildTests();
+            std::cout << "cold draw pipelines build after the GPU mutex is released\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--pipeline-deferred-build") {

@@ -4734,7 +4734,13 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
                 return false;
             }
         }
-        if (!repeated && pipeline == nullptr) pipeline = CachedPipeline(context, pipelineState, inputs.VertexLayout(), layouts, shaders, attachmentLayout, nullptr, &storeHash);
+        if (!repeated && pipeline == nullptr) {
+            pipeline = ResidentPipelineOrUnlockedBuild(context, pipelineState, inputs.VertexLayout(), layouts, shaders, attachmentLayout, &storeHash);
+            if (pipeline == nullptr) {
+                report(" pipeline building outside the GPU mutex");
+                return false;
+            }
+        }
         if (memoized) rememberShape(context, prepared.shape, targets, repeated ? nullptr : &pipeline, storeHash, inputs.VertexLayout(), layouts, shaders, attachmentLayout, inputs.fragmentOutputs);
     }
     // Resident targets' views are stable while their storage image lives, so the framebuffer is
@@ -5249,6 +5255,7 @@ DrawResult Draw(const Context& context, const State& state, const Pm4::DrawParam
             })) return DrawResult::NeedsIndividualRecords;
     }
     if (state.stages.tessellationGeometry) {
+        UnlockedPipelineBuild::Refuse();
         drawTessellationGeometry(context, state, draw, shaders, snapshots, trace);
         return DrawResult::Handled;
     }
@@ -5256,6 +5263,7 @@ DrawResult Draw(const Context& context, const State& state, const Pm4::DrawParam
         const auto limit = context.meshLimits.maxMeshOutputLayers;
         Require(limit != 0u && !state.depth, "mesh layer windows require a nonzero output limit and color-only layered rendering");
         Require(std::ranges::all_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->layerReplaySafe; }), "mesh layer windows refuse shaders with guest memory writes, clocks or unproven side effects");
+        UnlockedPipelineBuild::Refuse();
         if (recipeOut != nullptr) recipeOut->reset();
         const auto makeWindow = [&](std::uint32_t base) {
             auto window = state;
