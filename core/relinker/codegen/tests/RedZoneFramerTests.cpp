@@ -855,6 +855,26 @@ void skipsSitesTakenByOtherStubs() {
     require(sites.empty() && report.Skipped.at("overlaps another stub") == 1, "a site over another stub was framed");
 }
 
+void preservesWindowsSegmentAccesses() {
+    for (const std::uint8_t prefix : {0x64, 0x65}) {
+        const std::vector<std::uint8_t> segmentLoad{prefix, 0x48, 0x8b, 0x0c, 0x25, 0, 0, 0, 0};
+        auto atEntry = segmentLoad;
+        append(atEntry, StoreBelowRsp);
+        append(atEntry, LoadBelowRsp);
+        append(atEntry, AddRdxToRax);
+        auto inBody = StoreBelowPushes;
+        append(inBody, segmentLoad);
+        append(inBody, LoadBelowPushes);
+        const auto input = image({framelessLeaf(PushRbx, atEntry, PopRbxExit), leaf(inBody)});
+        Codegen::RedZoneFrameReport report;
+        std::vector<Codegen::RedZoneDisplacement> displacements;
+        const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
+        require(report.RedZoneFunctions == 2 && report.Framed == 1 && sites.size() == 2 &&
+                sites.front().Address == input.functions[1].Begin && displacements.empty(),
+                "Windows segment access must stay in place while an unrelated frame can still be emitted");
+    }
+}
+
 void framesAPointerOnlyFunctionByItsOwnBounds() {
     const auto first = leaf(StoreBelowPushes);
     std::vector<std::uint8_t> secondBody = StoreBelowPushes;
@@ -1001,6 +1021,7 @@ int main() {
         framesRedZoneLeaf();
         leavesOtherFunctions();
         skipsSitesTakenByOtherStubs();
+        preservesWindowsSegmentAccesses();
         framesLeafWithoutFramePointer();
         shiftsByTheDeepestOperandBelowRsp();
         movesPositiveOperandsThatFitAfterTheShift();

@@ -350,7 +350,7 @@ void frameSegment(
         const auto at = static_cast<std::size_t>(site.Address - ph.MappedAddress);
         taken.emplace_back(at, at + site.Length);
     }
-    const auto overlapsExisting = [&](const std::size_t begin, const std::size_t end) {
+    const auto overlapsTrampoline = [&](const std::size_t begin, const std::size_t end) {
         return std::any_of(taken.begin(), taken.end(), [&](const auto& range) { return begin < range.second && range.first < end; });
     };
     const auto targetInside = [&](const std::size_t begin, const std::size_t end) {
@@ -366,10 +366,18 @@ void frameSegment(
 
         const std::vector<std::uint8_t> code(seg.begin() + static_cast<std::ptrdiff_t>(start), seg.begin() + static_cast<std::ptrdiff_t>(limit));
         std::vector<Insn> body;
+        std::vector<std::pair<std::size_t, std::size_t>> segmentAccesses;
         for (const auto& match : scanner->ScanCodeSection(code, 0, code.size())) {
             if (code[match.Offset] == 0xcc && match.Length == 1) break;
             body.push_back({start + static_cast<std::size_t>(match.Offset), match.Length, decoder.DecodeInstruction(code.data() + match.Offset, match.Length)});
+            const auto& insn = body.back();
+            if (insn.Info.HasMemoryOperand && (insn.Info.SegmentPrefix == 0x64 || insn.Info.SegmentPrefix == 0x65))
+                segmentAccesses.emplace_back(insn.Offset, insn.Offset + insn.Length);
         }
+        const auto overlapsExisting = [&](const std::size_t begin, const std::size_t end) {
+            return overlapsTrampoline(begin, end) || std::any_of(segmentAccesses.begin(), segmentAccesses.end(),
+                [&](const auto& range) { return begin < range.second && range.first < end; });
+        };
         if (body.size() < 3) continue;
         const auto at = [&](const std::size_t k) { return seg.data() + body[k].Offset; };
         const bool rbpPrologue = body[0].Length == 1 && at(0)[0] == 0x55 && body[1].Length == 3 && std::memcmp(at(1), "\x48\x89\xe5", 3) == 0;
