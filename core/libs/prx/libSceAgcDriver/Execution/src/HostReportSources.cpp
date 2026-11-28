@@ -17,6 +17,10 @@
 extern char** environ;
 #endif
 
+#ifndef _WIN32
+extern char** environ;
+#endif
+
 namespace AgcDriver {
 
 namespace {
