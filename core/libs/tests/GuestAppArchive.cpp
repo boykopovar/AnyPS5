@@ -2,9 +2,12 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/AppArchive.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/exceptions/Unwind.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cerrno>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -215,6 +218,455 @@ void Invalid(const std::filesystem::path& root) {
     Require(thrown, "an invalid app0.zar was not reported");
 }
 
+void UnwindBounds() {
+    const LibcUnwind::Byte cieAsFde[36] = {
+        0x20, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x01, 0x78,
+        0x10
+    };
+    {
+        LibcUnwind::Frame frame{};
+        LibcUnwind::Lookup query{0x1000, cieAsFde};
+        const LibcUnwind::Byte* p = nullptr;
+        const char* augmentation = nullptr;
+        LibcUnwind::Byte lsdaEncoding = 0;
+        Require(!LibcUnwind::DecodeRange(frame, query, p, augmentation, lsdaEncoding), "DecodeRange accepted a CIE record with cieOffset == 0");
+    }
+
+    const LibcUnwind::Byte zeroCieLength[48] = {
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x01, 0x78,
+        0x10, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x18, 0x00, 0x00, 0x00,
+        0x18, 0x00, 0x00, 0x00
+    };
+    {
+        LibcUnwind::Frame frame{};
+        LibcUnwind::Lookup query{0x1000, &zeroCieLength[20]};
+        const LibcUnwind::Byte* p = nullptr;
+        const char* augmentation = nullptr;
+        LibcUnwind::Byte lsdaEncoding = 0;
+        Require(!LibcUnwind::DecodeRange(frame, query, p, augmentation, lsdaEncoding), "DecodeRange accepted a CIE with cieLength == 0");
+    }
+
+    const LibcUnwind::Byte shortFdeLength[44] = {
+        0x0c, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x01, 0x78,
+        0x10, 0x00, 0x00, 0x00,
+        0x02, 0x00, 0x00, 0x00,
+        0x14, 0x00, 0x00, 0x00
+    };
+    {
+        LibcUnwind::Frame frame{};
+        LibcUnwind::Lookup query{0x1000, &shortFdeLength[16]};
+        const LibcUnwind::Byte* p = nullptr;
+        const char* augmentation = nullptr;
+        LibcUnwind::Byte lsdaEncoding = 0;
+        Require(!LibcUnwind::DecodeRange(frame, query, p, augmentation, lsdaEncoding), "DecodeRange accepted an FDE with length < 4");
+    }
+
+    const LibcUnwind::Byte badAugSize[40] = {
+        0x10, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x01, 'z', 'R', 0x00,
+        0x01, 0x78, 0x10, 0x0a,
+        0x03, 0x00, 0x00, 0x00,
+        0x0c, 0x00, 0x00, 0x00,
+        0x18, 0x00, 0x00, 0x00,
+        0x00, 0x10, 0x00, 0x00,
+        0x10, 0x00, 0x00, 0x00
+    };
+    {
+        LibcUnwind::Frame frame{};
+        LibcUnwind::Lookup query{0x1000, &badAugSize[20]};
+        const LibcUnwind::Byte* p = nullptr;
+        const char* augmentation = nullptr;
+        LibcUnwind::Byte lsdaEncoding = 0;
+        Require(!LibcUnwind::DecodeRange(frame, query, p, augmentation, lsdaEncoding), "DecodeRange accepted a 'z' augmentation size exceeding cieEnd");
+    }
+
+    const LibcUnwind::Byte fdePastSection[36] = {
+        0x10, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x01, 'z', 'R', 0x00,
+        0x01, 0x78, 0x10, 0x01,
+        0x03, 0x0c, 0x07, 0x08,
+        0x20, 0x00, 0x00, 0x00,
+        0x18, 0x00, 0x00, 0x00,
+        0x00, 0x10, 0x00, 0x00,
+        0x10, 0x00, 0x00, 0x00
+    };
+    {
+        LibcUnwind::Frame frame{};
+        LibcUnwind::Lookup query{0x1000, &fdePastSection[20], 0, 0, 0, fdePastSection + sizeof(fdePastSection)};
+        const LibcUnwind::Byte* p = nullptr;
+        const char* augmentation = nullptr;
+        LibcUnwind::Byte lsdaEncoding = 0;
+        Require(!LibcUnwind::DecodeRange(frame, query, p, augmentation, lsdaEncoding), "DecodeRange accepted an FDE exceeding fdeEnd");
+    }
+    {
+        LibcUnwind::Frame frame{};
+        LibcUnwind::Lookup shortQuery{0x1000, &fdePastSection[20], 0, 0, 0, &fdePastSection[22]};
+        const LibcUnwind::Byte* p = nullptr;
+        const char* augmentation = nullptr;
+        LibcUnwind::Byte lsdaEncoding = 0;
+        Require(!LibcUnwind::DecodeRange(frame, shortQuery, p, augmentation, lsdaEncoding), "DecodeRange accepted an FDE with fewer than 4 bytes before fdeEnd");
+        LibcUnwind::Lookup emptyQuery{0x1000, &fdePastSection[20], 0, 0, 0, &fdePastSection[20]};
+        Require(!LibcUnwind::DecodeRange(frame, emptyQuery, p, augmentation, lsdaEncoding), "DecodeRange accepted an empty fdeEnd range");
+    }
+
+    {
+        LibcUnwind::Frame frame{};
+        frame.start = 0x1000;
+        frame.codeAlign = 1;
+        frame.dataAlign = -8;
+        LibcUnwind::Rules initial{};
+
+        const LibcUnwind::Byte truncDefCfaExpr[8] = {0x0f, 0x05};
+        LibcUnwind::Rules s1 = initial;
+        Require(!LibcUnwind::Instructions(truncDefCfaExpr, truncDefCfaExpr + 2, frame, 0x1000, s1, initial), "Instructions accepted truncated DW_CFA_def_cfa_expression");
+
+        const LibcUnwind::Byte truncExpr[8] = {0x10, 0x03, 0x04};
+        LibcUnwind::Rules s2 = initial;
+        Require(!LibcUnwind::Instructions(truncExpr, truncExpr + 3, frame, 0x1000, s2, initial), "Instructions accepted truncated DW_CFA_expression");
+
+        const LibcUnwind::Byte truncValExpr[8] = {0x16, 0x06, 0x04};
+        LibcUnwind::Rules s3 = initial;
+        Require(!LibcUnwind::Instructions(truncValExpr, truncValExpr + 3, frame, 0x1000, s3, initial), "Instructions accepted truncated DW_CFA_val_expression");
+
+        const LibcUnwind::Byte truncAdvanceLoc4[8] = {0x04, 0x01};
+        LibcUnwind::Rules s4 = initial;
+        Require(!LibcUnwind::Instructions(truncAdvanceLoc4, truncAdvanceLoc4 + 2, frame, 0x1000, s4, initial), "Instructions accepted truncated DW_CFA_advance_loc4");
+    }
+
+    const LibcUnwind::Byte validEhFrame[44] = {
+        0x10, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x01, 'z', 'R', 0x00,
+        0x01, 0x78, 0x10, 0x01,
+        0x03, 0x0c, 0x07, 0x08,
+        0x14, 0x00, 0x00, 0x00,
+        0x18, 0x00, 0x00, 0x00,
+        0x00, 0x10, 0x00, 0x00,
+        0x40, 0x00, 0x00, 0x00,
+        0x00, 0x44, 0x0e, 0x10,
+        0x86, 0x02, 0x90, 0x01
+    };
+    {
+        LibcUnwind::Frame frame{};
+        LibcUnwind::Lookup query{0x1010, &validEhFrame[20], 0, 0, 0, validEhFrame + sizeof(validEhFrame)};
+        const LibcUnwind::Byte* p = nullptr;
+        const char* augmentation = nullptr;
+        LibcUnwind::Byte lsdaEncoding = 0;
+        Require(LibcUnwind::DecodeRange(frame, query, p, augmentation, lsdaEncoding), "valid CIE/FDE failed DecodeRange");
+        Require(frame.start == 0x1000 && frame.length == 0x40, "valid FDE decoded unexpected range");
+        Require(frame.codeAlign == 1 && frame.dataAlign == -8 && frame.returnRegister == 16, "valid CIE decoded unexpected alignment or return register");
+        Require(std::strcmp(augmentation, "zR") == 0 && lsdaEncoding == 255, "valid CIE decoded unexpected augmentation");
+        Require(LibcUnwind::DecodeFdeAugmentation(frame, query, p, augmentation, lsdaEncoding), "valid FDE augmentation failed");
+        LibcUnwind::Rules initial{};
+        Require(LibcUnwind::Instructions(frame.cieBegin, frame.cieEnd, frame, frame.start, initial, initial), "valid CIE instructions failed");
+        Require(initial.cfaRegister == 7 && initial.cfaOffset == 8, "valid CIE instructions computed unexpected initial CFA");
+        LibcUnwind::Rules state = initial;
+        Require(LibcUnwind::Instructions(p, frame.end, frame, 0x1010, state, initial), "valid FDE instructions failed");
+        Require(state.cfaRegister == 7 && state.cfaOffset == 16, "valid FDE instructions computed unexpected CFA");
+        Require(state.registers[6].kind == 1 && state.registers[6].value == -16, "valid FDE instructions computed unexpected r6 rule");
+        Require(state.registers[16].kind == 1 && state.registers[16].value == -8, "valid FDE instructions computed unexpected r16 rule");
+    }
+
+    {
+        std::array<LibcUnwind::Byte, 68> ehBuf = {
+            0x14, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x01, 'z', 'R', 'L',
+            0x00, 0x01, 0x78, 0x10,
+            0x02, 0x1b, 0x03, 0x0c,
+            0x07, 0x08, 0x00, 0x00,
+            0x18, 0x00, 0x00, 0x00,
+            0x1c, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x40, 0x00, 0x00, 0x00,
+            0x04, 0x44, 0x33, 0x22,
+            0x11, 0x44, 0x0e, 0x10,
+            0x00, 0x00, 0x00, 0x00,
+            0x01, 0xff, 0x03, 0x3b,
+            0x01, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00
+        };
+        const LibcUnwind::Byte* const ehHdr = &ehBuf[52];
+        const LibcUnwind::Byte* const ehHdrEnd = ehBuf.data() + ehBuf.size();
+        const LibcUnwind::Word targetPc = reinterpret_cast<LibcUnwind::Word>(ehBuf.data()) + 0x100;
+        const std::int32_t fdeStartRel = static_cast<std::int32_t>(targetPc - reinterpret_cast<LibcUnwind::Word>(&ehBuf[32]));
+        const std::int32_t hdrPcRel = static_cast<std::int32_t>(targetPc - reinterpret_cast<LibcUnwind::Word>(ehHdr));
+        const std::int32_t hdrFdeRel = static_cast<std::int32_t>(&ehBuf[24] - ehHdr);
+        std::memcpy(&ehBuf[32], &fdeStartRel, sizeof(fdeStartRel));
+        std::memcpy(&ehBuf[60], &hdrPcRel, sizeof(hdrPcRel));
+        std::memcpy(&ehBuf[64], &hdrFdeRel, sizeof(hdrFdeRel));
+
+        LibcUnwind::Lookup truncHdrQuery{targetPc + 4};
+        Require(!LibcUnwind::SearchEhFrameHeader(ehHdr, ehHdrEnd - 1, truncHdrQuery), "SearchEhFrameHeader accepted a truncated .eh_frame_hdr table");
+
+        auto alignedHdrBuf = ehBuf;
+        alignedHdrBuf[55] = 0x5b;
+        LibcUnwind::Lookup alignedHdrQuery{targetPc + 4};
+        Require(!LibcUnwind::SearchEhFrameHeader(&alignedHdrBuf[52], alignedHdrBuf.data() + alignedHdrBuf.size(), alignedHdrQuery), "SearchEhFrameHeader accepted aligned table encoding");
+
+        LibcUnwind::Lookup query{targetPc + 4};
+        Require(LibcUnwind::SearchEhFrameHeader(ehHdr, ehHdrEnd, query), "SearchEhFrameHeader failed on valid .eh_frame_hdr");
+        Require(query.fde == &ehBuf[24], "SearchEhFrameHeader returned unexpected FDE");
+        query.fdeBegin = ehBuf.data();
+        query.fdeEnd = ehHdr;
+
+        LibcUnwind::Frame frame{};
+        const LibcUnwind::Byte* p = nullptr;
+        const char* augmentation = nullptr;
+        LibcUnwind::Byte lsdaEncoding = 0;
+        Require(LibcUnwind::DecodeRange(frame, query, p, augmentation, lsdaEncoding), "DecodeRange failed on looked-up FDE");
+        Require(frame.start == targetPc && frame.length == 0x40, "looked-up FDE decoded unexpected range");
+        Require(LibcUnwind::DecodeFdeAugmentation(frame, query, p, augmentation, lsdaEncoding), "DecodeFdeAugmentation failed on valid LSDA");
+        Require(frame.lsda == 0x11223344, "DecodeFdeAugmentation decoded unexpected LSDA");
+
+        {
+            const LibcUnwind::Byte emptyZLAug[] = {0x00, 0x00};
+            const LibcUnwind::Byte* ep = emptyZLAug;
+            LibcUnwind::Frame emptyLsdaFrame{};
+            emptyLsdaFrame.end = emptyZLAug + sizeof(emptyZLAug);
+            Require(LibcUnwind::DecodeFdeAugmentation(emptyLsdaFrame, query, ep, "zRL", 0x1b), "DecodeFdeAugmentation rejected empty zL FDE augmentation");
+            Require(emptyLsdaFrame.lsda == 0 && ep == emptyZLAug + 1, "empty zL FDE augmentation moved pointer unexpectedly");
+
+            const LibcUnwind::Byte shortZLAug[] = {0x01, 0x44};
+            const LibcUnwind::Byte* sp = shortZLAug;
+            LibcUnwind::Frame shortLsdaFrame{};
+            shortLsdaFrame.end = shortZLAug + sizeof(shortZLAug);
+            Require(!LibcUnwind::DecodeFdeAugmentation(shortLsdaFrame, query, sp, "zRL", 0x1b), "DecodeFdeAugmentation accepted truncated nonempty zL FDE augmentation");
+        }
+
+        LibcUnwind::Lookup truncFdeQuery = query;
+        truncFdeQuery.fdeEnd = &ehBuf[48];
+        LibcUnwind::Frame badFrame{};
+        Require(!LibcUnwind::DecodeRange(badFrame, truncFdeQuery, p, augmentation, lsdaEncoding), "DecodeRange accepted truncated looked-up FDE");
+
+        LibcUnwind::Lookup badCieBeginQuery = query;
+        badCieBeginQuery.fdeBegin = &ehBuf[1];
+        Require(!LibcUnwind::DecodeRange(badFrame, badCieBeginQuery, p, augmentation, lsdaEncoding), "DecodeRange accepted CIE starting before fdeBegin");
+
+        auto truncCieBuf = ehBuf;
+        truncCieBuf[0] = 0x40;
+        LibcUnwind::Lookup truncCieQuery{targetPc + 4};
+        const LibcUnwind::Byte* const truncHdr = &truncCieBuf[52];
+        const LibcUnwind::Byte* const truncHdrEnd = truncCieBuf.data() + truncCieBuf.size();
+        const std::int32_t truncFdeStartRel = static_cast<std::int32_t>(targetPc - reinterpret_cast<LibcUnwind::Word>(&truncCieBuf[32]));
+        const std::int32_t truncHdrPcRel = static_cast<std::int32_t>(targetPc - reinterpret_cast<LibcUnwind::Word>(truncHdr));
+        std::memcpy(&truncCieBuf[32], &truncFdeStartRel, sizeof(truncFdeStartRel));
+        std::memcpy(&truncCieBuf[60], &truncHdrPcRel, sizeof(truncHdrPcRel));
+        Require(LibcUnwind::SearchEhFrameHeader(truncHdr, truncHdrEnd, truncCieQuery), "SearchEhFrameHeader failed on truncCieBuf");
+        truncCieQuery.fdeBegin = truncCieBuf.data();
+        truncCieQuery.fdeEnd = truncHdr;
+        Require(!LibcUnwind::DecodeRange(badFrame, truncCieQuery, p, augmentation, lsdaEncoding), "DecodeRange accepted CIE extending past fdeEnd");
+
+        auto overlapCieBuf = ehBuf;
+        overlapCieBuf[0] = 0x18;
+        LibcUnwind::Lookup overlapCieQuery = query;
+        overlapCieQuery.fde = &overlapCieBuf[24];
+        overlapCieQuery.fdeBegin = overlapCieBuf.data();
+        overlapCieQuery.fdeEnd = &overlapCieBuf[52];
+        const std::int32_t overlapFdeStartRel = static_cast<std::int32_t>(targetPc - reinterpret_cast<LibcUnwind::Word>(&overlapCieBuf[32]));
+        std::memcpy(&overlapCieBuf[32], &overlapFdeStartRel, sizeof(overlapFdeStartRel));
+        Require(!LibcUnwind::DecodeRange(badFrame, overlapCieQuery, p, augmentation, lsdaEncoding), "DecodeRange accepted CIE overlapping FDE within fdeEnd");
+
+        std::array<LibcUnwind::Byte, 56> splitBuf = {
+            0x14, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x01, 'z', 'R', 'L',
+            0x00, 0x01, 0x78, 0x10,
+            0x02, 0x1b, 0x03, 0x0c,
+            0x07, 0x08, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x18, 0x00, 0x00, 0x00,
+            0x20, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x40, 0x00, 0x00, 0x00,
+            0x04, 0x44, 0x33, 0x22,
+            0x11, 0x44, 0x0e, 0x10,
+            0x00, 0x00, 0x00, 0x00
+        };
+        const std::int32_t splitFdeStartRel = static_cast<std::int32_t>(targetPc - reinterpret_cast<LibcUnwind::Word>(&splitBuf[36]));
+        std::memcpy(&splitBuf[36], &splitFdeStartRel, sizeof(splitFdeStartRel));
+        LibcUnwind::Lookup validSplitQuery{targetPc + 4, &splitBuf[28], 0, 0, 0, splitBuf.data() + splitBuf.size(), &splitBuf[28], splitBuf.data(), &splitBuf[24]};
+        LibcUnwind::Frame splitFrame{};
+        Require(LibcUnwind::DecodeRange(splitFrame, validSplitQuery, p, augmentation, lsdaEncoding), "DecodeRange failed on valid split CIE/FDE sections");
+
+        auto crossCieBuf = splitBuf;
+        crossCieBuf[0] = 0x18;
+        const std::int32_t crossFdeStartRel = static_cast<std::int32_t>(targetPc - reinterpret_cast<LibcUnwind::Word>(&crossCieBuf[36]));
+        std::memcpy(&crossCieBuf[36], &crossFdeStartRel, sizeof(crossFdeStartRel));
+        LibcUnwind::Lookup crossCieQuery{targetPc + 4, &crossCieBuf[28], 0, 0, 0, crossCieBuf.data() + crossCieBuf.size(), &crossCieBuf[28], crossCieBuf.data(), &crossCieBuf[24]};
+        Require(!LibcUnwind::DecodeRange(badFrame, crossCieQuery, p, augmentation, lsdaEncoding), "DecodeRange accepted CIE crossing cieEnd before fdeEnd");
+
+        LibcUnwind::Lookup shortCieQuery{targetPc + 4, &splitBuf[28], 0, 0, 0, splitBuf.data() + splitBuf.size(), &splitBuf[28], splitBuf.data(), &splitBuf[2]};
+        Require(!LibcUnwind::DecodeRange(badFrame, shortCieQuery, p, augmentation, lsdaEncoding), "DecodeRange accepted CIE with fewer than 4 bytes before cieEnd");
+
+        auto badFdeAugBuf = ehBuf;
+        badFdeAugBuf[40] = 0x20;
+        LibcUnwind::Lookup badAugQuery{targetPc + 4, &badFdeAugBuf[24], 0, 0, 0, &badFdeAugBuf[52], badFdeAugBuf.data()};
+        Require(LibcUnwind::DecodeRange(badFrame, badAugQuery, p, augmentation, lsdaEncoding), "DecodeRange failed before FDE augmentation check");
+        Require(!LibcUnwind::DecodeFdeAugmentation(badFrame, badAugQuery, p, augmentation, lsdaEncoding), "DecodeFdeAugmentation accepted augmentation size exceeding frame.end");
+
+        auto shortLsdaBuf = ehBuf;
+        shortLsdaBuf[40] = 0x02;
+        LibcUnwind::Lookup shortLsdaQuery{targetPc + 4, &shortLsdaBuf[24], 0, 0, 0, &shortLsdaBuf[52], shortLsdaBuf.data()};
+        Require(LibcUnwind::DecodeRange(badFrame, shortLsdaQuery, p, augmentation, lsdaEncoding), "DecodeRange failed before LSDA bounds check");
+        Require(!LibcUnwind::DecodeFdeAugmentation(badFrame, shortLsdaQuery, p, augmentation, lsdaEncoding), "DecodeFdeAugmentation accepted truncated LSDA inside FDE augmentation");
+
+        std::array<LibcUnwind::Byte, 32> unterminatedAugBuf = {
+            0x07, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x01, 'z', 'R',
+            0x10, 0x00, 0x00, 0x00,
+            0x0f, 0x00, 0x00, 0x00,
+            0x00, 0x10, 0x00, 0x00,
+            0x10, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x00
+        };
+        LibcUnwind::Lookup unterminatedAugQuery{0x1000, &unterminatedAugBuf[11], 0, 0, 0, unterminatedAugBuf.data() + 31, unterminatedAugBuf.data(), unterminatedAugBuf.data(), &unterminatedAugBuf[11]};
+        Require(!LibcUnwind::DecodeRange(badFrame, unterminatedAugQuery, p, augmentation, lsdaEncoding), "DecodeRange accepted an unterminated CIE augmentation string reaching cieEnd");
+
+        LibcUnwind::Lookup unterminatedAugNoSectionEndQuery{0x1000, &unterminatedAugBuf[11], 0, 0, 0, unterminatedAugBuf.data() + 31, unterminatedAugBuf.data()};
+        Require(!LibcUnwind::DecodeRange(badFrame, unterminatedAugNoSectionEndQuery, p, augmentation, lsdaEncoding), "DecodeRange accepted an unterminated CIE augmentation string reaching CIE record end");
+    }
+
+    {
+        const std::array<LibcUnwind::Byte, 10> ulebMax = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01};
+        const LibcUnwind::Byte* cursor = ulebMax.data();
+        LibcUnwind::Word u = 0;
+        Require(LibcUnwind::TryUleb(cursor, ulebMax.data() + ulebMax.size(), u) && cursor == ulebMax.data() + ulebMax.size() && u == static_cast<LibcUnwind::Word>(UINT64_MAX), "TryUleb rejected UINT64_MAX");
+
+        for (const LibcUnwind::Byte tail : {LibcUnwind::Byte{0x02}, LibcUnwind::Byte{0x7f}, LibcUnwind::Byte{0x80}}) {
+            const std::array<LibcUnwind::Byte, 10> ulebOverflow = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, tail};
+            cursor = ulebOverflow.data();
+            Require(!LibcUnwind::TryUleb(cursor, ulebOverflow.data() + ulebOverflow.size(), u), "TryUleb accepted overflowing 10th byte");
+        }
+
+        const std::array<LibcUnwind::Byte, 10> slebMax = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00};
+        cursor = slebMax.data();
+        std::intptr_t s = 0;
+        Require(LibcUnwind::TrySleb(cursor, slebMax.data() + slebMax.size(), s) && cursor == slebMax.data() + slebMax.size() && s == static_cast<std::intptr_t>(INT64_MAX), "TrySleb rejected INT64_MAX");
+
+        const std::array<LibcUnwind::Byte, 10> slebMin = {0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x7f};
+        cursor = slebMin.data();
+        Require(LibcUnwind::TrySleb(cursor, slebMin.data() + slebMin.size(), s) && cursor == slebMin.data() + slebMin.size() && s == static_cast<std::intptr_t>(INT64_MIN), "TrySleb rejected INT64_MIN");
+
+        for (const LibcUnwind::Byte tail : {LibcUnwind::Byte{0x01}, LibcUnwind::Byte{0x40}, LibcUnwind::Byte{0x7e}, LibcUnwind::Byte{0x80}}) {
+            const std::array<LibcUnwind::Byte, 10> slebOverflowPos = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, tail};
+            cursor = slebOverflowPos.data();
+            Require(!LibcUnwind::TrySleb(cursor, slebOverflowPos.data() + slebOverflowPos.size(), s), "TrySleb accepted overflowing 10th byte");
+            const std::array<LibcUnwind::Byte, 10> slebOverflowNeg = {0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, tail};
+            cursor = slebOverflowNeg.data();
+            Require(!LibcUnwind::TrySleb(cursor, slebOverflowNeg.data() + slebOverflowNeg.size(), s), "TrySleb accepted overflowing negative 10th byte");
+        }
+
+        const std::array<LibcUnwind::Byte, 48> overflowCieCodeAlign = {
+            0x1c, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x01, 'z', 'R', 0x00,
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x02,
+            0x78,
+            0x10,
+            0x01,
+            0x03,
+            0x0c, 0x07, 0x08, 0x00, 0x00, 0x00,
+            0x0c, 0x00, 0x00, 0x00,
+            0x24, 0x00, 0x00, 0x00,
+            0x00, 0x10, 0x00, 0x00,
+            0x40, 0x00, 0x00, 0x00
+        };
+        LibcUnwind::Frame overflowFrame{};
+        LibcUnwind::Lookup overflowCieCodeQuery{0x1010, &overflowCieCodeAlign[32], 0, 0, 0, overflowCieCodeAlign.data() + overflowCieCodeAlign.size(), overflowCieCodeAlign.data(), overflowCieCodeAlign.data(), &overflowCieCodeAlign[32]};
+        const LibcUnwind::Byte* p = nullptr;
+        const char* augmentation = nullptr;
+        LibcUnwind::Byte lsdaEncoding = 0;
+        Require(!LibcUnwind::DecodeRange(overflowFrame, overflowCieCodeQuery, p, augmentation, lsdaEncoding), "DecodeRange accepted overflowing ULEB128 codeAlign in CIE");
+
+        const std::array<LibcUnwind::Byte, 48> overflowCieDataAlign = {
+            0x1c, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x01, 'z', 'R', 0x00,
+            0x01,
+            0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x7e,
+            0x10,
+            0x01,
+            0x03,
+            0x0c, 0x07, 0x08, 0x00, 0x00, 0x00,
+            0x0c, 0x00, 0x00, 0x00,
+            0x24, 0x00, 0x00, 0x00,
+            0x00, 0x10, 0x00, 0x00,
+            0x40, 0x00, 0x00, 0x00
+        };
+        overflowFrame = {};
+        LibcUnwind::Lookup overflowCieDataQuery{0x1010, &overflowCieDataAlign[32], 0, 0, 0, overflowCieDataAlign.data() + overflowCieDataAlign.size(), overflowCieDataAlign.data(), overflowCieDataAlign.data(), &overflowCieDataAlign[32]};
+        Require(!LibcUnwind::DecodeRange(overflowFrame, overflowCieDataQuery, p, augmentation, lsdaEncoding), "DecodeRange accepted overflowing SLEB128 dataAlign in CIE");
+
+        const std::array<LibcUnwind::Byte, 40> overflowFdeRange = {
+            0x10, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x01, 'z', 'R', 0x00,
+            0x01, 0x78, 0x10, 0x01,
+            0x01, 0x0c, 0x07, 0x08,
+            0x10, 0x00, 0x00, 0x00,
+            0x18, 0x00, 0x00, 0x00,
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x02,
+            0x40,
+            0x00
+        };
+        overflowFrame = {};
+        LibcUnwind::Lookup overflowFdeQuery{0x1010, &overflowFdeRange[20], 0, 0, 0, overflowFdeRange.data() + overflowFdeRange.size(), overflowFdeRange.data(), overflowFdeRange.data(), &overflowFdeRange[20]};
+        Require(!LibcUnwind::DecodeRange(overflowFrame, overflowFdeQuery, p, augmentation, lsdaEncoding), "DecodeRange accepted overflowing ULEB128 start in FDE");
+    }
+
+    {
+        Require(LibcUnwind::EffectiveSectionSize(0, sizeof(validEhFrame)) == sizeof(validEhFrame), "EffectiveSectionSize failed SizeOfRawData fallback");
+        Require(LibcUnwind::EffectiveSectionSize(24, sizeof(validEhFrame)) == 24, "EffectiveSectionSize ignored nonzero VirtualSize");
+        Require(LibcUnwind::EffectiveSectionSize(0, 0) == 0, "EffectiveSectionSize failed zero-size section");
+
+        std::array<LibcUnwind::Byte, 64> sectionImage{};
+        std::memcpy(&sectionImage[16], validEhFrame, sizeof(validEhFrame));
+
+        const LibcUnwind::Byte* frames = nullptr;
+        const LibcUnwind::Byte* framesEnd = nullptr;
+        Require(LibcUnwind::SectionBounds(sectionImage.data(), 16, 0, sizeof(validEhFrame), frames, framesEnd), "SectionBounds rejected VirtualSize == 0 with nonzero SizeOfRawData");
+        Require(frames == &sectionImage[16] && framesEnd == &sectionImage[16] + sizeof(validEhFrame), "SectionBounds computed unexpected fallback bounds");
+
+        LibcUnwind::Frame sectionFrame{};
+        const LibcUnwind::Byte* p = nullptr;
+        const char* augmentation = nullptr;
+        LibcUnwind::Byte lsdaEncoding = 0;
+        LibcUnwind::Lookup fallbackQuery{0x1010, frames + 20, 0, 0, 0, framesEnd, frames, frames, framesEnd};
+        Require(LibcUnwind::DecodeRange(sectionFrame, fallbackQuery, p, augmentation, lsdaEncoding), "DecodeRange rejected .ehfram bounds with VirtualSize == 0 fallback");
+        Require(sectionFrame.start == 0x1000 && sectionFrame.length == 0x40, "DecodeRange decoded unexpected range from fallback .ehfram bounds");
+
+        const LibcUnwind::Byte* truncFrames = nullptr;
+        const LibcUnwind::Byte* truncFramesEnd = nullptr;
+        Require(LibcUnwind::SectionBounds(sectionImage.data(), 16, 24, sizeof(validEhFrame), truncFrames, truncFramesEnd), "SectionBounds rejected nonzero VirtualSize");
+        Require(truncFrames == &sectionImage[16] && truncFramesEnd == &sectionImage[16] + 24, "SectionBounds did not prefer nonzero VirtualSize");
+        LibcUnwind::Lookup truncQuery{0x1010, truncFrames + 20, 0, 0, 0, truncFramesEnd, truncFrames, truncFrames, truncFramesEnd};
+        LibcUnwind::Frame truncFrame{};
+        Require(!LibcUnwind::DecodeRange(truncFrame, truncQuery, p, augmentation, lsdaEncoding), "DecodeRange accepted FDE past nonzero VirtualSize");
+
+        const LibcUnwind::Byte* badBegin = &sectionImage[0];
+        const LibcUnwind::Byte* badEnd = &sectionImage[0];
+        Require(!LibcUnwind::SectionBounds(sectionImage.data(), 16, 0, 0, badBegin, badEnd) && !badBegin && !badEnd, "SectionBounds accepted empty section");
+        Require(!LibcUnwind::SectionBounds(nullptr, 16, 0, sizeof(validEhFrame), badBegin, badEnd), "SectionBounds accepted null image base");
+        Require(!LibcUnwind::SectionBounds(sectionImage.data(), ~LibcUnwind::Word(0) - 4, 16, 0, badBegin, badEnd), "SectionBounds accepted virtualAddress wraparound");
+        Require(!LibcUnwind::SectionBounds(sectionImage.data(), 16, ~LibcUnwind::Word(0) - 4, 0, badBegin, badEnd), "SectionBounds accepted section size wraparound");
+    }
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -229,6 +681,7 @@ int main(int argc, char** argv) {
     else if (mode == "damaged") Damaged(root);
     else if (mode == "invalid") Invalid(root);
     else return 2;
+    UnwindBounds();
     std::error_code error;
     std::filesystem::current_path(std::filesystem::temp_directory_path(), error);
     std::filesystem::remove_all(root, error);
