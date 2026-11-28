@@ -2,9 +2,11 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <initializer_list>
 #include <limits>
 #include <memory>
@@ -15,6 +17,15 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 using NKWebKit::HttpAbi::HTTPHeaderMap;
 using NKWebKit::HttpAbi::HTTPHeaderName;
@@ -814,6 +825,226 @@ static void TestNullArguments() {
     Require(!CanSkip());
 }
 
+struct GuardedPages {
+    unsigned char* base{nullptr};
+    std::size_t pageSize{0};
+
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 4, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(base + pageSize, pageSize, PAGE_READONLY, &previous) != 0);
+        Require(VirtualProtect(base + pageSize * 3, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0);
+        pageSize = static_cast<std::size_t>(size);
+        void* mapped = mmap(nullptr, pageSize * 4, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        base = static_cast<unsigned char*>(mapped);
+        Require(mprotect(base + pageSize, pageSize, PROT_READ) == 0);
+        Require(mprotect(base + pageSize * 3, pageSize, PROT_NONE) == 0);
+#endif
+    }
+
+    ~GuardedPages() {
+        if (!base) return;
+#ifdef _WIN32
+        Require(VirtualFree(base, 0, MEM_RELEASE) != 0);
+#else
+        Require(munmap(base, pageSize * 4) == 0);
+#endif
+    }
+
+    unsigned char* ReadOnly() const { return base + pageSize; }
+    unsigned char* Guard() const { return base + pageSize * 3; }
+};
+
+template<typename TFunction>
+static bool ThrowsNotImplemented(TFunction&& function, const char* symbol) {
+    try {
+        function();
+    } catch (const std::runtime_error& error) {
+        return std::string(error.what()) == std::string(symbol) + " not implemented";
+    }
+    return false;
+}
+
+static void TestGuestPointers() {
+    constexpr const char* kAppendSymbol =
+        "_ZN7WebCore31CrossOriginPreflightResultCache11appendEntryERKN3WTF6StringERKNS1_3URLESt10unique_ptrINS_35CrossOriginPreflightResultCacheItemESt14default_deleteIS9_EE";
+    constexpr const char* kCanSkipSymbol =
+        "_ZN7WebCore31CrossOriginPreflightResultCache16canSkipPreflightERKN3WTF6StringERKNS1_3URLENS_23StoredCredentialsPolicyES4_RKNS_13HTTPHeaderMapE";
+    GuardedPages pages;
+    Clear();
+
+    const String origin = Text(kOrigin);
+    const String urlText = Text(kURL);
+    const String method = Text("GET");
+    URL url{};
+    url.impl = urlText.impl;
+    const HTTPHeaderMap emptyHeaders{};
+    CrossOriginPreflightResultCacheItem* emptyItem = nullptr;
+
+    Require(ThrowsNotImplemented([&] {
+        _ZN7WebCore31CrossOriginPreflightResultCache11appendEntryERKN3WTF6StringERKNS1_3URLESt10unique_ptrINS_35CrossOriginPreflightResultCacheItemESt14default_deleteIS9_EE(
+            Cache(), reinterpret_cast<const String*>(pages.Guard()), &url, &emptyItem);
+    }, kAppendSymbol));
+    Require(ThrowsNotImplemented([&] {
+        _ZN7WebCore31CrossOriginPreflightResultCache11appendEntryERKN3WTF6StringERKNS1_3URLESt10unique_ptrINS_35CrossOriginPreflightResultCacheItemESt14default_deleteIS9_EE(
+            Cache(), &origin, reinterpret_cast<const URL*>(pages.Guard()), &emptyItem);
+    }, kAppendSymbol));
+    Require(ThrowsNotImplemented([&] {
+        _ZN7WebCore31CrossOriginPreflightResultCache11appendEntryERKN3WTF6StringERKNS1_3URLESt10unique_ptrINS_35CrossOriginPreflightResultCacheItemESt14default_deleteIS9_EE(
+            Cache(), &origin, &url, reinterpret_cast<CrossOriginPreflightResultCacheItem**>(pages.Guard()));
+    }, kAppendSymbol));
+    Require(ThrowsNotImplemented([&] {
+        _ZN7WebCore31CrossOriginPreflightResultCache11appendEntryERKN3WTF6StringERKNS1_3URLESt10unique_ptrINS_35CrossOriginPreflightResultCacheItemESt14default_deleteIS9_EE(
+            Cache(), &origin, &url, reinterpret_cast<CrossOriginPreflightResultCacheItem**>(pages.ReadOnly()));
+    }, kAppendSymbol));
+
+    alignas(String) unsigned char badOriginRaw[sizeof(String)]{};
+    auto* guardImpl = reinterpret_cast<StringImpl*>(pages.Guard());
+    std::memcpy(badOriginRaw, &guardImpl, sizeof(guardImpl));
+    Require(ThrowsNotImplemented([&] {
+        _ZN7WebCore31CrossOriginPreflightResultCache11appendEntryERKN3WTF6StringERKNS1_3URLESt10unique_ptrINS_35CrossOriginPreflightResultCacheItemESt14default_deleteIS9_EE(
+            Cache(), reinterpret_cast<const String*>(badOriginRaw), &url, &emptyItem);
+    }, kAppendSymbol));
+
+    StringImpl badDataImpl{2, 8, pages.Guard() - 4, 4};
+    auto* badDataPtr = &badDataImpl;
+    std::memcpy(badOriginRaw, &badDataPtr, sizeof(badDataPtr));
+    Require(ThrowsNotImplemented([&] {
+        _ZN7WebCore31CrossOriginPreflightResultCache11appendEntryERKN3WTF6StringERKNS1_3URLESt10unique_ptrINS_35CrossOriginPreflightResultCacheItemESt14default_deleteIS9_EE(
+            Cache(), reinterpret_cast<const String*>(badOriginRaw), &url, &emptyItem);
+    }, kAppendSymbol));
+
+    URL badUrl{};
+    badUrl.impl = guardImpl;
+    Require(ThrowsNotImplemented([&] {
+        _ZN7WebCore31CrossOriginPreflightResultCache11appendEntryERKN3WTF6StringERKNS1_3URLESt10unique_ptrINS_35CrossOriginPreflightResultCacheItemESt14default_deleteIS9_EE(
+            Cache(), &origin, &badUrl, &emptyItem);
+    }, kAppendSymbol));
+
+    auto* guardGuestItem = reinterpret_cast<CrossOriginPreflightResultCacheItem*>(pages.Guard());
+    Require(ThrowsNotImplemented([&] {
+        _ZN7WebCore31CrossOriginPreflightResultCache11appendEntryERKN3WTF6StringERKNS1_3URLESt10unique_ptrINS_35CrossOriginPreflightResultCacheItemESt14default_deleteIS9_EE(
+            Cache(), &origin, &url, &guardGuestItem);
+    }, kAppendSymbol));
+    Require(guardGuestItem == reinterpret_cast<CrossOriginPreflightResultCacheItem*>(pages.Guard()));
+
+    CrossOriginPreflightResultCacheItem badMethodsMetaItem{Now() + 60, doNotUse, reinterpret_cast<StringImpl**>(pages.Guard() + 16), nullptr};
+    auto* badMethodsMetaPtr = &badMethodsMetaItem;
+    Require(ThrowsNotImplemented([&] {
+        _ZN7WebCore31CrossOriginPreflightResultCache11appendEntryERKN3WTF6StringERKNS1_3URLESt10unique_ptrINS_35CrossOriginPreflightResultCacheItemESt14default_deleteIS9_EE(
+            Cache(), &origin, &url, &badMethodsMetaPtr);
+    }, kAppendSymbol));
+    Require(badMethodsMetaPtr == &badMethodsMetaItem);
+
+    auto* splitMeta = reinterpret_cast<unsigned*>(pages.Guard() - 16);
+    splitMeta[0] = 1;
+    splitMeta[1] = 1;
+    splitMeta[2] = 1;
+    splitMeta[3] = 2;
+    CrossOriginPreflightResultCacheItem badMethodsSlotsItem{Now() + 60, doNotUse, reinterpret_cast<StringImpl**>(pages.Guard()), nullptr};
+    auto* badMethodsSlotsPtr = &badMethodsSlotsItem;
+    Require(ThrowsNotImplemented([&] {
+        _ZN7WebCore31CrossOriginPreflightResultCache11appendEntryERKN3WTF6StringERKNS1_3URLESt10unique_ptrINS_35CrossOriginPreflightResultCacheItemESt14default_deleteIS9_EE(
+            Cache(), &origin, &url, &badMethodsSlotsPtr);
+    }, kAppendSymbol));
+    Require(badMethodsSlotsPtr == &badMethodsSlotsItem);
+
+    alignas(16) unsigned char fakeTableBuf[4 * sizeof(unsigned) + 2 * sizeof(StringImpl*)]{};
+    auto* fakeMeta = reinterpret_cast<unsigned*>(fakeTableBuf);
+    fakeMeta[0] = 1;
+    fakeMeta[1] = 1;
+    fakeMeta[2] = 1;
+    fakeMeta[3] = 2;
+    auto** fakeTable = reinterpret_cast<StringImpl**>(fakeMeta + 4);
+    StringImpl terminatingEntry{2, 0, nullptr, 16};
+    fakeTable[0] = &terminatingEntry;
+    CrossOriginPreflightResultCacheItem terminatingTableItem{Now() + 60, doNotUse, fakeTable, nullptr};
+    auto* terminatingTablePtr = &terminatingTableItem;
+    Require(ThrowsNotImplemented([&] {
+        _ZN7WebCore31CrossOriginPreflightResultCache11appendEntryERKN3WTF6StringERKNS1_3URLESt10unique_ptrINS_35CrossOriginPreflightResultCacheItemESt14default_deleteIS9_EE(
+            Cache(), &origin, &url, &terminatingTablePtr);
+    }, kAppendSymbol));
+    Require(terminatingTablePtr == &terminatingTableItem && terminatingEntry.refCount == 2);
+
+    Require(ThrowsNotImplemented([&] {
+        static_cast<void>(_ZN7WebCore31CrossOriginPreflightResultCache16canSkipPreflightERKN3WTF6StringERKNS1_3URLENS_23StoredCredentialsPolicyES4_RKNS_13HTTPHeaderMapE(
+            Cache(), reinterpret_cast<const String*>(pages.Guard()), &url, doNotUse, &method, &emptyHeaders));
+    }, kCanSkipSymbol));
+    Require(ThrowsNotImplemented([&] {
+        static_cast<void>(_ZN7WebCore31CrossOriginPreflightResultCache16canSkipPreflightERKN3WTF6StringERKNS1_3URLENS_23StoredCredentialsPolicyES4_RKNS_13HTTPHeaderMapE(
+            Cache(), &origin, reinterpret_cast<const URL*>(pages.Guard()), doNotUse, &method, &emptyHeaders));
+    }, kCanSkipSymbol));
+    Require(ThrowsNotImplemented([&] {
+        static_cast<void>(_ZN7WebCore31CrossOriginPreflightResultCache16canSkipPreflightERKN3WTF6StringERKNS1_3URLENS_23StoredCredentialsPolicyES4_RKNS_13HTTPHeaderMapE(
+            Cache(), &origin, &url, doNotUse, reinterpret_cast<const String*>(pages.Guard()), &emptyHeaders));
+    }, kCanSkipSymbol));
+    Require(ThrowsNotImplemented([&] {
+        static_cast<void>(_ZN7WebCore31CrossOriginPreflightResultCache16canSkipPreflightERKN3WTF6StringERKNS1_3URLENS_23StoredCredentialsPolicyES4_RKNS_13HTTPHeaderMapE(
+            Cache(), &origin, &url, doNotUse, &method, reinterpret_cast<const HTTPHeaderMap*>(pages.Guard())));
+    }, kCanSkipSymbol));
+
+    std::vector<String> watched;
+    AppendGuest(Now() + 100, doNotUse, MakeTable(watched, {"PUT"}), MakeTable(watched, {"x-custom"}));
+    Require(ThrowsNotImplemented([&] {
+        static_cast<void>(_ZN7WebCore31CrossOriginPreflightResultCache16canSkipPreflightERKN3WTF6StringERKNS1_3URLENS_23StoredCredentialsPolicyES4_RKNS_13HTTPHeaderMapE(
+            Cache(), reinterpret_cast<const String*>(badOriginRaw), &url, doNotUse, &method, &emptyHeaders));
+    }, kCanSkipSymbol));
+    Require(ThrowsNotImplemented([&] {
+        static_cast<void>(_ZN7WebCore31CrossOriginPreflightResultCache16canSkipPreflightERKN3WTF6StringERKNS1_3URLENS_23StoredCredentialsPolicyES4_RKNS_13HTTPHeaderMapE(
+            Cache(), &origin, &badUrl, doNotUse, &method, &emptyHeaders));
+    }, kCanSkipSymbol));
+    Require(ThrowsNotImplemented([&] {
+        static_cast<void>(_ZN7WebCore31CrossOriginPreflightResultCache16canSkipPreflightERKN3WTF6StringERKNS1_3URLENS_23StoredCredentialsPolicyES4_RKNS_13HTTPHeaderMapE(
+            Cache(), &origin, &url, doNotUse, reinterpret_cast<const String*>(badOriginRaw), &emptyHeaders));
+    }, kCanSkipSymbol));
+
+    HTTPHeaderMap badCommonBuf{};
+    badCommonBuf.common = {reinterpret_cast<NKWebKit::HttpAbi::CommonHeader*>(pages.Guard()), 1, 1};
+    Require(ThrowsNotImplemented([&] {
+        static_cast<void>(_ZN7WebCore31CrossOriginPreflightResultCache16canSkipPreflightERKN3WTF6StringERKNS1_3URLENS_23StoredCredentialsPolicyES4_RKNS_13HTTPHeaderMapE(
+            Cache(), &origin, &url, doNotUse, &method, &badCommonBuf));
+    }, kCanSkipSymbol));
+
+    HTTPHeaderMap badUncommonBuf{};
+    badUncommonBuf.uncommon = {reinterpret_cast<NKWebKit::HttpAbi::UncommonHeader*>(pages.Guard()), 1, 1};
+    Require(ThrowsNotImplemented([&] {
+        static_cast<void>(_ZN7WebCore31CrossOriginPreflightResultCache16canSkipPreflightERKN3WTF6StringERKNS1_3URLENS_23StoredCredentialsPolicyES4_RKNS_13HTTPHeaderMapE(
+            Cache(), &origin, &url, doNotUse, &method, &badUncommonBuf));
+    }, kCanSkipSymbol));
+
+    alignas(NKWebKit::HttpAbi::CommonHeader) unsigned char badCommonElem[sizeof(NKWebKit::HttpAbi::CommonHeader)]{};
+    const HTTPHeaderName acceptKey = HTTPHeaderName::Accept;
+    std::memcpy(badCommonElem, &acceptKey, sizeof(acceptKey));
+    std::memcpy(badCommonElem + offsetof(NKWebKit::HttpAbi::CommonHeader, value), &badDataPtr, sizeof(badDataPtr));
+    HTTPHeaderMap badCommonValue{};
+    badCommonValue.common = {reinterpret_cast<NKWebKit::HttpAbi::CommonHeader*>(badCommonElem), 1, 1};
+    Require(ThrowsNotImplemented([&] {
+        static_cast<void>(_ZN7WebCore31CrossOriginPreflightResultCache16canSkipPreflightERKN3WTF6StringERKNS1_3URLENS_23StoredCredentialsPolicyES4_RKNS_13HTTPHeaderMapE(
+            Cache(), &origin, &url, doNotUse, &method, &badCommonValue));
+    }, kCanSkipSymbol));
+
+    alignas(NKWebKit::HttpAbi::UncommonHeader) unsigned char badUncommonElem[sizeof(NKWebKit::HttpAbi::UncommonHeader)]{};
+    std::memcpy(badUncommonElem, &badDataPtr, sizeof(badDataPtr));
+    HTTPHeaderMap badUncommonKey{};
+    badUncommonKey.uncommon = {reinterpret_cast<NKWebKit::HttpAbi::UncommonHeader*>(badUncommonElem), 1, 1};
+    Require(ThrowsNotImplemented([&] {
+        static_cast<void>(_ZN7WebCore31CrossOriginPreflightResultCache16canSkipPreflightERKN3WTF6StringERKNS1_3URLENS_23StoredCredentialsPolicyES4_RKNS_13HTTPHeaderMapE(
+            Cache(), &origin, &url, doNotUse, &method, &badUncommonKey));
+    }, kCanSkipSymbol));
+
+    Require(CanSkip("PUT"));
+    Clear();
+}
+
 int main() {
     TestSingleton();
     TestLifetime();
@@ -826,6 +1057,7 @@ int main() {
     TestExpiry();
     TestGuestItems();
     TestNullArguments();
+    TestGuestPointers();
     std::puts("libSceNKWebKit CORS preflight tests passed");
     return 0;
 }

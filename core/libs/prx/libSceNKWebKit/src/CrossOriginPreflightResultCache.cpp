@@ -173,6 +173,8 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libSceNKWebKit/include/CrossOriginPreflightExports.hpp"
 #include "prx/libSceNKWebKit/include/ResourceResponseExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
@@ -182,6 +184,8 @@
 #include <compare>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <deque>
 #include <initializer_list>
 #include <limits>
 #include <map>
@@ -216,6 +220,109 @@ constexpr std::size_t kMaxSafeHeaderValueLength = 128;
 constexpr std::int32_t kWhiteSpaceNeutral = 9;
 constexpr std::size_t kHashTableMetadataFields = 4;
 constexpr std::size_t kHashTableSizeField = 3;
+constexpr unsigned kStringImplFlag8Bit = 4u;
+constexpr unsigned kStringImplBufferOwnershipMask = 3u;
+constexpr unsigned kStringImplBufferSubstring = 2u;
+constexpr unsigned kStringImplBufferOwned = 3u;
+constexpr unsigned kStringImplTerminatingFlagsMask = 48u;
+constexpr std::size_t kSubstringHeaderBytes = 24u + sizeof(StringImpl*);
+
+struct PlannedRelease {
+    const StringImpl* impl{nullptr};
+    unsigned refCount{0};
+    unsigned hashAndFlags{0};
+    bool destroyed{false};
+};
+
+struct PreparedTable {
+    void* metadataToFree{nullptr};
+    std::vector<StringImpl*> entriesToRelease;
+    std::set<std::u16string> values;
+};
+
+struct CopiedCommonHeader {
+    HTTPHeaderName key{};
+    std::u16string value;
+};
+
+struct CopiedUncommonHeader {
+    bool hasKey{false};
+    std::u16string key;
+};
+
+void RequireReadableGuestBytes(const void* pointer, std::size_t size, const char* function) {
+    if (!size) return;
+    if (!pointer) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(pointer, size);
+    if (!GuestReadable_nid_no_patch(pointer, size))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+template<typename T>
+T ReadGuestValue(const void* pointer, const char* function) {
+    RequireReadableGuestBytes(pointer, sizeof(T), function);
+    T value{};
+    if (!GuestCopyIn_nid_no_patch(&value, pointer, sizeof(T)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return value;
+}
+
+std::u16string ReadGuestStringUnits(const StringImpl* impl, const char* function) {
+    if (!impl) return {};
+    const StringImpl header = ReadGuestValue<StringImpl>(impl, function);
+    if (!header.length) return {};
+    if (!header.data) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    const bool is8Bit = (header.hashAndFlags & kStringImplFlag8Bit) != 0;
+    const std::size_t unitSize = is8Bit ? 1u : sizeof(char16_t);
+    if (header.length > std::numeric_limits<std::size_t>::max() / unitSize)
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    const std::size_t byteLength = static_cast<std::size_t>(header.length) * unitSize;
+    RequireReadableGuestBytes(header.data, byteLength, function);
+    std::u16string text(header.length, u'\0');
+    if (is8Bit) {
+        std::vector<unsigned char> raw(header.length);
+        if (!GuestCopyIn_nid_no_patch(raw.data(), header.data, byteLength))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        for (unsigned index = 0; index < header.length; ++index) text[index] = raw[index];
+    } else {
+        if (!GuestCopyIn_nid_no_patch(text.data(), header.data, byteLength))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    }
+    return text;
+}
+
+void PlanRelease(StringImpl* impl, const char* function, std::vector<PlannedRelease>& planned, std::deque<GuestArena::HostWrite>& writeGuards, unsigned depth = 0) {
+    if (!impl) return;
+    if (depth >= 64u) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    std::size_t index = planned.size();
+    for (std::size_t i = 0; i < planned.size(); ++i) {
+        if (planned[i].impl == impl) {
+            index = i;
+            break;
+        }
+    }
+    if (index == planned.size()) {
+        const StringImpl header = ReadGuestValue<StringImpl>(impl, function);
+        auto& guard = writeGuards.emplace_back(impl, sizeof(StringImpl));
+        if (!guard.Open() || !GuestWritable_nid_no_patch(impl, sizeof(StringImpl)))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        planned.push_back({impl, header.refCount, header.hashAndFlags, false});
+    }
+    if (planned[index].destroyed) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    if (planned[index].refCount != 2u) {
+        planned[index].refCount -= 2u;
+        return;
+    }
+    const unsigned flags = planned[index].hashAndFlags;
+    if ((flags & kStringImplTerminatingFlagsMask) != 0u || (flags & kStringImplBufferOwnershipMask) == kStringImplBufferOwned)
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    planned[index].destroyed = true;
+    if ((flags & kStringImplBufferOwnershipMask) == kStringImplBufferSubstring) {
+        RequireReadableGuestBytes(impl, kSubstringHeaderBytes, function);
+        auto* const owner = ReadGuestValue<StringImpl*>(reinterpret_cast<const unsigned char*>(impl) + 24, function);
+        if (owner) PlanRelease(owner, function, planned, writeGuards, depth + 1u);
+    }
+}
 
 struct Key {
     std::u16string origin;
@@ -389,8 +496,7 @@ bool IsFormContentType(std::u16string_view value) {
     return mimeType == u"application/x-www-form-urlencoded" || mimeType == u"multipart/form-data" || mimeType == u"text/plain";
 }
 
-bool IsCrossOriginSafeRequestHeader(HTTPHeaderName name, const String& header) {
-    const std::u16string value = Units(header.impl);
+bool IsCrossOriginSafeRequestHeaderValue(HTTPHeaderName name, std::u16string_view value) {
     switch (name) {
     case HTTPHeaderName::Accept:
         if (!IsValidAcceptHeaderValue(value)) return false;
@@ -406,6 +512,10 @@ bool IsCrossOriginSafeRequestHeader(HTTPHeaderName name, const String& header) {
         return false;
     }
     return value.size() <= kMaxSafeHeaderValueLength;
+}
+
+bool IsCrossOriginSafeRequestHeader(HTTPHeaderName name, const String& header) {
+    return IsCrossOriginSafeRequestHeaderValue(name, Units(header.impl));
 }
 
 template<class TEntry>
@@ -447,40 +557,68 @@ std::optional<String> ValidateCrossOriginHeaders(const Item& item, const HTTPHea
     return std::nullopt;
 }
 
-bool AllowsRequest(const Item& item, StoredCredentialsPolicy storedCredentialsPolicy, const String& method, const HTTPHeaderMap& requestHeaders) {
+PreparedTable PrepareGuestTable(StringImpl** table, bool foldCase, const char* function, std::vector<PlannedRelease>& planned, std::deque<GuestArena::HostWrite>& writeGuards) {
+    PreparedTable result;
+    if (!table) return result;
+    const auto tableAddress = reinterpret_cast<std::uintptr_t>(table);
+    const std::size_t metadataBytes = kHashTableMetadataFields * sizeof(unsigned);
+    if (tableAddress < metadataBytes) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    auto* const metadata = reinterpret_cast<unsigned*>(tableAddress - metadataBytes);
+    RequireReadableGuestBytes(metadata, metadataBytes, function);
+    unsigned metadataValues[kHashTableMetadataFields]{};
+    if (!GuestCopyIn_nid_no_patch(metadataValues, metadata, metadataBytes))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    const unsigned tableSize = metadataValues[kHashTableSizeField];
+    if (tableSize > std::numeric_limits<std::size_t>::max() / sizeof(StringImpl*))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    std::vector<StringImpl*> slots(tableSize, nullptr);
+    if (tableSize > 0) {
+        const std::size_t slotBytes = static_cast<std::size_t>(tableSize) * sizeof(StringImpl*);
+        RequireReadableGuestBytes(table, slotBytes, function);
+        if (!GuestCopyIn_nid_no_patch(slots.data(), table, slotBytes))
+            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    }
+    for (StringImpl* entry : slots) {
+        if (!entry || entry == reinterpret_cast<StringImpl*>(static_cast<std::intptr_t>(-1))) continue;
+        std::u16string text = ReadGuestStringUnits(entry, function);
+        PlanRelease(entry, function, planned, writeGuards);
+        result.values.insert(foldCase ? LowerASCII(std::move(text)) : std::move(text));
+        result.entriesToRelease.push_back(entry);
+    }
+    result.metadataToFree = metadata;
+    return result;
+}
+
+bool AllowsRequestFromCopied(
+    const Item& item, StoredCredentialsPolicy storedCredentialsPolicy, bool hasMethod, const std::u16string& methodText,
+    const std::vector<CopiedCommonHeader>& commonHeaders, const std::vector<CopiedUncommonHeader>& uncommonHeaders) {
     if (item.absoluteExpiryTime < _ZN3WTF13MonotonicTime3nowEv().m_value) return false;
     if (storedCredentialsPolicy == StoredCredentialsPolicy::Use && item.storedCredentialsPolicy == StoredCredentialsPolicy::DoNotUse) return false;
-    if (!AllowsCrossOriginMethod(item, method, storedCredentialsPolicy)) return false;
-    if (ValidateCrossOriginHeaders(item, requestHeaders, storedCredentialsPolicy)) return false;
-    return true;
-}
-
-std::set<std::u16string> TakeSet(StringImpl** table, bool foldCase) {
-    std::set<std::u16string> set;
-    if (!table) return set;
-    unsigned* metadata = reinterpret_cast<unsigned*>(table) - kHashTableMetadataFields;
-    const unsigned tableSize = metadata[kHashTableSizeField];
-    for (unsigned index = 0; index < tableSize; ++index) {
-        StringImpl* entry = table[index];
-        if (!entry || entry == reinterpret_cast<StringImpl*>(static_cast<std::intptr_t>(-1))) continue;
-        set.insert(foldCase ? LowerASCII(Units(entry)) : Units(entry));
-        NKWebKit::WtfAbi::Release(entry);
+    bool methodAllowed = false;
+    if (item.hasMethodsTable) {
+        if (!hasMethod) throw std::invalid_argument("null WTF::String looked up in a WebCore::CrossOriginPreflightResultCacheItem set");
+        methodAllowed = item.methods.contains(methodText);
     }
-    _ZN3WTF8fastFreeEPv(metadata);
-    return set;
-}
+    if (!methodAllowed && item.methods.contains(u"*") && storedCredentialsPolicy != StoredCredentialsPolicy::Use) methodAllowed = true;
+    if (!methodAllowed) methodAllowed = methodText == u"GET" || methodText == u"HEAD" || methodText == u"POST";
+    if (!methodAllowed) return false;
 
-std::unique_ptr<Item> Adopt(CrossOriginPreflightResultCacheItem* guest) {
-    if (!guest) return nullptr;
-    auto item = std::make_unique<Item>();
-    item->absoluteExpiryTime = guest->absoluteExpiryTime;
-    item->storedCredentialsPolicy = guest->storedCredentialsPolicy;
-    item->hasMethodsTable = guest->methods;
-    item->methods = TakeSet(guest->methods, false);
-    item->hasHeadersTable = guest->headers;
-    item->headers = TakeSet(guest->headers, true);
-    _ZN3WTF8fastFreeEPv(guest);
-    return item;
+    const bool validWildcard = item.headers.contains(u"*") && storedCredentialsPolicy != StoredCredentialsPolicy::Use;
+    for (const auto& header : commonHeaders) {
+        if (IsCrossOriginSafeRequestHeaderValue(header.key, header.value)) continue;
+        const auto nameIndex = static_cast<std::size_t>(static_cast<std::uint32_t>(header.key));
+        const std::string_view name(NKWebKit::HttpAbi::headerNames[nameIndex]);
+        if (!item.headers.contains(LowerASCII(std::u16string(name.begin(), name.end()))) && !validWildcard) return false;
+    }
+    for (const auto& header : uncommonHeaders) {
+        bool found = false;
+        if (item.hasHeadersTable) {
+            if (!header.hasKey) throw std::invalid_argument("null WTF::String looked up in a WebCore::CrossOriginPreflightResultCacheItem set");
+            found = item.headers.contains(LowerASCII(header.key));
+        }
+        if (!found && !validWildcard) return false;
+    }
+    return true;
 }
 
 String LowerASCIIString(const String& text) {
@@ -611,9 +749,54 @@ void APS5_VABI _ZN7WebCore31CrossOriginPreflightResultCache11appendEntryERKN3WTF
     if (!origin) throw std::invalid_argument("null WTF::String");
     if (!url) throw std::invalid_argument("null WTF::URL");
     if (!preflightResult) throw std::invalid_argument("null std::unique_ptr<WebCore::CrossOriginPreflightResultCacheItem>");
-    if (!origin->impl) throw std::invalid_argument("null origin string for WebCore::CrossOriginPreflightResultCache");
-    if (!url->impl) throw std::invalid_argument("null URL string for WebCore::CrossOriginPreflightResultCache");
-    NKWebKit::PreflightCache::Append(*origin, *url, Adopt(std::exchange(*preflightResult, nullptr)));
+    auto* const originImpl = ReadGuestValue<StringImpl*>(origin, __func__);
+    if (!originImpl) throw std::invalid_argument("null origin string for WebCore::CrossOriginPreflightResultCache");
+    const URL urlLocal = ReadGuestValue<URL>(url, __func__);
+    if (!urlLocal.impl) throw std::invalid_argument("null URL string for WebCore::CrossOriginPreflightResultCache");
+    std::u16string originText = ReadGuestStringUnits(originImpl, __func__);
+    std::u16string urlText = ReadGuestStringUnits(urlLocal.impl, __func__);
+
+    RequireReadableGuestBytes(preflightResult, sizeof(CrossOriginPreflightResultCacheItem*), __func__);
+    const GuestArena::HostWrite slotWrite(preflightResult, sizeof(CrossOriginPreflightResultCacheItem*));
+    if (!slotWrite.Open() || !GuestWritable_nid_no_patch(preflightResult, sizeof(CrossOriginPreflightResultCacheItem*)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    auto* const guestPtr = ReadGuestValue<CrossOriginPreflightResultCacheItem*>(preflightResult, __func__);
+
+    if (!guestPtr) {
+        Cache& cache = State();
+        cache.entries[Key{std::move(originText), std::move(urlText)}] = nullptr;
+        cache.hasTable = true;
+        return;
+    }
+
+    const auto guestItem = ReadGuestValue<CrossOriginPreflightResultCacheItem>(guestPtr, __func__);
+    std::vector<PlannedRelease> planned;
+    std::deque<GuestArena::HostWrite> stringWrites;
+    PreparedTable methodsTable = PrepareGuestTable(guestItem.methods, false, __func__, planned, stringWrites);
+    PreparedTable headersTable = PrepareGuestTable(guestItem.headers, true, __func__, planned, stringWrites);
+
+    auto item = std::make_unique<Item>();
+    item->absoluteExpiryTime = guestItem.absoluteExpiryTime;
+    item->storedCredentialsPolicy = guestItem.storedCredentialsPolicy;
+    item->hasMethodsTable = guestItem.methods != nullptr;
+    item->methods = std::move(methodsTable.values);
+    item->hasHeadersTable = guestItem.headers != nullptr;
+    item->headers = std::move(headersTable.values);
+
+    Cache& cache = State();
+    auto [slot, inserted] = cache.entries.try_emplace(Key{std::move(originText), std::move(urlText)});
+    CrossOriginPreflightResultCacheItem* const nullItem = nullptr;
+    if (!GuestCopyOut_nid_no_patch(preflightResult, &nullItem, sizeof(nullItem))) {
+        if (inserted) cache.entries.erase(slot);
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    }
+    slot->second = std::move(item);
+    cache.hasTable = true;
+    for (StringImpl* entry : methodsTable.entriesToRelease) NKWebKit::WtfAbi::Release(entry);
+    if (methodsTable.metadataToFree) _ZN3WTF8fastFreeEPv(methodsTable.metadataToFree);
+    for (StringImpl* entry : headersTable.entriesToRelease) NKWebKit::WtfAbi::Release(entry);
+    if (headersTable.metadataToFree) _ZN3WTF8fastFreeEPv(headersTable.metadataToFree);
+    _ZN3WTF8fastFreeEPv(guestPtr);
 }
 
 bool APS5_VABI _ZN7WebCore31CrossOriginPreflightResultCache16canSkipPreflightERKN3WTF6StringERKNS1_3URLENS_23StoredCredentialsPolicyES4_RKNS_13HTTPHeaderMapE(
@@ -623,14 +806,67 @@ bool APS5_VABI _ZN7WebCore31CrossOriginPreflightResultCache16canSkipPreflightERK
     if (!origin || !method) throw std::invalid_argument("null WTF::String");
     if (!url) throw std::invalid_argument("null WTF::URL");
     if (!requestHeaders) throw std::invalid_argument("null WebCore::HTTPHeaderMap");
+    auto* const originImpl = ReadGuestValue<StringImpl*>(origin, __func__);
+    const URL urlLocal = ReadGuestValue<URL>(url, __func__);
+    auto* const methodImpl = ReadGuestValue<StringImpl*>(method, __func__);
+    const HTTPHeaderMap headersLocal = ReadGuestValue<HTTPHeaderMap>(requestHeaders, __func__);
+
     Cache& cache = State();
     if (!cache.hasTable) return false;
-    if (!origin->impl) throw std::invalid_argument("null origin string for WebCore::CrossOriginPreflightResultCache");
-    if (!url->impl) throw std::invalid_argument("null URL string for WebCore::CrossOriginPreflightResultCache");
-    const auto entry = cache.entries.find(Key{Units(origin->impl), Units(url->impl)});
+    if (!originImpl) throw std::invalid_argument("null origin string for WebCore::CrossOriginPreflightResultCache");
+    if (!urlLocal.impl) throw std::invalid_argument("null URL string for WebCore::CrossOriginPreflightResultCache");
+    const std::u16string originText = ReadGuestStringUnits(originImpl, __func__);
+    const std::u16string urlText = ReadGuestStringUnits(urlLocal.impl, __func__);
+    const auto entry = cache.entries.find(Key{originText, urlText});
     if (entry == cache.entries.end()) return false;
     if (!entry->second) throw std::invalid_argument("null WebCore::CrossOriginPreflightResultCacheItem in WebCore::CrossOriginPreflightResultCache");
-    if (AllowsRequest(*entry->second, storedCredentialsPolicy, *method, *requestHeaders)) return true;
+
+    const std::u16string methodText = ReadGuestStringUnits(methodImpl, __func__);
+    Validate(headersLocal.common);
+    Validate(headersLocal.uncommon);
+    if (headersLocal.common.size > std::numeric_limits<std::size_t>::max() / sizeof(NKWebKit::HttpAbi::CommonHeader) ||
+        headersLocal.uncommon.size > std::numeric_limits<std::size_t>::max() / sizeof(NKWebKit::HttpAbi::UncommonHeader))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+
+    std::vector<CopiedCommonHeader> commonHeaders;
+    commonHeaders.reserve(headersLocal.common.size);
+    if (headersLocal.common.size > 0) {
+        const std::size_t bytes = static_cast<std::size_t>(headersLocal.common.size) * sizeof(NKWebKit::HttpAbi::CommonHeader);
+        RequireReadableGuestBytes(headersLocal.common.buffer, bytes, __func__);
+        std::vector<unsigned char> raw(bytes);
+        if (!GuestCopyIn_nid_no_patch(raw.data(), headersLocal.common.buffer, bytes))
+            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        for (unsigned index = 0; index < headersLocal.common.size; ++index) {
+            const unsigned char* base = raw.data() + static_cast<std::size_t>(index) * sizeof(NKWebKit::HttpAbi::CommonHeader);
+            HTTPHeaderName key{};
+            StringImpl* valueImpl = nullptr;
+            std::memcpy(&key, base + offsetof(NKWebKit::HttpAbi::CommonHeader, key), sizeof(key));
+            std::memcpy(&valueImpl, base + offsetof(NKWebKit::HttpAbi::CommonHeader, value), sizeof(valueImpl));
+            const auto nameIndex = static_cast<std::size_t>(static_cast<std::uint32_t>(key));
+            if (nameIndex >= NKWebKit::HttpAbi::headerNames.size())
+                throw std::invalid_argument("unknown WebCore::HTTPHeaderName in a WebCore::HTTPHeaderMap");
+            commonHeaders.push_back({key, ReadGuestStringUnits(valueImpl, __func__)});
+        }
+    }
+
+    std::vector<CopiedUncommonHeader> uncommonHeaders;
+    uncommonHeaders.reserve(headersLocal.uncommon.size);
+    if (headersLocal.uncommon.size > 0) {
+        const std::size_t bytes = static_cast<std::size_t>(headersLocal.uncommon.size) * sizeof(NKWebKit::HttpAbi::UncommonHeader);
+        RequireReadableGuestBytes(headersLocal.uncommon.buffer, bytes, __func__);
+        std::vector<unsigned char> raw(bytes);
+        if (!GuestCopyIn_nid_no_patch(raw.data(), headersLocal.uncommon.buffer, bytes))
+            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        for (unsigned index = 0; index < headersLocal.uncommon.size; ++index) {
+            const unsigned char* base = raw.data() + static_cast<std::size_t>(index) * sizeof(NKWebKit::HttpAbi::UncommonHeader);
+            StringImpl* keyImpl = nullptr;
+            std::memcpy(&keyImpl, base + offsetof(NKWebKit::HttpAbi::UncommonHeader, key), sizeof(keyImpl));
+            uncommonHeaders.push_back({keyImpl != nullptr, ReadGuestStringUnits(keyImpl, __func__)});
+        }
+    }
+
+    if (AllowsRequestFromCopied(*entry->second, storedCredentialsPolicy, methodImpl != nullptr, methodText, commonHeaders, uncommonHeaders))
+        return true;
     cache.entries.erase(entry);
     return false;
 }
