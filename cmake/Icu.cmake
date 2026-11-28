@@ -172,3 +172,5 @@ target_sources(icu_i18n PRIVATE
     ${ICU_SOURCE_DIR}/i18n/fpositer.cpp
     ${CMAKE_SOURCE_DIR}/core/libs/prx/libSceIcu/FieldPositionBackend.cpp
     ${ICU_SOURCE_DIR}/i18n/fphdlimp.cpp)
+
+include(${CMAKE_CURRENT_LIST_DIR}/IcuData.cmake)
