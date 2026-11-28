@@ -78,6 +78,99 @@ int RequireEncoder(const void* encoder, const char* name) {
     NotImplemented_nid_no_patch(name);
 }
 
+bool TryOptionalPointerSize(const void* base, std::size_t offset, std::uint64_t minSize,
+                            std::uint64_t maxSize, const void*& outPtr) {
+    outPtr = nullptr;
+    if (!TryFieldAt(outPtr, base, offset)) {
+        return false;
+    }
+    if (outPtr == nullptr) {
+        return true;
+    }
+    std::uint64_t subSize = 0;
+    return TryFieldAt(subSize, outPtr, 0) && subSize >= minSize && subSize <= maxSize;
+}
+
+int ValidateParameters(const void* parameters, std::uint32_t* outCodecType) {
+    std::uint64_t paramSize = 0;
+    if (!TryFieldAt(paramSize, parameters, 0) || paramSize < 0x60ull || paramSize > 0x68ull) {
+        return VencError(0x01);
+    }
+    const void* codec = nullptr;
+    if (!TryOptionalPointerSize(parameters, 0x8, 0x30ull, 0x38ull, codec)) {
+        return VencError(0x04);
+    }
+    if (codec != nullptr && outCodecType != nullptr) {
+        if (!TryFieldAt(*outCodecType, codec, 0x8)) {
+            return VencError(0x04);
+        }
+    }
+    const void* sub = nullptr;
+    if (!TryOptionalPointerSize(parameters, 0x10, 0x10ull, 0x10ull, sub)) {
+        return VencError(0x05);
+    }
+    if (!TryOptionalPointerSize(parameters, 0x18, 0x20ull, 0x20ull, sub)) {
+        return VencError(0x06);
+    }
+    if (!TryOptionalPointerSize(parameters, 0x20, 0x10ull, 0x10ull, sub)) {
+        return VencError(0x08);
+    }
+    if (!TryOptionalPointerSize(parameters, 0x28, 0x20ull, 0x28ull, sub)) {
+        return VencError(0x07);
+    }
+    if (!TryOptionalPointerSize(parameters, 0x30, 0x10ull, 0x18ull, sub)) {
+        return VencError(0x12);
+    }
+    const void* sub38 = nullptr;
+    if (!TryOptionalPointerSize(parameters, 0x38, 0x20ull, 0x20ull, sub38)) {
+        return VencError(0x09);
+    }
+    if (sub38 != nullptr && !TryOptionalPointerSize(sub38, 0x8, 0x20ull, 0x20ull, sub)) {
+        return VencError(0x10);
+    }
+    const void* sub40 = nullptr;
+    if (!TryOptionalPointerSize(parameters, 0x40, 0x30ull, 0x30ull, sub40)) {
+        return VencError(0x0A);
+    }
+    if (sub40 != nullptr && !TryOptionalPointerSize(sub40, 0x8, 0x20ull, 0x20ull, sub)) {
+        return VencError(0x10);
+    }
+    const void* sub48 = nullptr;
+    if (!TryOptionalPointerSize(parameters, 0x48, 0x28ull, 0x28ull, sub48)) {
+        return VencError(0x0A);
+    }
+    if (sub48 != nullptr && !TryOptionalPointerSize(sub48, 0x8, 0x20ull, 0x20ull, sub)) {
+        return VencError(0x10);
+    }
+    if (!TryOptionalPointerSize(parameters, 0x50, 0x18ull, 0x18ull, sub)) {
+        return VencError(0x0D);
+    }
+    if (!TryOptionalPointerSize(parameters, 0x58, 0x10ull, 0x10ull, sub)) {
+        return VencError(0x0E);
+    }
+    if (paramSize >= 0x68ull && !TryOptionalPointerSize(parameters, 0x60, 0x10ull, 0x10ull, sub)) {
+        return VencError(0x14);
+    }
+    return 0;
+}
+
+int ValidateMemorySize(const void* memory) {
+    if (memory == nullptr) {
+        return 0;
+    }
+    std::uint64_t memSize = 0;
+    if (!TryFieldAt(memSize, memory, 0) || memSize != 0x20ull) {
+        return VencError(0x10);
+    }
+    const void* sub = nullptr;
+    if (!TryOptionalPointerSize(memory, 0x8, 0x18ull, 0x18ull, sub) ||
+        !TryOptionalPointerSize(memory, 0x10, 0x20ull, 0x20ull, sub) ||
+        !TryOptionalPointerSize(memory, 0x18, 0x20ull, 0x20ull, sub)) {
+        return VencError(0x10);
+    }
+    return 0;
+}
+
 }
 
 extern "C" {
@@ -104,6 +197,10 @@ int APS5_VABI sceVencCreateEncoder(const void* parameters, const void* memory, v
     }
     if (MemoryIsIncomplete(memory)) {
         return VencError(0x10);
+    }
+    const int paramStatus = ValidateParameters(parameters, nullptr);
+    if (paramStatus != 0) {
+        return paramStatus;
     }
     NotImplemented_nid_no_patch(__func__);
 }
@@ -135,11 +232,26 @@ int APS5_VABI sceVencQueryHeader(const void* parameters, void* header) {
     if (header == nullptr) {
         return VencError(0x0F);
     }
+    std::uint32_t codecType = 0;
+    const int paramStatus = ValidateParameters(parameters, &codecType);
+    if (paramStatus != 0) {
+        return paramStatus;
+    }
+    std::uint64_t headerSize = 0;
+    const std::uint64_t expectedHeaderSize = codecType == 1u ? 0x118ull : (codecType == 3u ? 0x8ull : 0x1a0ull);
+    if (!TryFieldAt(headerSize, header, 0) || headerSize != expectedHeaderSize) {
+        return VencError(0x0F);
+    }
+    if (codecType == 3u) {
+        return 0;
+    }
+    if (codecType != 1u && codecType != 2u) {
+        return VencError(0x04);
+    }
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceVencQueryMemorySize(const void* parameters, void* memory) {
-    (void)memory;
     if (parameters == nullptr) {
         return VencError(0x01);
     }
@@ -155,6 +267,14 @@ int APS5_VABI sceVencQueryMemorySize(const void* parameters, void* memory) {
     }
     if (FieldAt<std::uint32_t>(nestedParameters, 0x20) == ModeWithExtraPointer && PointerFieldIsNull(parameters, 0x28)) {
         return VencError(0x07);
+    }
+    const int paramStatus = ValidateParameters(parameters, nullptr);
+    if (paramStatus != 0) {
+        return paramStatus;
+    }
+    const int memStatus = ValidateMemorySize(memory);
+    if (memStatus != 0) {
+        return memStatus;
     }
     NotImplemented_nid_no_patch(__func__);
 }
@@ -219,6 +339,10 @@ int APS5_VABI sceVencGetHeader(const void* parameters, const void* startParamete
     }
     if (header == nullptr) {
         return VencError(0x0F);
+    }
+    const int paramStatus = ValidateParameters(parameters, nullptr);
+    if (paramStatus != 0) {
+        return paramStatus;
     }
     NotImplemented_nid_no_patch(__func__);
 }
