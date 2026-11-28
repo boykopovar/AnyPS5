@@ -256,6 +256,12 @@ void TestRemoteSharePlayCpuBudget() {
     Require(Throws(sceShellCoreUtilIsSharePlayCpuBudgetAcquired));
 }
 
+void TestBgmCpuBudget() {
+    Require(!sceShellCoreUtilIsBgmCpuBudgetAcquired());
+    Require(!sceShellCoreUtilIsBgmCpuBudgetAvailable());
+    Require(!sceSystemServiceIsBgmCpuBudgetAvailable());
+}
+
 void TestPlayerDialogParam() {
     alignas(8) unsigned char buffer[0x100];
     std::memset(buffer, 0xab, sizeof(buffer));
@@ -467,6 +473,7 @@ int main() {
     TestRunningAppUser();
     TestRunningAppState();
     TestRemoteSharePlayCpuBudget();
+    TestBgmCpuBudget();
     TestPlayerDialogParam();
     TestGpuLoadEmulationMode();
     TestSuspendConfirmationDialog();
