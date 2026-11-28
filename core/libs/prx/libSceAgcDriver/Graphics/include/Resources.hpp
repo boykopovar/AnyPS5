@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_RESOURCES_HPP
 
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
+#include <cstdint>
 #include <exception>
 #include <functional>
 #include <memory>
@@ -132,6 +133,13 @@ private:
     std::vector<std::shared_ptr<void>> kept;
     TextureDetiler* detiler = nullptr;
 };
+
+struct CommandBatchStalls {
+    std::uint64_t waits = 0;
+    std::uint64_t slices = 0;
+};
+
+CommandBatchStalls CommandBatchWaitStalls();
 
 }
 

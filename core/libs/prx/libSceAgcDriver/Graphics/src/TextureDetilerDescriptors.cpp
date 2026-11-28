@@ -37,7 +37,7 @@ void TextureDetiler::resetRing(DescriptorRing& ring, const char* resetWhat) {
 
 VkDescriptorSet TextureDetiler::allocateFrom(DescriptorRing& ring, VkDescriptorSetLayout layout, const std::vector<VkDescriptorPoolSize>& sizes, const char* createWhat, const char* allocateWhat, const char* resetWhat) {
     constexpr std::uint32_t setsPerPool = 64;
-    const auto* recorder = Recorder::Active();
+    auto* recorder = Recorder::Active();
     const bool standalone = recorder == nullptr || standaloneBatches.load(std::memory_order_acquire) != 0;
     if (ring.pools.empty() || ring.used == setsPerPool) {
         const auto completed = recorder != nullptr ? recorder->CompletedThrough() : 0;
@@ -80,7 +80,10 @@ VkDescriptorSet TextureDetiler::allocateFrom(DescriptorRing& ring, VkDescriptorS
     Check(context.Resolved(&DeviceFunctions::allocateDescriptorSets, "vkAllocateDescriptorSets")(context.device, &allocation, &set), allocateWhat);
     ++ring.used;
     if (standalone) ring.standaloneUsers[ring.current] = true;
-    if (recorder != nullptr) ring.serials[ring.current] = std::max(ring.serials[ring.current], recorder->OpenSerial());
+    if (recorder != nullptr) {
+        ring.serials[ring.current] = std::max(ring.serials[ring.current], recorder->OpenSerial());
+        if (std::none_of(recorders.begin(), recorders.end(), [&](const auto& used) { return used.first == recorder && used.second == recorder->Id(); })) recorders.emplace_back(recorder, recorder->Id());
+    }
     return set;
 }
 

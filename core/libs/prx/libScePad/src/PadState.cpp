@@ -432,7 +432,7 @@ void ApplyRecording(PadData& data, std::uint64_t now) {
         }
         writer.emplace(path);
     }
-    if (const auto replayed = player.At(now)) {
+    if (const auto replayed = player.At(now); replayed && (data.buttons & kInterceptedButton) == 0) {
         data.buttons = replayed->buttons;
         data.left_stick_x = replayed->sticks[0];
         data.left_stick_y = replayed->sticks[1];

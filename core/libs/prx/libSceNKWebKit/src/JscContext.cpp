@@ -627,6 +627,7 @@ OpaqueJSContext::OpaqueJSContext(OpaqueJSContextGroup* grp, OpaqueJSClass* globa
     qctx = JS_NewContext(group->rt);
     InstallDateConstructor(group, qctx);
     JS_SetContextOpaque(qctx, this);
+    InstallRegExpLegacyProperties(qctx);
     group->contexts.push_back(this);
     for (auto& [ptr, data] : group->callbackDataByPtr) {
         if (data && !data->ctx) data->ctx = this;

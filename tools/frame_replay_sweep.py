@@ -41,7 +41,8 @@ def _trial_status(run):
 
 def _markdown_cell(value):
     text = escape(str(value), quote=False)
-    return re.sub(r"([\\|`\[\]])", r"\\\1", text)
+    text = re.sub(r"([\\|`\[\]])", r"\\\1", text)
+    return text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "<br>")
 
 
 def _sweep_markdown(cases):

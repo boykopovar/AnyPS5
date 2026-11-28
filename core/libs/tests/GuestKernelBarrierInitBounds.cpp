@@ -208,7 +208,7 @@ void TestBarrierSetnameBounds() {
     PthreadBarrierPrivate* barrier = nullptr;
     Require(pthread_barrier_init_nid_postfix(&barrier, nullptr, 2) == 0 && barrier != nullptr);
 
-    Require(pthread_barrier_setname_np_nid_postfix(&barrier, nullptr) == 0);
+    Require(pthread_barrier_setname_np_nid_postfix(&barrier, nullptr) == PosixEinval);
     Require(pthread_barrier_setname_np_nid_postfix(&barrier, "first_name") == 0);
     Require(pthread_barrier_setname_np_nid_postfix(&barrier, "second_name") == PosixEagain);
 
