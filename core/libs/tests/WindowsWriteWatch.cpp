@@ -187,12 +187,14 @@ struct PageWalk {
     bool skipRefused = false;
     std::size_t calls = SIZE_MAX;
     std::size_t firstPage = 0;
+    std::size_t head = 0;
+    std::size_t tail = 0;
 };
 
 std::vector<std::size_t> CollectPages(std::uintptr_t address, std::size_t pageCount, PageWalk walk) {
     std::vector<std::size_t> result;
-    const auto end = address + pageCount * Small;
-    for (auto cursor = address + walk.firstPage * Small; cursor < end && walk.calls-- != 0;) {
+    const auto end = address + pageCount * Small - walk.tail;
+    for (auto cursor = address + walk.firstPage * Small + walk.head; cursor < end && walk.calls-- != 0;) {
         std::array<void*, 32> pages{};
         auto count = walk.capacity;
         Require(Mappings::Get().Collect(cursor, end - cursor, pages.data(), &count, walk.clear, walk.mode, walk.skipRefused), "page collection failed");
@@ -243,6 +245,36 @@ void CheckHostStoresKeepCollectedPages() {
     Require(CollectPages(address, pages, {.capacity = 32, .mode = Collection::Fresh}).empty(), "a fresh collect took private writes another collect left behind");
     Require(CollectPages(address, pages, {.capacity = 32, .mode = Collection::Armed}) == PageList(4, 10), "a fresh collect consumed private writes another collect left behind");
     mappings.Reset(memory, Bytes);
+    VirtualFree(memory, 0, MEM_RELEASE);
+}
+
+void CheckHostStoreSpanBoundaries() {
+    auto& mappings = Mappings::Get();
+    constexpr std::size_t pages = 16;
+    auto* memory = static_cast<unsigned char*>(mappings.Reserve(nullptr, pages * Small));
+    Require(memory != nullptr, "private reservation failed");
+    mappings.Commit(memory, pages * Small, PAGE_READWRITE, pages * Small, true);
+    const auto address = reinterpret_cast<std::uintptr_t>(memory);
+    struct Store {
+        std::size_t offset;
+        std::size_t bytes;
+    };
+    const auto check = [&](std::vector<std::size_t> written, std::vector<Store> stores, PageWalk walk, std::vector<std::size_t> expected, const char* message) {
+        CollectPages(address, pages, {.capacity = 32});
+        for (const auto page : written) static_cast<volatile unsigned char*>(memory)[page * Small + 8] = static_cast<unsigned char>(page + 1);
+        for (const auto& store : stores) Require(mappings.BeginHostWrite(address + store.offset, store.bytes), "host write refused");
+        Require(CollectPages(address, pages, walk) == expected, message);
+        for (const auto& store : stores) mappings.EndHostWrite(address + store.offset, store.bytes);
+    };
+    check({0, 5, 9}, {{2 * Small, Small}}, {.capacity = 1}, {0, 2, 5, 9}, "a one-page buffer beside an open host store lost pages");
+    check({0, 4, 12}, {{Small, 8 * Small}}, {.capacity = 3}, {0, 1, 2, 3, 4, 5, 6, 7, 8, 12}, "an open host store larger than the page buffer lost pages");
+    check({0, 4, 10}, {{Small, 2 * Small}, {6 * Small, 2 * Small}}, {.capacity = 2}, {0, 1, 2, 4, 6, 7, 10}, "two separate open host stores lost pages");
+    check({1, 5, 11}, {{2 * Small, 2 * Small}, {4 * Small, 2 * Small}}, {}, {1, 2, 3, 4, 5, 11}, "adjacent open host stores lost or repeated pages");
+    check({1, 5, 11}, {{3 * Small, 4 * Small}, {5 * Small, 4 * Small}}, {}, {1, 3, 4, 5, 6, 7, 8, 11}, "overlapping open host stores lost or repeated pages");
+    check({1, 2, 6, 11, 12}, {{4 * Small + 10, 20}, {8 * Small - 5, 10}}, {.head = 2 * Small + 100, .tail = 4 * Small + 50}, {2, 4, 6, 7, 8, 11}, "an unaligned collect beside unaligned open host stores lost or invented pages");
+    check({3, 9}, {{5 * Small, 2 * Small}}, {.capacity = 2, .mode = Collection::Fresh}, {5, 6}, "a fresh collect beside an open host store changed");
+    check({3, 9}, {{5 * Small, 2 * Small}}, {.capacity = 2, .mode = Collection::Armed}, {3, 5, 6, 9}, "an armed collect beside an open host store lost pages");
+    mappings.Reset(memory, pages * Small);
     VirtualFree(memory, 0, MEM_RELEASE);
 }
 
@@ -1337,6 +1369,7 @@ int main(int argc, char** argv) {
         CheckKnownZeroFirstReads();
         CheckKnownZeroMarks();
         CheckResidentRunNoAccessTransitions();
+        CheckHostStoreSpanBoundaries();
         CheckFailedCollectReportsResetPages();
         CheckRefusedCollectPassesReleasedAllocations();
         CheckRefusedCollectPassesUnwatchedResidentRuns();
