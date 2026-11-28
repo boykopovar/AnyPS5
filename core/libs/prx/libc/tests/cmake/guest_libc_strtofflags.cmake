@@ -1,0 +1,8 @@
+if(BUILD_TESTING)
+    add_test_executable(guest_libc_strtofflags_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcStrtofflags.cpp)
+    target_include_directories(guest_libc_strtofflags_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libc_strtofflags_tests PRIVATE libc)
+    configure_windows_unwind(guest_libc_strtofflags_tests)
+    add_test(NAME guest_libc_strtofflags COMMAND guest_libc_strtofflags_tests)
+    set_tests_properties(guest_libc_strtofflags PROPERTIES TIMEOUT 20)
+endif()
