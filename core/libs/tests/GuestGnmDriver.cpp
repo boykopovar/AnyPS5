@@ -210,6 +210,14 @@ void TestQueries() {
     check(sceGnmLogicalCuIndexToPhysicalCuIndex(0xffffffffu, 0xffffffffu) == 0, "the CU index with engine and cuIndex 0xffffffff was not 0");
 }
 
+void TestResourceRegistration() {
+    constexpr int Failure = static_cast<int>(0x8EEE00FFu);
+    check(sceGnmRegisterOwner_nid_disambig1(nullptr, "owner") == Failure, "a resource owner was registered on retail firmware");
+    for (const auto call : {sceGnmSetResourceRegistrationUserMemory_nid_disambig1, sceGnmGetResourceShaderGuid_nid_disambig1, sceGnmGetResourceName_nid_disambig1, sceGnmGetResourceType_nid_disambig1, sceGnmRegisterGdsResource_nid_disambig1, sceGnmGetOwnerName_nid_disambig1, sceGnmRegisterResource_nid_disambig1, sceGnmUnregisterAllResourcesForOwner_nid_disambig1, sceGnmUnregisterResource_nid_disambig1, sceGnmSetResourceUserData_nid_disambig1, sceGnmQueryResourceRegistrationUserMemoryRequirements_nid_disambig1, sceGnmGetResourceBaseAddressAndSizeInBytes_nid_disambig1, sceGnmFindResourcesPublic_nid_disambig1, sceGnmGetResourceUserData_nid_disambig1, sceGnmUnregisterOwnerAndResources_nid_disambig1, sceGnmRegisterOwnerForSystem_nid_disambig1}) {
+        check(call() == Failure, "a resource registration call did not fail on retail firmware");
+    }
+}
+
 void TestEmbeddedShaders() {
     std::array<std::uint32_t, 0x100> words{};
     check(sceGnmSetEmbeddedPsShader_nid_disambig1(nullptr, 0x100, 0, 0) == -1, "a null embedded pixel shader buffer was accepted");
@@ -243,6 +251,7 @@ int main() {
         TestQueries();
         TestWriters();
         TestEmbeddedShaders();
+        TestResourceRegistration();
         TestSubmitValidation();
         TestWorkloads();
         TestFillerSubmit();

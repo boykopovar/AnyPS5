@@ -1079,4 +1079,72 @@ int APS5_VABI sceGnmUpdateVsShader_nid_disambig1(std::uint32_t* cmdbuf, std::uin
     return WriteSharedCommandBuffer<0x1d>(cmdbuf, [&](std::uint32_t* buffer) { return GnmCommandWriters::UpdateVsShader(buffer, size, localRegs.data(), modifier); });
 }
 
+int APS5_VABI sceGnmRegisterOwner_nid_disambig1(void*, const char*) {
+    return Failure;
+}
+
+int APS5_VABI sceGnmSetResourceRegistrationUserMemory_nid_disambig1(void) {
+    return Failure;
+}
+
+int APS5_VABI sceGnmGetResourceShaderGuid_nid_disambig1(void) {
+    return Failure;
+}
+
+int APS5_VABI sceGnmGetResourceName_nid_disambig1(void) {
+    return Failure;
+}
+
+int APS5_VABI sceGnmGetResourceType_nid_disambig1(void) {
+    return Failure;
+}
+
+int APS5_VABI sceGnmRegisterGdsResource_nid_disambig1(void) {
+    return Failure;
+}
+
+int APS5_VABI sceGnmGetOwnerName_nid_disambig1(void) {
+    return Failure;
+}
+
+int APS5_VABI sceGnmRegisterResource_nid_disambig1(void) {
+    return Failure;
+}
+
+int APS5_VABI sceGnmUnregisterAllResourcesForOwner_nid_disambig1(void) {
+    return Failure;
+}
+
+int APS5_VABI sceGnmUnregisterResource_nid_disambig1(void) {
+    return Failure;
+}
+
+int APS5_VABI sceGnmSetResourceUserData_nid_disambig1(void) {
+    return Failure;
+}
+
+int APS5_VABI sceGnmQueryResourceRegistrationUserMemoryRequirements_nid_disambig1(void) {
+    return Failure;
+}
+
+int APS5_VABI sceGnmGetResourceBaseAddressAndSizeInBytes_nid_disambig1(void) {
+    return Failure;
+}
+
+int APS5_VABI sceGnmFindResourcesPublic_nid_disambig1(void) {
+    return Failure;
+}
+
+int APS5_VABI sceGnmGetResourceUserData_nid_disambig1(void) {
+    return Failure;
+}
+
+int APS5_VABI sceGnmUnregisterOwnerAndResources_nid_disambig1(void) {
+    return Failure;
+}
+
+int APS5_VABI sceGnmRegisterOwnerForSystem_nid_disambig1(void) {
+    return Failure;
+}
+
 }
