@@ -368,6 +368,16 @@ class NidArgumentTests(unittest.TestCase):
             self.assertEqual(exit.exception.code, 2)
             self.assertIn(path.name, errors.getvalue())
 
+    def test_invalid_utf8_in_where_symbol_file_names_the_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "invalid-symbols.txt"
+            path.write_bytes(b"abc\xff\n")
+            errors = io.StringIO()
+            with contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as exit:
+                nid_names.main(["--where", "--from-file", str(path)])
+            self.assertEqual(exit.exception.code, 2)
+            self.assertIn(path.name, errors.getvalue())
+
     options = ["-h", "--help", "--db", "--nid", "--json"]
 
     def test_name_and_nid_modes_conflict_even_with_empty_filters(self):
