@@ -57,14 +57,23 @@ int GuestCharAt(const char* text, std::size_t index, bool& ok) {
 extern "C" std::uint32_t APS5_VABI inet_nsap_addr_nid_postfix(const char* ascii, std::uint8_t* binary, int maxlen) {
     if (!ascii) throw std::runtime_error("inet_nsap_addr: null text");
     bool ok = true;
-    if (GuestCharAt(ascii, 0, ok) != '0' || (GuestCharAt(ascii, 1, ok) != 'x' && GuestCharAt(ascii, 1, ok) != 'X')) {
+    const int prefix = GuestCharAt(ascii, 0, ok);
+    const int radix = GuestCharAt(ascii, 1, ok);
+    if (!ok) {
+        *__error_nid_postfix() = GuestEfault;
+        return 0;
+    }
+    if (prefix != '0' || (radix != 'x' && radix != 'X')) {
         return 0;
     }
     std::size_t pos = 2;
     std::uint32_t length = 0;
     std::vector<std::uint8_t> out;
     const auto finish = [&](std::uint32_t result) -> std::uint32_t {
-        if (!out.empty() && binary && !GuestCopyOut_nid_no_patch(binary, out.data(), out.size())) ok = false;
+        if (!out.empty()) {
+            if (binary == nullptr) throw std::runtime_error("inet_nsap_addr: null binary");
+            if (!GuestCopyOut_nid_no_patch(binary, out.data(), out.size())) ok = false;
+        }
         if (!ok) {
             *__error_nid_postfix() = GuestEfault;
             return 0;
@@ -90,7 +99,7 @@ extern "C" std::uint32_t APS5_VABI inet_nsap_addr_nid_postfix(const char* ascii,
 }
 
 extern "C" char* APS5_VABI inet_nsap_ntoa_nid_postfix(int binlen, const std::uint8_t* binary, char* ascii) {
-    static char tmpbuf[255 * 3 + 3];
+    static thread_local char tmpbuf[255 * 3 + 3];
     char* const start = ascii ? ascii : tmpbuf;
     if (binlen > 255) binlen = 255;
     std::vector<std::uint8_t> bytes;
