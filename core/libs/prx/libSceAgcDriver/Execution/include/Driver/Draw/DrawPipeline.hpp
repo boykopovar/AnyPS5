@@ -14,6 +14,7 @@
 #include <optional>
 #include <thread>
 #include <span>
+#include <unordered_map>
 #include <string>
 #include <utility>
 #include <vector>
@@ -161,7 +162,15 @@ public:
         std::vector<Range> writes;
         std::uint64_t labelAddress = 0;
         std::vector<std::byte> labelBytes;
+        bool countedUnknown = false;
+        std::vector<Range> countedWrites;
     };
+    struct PendingBlockCounts {
+        std::uint64_t answered = 0, verified = 0;
+    };
+    static bool PendingWriteBlocks();
+    static bool VerifyPendingWriteBlocks();
+    static PendingBlockCounts PendingBlockTotals();
     enum class LabelLookup : std::uint8_t { NotHeld, Value, Unknown };
     static bool Overlap();
     bool PendingOverlaps(std::uint64_t begin, std::uint64_t end);
@@ -191,6 +200,12 @@ private:
     std::condition_variable idle;
     std::deque<Job> jobs;
     std::deque<Pending> pending;
+    void countPendingWrites(Pending& held);
+    void uncountPendingWrites(Pending& held);
+    bool pendingBlocksClear(std::span<const Range> ranges) const;
+    std::unordered_map<std::uint64_t, std::uint32_t> pendingWriteBlocks;
+    std::size_t pendingUnknownJobs = 0;
+    std::size_t pendingWideRanges = 0;
     std::vector<Job> ran;
     std::exception_ptr failure;
     bool running = false;
