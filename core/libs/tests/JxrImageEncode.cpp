@@ -4,6 +4,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <cstdint>
+#include <stdexcept>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -108,6 +109,13 @@ int main() {
         Require(PKImageEncode_SetSize_nid_postfix(encoder, 640, 360) == 0 && encoder->width == 640 && encoder->height == 360);
         Require(PKImageEncode_SetSize_nid_postfix(encoder, -1, -2) == 0 && encoder->width == 0xffffffff && encoder->height == 0xfffffffe);
         Require(encoder->currentLine == 0);
+        bool rejected = false;
+        try {
+            PKImageEncode_SetSize_nid_postfix(reinterpret_cast<Jxr::ImageEncode*>(0x10), 1, 1);
+        } catch (const std::invalid_argument&) {
+            rejected = true;
+        }
+        Require(rejected);
         free_nid_postfix(encoder);
     }
     {
