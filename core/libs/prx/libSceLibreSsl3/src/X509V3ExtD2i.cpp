@@ -60,6 +60,9 @@ enum class Decoder {
     Integer,
     Enumerated,
     Ia5String,
+    BasicConstraints,
+    ExtendedKeyUsage,
+    UsagePeriod,
     GeneralizedTime,
     Object,
     OcspNonce,
@@ -83,15 +86,15 @@ constexpr Method Methods[] = {
     {78, Decoder::Ia5String},
     {82, Decoder::OctetString},
     {83, Decoder::BitString},
-    {84, Decoder::Unsupported},
+    {84, Decoder::UsagePeriod},
     {85, Decoder::Unsupported},
     {86, Decoder::Unsupported},
-    {87, Decoder::Unsupported},
+    {87, Decoder::BasicConstraints},
     {88, Decoder::Integer},
     {89, Decoder::Unsupported},
     {90, Decoder::AuthorityKeyId},
     {103, Decoder::Unsupported},
-    {126, Decoder::Unsupported},
+    {126, Decoder::ExtendedKeyUsage},
     {140, Decoder::Integer},
     {141, Decoder::Enumerated},
     {142, Decoder::GeneralizedTime},
@@ -550,6 +553,219 @@ void* NewAuthorityKeyId(std::span<const unsigned char> value) {
     return id.release();
 }
 
+constexpr int BooleanIsWrongLength = 106;
+constexpr int EndOfContentsInDefiniteForm = 159;
+constexpr std::uint32_t BooleanTag = 1;
+
+enum class TagCheck {
+    Absent,
+    Failed,
+    Present,
+};
+
+TagCheck CheckTag(std::span<const unsigned char>& cursor, std::uint32_t tag, std::uint8_t tagClass, bool optional,
+    Header& header) {
+    std::span<const unsigned char> input = cursor;
+    if (!ReadIdentifier(input, header)) {
+        PutError(BadObjectHeader);
+        return TagCheck::Failed;
+    }
+    if (header.tag != tag || header.tagClass != tagClass) {
+        if (optional) return TagCheck::Absent;
+        PutError(WrongTag);
+        return TagCheck::Failed;
+    }
+    if (!ReadLength(input, header) || (header.indefinite && !header.constructed)) {
+        PutError(BadObjectHeader);
+        return TagCheck::Failed;
+    }
+    if (!header.indefinite && header.length > input.size()) {
+        PutError(TooLong);
+        return TagCheck::Failed;
+    }
+    cursor = input;
+    return TagCheck::Present;
+}
+
+bool SequenceBody(std::span<const unsigned char> value, bool sequenceOf, const char* indefiniteForm,
+    std::span<const unsigned char>& body) {
+    Header header;
+    if (CheckTag(value, SequenceTag, 0, false, header) != TagCheck::Present) {
+        PutError(NestedAsn1Error);
+        return false;
+    }
+    if (!sequenceOf && !header.constructed) {
+        PutError(SequenceNotConstructed);
+        return false;
+    }
+    if (header.indefinite) NotImplemented_nid_no_patch(indefiniteForm);
+    body = value.first(header.length);
+    return true;
+}
+
+bool EndsDefiniteContent(std::span<const unsigned char> body) {
+    if (body.size() < 2 || body[0] != 0 || body[1] != 0) return false;
+    PutError(EndOfContentsInDefiniteForm);
+    return true;
+}
+
+struct BasicConstraintsValue {
+    int ca;
+    Asn1String* pathLength;
+};
+
+static_assert(sizeof(BasicConstraintsValue) == 16 && offsetof(BasicConstraintsValue, pathLength) == 8);
+
+void FreeBasicConstraints(BasicConstraintsValue* constraints) {
+    ASN1_INTEGER_free_nid_postfix(constraints->pathLength);
+    free_nid_postfix(constraints);
+}
+
+void* NewBasicConstraints(std::span<const unsigned char> value) {
+    std::span<const unsigned char> body;
+    if (!SequenceBody(value, false, "BASIC_CONSTRAINTS indefinite length", body)) return nullptr;
+    auto* allocated = static_cast<BasicConstraintsValue*>(calloc_nid_postfix(1, sizeof(BasicConstraintsValue)));
+    if (!allocated) {
+        PutHeaderError(MallocFailure);
+        return nullptr;
+    }
+    std::unique_ptr<BasicConstraintsValue, void (*)(BasicConstraintsValue*)> constraints(allocated, FreeBasicConstraints);
+    if (body.empty()) return constraints.release();
+    Header header;
+    switch (CheckTag(body, BooleanTag, 0, true, header)) {
+    case TagCheck::Failed:
+        PutError(NestedAsn1Error);
+        PutError(NestedAsn1Error);
+        return nullptr;
+    case TagCheck::Present:
+        if (header.constructed) {
+            PutHeaderError(TypeNotPrimitive);
+            return nullptr;
+        }
+        if (header.length != 1) {
+            PutHeaderError(BooleanIsWrongLength);
+            return nullptr;
+        }
+        constraints->ca = body.front();
+        body = body.subspan(1);
+        break;
+    case TagCheck::Absent:
+        break;
+    }
+    if (EndsDefiniteContent(body)) return nullptr;
+    if (body.empty()) return constraints.release();
+    const unsigned char* cursor = body.data();
+    constraints->pathLength = static_cast<Asn1String*>(
+        d2i_ASN1_INTEGER_nid_postfix(nullptr, &cursor, static_cast<std::int64_t>(body.size())));
+    if (!constraints->pathLength) {
+        PutError(NestedAsn1Error);
+        return nullptr;
+    }
+    if (cursor != body.data() + body.size()) {
+        PutError(SequenceLengthMismatch);
+        return nullptr;
+    }
+    return constraints.release();
+}
+
+void FreeObjectStack(LibreSslStack* objects) {
+    for (int index = 0; index < objects->num; ++index)
+        ASN1_OBJECT_free_nid_postfix(reinterpret_cast<Asn1Object_nid_no_patch*>(objects->data[index]));
+    sk_free_nid_postfix(objects);
+}
+
+void* NewExtendedKeyUsage(std::span<const unsigned char> value) {
+    std::span<const unsigned char> body;
+    if (!SequenceBody(value, true, "EXTENDED_KEY_USAGE indefinite length", body)) return nullptr;
+    LibreSslStack* allocated = sk_new_nid_postfix(nullptr);
+    if (!allocated) {
+        PutError(MallocFailure);
+        return nullptr;
+    }
+    std::unique_ptr<LibreSslStack, void (*)(LibreSslStack*)> usages(allocated, FreeObjectStack);
+    while (!body.empty()) {
+        if (EndsDefiniteContent(body)) return nullptr;
+        Header header;
+        if (CheckTag(body, ObjectTag, 0, false, header) != TagCheck::Present) {
+            PutError(NestedAsn1Error);
+            PutError(NestedAsn1Error);
+            return nullptr;
+        }
+        if (header.constructed) {
+            PutHeaderError(TypeNotPrimitive);
+            return nullptr;
+        }
+        void* object = NewObject(body.first(header.length));
+        if (!object) {
+            PutError(NestedAsn1Error);
+            return nullptr;
+        }
+        body = body.subspan(header.length);
+        if (sk_push_nid_postfix(usages.get(), object) == 0) {
+            ASN1_OBJECT_free_nid_postfix(static_cast<Asn1Object_nid_no_patch*>(object));
+            PutError(MallocFailure);
+            return nullptr;
+        }
+    }
+    return usages.release();
+}
+
+struct UsagePeriodValue {
+    Asn1String* notBefore;
+    Asn1String* notAfter;
+};
+
+static_assert(sizeof(UsagePeriodValue) == 16 && offsetof(UsagePeriodValue, notAfter) == 8);
+
+void FreeUsagePeriod(UsagePeriodValue* period) {
+    ASN1_OCTET_STRING_free_nid_postfix(period->notBefore);
+    ASN1_OCTET_STRING_free_nid_postfix(period->notAfter);
+    free_nid_postfix(period);
+}
+
+bool ReadUsageTime(std::span<const unsigned char>& body, std::uint32_t tag, bool optional, Asn1String*& time) {
+    Header header;
+    switch (CheckTag(body, tag, ContextClass, optional, header)) {
+    case TagCheck::Absent:
+        return true;
+    case TagCheck::Failed:
+        PutError(NestedAsn1Error);
+        PutError(NestedAsn1Error);
+        return false;
+    case TagCheck::Present:
+        break;
+    }
+    if (header.constructed) NotImplemented_nid_no_patch("PKEY_USAGE_PERIOD constructed time");
+    time = static_cast<Asn1String*>(NewGeneralizedTime(body.first(header.length)));
+    if (!time) {
+        PutError(NestedAsn1Error);
+        return false;
+    }
+    body = body.subspan(header.length);
+    return true;
+}
+
+void* NewUsagePeriod(std::span<const unsigned char> value) {
+    std::span<const unsigned char> body;
+    if (!SequenceBody(value, false, "PKEY_USAGE_PERIOD indefinite length", body)) return nullptr;
+    auto* allocated = static_cast<UsagePeriodValue*>(calloc_nid_postfix(1, sizeof(UsagePeriodValue)));
+    if (!allocated) {
+        PutHeaderError(MallocFailure);
+        return nullptr;
+    }
+    std::unique_ptr<UsagePeriodValue, void (*)(UsagePeriodValue*)> period(allocated, FreeUsagePeriod);
+    if (body.empty()) return period.release();
+    if (!ReadUsageTime(body, 0, true, period->notBefore)) return nullptr;
+    if (EndsDefiniteContent(body)) return nullptr;
+    if (body.empty()) return period.release();
+    if (!ReadUsageTime(body, 1, false, period->notAfter)) return nullptr;
+    if (!body.empty()) {
+        PutError(SequenceLengthMismatch);
+        return nullptr;
+    }
+    return period.release();
+}
+
 void* Decode(const LibreSsl3X509Extension& extension, Decoder decoder) {
     const auto* encoded = static_cast<const Asn1String*>(extension.value);
     if (!encoded) throw std::invalid_argument(std::string(__func__) + ": null extension value");
@@ -592,6 +808,12 @@ void* Decode(const LibreSsl3X509Extension& extension, Decoder decoder) {
         return NewNull(value);
     case Decoder::Unsupported:
         break;
+    case Decoder::BasicConstraints:
+        return NewBasicConstraints(value);
+    case Decoder::ExtendedKeyUsage:
+        return NewExtendedKeyUsage(value);
+    case Decoder::UsagePeriod:
+        return NewUsagePeriod(value);
     }
     NotImplemented_nid_no_patch(__func__);
 }

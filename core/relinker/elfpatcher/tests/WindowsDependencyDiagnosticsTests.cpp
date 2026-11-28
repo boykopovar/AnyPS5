@@ -113,7 +113,7 @@ std::vector<std::uint8_t> fakeElfBytes() {
     return elf;
 }
 
-void createImage(const Fs::path& path, const std::vector<std::pair<std::string, std::string>>& imports, const std::string& exported, const std::string& forwarded = {}) {
+void createImage(const Fs::path& path, const std::vector<std::pair<std::string, std::string>>& imports, const std::string& exported, const std::string& forwarded = {}, const bool omitOriginalThunk = false) {
     PeSection section{".fixture", LoadRva, SectionRead | SectionExecute | 0x20u, std::vector<std::uint8_t>(4096)};
     auto& bytes = section.Data;
     const auto put = [&](const std::size_t offset, const std::uint64_t value, const std::size_t size = 4) {
@@ -147,7 +147,7 @@ void createImage(const Fs::path& path, const std::vector<std::pair<std::string, 
         for (std::size_t index = 0; index < imports.size(); ++index) {
             const auto& [library, symbol] = imports[index];
             const auto thunk = 0x400 + index * 16;
-            put(0x300 + index * 20, LoadRva + thunk);
+            put(0x300 + index * 20, omitOriginalThunk ? 0 : LoadRva + thunk);
             put(0x300 + index * 20 + 12, string(library));
             put(0x300 + index * 20 + 16, LoadRva + thunk);
             if (symbol.starts_with('#')) {
@@ -248,7 +248,7 @@ void runScenario(const std::string& scenario, const Fs::path& root, const Fs::pa
     const auto leafName = leaf.filename().string();
     if (scenario == "missing_symbol_diamond") {
         createImage(root, {{middleName, "Middle"}}, {});
-        createImage(middle, {{leafName, "Missing"}}, "Middle");
+        createImage(middle, {{leafName, "Missing"}}, "Middle", {}, true);
         createImage(leaf, {}, "Present");
         expectDiagnostic(runner, {"Importer: " + middle.string(), "Provider: " + leaf.string(), "Symbol: Missing",
             runner.string() + " -> " + root.string() + " -> " + middle.string() + " -> " + leaf.string()});
@@ -295,7 +295,7 @@ void runScenario(const std::string& scenario, const Fs::path& root, const Fs::pa
         expectDiagnostic(runner, {"dependency module not found: api-ms-win-core-relinkerdiagnostics-l1-1-0.dll", "Importer: " + root.string(),
             runner.string() + " -> " + root.string() + " -> api-ms-win-core-relinkerdiagnostics-l1-1-0.dll"});
     } else if (scenario == "real_export_present") {
-        createImage(root, {{"KERNEL32.dll", "CreateRemoteThreadEx"}}, {});
+        createImage(root, {{"KERNEL32.dll", "CreateRemoteThreadEx"}}, {}, {}, true);
         expectDiagnostic(runner, {"Dependency tables contain no missing imports"});
     } else if (scenario == "real_module_fake_export") {
         createImage(root, {{"KERNEL32.dll", "RelinkerDiagnosticsMissingExport"}}, {});

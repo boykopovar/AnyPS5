@@ -247,6 +247,12 @@ int APS5_VABI sceHttp2DeleteTemplate(int tmpl_id) {
 }
 
 int APS5_VABI sceHttp2GetAllResponseHeaders(int req_id, char** header, size_t* header_size) {
+    {
+        std::lock_guard lock(g_handlesMutex);
+        const auto* handle = FindHandle(req_id, Http2Kind::Request);
+        if (!handle) return ERROR_INVALID_ID;
+        if (!handle->transport) return ERROR_NOT_CONNECTED;
+    }
     const auto request = Transport(req_id, false);
     return request ? request->Headers(header, header_size) : ERROR_INVALID_ID;
 }
@@ -345,7 +351,7 @@ int APS5_VABI sceHttp2SetRedirectCallback(int id, Http2RedirectCallback cb_func,
     return Update(id, __func__, [&](auto& settings) {
         settings.redirectCallback = cb_func;
         settings.redirectArgument = user_arg;
-    });
+    }, true);
 }
 
 int APS5_VABI sceHttp2SetRequestContentLength(int id, uint64_t content_length) {
@@ -367,6 +373,10 @@ int APS5_VABI sceHttp2SetSendTimeOut(int id, uint32_t usec) {
 }
 
 int APS5_VABI sceHttp2SetSslCallback(int id, HttpsCallback cb_func, void* user_arg) {
+    {
+        std::lock_guard lock(g_handlesMutex);
+        if (FindHandle(id, Http2Kind::CookieBox)) return ERROR_INVALID_ID;
+    }
     return Update(id, __func__, [&](auto& settings) {
         settings.sslCallback = cb_func;
         settings.sslArgument = user_arg;
@@ -377,6 +387,8 @@ int APS5_VABI sceHttp2SetStripGZIPHeadersEnabled(int id, int enable) {
     {
         std::lock_guard lock(g_handlesMutex);
         if (FindHandle(id, Http2Kind::Context)) return ERROR_INVALID_ID;
+        const auto* request = FindHandle(id, Http2Kind::Request);
+        if (request && request->transport) return 0;
     }
     return Update(id, __func__, [&](auto& settings) { settings.stripGzipHeaders = enable != 0; });
 }

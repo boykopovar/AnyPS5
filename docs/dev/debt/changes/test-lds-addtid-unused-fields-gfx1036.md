@@ -1,0 +1,5 @@
+# shader
+
+## change [GFX10 scratch address operands and DS addtid tolerance]
+
+- [GFX10 scratch address operands and DS addtid tolerance](../../../core/shader/recompiler/RdnaDecoder/src/RdnaMemoryOpDecoder.cpp) (shader recompiler) - `RdnaMemoryOpDecoder.cpp` and `MemoryResourceHelpers.cpp` use the SV/SS/ST scratch operand widths described by LLVM FLATInstructions.td at 3eb867f9b63ae2881bbe3c25d3c12842f2bdc55e (operand pseudos L557-L630, GFX10 encoding L2973-L3038). Decoding and IR tests cover the one-dword VGPR offset; PS5 hardware address-result validation remains outstanding. Unsupported scalar registers still throw. Unused fields of `ds_write_addtid_b32` (ADDR, data1) and `ds_read_addtid_b32` (ADDR, data0, data1) are ignored, as RDNA2 (gfx1036, [hardware oracle](../HW_ORACLE.md)) does in wave32 and wave64: the access stays at `M0[15:0]` + OFFSET + 4 × lane and nothing else is written ([LdsAddtidUnusedFields](../../../core/libs/prx/libSceAgcDriver/tests/execution/LdsAddtidUnusedFields.cpp)). gfx1013 is not measured.

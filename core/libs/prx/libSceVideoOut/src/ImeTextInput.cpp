@@ -24,6 +24,10 @@ bool IsPasteShortcut(const SDL_KeyboardEvent& key) {
 void ImeTextInput::HandleEvent(const SDL_Event& event, unsigned windowId) {
     ImeHostInput input{};
     switch (event.type) {
+        case SDL_TEXTEDITING_EXT:
+            if (event.editExt.windowID != windowId || event.editExt.text == nullptr) return;
+            ImePublishPreedit_nid_postfix(event.editExt.text, std::strlen(event.editExt.text), event.editExt.start, event.editExt.length);
+            return;
         case SDL_TEXTEDITING:
             if (event.edit.windowID != windowId) return;
             static_assert(sizeof(input.text) >= sizeof(event.edit.text));

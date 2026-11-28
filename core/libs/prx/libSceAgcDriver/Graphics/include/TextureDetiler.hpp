@@ -45,6 +45,7 @@ namespace AgcDriver::Graphics {
         ~TextureDetiler();
         TextureDetiler(const TextureDetiler&) = delete;
         TextureDetiler& operator=(const TextureDetiler&) = delete;
+        void DispatchBc1Decode(VkCommandBuffer commands, VkBuffer source, std::uint64_t sourceOffset, VkBuffer destination, std::uint64_t destinationOffset, const TileMipLayout& layout);
 
         // Detiles `source` (tiled) into `destination` (linear), or with `retile` writes linear `source`
         // into tiled `destination`; offsets always refer to the respective buffers, and `window`
@@ -62,6 +63,10 @@ namespace AgcDriver::Graphics {
         void DispatchMultisampleImage(VkCommandBuffer commands, std::uint32_t elementBytes, VkBuffer source, std::uint64_t offset, std::uint64_t bytes, VkImageView arrayView, std::uint32_t width, std::uint32_t height, std::uint32_t layers, std::uint32_t fragments, std::uint32_t firstElement, std::uint32_t elements);
 
     private:
+        struct Retired {};
+        TextureDetiler(const Context& context, Retired);
+        void adopt(TextureDetiler& other) noexcept;
+        bool retireToRecorders() noexcept;
         VkPipeline multisampleReadbackPipeline(std::uint32_t elementBytes, bool depth);
         VkPipeline multisampleUploadPipeline(std::uint32_t elementBytes);
         VkPipeline pipeline(TextureTileMode tileMode, std::uint32_t elementBytes, bool retile, bool thick, bool image = false);
@@ -81,6 +86,7 @@ namespace AgcDriver::Graphics {
         VkDescriptorSetLayout descriptorLayout = VK_NULL_HANDLE;
         VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
         VkShaderModule module = VK_NULL_HANDLE;
+        VkPipeline bc1DecodePipeline = VK_NULL_HANDLE;
         std::vector<std::pair<std::uint32_t, VkPipeline>> pipelines;
         std::vector<std::pair<std::uint32_t, GcnTileGeometry>> gcnGeometries;
         std::uint32_t layerBankXor(TextureTileMode tileMode, std::uint32_t elementBytes, const TileMipLayout& layout, std::uint32_t layer);
@@ -104,6 +110,7 @@ namespace AgcDriver::Graphics {
         std::vector<std::pair<std::uint32_t, VkPipeline>> readbackPipelines;
         DescriptorRing readbackDescriptorSets;
         VkShaderModule multisampleUploadModule = VK_NULL_HANDLE;
+        std::vector<std::pair<Recorder*, std::uint64_t>> recorders;
     };
 
 }

@@ -139,7 +139,7 @@ int APS5_VABI _ZN3sce3Xml3Dom8Document15removeAttributeENS1_6NodeIdEPKNS0_6Strin
 int APS5_VABI _ZN3sce3Xml3Dom8Document16removeAttributesENS1_6NodeIdE(XmlHandle* self, XmlNodeId node);
 int APS5_VABI _ZN3sce3Xml3Dom8Document16setAttributeListENS1_6NodeIdEPKNS0_13AttributeListE(XmlHandle* self, XmlNodeId node, const XmlHandle* attrs);
 int APS5_VABI _ZN3sce3Xml3Dom8Document7setTextENS1_6NodeIdEPKNS0_6StringE(XmlHandle* self, XmlNodeId node, const XmlString* text);
-int APS5_VABI _ZN3sce3Xml3Dom8Document9serializeEPKNS0_18SerializeParameterEPNS0_6StringE();
+int APS5_VABI _ZN3sce3Xml3Dom8Document9serializeEPKNS0_18SerializeParameterEPNS0_6StringE(XmlHandle* self, const XmlSerializeParameter* parameter, XmlString* result);
 int APS5_VABI _ZN3sce3Xml3Dom8Document9terminateEv(XmlHandle* self);
 void APS5_VABI _ZN3sce3Xml3Dom8DocumentC1ERKS2_(XmlHandle* self, const XmlHandle* other);
 void APS5_VABI _ZN3sce3Xml3Dom8DocumentC1Ev(XmlHandle* self);

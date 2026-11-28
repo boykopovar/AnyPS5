@@ -37,6 +37,31 @@ class FeatureTests(unittest.TestCase):
         self.assertEqual(groups[2]["presence"], "added")
         self.assertEqual(original, [p.read_bytes() for p in paths])
 
+    def test_shared_source_transition_keeps_retained_symbols_and_reports_real_removals(self):
+        owner = {"name": "libSceExample", "done_names": ["Ready", "Gone"],
+                 "todo_names": ["Pending"], "inert_names": ["Ready"]}
+        wrapper = {**owner, "name": "libSceExample.native"}
+        before = {"libraries": {"percent": 66.67, "groups": [owner, wrapper]},
+                  "shaders": {"percent": 0, "groups": []}}
+        after = {"libraries": {"percent": 50, "groups": [
+            {**owner, "done_names": ["Ready"]},
+            {"name": wrapper["name"], "shared_sources": owner["name"]},
+        ]}, "shaders": before["shaders"]}
+        paths = [self.root / "base.json", self.root / "head.json"]
+        for path, snapshot in zip(paths, [before, after]):
+            path.write_text(json.dumps(snapshot), encoding="utf-8")
+
+        result = self.cli("progress_diff.py", *paths)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        libraries = json.loads(result.stdout)["libraries"]
+        self.assertEqual(libraries["change_percentage_points"], -16.67)
+        source, alias = libraries["groups"]
+        self.assertEqual((source["name"], alias["name"]), (owner["name"], wrapper["name"]))
+        self.assertEqual(source["done_names"], {"added": [], "removed": ["Gone"]})
+        self.assertEqual(alias["presence"], "both")
+        for state in ("done_names", "todo_names", "inert_names"):
+            self.assertEqual(alias[state], {"added": [], "removed": []})
+
     def test_percentage_point_change_is_rounded_like_the_snapshot_percentages(self):
         base, head = self.root / "base.json", self.root / "head.json"
         for old, new, change in ((40.03, 40.09, 0.06), (40.09, 40.03, -0.06)):

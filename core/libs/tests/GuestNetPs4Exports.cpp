@@ -289,6 +289,7 @@ void CheckValidation() {
     Require(Failed(sceNetResolverConnectCreate("test", 1, connection, 1), kEinval));
     Require(Failed(sceNetResolverConnect(nullptr, "localhost", 80, nullptr), kEinval));
     Require(Failed(sceNetResolverConnectDestroy(nullptr), kEinval));
+    Require(Failed(sceNetResolverConnectDestroy(reinterpret_cast<NetResolverConnection*>(0x10)), kEfault));
     g_record.fill(0);
     Require(Failed(sceNetResolverConnectDestroy(connection), kEbadf));
     g_record[0x1D8] = 2;

@@ -14,6 +14,7 @@ import sys
 import tempfile
 import threading
 import time
+from collections import Counter
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -712,9 +713,17 @@ def is_module(path):
 
 
 def stage_inputs(package, entry, source):
+    unwrap_or_copy(package / "eboot.bin", source / "eboot.elf")
+    options = iter(entry.get("relink", []))
+    for option in options:
+        if option == "--skip-sce-module":
+            return
+        if option == "--":
+            break
+        if option in ("--exclude-sce-module", "--module-dir", "--rpath"):
+            next(options, None)
     if not (package / "sce_modules").is_dir():
         (source / "sce_module").mkdir(parents=True)
-    unwrap_or_copy(package / "eboot.bin", source / "eboot.elf")
     executables = [path for path in (package / "eboot.bin", *(package / name for name in entry.get("executables", []))) if path.is_file()]
     for directory in dict.fromkeys([*STANDARD_MODULE_DIRS, *module_dirs(entry)]):
         if not (package / directory).is_dir():
@@ -1414,11 +1423,93 @@ def write_summary(output, summary):
         staged.replace(target)
 
 
+def saved_smoke_group(runs):
+    samples = []
+    for run in runs:
+        fps = run.get("fps")
+        if run["outcome"] == "rendering" and type(fps) in (int, float) and 0 <= fps <= sys.float_info.max:
+            samples.append(float(fps))
+    samples.sort()
+    count = len(samples)
+    fps = {"count": count, "min": None, "median": None, "max": None}
+    if samples:
+        lower, upper = samples[(count - 1) // 2], samples[count // 2]
+        fps.update(min=samples[0], median=lower + (upper - lower) / 2, max=samples[-1])
+    return {"outcomes": [run["outcome"] for run in runs], "fps": fps}
+
+
+def saved_smoke_title(title):
+    if title is None:
+        return None
+    groups = {"cold": [], "warm": [], "unknown": []}
+    for run in title["runs"]:
+        cache = run.get("cache")
+        groups[cache if cache in ("cold", "warm") else "unknown"].append(run)
+    version = title.get("version")
+    return {"version": version if isinstance(version, str) else None,
+            "groups": {cache: saved_smoke_group(runs) for cache, runs in groups.items() if runs}}
+
+
+def render_saved_smoke_comparison(titles):
+    lines = ["FPS uses recorded samples from rendering runs. Cold and warm are saved run labels.", "",
+             "| Title | ID | Side | Version | Cache | Outcomes | FPS samples | Median FPS | FPS range |",
+             "| --- | --- | --- | --- | --- | --- | ---: | ---: | ---: |"]
+    for title_id, title in titles.items():
+        for side in ("baseline", "candidate"):
+            heading = [title["name"], title_id, side.capitalize()]
+            entry = title[side]
+            if entry is None:
+                row = heading + ["-", "-", "not recorded", "-", "-", "-"]
+                lines.append("| " + " | ".join(map(markdown_cell, row)) + " |")
+                continue
+            for cache, group in entry["groups"].items():
+                outcomes = ", ".join(f"{name} {count}" for name, count in Counter(group["outcomes"]).items())
+                fps = group["fps"]
+                bounds = f"{display(fps['min'])} to {display(fps['max'])}" if fps["count"] else "-"
+                row = heading + [entry["version"] or "-", cache, outcomes,
+                                 f"{fps['count']}/{len(group['outcomes'])}", display(fps["median"]), bounds]
+                lines.append("| " + " | ".join(map(markdown_cell, row)) + " |")
+    return "\n".join(lines)
+
+
+def compare_saved_smoke_runs(argv):
+    parser = argparse.ArgumentParser(prog="title_run.py compare", description="Compare two saved smoke-run summaries.")
+    parser.add_argument("baseline", type=Path, help="baseline summary.json")
+    parser.add_argument("candidate", type=Path, help="candidate summary.json")
+    parser.add_argument("--json", action="store_true", help="print the comparison as JSON")
+    args = parser.parse_args(argv)
+    summaries = []
+    for path in (args.baseline, args.candidate):
+        try:
+            document = load_json(path.read_text(encoding="utf-8-sig"), path)
+            if isinstance(document, dict) and document.get("format") == "anyps5-performance-capture/1":
+                raise ValueError("expected a smoke-run summary, got a performance capture summary")
+            validate_comparison(document)
+        except (OSError, ValueError) as error:
+            parser.error(f"{path}: {error}")
+        summaries.append(document["titles"])
+    baseline, candidate = summaries
+    titles = {}
+    for title_id in sorted(baseline.keys() | candidate.keys()):
+        before, after = baseline.get(title_id), candidate.get(title_id)
+        titles[title_id] = {"name": (after or before)["name"], "baseline": saved_smoke_title(before),
+                            "candidate": saved_smoke_title(after)}
+    if args.json:
+        print(json.dumps({"format": "title-run-repeatability", "version": 1, "titles": titles}, indent=2, allow_nan=False))
+    else:
+        print(render_saved_smoke_comparison(titles))
+    return 0
+
+
 def run_cli(argv, capture_resources):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="backslashreplace")
-    parser = argparse.ArgumentParser(description="Run titles repeatably and report each run's outcome.")
+    argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] == "compare":
+        return compare_saved_smoke_runs(argv[1:])
+    parser = argparse.ArgumentParser(description="Run titles repeatably and report each run's outcome.",
+                                     epilog="Use %(prog)s compare --help to compare two saved summaries without running a title.")
     parser.add_argument("ids", nargs="*", help="title IDs to run (default: every title found)")
     parser.add_argument("--games", action="append", type=Path, required=True, help="directory searched for extracted packages")
     parser.add_argument("--build", type=Path, default=ROOT / "build")

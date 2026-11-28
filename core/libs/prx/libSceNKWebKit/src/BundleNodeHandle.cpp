@@ -74,4 +74,23 @@ bool APS5_VABI WKBundleNodeHandleGetHTMLTextAreaElementLastChangeWasUserEdit(con
     return handle->htmlTextAreaElementLastChangeWasUserEdit;
 }
 
+void APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutoFillButtonEnabledWithButtonType(const void* nodeHandleRef, std::uint8_t autoFillButtonType) {
+    auto* handle = NKWebKit::Cast<NKWebKit::BundleNodeHandle>(nodeHandleRef, __func__);
+    if (handle->htmlInputElementAutoFillButtonType == autoFillButtonType) {
+        return;
+    }
+    handle->htmlInputElementLastAutoFillButtonType = handle->htmlInputElementAutoFillButtonType;
+    handle->htmlInputElementAutoFillButtonType = autoFillButtonType;
+}
+
+std::uint8_t APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFillButtonType(const void* nodeHandleRef) {
+    const auto* handle = NKWebKit::Cast<NKWebKit::BundleNodeHandle>(nodeHandleRef, __func__);
+    return handle->htmlInputElementAutoFillButtonType;
+}
+
+std::uint8_t APS5_VABI WKBundleNodeHandleGetHTMLInputElementLastAutoFillButtonType(const void* nodeHandleRef) {
+    const auto* handle = NKWebKit::Cast<NKWebKit::BundleNodeHandle>(nodeHandleRef, __func__);
+    return handle->htmlInputElementLastAutoFillButtonType;
+}
+
 }

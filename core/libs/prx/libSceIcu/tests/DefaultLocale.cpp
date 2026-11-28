@@ -1,12 +1,12 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libSceIcu/tests/RecoveredSignatureChecks.hpp"
 #include "prx/libc/include/Api.hpp"
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <string_view>
 #include <type_traits>
-#include <array>
 #include <cerrno>
 #include <string>
 
@@ -183,6 +183,15 @@ void Check(std::string_view systemId, std::string_view defaultName) {
     Require(uloc_getDefault() == name);
 }
 
+void CheckName(std::int32_t (APS5_VABI* function)(const char*, char*, std::int32_t, std::int32_t*),
+               const char* locale, std::string_view expected) {
+    std::array<char, 64> buffer{};
+    std::int32_t status = 0;
+    const auto length = function(locale, buffer.data(), static_cast<std::int32_t>(buffer.size()), &status);
+    Require(status == 0);
+    Require(std::string_view(buffer.data(), static_cast<std::size_t>(length)) == expected);
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -206,6 +215,42 @@ int main(int argc, char** argv) {
     } else if (scenario == "long") {
         SetEnvironment("LANG", "abcdefghijkl_US");
         Check("abcdefghijkl_US", "");
+    } else if (scenario == "i-default") {
+        SetEnvironment("LANG", "fr_FR");
+        Check("fr_FR", "fr_FR");
+        CheckName(uloc_getBaseName, "i-default", "en");
+        CheckName(uloc_getBaseName, "i-default_US", "fr_FR");
+        CheckName(uloc_getBaseName, "i-default.utf8", "fr_FR.utf8");
+        CheckName(uloc_canonicalize, "i-default", "en@x=i-default");
+        CheckName(uloc_canonicalize, "i-default_US", "fr_FR");
+        CheckName(uloc_canonicalize, "i-default@currency=EUR", "fr_FR@currency=EUR");
+        std::int32_t status = 0;
+        uloc_setDefault_nid_postfix("fr_FR@collation=phonebook", &status);
+        Require(status == 0);
+        CheckName(uloc_getBaseName, "i-default_US", "fr_FR");
+        CheckName(uloc_canonicalize, "i-default_US", "fr_FR@collation=phonebook");
+        CheckName(uloc_canonicalize, "i-default@currency=EUR", "fr_FR@currency=EUR");
+        uloc_setDefault_nid_postfix("en_US.UTF-8", &status);
+        Require(status == 0);
+        CheckName(uloc_getBaseName, "i-default.utf8", "en_US.utf8");
+        CheckName(uloc_canonicalize, "i-default.utf8", "en_US");
+    } else if (scenario == "i-default-sentinel") {
+        SetEnvironment("LANG", "i-default");
+        Check("i-default", "en@x=i-default");
+        CheckName(uloc_getBaseName, "i-default_US", "en");
+        CheckName(uloc_canonicalize, "i-default_US", "en@x=i-default");
+    } else if (scenario == "i-default-tag") {
+        SetEnvironment("LANG", "i-default-extra");
+        Check("i-default-extra", "en@x=i-default-extra");
+    } else if (scenario == "i-default-system") {
+        SetEnvironment("LANG", "i-default_US");
+        Check("i-default_US", "i-default_US");
+        CheckName(uloc_getBaseName, "i-default", "en");
+        CheckName(uloc_getBaseName, "i-default_US", "i-default_US");
+        CheckName(uloc_getBaseName, "i-default.utf8", "i-default_US.utf8");
+        CheckName(uloc_canonicalize, "i-default", "en@x=i-default");
+        CheckName(uloc_canonicalize, "i-default_US", "i-default_US");
+        CheckName(uloc_canonicalize, "i-default@currency=EUR", "i-default_US@currency=EUR");
     } else {
         std::fprintf(stderr, "unknown default locale scenario\n");
         return 1;

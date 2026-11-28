@@ -61,6 +61,19 @@ class ElfLayoutTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotEqual(after, image)
 
+    def test_relocation_layout_linked_to_dynsym_is_checked(self):
+        for size, entry_size in ((25, 24), (24, 0), (24, 8), (24, 16)):
+            with self.subTest(size=size, entry_size=entry_size):
+                image = build_image(symbols(False), False)
+                rela_offset = 0x600
+                struct.pack_into("<QQq", image, rela_offset, 0x1234, (3 << 32) | 1, 0)
+                if size > 24:
+                    image[rela_offset + 24] = 0x7f
+                struct.pack_into("<H", image, 0x3c, 5)
+                struct.pack_into("<IIQQQQIIQQ", image, SHOFF + 4 * 64,
+                                 0, 4, 2, 0, rela_offset, size, 1, 0, 8, entry_size)
+                self.reject(image)
+
 
 if __name__ == "__main__":
     unittest.main()

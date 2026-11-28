@@ -465,6 +465,29 @@ class BenchmarkCompareTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             benchmark_compare.compare_benchmark_runs(self.write_series(runs))
 
+    def test_reserialized_capture_cannot_count_as_an_independent_run(self):
+        runs = self.abba()[:2]
+        first, second = (self.root / attempt["capture"] for attempt in runs)
+        capture = json.loads(gzip.decompress(first.read_bytes()))
+        capture["title"] = "Fixture 界"
+        original = json.dumps(capture, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        first.write_bytes(gzip.compress(original, mtime=0))
+        manifest = self.write_series(runs)
+        representations = (
+            json.dumps(capture, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+            json.dumps(capture, ensure_ascii=False, indent=2),
+            json.dumps(capture, ensure_ascii=True, separators=(",", ":")),
+            json.dumps(capture, ensure_ascii=False, indent=4).replace("\n", "\r\n"),
+        )
+        for number, text in enumerate(representations):
+            for encoding in ("utf-8", "utf-8-sig"):
+                for compress in (False, True):
+                    with self.subTest(layout=number, encoding=encoding, compress=compress):
+                        serialized = text.encode(encoding)
+                        second.write_bytes(gzip.compress(serialized, mtime=1) if compress else serialized)
+                        with self.assertRaisesRegex(ValueError, "duplicate capture evidence"):
+                            benchmark_compare.compare_benchmark_runs(manifest)
+
     def test_series_run_manifest_and_total_frame_limits(self):
         path = self.write_series(self.abba())
         for constant, limit in (("MAX_RUNS", 3), ("MAX_MANIFEST_BYTES", 16), ("MAX_TOTAL_FRAMES", 1000)):

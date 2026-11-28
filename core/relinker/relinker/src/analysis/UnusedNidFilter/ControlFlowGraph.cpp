@@ -131,6 +131,7 @@ void walkGraph(std::span<const std::uint8_t> text, VirtualAddress textVaddr, Vir
                 if (info.AddressSize32) base = static_cast<std::uint32_t>(base);
                 takeAddress(base);
                 for (VirtualAddress target : ReadRelativeTableTargets(*data, base, textVaddr, text.size())) takeAddress(target);
+                for (VirtualAddress target : ReadRelativeTableTargets(text, base, textVaddr)) takeAddress(target);
             }
 
             bool fallThrough = true;

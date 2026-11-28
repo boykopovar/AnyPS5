@@ -45,13 +45,17 @@ ShaderRecompiler::ShaderVertexStageInfo DecodeOrderedVertexStageInfo(std::span<c
     auto watch = queue.WatchWrites();
     auto info = decode();
     if (watch.items == 0 && !queue.Busy() && queue.Retired() == watch.retired) return info;
+    if (reads.empty()) {
+        queue.NoteDecodeDrainSkip();
+        return info;
+    }
     struct RangesStorage {};
     auto& ranges = HostThreadLocal<std::vector<DrawPipeline::Range>, RangesStorage>();
     ranges.clear();
     for (const auto& read : reads) ranges.emplace_back(read.address, read.address + read.size);
     if (!queue.WrittenSince(watch, ranges)) return info;
     queue.NoteDecodeDrain();
-    queue.Drain(DrawPipeline::DrainReason::Capture);
+    queue.Drain(DrawPipeline::DrainReason::Capture, 0x100, "decode_reads");
     return decode();
 }
 
@@ -93,7 +97,7 @@ std::vector<std::pair<std::size_t, std::size_t>> UserDataWords(const std::vector
     if (location == 0x280u) return words;
     for (std::size_t i = 0; i < programs.size(); ++i) {
         if (roles[i] == Role::Fragment || roles[i] == Role::GeometryBack || location < programs[i].userDataBase) continue;
-        const auto word = location - programs[i].userDataBase + (8u - programs[i].firstUserSgpr);
+        const auto word = location - programs[i].userDataBase + programs[i].hiddenUserWords;
         if (word < programs[i].userData.size()) words.emplace_back(i, static_cast<std::size_t>(word));
     }
     return words;
@@ -225,7 +229,7 @@ std::shared_ptr<DrawDecode> Driver::decodeDraw(const QueueState& queue, const Su
         const auto localDevice = device.Load();
         if (localDevice != nullptr) product->pixel.sampleOrder = localDevice->HostSampleOrder(product->state);
     }
-    product->pixel.quadSampleMask = Graphics::QuadSampleMasks(product->state, product->pixel.sampleOrder);
+    product->pixel.quadSampleMask = Graphics::QuadSampleMasks(product->state, product->pixel.sampleOrder, context.staticSampleMaskStopsShading);
     if (product->pixel.stencilRefExportEnable && Graphics::StencilReferenceUnused(product->state)) {
         const auto localDevice = device.Load();
         const auto capabilities = localDevice == nullptr ? std::vector<std::uint32_t>{} : localDevice->Target().supportedCapabilities;
