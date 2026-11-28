@@ -1555,6 +1555,8 @@ struct StorageTextureCache {
     std::unordered_map<StorageKey, std::list<CachedStorageTexture>::iterator, StorageKeyHash> index;
     std::unordered_map<const StorageTexture*, std::list<CachedStorageTexture>::iterator> byImage;
     std::atomic<std::uint64_t> bytes{0};
+    std::atomic<std::uint64_t> allRecentAtPresent{0};
+    std::atomic<std::uint64_t> reclaimScans{0};
 };
 
 StorageTextureCache& StorageTextures() {
@@ -1981,6 +1983,7 @@ void ClearCachedTextures(VkDevice device) {
         sampled.spareBytes = 0;
     }
     auto& storage = StorageTextures();
+    storage.allRecentAtPresent.store(0, std::memory_order_relaxed);
     std::vector<std::shared_ptr<StorageTexture>> cleared;
     {
         std::lock_guard lock(storage.mutex);
@@ -2009,6 +2012,10 @@ void ClearCachedTextures(VkDevice device) {
             }
         }
     }
+}
+
+std::uint64_t StorageReclaimScans() {
+    return StorageTextures().reclaimScans.load(std::memory_order_relaxed);
 }
 
 std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage) {
@@ -2050,71 +2057,95 @@ std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage) {
     }
     if (freed < bytes) {
         auto& cache = StorageTextures();
-        std::unique_lock<GuestMemory::GpuMutexType> gpu(GuestMemory::GpuMutex(), std::defer_lock);
-        const bool inherited = storageCacheHeld != 0;
-        if ((inherited && (!newImage || storageCacheReclaimable == 0)) || !gpu.try_lock()) {
-            storageSkipped = true;
-        } else {
-            try {
-                while (freed < bytes) {
-                    std::shared_ptr<StorageTexture> image;
-                    {
-                        std::unique_lock lock(cache.mutex, std::defer_lock);
-                        if (!inherited && !lock.try_lock()) {
+        const auto currentPresent = Recorder::Presents();
+        const bool storageKnownRecent = currentPresent != 0u && cache.allRecentAtPresent.load(std::memory_order_relaxed) == currentPresent;
+        if (!storageKnownRecent) {
+            std::unique_lock<GuestMemory::GpuMutexType> gpu(GuestMemory::GpuMutex(), std::defer_lock);
+            const bool inherited = storageCacheHeld != 0;
+            if ((inherited && (!newImage || storageCacheReclaimable == 0)) || !gpu.try_lock()) {
+                storageSkipped = true;
+            } else {
+                try {
+                    while (freed < bytes) {
+                        std::shared_ptr<StorageTexture> image;
+                        {
+                            std::unique_lock lock(cache.mutex, std::defer_lock);
+                            if (!inherited && !lock.try_lock()) {
+                                storageSkipped = true;
+                                break;
+                            }
+                            if (!storageScanned) {
+                                storageCached = cache.entries.size();
+                                cache.reclaimScans.fetch_add(1, std::memory_order_relaxed);
+                            }
+                            storageScanned = true;
+                            storagePending = 0;
+                            storageRecent = 0;
+                            bool spared = false;
+                            const auto present = Recorder::Presents();
+                            for (auto it = cache.entries.end(); it != cache.entries.begin();) {
+                                --it;
+                                if (it->texture->Dirty()) {
+                                    ++storagePending;
+                                    continue;
+                                }
+                                if (present != 0u && it->lastPresent + 1u >= present) {
+                                    ++storageRecent;
+                                    continue;
+                                }
+                                if (it->texture->TakeUsed()) {
+                                    spared = true;
+                                    continue;
+                                }
+                                image = evictStorage(cache, it);
+                                break;
+                            }
+                            if (image == nullptr) {
+                                if (spared) continue;
+                                break;
+                            }
+                        }
+                        std::vector<std::shared_ptr<ShaderResources>> resources;
+                        const bool removed = SharedResourceCache().TryRemoveImage(image.get(), &resources);
+                        if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->Recording()) {
+                            for (auto& resource : resources) recorder->Keep(std::move(resource));
+                        }
+                        resources.clear();
+                        ++storageEntries;
+                        image.reset();
+                        freed = ImageMemoryReleasedBytes() - releasedBefore;
+                        if (!removed) {
                             storageSkipped = true;
                             break;
                         }
-                        if (!storageScanned) storageCached = cache.entries.size();
-                        storageScanned = true;
-                        storagePending = 0;
-                        storageRecent = 0;
-                        bool spared = false;
-                        const auto present = Recorder::Presents();
-                        for (auto it = cache.entries.end(); it != cache.entries.begin();) {
-                            --it;
-                            if (it->texture->Dirty()) {
-                                ++storagePending;
-                                continue;
-                            }
-                            if (present != 0u && it->lastPresent + 1u >= present) {
-                                ++storageRecent;
-                                continue;
-                            }
-                            if (it->texture->TakeUsed()) {
-                                spared = true;
-                                continue;
-                            }
-                            image = evictStorage(cache, it);
-                            break;
-                        }
-                        if (image == nullptr) {
-                            if (spared) continue;
-                            break;
-                        }
                     }
-                    std::vector<std::shared_ptr<ShaderResources>> resources;
-                    const bool removed = SharedResourceCache().TryRemoveImage(image.get(), &resources);
-                    if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->Recording()) {
-                        for (auto& resource : resources) recorder->Keep(std::move(resource));
-                    }
-                    resources.clear();
-                    ++storageEntries;
-                    image.reset();
-                    freed = ImageMemoryReleasedBytes() - releasedBefore;
-                    if (!removed) {
-                        storageSkipped = true;
-                        break;
-                    }
+                } catch (const std::exception& error) {
+                    std::fprintf(stderr, "[gpu] texture cache release stopped: %s\n", error.what());
                 }
-            } catch (const std::exception& error) {
-                std::fprintf(stderr, "[gpu] texture cache release stopped: %s\n", error.what());
+                if (!storageSkipped && storageScanned && storageEntries == 0 && storagePending == 0 && currentPresent != 0u && storageCached != 0u) {
+                    cache.allRecentAtPresent.store(currentPresent, std::memory_order_relaxed);
+                } else {
+                    cache.allRecentAtPresent.store(0, std::memory_order_relaxed);
+                }
             }
         }
     }
     freed = ImageMemoryReleasedBytes() - releasedBefore;
-    char kept[192] = "";
-    if (storageScanned) std::snprintf(kept, sizeof(kept), "; of the %zu cached storage images, %zu with pending results and %zu used in this or the previous present were kept", storageCached, storagePending, storageRecent);
-    std::fprintf(stderr, "[gpu] texture caches released %llu MiB of the %llu MiB asked for: %zu sampled entries%s, %zu storage images%s%s\n", static_cast<unsigned long long>(freed >> 20u), static_cast<unsigned long long>(bytes >> 20u), sampledEntries, sampledSkipped ? " (cache busy, skipped)" : "", storageEntries, storageSkipped ? " (cache or device busy, skipped)" : "", kept);
+    static std::atomic<std::uint64_t> zeroReleases{0};
+    bool report = true;
+    char emptySuffix[64] = "";
+    if (freed != 0) {
+        zeroReleases.store(0, std::memory_order_relaxed);
+    } else {
+        const auto count = zeroReleases.fetch_add(1, std::memory_order_relaxed) + 1;
+        report = count <= 5 || (count & (count - 1)) == 0;
+        if (report && count > 1) std::snprintf(emptySuffix, sizeof(emptySuffix), "; %llu consecutive empty releases", static_cast<unsigned long long>(count));
+    }
+    if (report) {
+        char kept[192] = "";
+        if (storageScanned) std::snprintf(kept, sizeof(kept), "; of the %zu cached storage images, %zu with pending results and %zu used in this or the previous present were kept", storageCached, storagePending, storageRecent);
+        std::fprintf(stderr, "[gpu] texture caches released %llu MiB of the %llu MiB asked for: %zu sampled entries%s, %zu storage images%s%s%s\n", static_cast<unsigned long long>(freed >> 20u), static_cast<unsigned long long>(bytes >> 20u), sampledEntries, sampledSkipped ? " (cache busy, skipped)" : "", storageEntries, storageSkipped ? " (cache or device busy, skipped)" : "", kept, emptySuffix);
+    }
     return freed;
 }
 
