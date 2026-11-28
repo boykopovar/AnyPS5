@@ -9,7 +9,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <stdexcept>
 
 static_assert(offsetof(SceKernelProsperoSystemSwVersion, versionString) == 0x08);
 static_assert(offsetof(SceKernelProsperoSystemSwVersion, version) == 0x24);
@@ -64,20 +63,17 @@ static void CheckInvalidGuestFirmwareVersion() {
     Require(sceKernelGetAllowedSdkVersionOnSystem_nid_postfix(nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(*__error_nid_postfix() == 13);
     SceKernelProsperoSystemSwVersion system{};
-    system.size = sizeof(system);
-    try {
-        sceKernelGetProsperoSystemSwVersion_nid_postfix(&system);
-        Require(false);
-    } catch (const std::invalid_argument&) {
-        Require(system.size == sizeof(system) && system.versionString[0] == '\0' && system.version == 0);
-    }
-    std::uint32_t allowed = 0xaaaaaaaa;
-    try {
-        sceKernelGetAllowedSdkVersionOnSystem_nid_postfix(&allowed);
-        Require(false);
-    } catch (const std::invalid_argument&) {
-        Require(allowed == 0xaaaaaaaa);
-    }
+    std::array<unsigned char, sizeof(system)> untouched;
+    untouched.fill(0xaa);
+    std::memcpy(&system, untouched.data(), untouched.size());
+    Require(sceKernelGetProsperoSystemSwVersion_nid_postfix(&system) == SCE_KERNEL_ERROR_EINVAL);
+    Require(std::memcmp(&system, untouched.data(), untouched.size()) == 0);
+    Require(*__error_nid_postfix() == 13);
+
+    std::array<std::uint32_t, 2> allowed{0xaaaaaaaa, 0xbbbbbbbb};
+    Require(sceKernelGetAllowedSdkVersionOnSystem_nid_postfix(allowed.data()) == SCE_KERNEL_ERROR_EINVAL);
+    Require(allowed[0] == 0xaaaaaaaa && allowed[1] == 0xbbbbbbbb);
+    Require(*__error_nid_postfix() == 13);
 }
 
 namespace {
@@ -142,7 +138,9 @@ static void CheckTitleWorkaround() {
 
 int main(int argc, char** argv) {
     Require(argc <= 2);
-    SetGuestFirmwareVersion("99.999.999");
+    const bool missing = argc == 2 && std::strcmp(argv[1], "missing") == 0;
+    if (missing) Require(std::getenv("ANYPS5_FIRMWARE_VERSION") == nullptr);
+    SetGuestFirmwareVersion("98.998.998");
     if (argc == 2 && std::strcmp(argv[1], "invalid") == 0) {
         CheckInvalidGuestFirmwareVersion();
         return 0;
@@ -158,8 +156,9 @@ int main(int argc, char** argv) {
         {"12.700.001", 0x12700001, 0x12700fff},
         {"13.420.000", 0x13420000, 0x13420fff},
         {"13.600.007", 0x13600007, 0x13600fff},
+        {"99.999.999", 0x99999999, 0x99999fff},
     };
-    const char* expected = argc == 2 ? argv[1] : cases[0].formatted;
+    const char* expected = argc == 2 && !missing ? argv[1] : cases[0].formatted;
     for (const auto& test : cases) {
         if (std::strcmp(expected, test.formatted) != 0) continue;
         CheckCompiledSdkVersions();

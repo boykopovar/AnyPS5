@@ -9,7 +9,6 @@
 #include <cstdlib>
 #include <limits>
 #include <optional>
-#include <stdexcept>
 #include <string_view>
 
 static_assert(offsetof(SceKernelProsperoSystemSwVersion, size) == 0x00);
@@ -41,11 +40,6 @@ std::optional<std::uint32_t> ReadGuestFirmwareVersion() {
 
 const std::optional<std::uint32_t> ConfiguredFirmwareVersion = ReadGuestFirmwareVersion();
 
-std::uint32_t GuestFirmwareVersion() {
-    if (!ConfiguredFirmwareVersion) throw std::invalid_argument("ANYPS5_FIRMWARE_VERSION must use the MM.mmm.ppp decimal format");
-    return *ConfiguredFirmwareVersion;
-}
-
 struct VersionPayload {
     char versionString[sizeof(SceKernelProsperoSystemSwVersion::versionString)]{};
     std::uint32_t version{};
@@ -65,9 +59,10 @@ int APS5_VABI sceKernelGetProsperoSystemSwVersion_nid_postfix(SceKernelProsperoS
     if (address > std::numeric_limits<std::uintptr_t>::max() - offset - sizeof(VersionPayload)) {
         return SCE_KERNEL_ERROR_EFAULT;
     }
+    if (!ConfiguredFirmwareVersion) return SCE_KERNEL_ERROR_EINVAL;
     const int saved = errno;
     VersionPayload payload{};
-    payload.version = GuestFirmwareVersion();
+    payload.version = *ConfiguredFirmwareVersion;
     const auto packed = static_cast<unsigned int>(payload.version);
     std::snprintf(payload.versionString, sizeof(payload.versionString), "%02x.%03x.%03x",
         packed >> 24, (packed >> 12) & SdkPatchMask, packed & SdkPatchMask);
@@ -79,7 +74,8 @@ int APS5_VABI sceKernelGetProsperoSystemSwVersion_nid_postfix(SceKernelProsperoS
 
 int APS5_VABI sceKernelGetAllowedSdkVersionOnSystem_nid_postfix(std::uint32_t* version) {
     if (version == nullptr) return SCE_KERNEL_ERROR_EINVAL;
-    const std::uint32_t value = GuestFirmwareVersion() | SdkPatchMask;
+    if (!ConfiguredFirmwareVersion) return SCE_KERNEL_ERROR_EINVAL;
+    const std::uint32_t value = *ConfiguredFirmwareVersion | SdkPatchMask;
     const bool copied = GuestCopyOut_nid_no_patch(version, &value, sizeof(value));
     if (!copied) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
