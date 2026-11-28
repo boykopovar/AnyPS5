@@ -41,7 +41,7 @@ def commit_on_base(base, message, files):
     return run("rev-parse", "HEAD")
 
 
-class NamesLookupTests(unittest.TestCase):
+class NamesLookupFixture(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         seed = tempfile.TemporaryDirectory()
@@ -84,6 +84,8 @@ class NamesLookupTests(unittest.TestCase):
         self.prs = {n: {"ref": f"refs/pr/{n}", "sha": sha, "author": f"author{n}", "title": f"title {n}", "depends": set()}
                     for n, sha in self.numbers.items()}
 
+
+class NamesLookupTests(NamesLookupFixture):
     def test_finds_the_pull_requests_that_add_each_name(self):
         found = pr_overlap.pull_requests_with(["pending_nid_postfix", "legacy_target", "done", "absent"], self.prs, 2)
         self.assertEqual(found, {"pending": [1], "legacy_target": [2], "done": [], "absent": []})
@@ -136,6 +138,8 @@ class NamesLookupTests(unittest.TestCase):
                 pr = {"ref": "refs/pr/4", "sha": sha, "author": "author4", "title": "insertion", "depends": set()}
                 self.assertEqual(pr_overlap.pull_requests_with(["done"], {4: pr}, 2), {"done": expected})
 
+
+class NamesAliasTests(NamesLookupFixture):
     def test_finds_body_edits_through_an_existing_nid_alias(self):
         path = "core/libs/prx/libSceExample/Export.cpp"
         source = ('int APS5_VABI legacyHelper_nid_no_patch() {\n    return 0;\n}\n'
@@ -157,6 +161,9 @@ class NamesLookupTests(unittest.TestCase):
         pr = {"ref": "refs/pr/4", "sha": sha, "author": "author4", "title": "handler edit", "depends": set()}
         self.assertEqual(pr_overlap.pull_requests_with(["done"], {4: pr}, 2), {"done": [4]})
 
+
+
+class NamesReportTests(NamesLookupFixture):
     def test_reports_the_state_on_the_base_through_names_and_nid_aliases(self):
         status = pr_overlap.main_status(["done", "pending", "legacy_target", "absent"], "refs/pr/base")
         library = "core/libs/prx/libSceExample"
