@@ -1861,7 +1861,7 @@ public:
             const std::lock_guard lock(_lock);
             if (held()) return true;
         }
-        if (!GuestArena::GuestArenaContains_nid_postfix(reinterpret_cast<const void*>(first), last - first) || GuestArena::WindowsMappings::Get().ProtectsItself(first, last - first)) return false;
+        if (!GuestArena::GuestArenaContains_nid_postfix(reinterpret_cast<const void*>(first), last - first) || GuestArena::GuestArenaHostRegionOverlaps_nid_postfix(first, last - first) || GuestArena::WindowsMappings::Get().ProtectsItself(first, last - first)) return false;
         Trap trap{begin, end, first, last, 0, 0, std::vector<std::uint8_t>((last - first) / PageBytes, 0)};
         const std::lock_guard lock(_lock);
         if (held()) return true;
