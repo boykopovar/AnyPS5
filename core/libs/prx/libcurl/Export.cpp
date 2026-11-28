@@ -237,21 +237,23 @@ curl_httppost* HostFormFromGuest(const guest_curl_httppost* guest, HostForm& for
         form.cyclic = true;
         return nullptr;
     }
+    guest_curl_httppost node;
+    if (!GuestCopyIn_nid_no_patch(&node, guest, sizeof(node))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     auto& host = form.nodes.emplace_back();
-    host.more = HostFormFromGuest(guest->more, form);
-    host.next = HostFormFromGuest(guest->next, form);
-    host.name = guest->name;
-    host.namelength = HostLong(guest->namelength);
-    host.contents = guest->contents;
-    host.contentslength = HostLong(guest->contentslength);
-    host.buffer = guest->buffer;
-    host.bufferlength = HostLong(guest->bufferlength);
-    host.contenttype = guest->contenttype;
-    host.contentheader = reinterpret_cast<curl_slist*>(guest->contentheader);
-    host.flags = HostLong(guest->flags);
-    host.showfilename = guest->showfilename;
-    host.userp = guest->userp;
-    host.contentlen = guest->contentlen;
+    host.more = HostFormFromGuest(node.more, form);
+    host.next = HostFormFromGuest(node.next, form);
+    host.name = node.name;
+    host.namelength = HostLong(node.namelength);
+    host.contents = node.contents;
+    host.contentslength = HostLong(node.contentslength);
+    host.buffer = node.buffer;
+    host.bufferlength = HostLong(node.bufferlength);
+    host.contenttype = node.contenttype;
+    host.contentheader = reinterpret_cast<curl_slist*>(node.contentheader);
+    host.flags = HostLong(node.flags);
+    host.showfilename = node.showfilename;
+    host.userp = node.userp;
+    host.contentlen = node.contentlen;
     return &host;
 }
 
