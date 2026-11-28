@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <source_location>
 #include <stdexcept>
 #include <string>
@@ -858,6 +859,80 @@ void CheckErrorsAndGuardPages() {
         errno = 99;
         RequireThrows([&] { X509_print_ex_nid_postfix(&bio.bio, &bad.cert, X509FlagCompat, X509FlagCompat); }, "unmapped spk");
         Require(errno == 99, "errno preserved on guard page publicKey");
+    }
+    {
+        CertificateFixture bad;
+        bad.subjectStack.num = 3;
+        bad.subjectStack.numAlloc = 2;
+        RequireThrows([&] { X509_print_ex_nid_postfix(&bio.bio, &bad.cert, X509FlagCompat, X509FlagCompat); }, "name num > numAlloc");
+        bad.subjectStack.num = -1;
+        bad.subjectStack.numAlloc = 2;
+        RequireThrows([&] { X509_print_ex_nid_postfix(&bio.bio, &bad.cert, X509FlagCompat, X509FlagCompat); }, "negative name num");
+    }
+    {
+        CertificateFixture bad;
+        bad.extStack.num = 3;
+        bad.extStack.numAlloc = 2;
+        RequireThrows([&] { X509_print_ex_nid_postfix(&bio.bio, &bad.cert, X509FlagCompat, X509FlagCompat); }, "ext num > numAlloc");
+        bad.extStack.num = -1;
+        bad.extStack.numAlloc = 2;
+        RequireThrows([&] { X509_print_ex_nid_postfix(&bio.bio, &bad.cert, X509FlagCompat, X509FlagCompat); }, "negative ext num");
+    }
+    {
+        CertificateFixture bad;
+        std::uint64_t nWords[2]{1ULL, 2ULL};
+        std::uint64_t eWords[1]{65537ULL};
+        TestBignum nBn{nWords, 3, 2, 0, 1};
+        TestBignum eBn{eWords, 1, 1, 0, 1};
+        LibreSslRsa rsa{};
+        rsa.n = &nBn;
+        rsa.e = &eBn;
+        TestEvpPkey pkey{6, 6, 1, 0, nullptr, nullptr, &rsa, 1, 0, nullptr};
+        bad.pubkey.publicKey = nullptr;
+        bad.pubkey.pkey = &pkey;
+        RequireThrows([&] { X509_print_ex_nid_postfix(&bio.bio, &bad.cert, X509FlagCompat, X509FlagCompat); }, "bn top > dmax");
+        nBn.top = -1;
+        RequireThrows([&] { X509_print_ex_nid_postfix(&bio.bio, &bad.cert, X509FlagCompat, X509FlagCompat); }, "negative bn top");
+    }
+    {
+        CertificateFixture bad;
+        bad.extStack.num = 2;
+        bad.extStack.numAlloc = 2;
+        bad.extStack.data = reinterpret_cast<char**>(std::numeric_limits<std::uintptr_t>::max() - 4);
+        RequireThrows([&] { X509_print_ex_nid_postfix(&bio.bio, &bad.cert, X509FlagCompat, X509FlagCompat); }, "ext address wrap");
+    }
+    {
+        CertificateFixture bad;
+        bad.subjectStack.num = std::numeric_limits<int>::max();
+        bad.subjectStack.numAlloc = std::numeric_limits<int>::max();
+        bad.subjectStack.data = static_cast<char**>(guardPage);
+        errno = 51;
+        RequireThrows([&] { X509_print_ex_nid_postfix(&bio.bio, &bad.cert, X509FlagCompat, X509FlagCompat); }, "huge name stack guard");
+        Require(errno == 51, "errno preserved on huge name stack guard");
+    }
+    {
+        CertificateFixture bad;
+        bad.extStack.num = std::numeric_limits<int>::max();
+        bad.extStack.numAlloc = std::numeric_limits<int>::max();
+        bad.extStack.data = static_cast<char**>(guardPage);
+        errno = 52;
+        RequireThrows([&] { X509_print_ex_nid_postfix(&bio.bio, &bad.cert, X509FlagCompat, X509FlagCompat); }, "huge ext stack guard");
+        Require(errno == 52, "errno preserved on huge ext stack guard");
+    }
+    {
+        CertificateFixture bad;
+        std::uint64_t eWords[1]{65537ULL};
+        TestBignum nBn{static_cast<std::uint64_t*>(guardPage), std::numeric_limits<int>::max(), std::numeric_limits<int>::max(), 0, 1};
+        TestBignum eBn{eWords, 1, 1, 0, 1};
+        LibreSslRsa rsa{};
+        rsa.n = &nBn;
+        rsa.e = &eBn;
+        TestEvpPkey pkey{6, 6, 1, 0, nullptr, nullptr, &rsa, 1, 0, nullptr};
+        bad.pubkey.publicKey = nullptr;
+        bad.pubkey.pkey = &pkey;
+        errno = 53;
+        RequireThrows([&] { X509_print_ex_nid_postfix(&bio.bio, &bad.cert, X509FlagCompat, X509FlagCompat); }, "huge bn guard");
+        Require(errno == 53, "errno preserved on huge bn guard");
     }
     freeGuard();
 }

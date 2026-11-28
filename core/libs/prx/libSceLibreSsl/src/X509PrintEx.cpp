@@ -178,13 +178,36 @@ T CopyIn(const T* source, const char* function) {
     return value;
 }
 
-std::vector<unsigned char> CopyBytes(const unsigned char* source, std::size_t count, const char* function) {
-    std::vector<unsigned char> bytes(count);
-    if (count == 0) return bytes;
-    PreservedErrno guard;
-    if (!GuestCopyIn_nid_no_patch(bytes.data(), source, count))
+template <typename T>
+std::vector<T> CopyGuestArray(const T* source, std::size_t count, const char* function) {
+    if (count == 0) return {};
+    if (!source) throw std::invalid_argument(std::string(function) + ": null guest array");
+    if (count > std::numeric_limits<std::size_t>::max() / sizeof(T))
+        throw std::invalid_argument(std::string(function) + ": guest array size overflow");
+    const auto start = reinterpret_cast<std::uintptr_t>(source);
+    const std::size_t totalBytes = count * sizeof(T);
+    if (totalBytes > std::numeric_limits<std::uintptr_t>::max() - start)
         NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
-    return bytes;
+    constexpr std::size_t ChunkBytes = 4096;
+    constexpr std::size_t ChunkElements = ChunkBytes / sizeof(T) > 0 ? ChunkBytes / sizeof(T) : 1;
+    std::vector<T> result;
+    std::size_t copied = 0;
+    while (copied < count) {
+        const std::size_t batch = std::min(ChunkElements, count - copied);
+        T scratch[ChunkElements];
+        {
+            PreservedErrno guard;
+            if (!GuestCopyIn_nid_no_patch(scratch, source + copied, batch * sizeof(T)))
+                NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        }
+        result.insert(result.end(), scratch, scratch + batch);
+        copied += batch;
+    }
+    return result;
+}
+
+std::vector<unsigned char> CopyBytes(const unsigned char* source, std::size_t count, const char* function) {
+    return CopyGuestArray(source, count, function);
 }
 
 std::string CopyGuestCString(const char* source, const char* function) {
@@ -247,15 +270,11 @@ struct HostX509Name {
         name = CopyIn(guest, function);
         if (!name.entries) return &name;
         stack = CopyIn(name.entries, function);
-        const std::size_t count = stack.num > 0 ? static_cast<std::size_t>(stack.num) : 0;
+        if (stack.num < 0 || stack.numAlloc < 0 || stack.num > stack.numAlloc)
+            throw std::invalid_argument(std::string(function) + ": malformed name stack");
+        const std::size_t count = static_cast<std::size_t>(stack.num);
         if (count > 0) {
-            if (!stack.data) throw std::invalid_argument(std::string(function) + ": null name entry array");
-            pointers.resize(count);
-            {
-                PreservedErrno guard;
-                if (!GuestCopyIn_nid_no_patch(pointers.data(), stack.data, count * sizeof(char*)))
-                    NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
-            }
+            pointers = CopyGuestArray(stack.data, count, function);
             entries.resize(count);
             objects.resize(count);
             values.resize(count);
@@ -586,19 +605,18 @@ bool ExtractBignumBytes(const void* guestBn, std::vector<unsigned char>& bytes, 
     if (!guestBn) return false;
     const BignumWords bn = CopyIn(static_cast<const BignumWords*>(guestBn), function);
     negative = bn.neg != 0;
-    if (bn.top <= 0) return true;
-    if (!bn.d) throw std::invalid_argument(std::string(function) + ": null bignum limb array");
+    if (bn.top < 0 || bn.dmax < 0 || bn.top > bn.dmax)
+        throw std::invalid_argument(std::string(function) + ": malformed bignum size");
+    if (bn.top == 0) return true;
     const std::size_t wordCount = static_cast<std::size_t>(bn.top);
-    std::vector<std::uint64_t> words(wordCount);
-    {
-        PreservedErrno guard;
-        if (!GuestCopyIn_nid_no_patch(words.data(), bn.d, wordCount * sizeof(std::uint64_t)))
-            NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
-    }
+    const std::vector<std::uint64_t> words = CopyGuestArray(bn.d, wordCount, function);
     std::size_t top = wordCount;
     while (top > 0 && words[top - 1] == 0) --top;
     if (top == 0) return true;
-    bits = static_cast<int>((top - 1) * 64 + static_cast<std::size_t>(std::bit_width(words[top - 1])));
+    const std::size_t bitCount = (top - 1) * 64 + static_cast<std::size_t>(std::bit_width(words[top - 1]));
+    if (bitCount > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+        throw std::invalid_argument(std::string(function) + ": bignum bit count overflow");
+    bits = static_cast<int>(bitCount);
     for (std::size_t idx = top; idx-- > 0;) {
         const std::uint64_t w = words[idx];
         for (int shift = 56; shift >= 0; shift -= 8) {
@@ -721,15 +739,11 @@ bool PrintPublicKey(LibreSsl::Bio* bio, const void* guestKey) {
 bool PrintExtensions(LibreSsl::Bio* bio, const void* guestExtensions, std::uint64_t certFlags) {
     if (!guestExtensions) return true;
     const LibreSslStack stack = CopyIn(static_cast<const LibreSslStack*>(guestExtensions), __func__);
-    if (stack.num <= 0) return true;
-    if (!stack.data) throw std::invalid_argument("X509_print_ex: null extension array");
+    if (stack.num < 0 || stack.numAlloc < 0 || stack.num > stack.numAlloc)
+        throw std::invalid_argument("X509_print_ex: malformed extension stack");
+    if (stack.num == 0) return true;
     const std::size_t count = static_cast<std::size_t>(stack.num);
-    std::vector<char*> pointers(count);
-    {
-        PreservedErrno guard;
-        if (!GuestCopyIn_nid_no_patch(pointers.data(), stack.data, count * sizeof(char*)))
-            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-    }
+    const std::vector<char*> pointers = CopyGuestArray(stack.data, count, __func__);
     if (!WriteBytes(bio, "        X509v3 extensions:\n")) return false;
     StrictWriteBio proxy(bio);
     for (std::size_t i = 0; i < count; ++i) {
