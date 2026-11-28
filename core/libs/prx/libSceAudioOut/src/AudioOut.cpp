@@ -490,12 +490,19 @@ static Port* getPort(int handle) {
     return &g_ports[idx];
 }
 
+static bool g_closedMainHandles[PORTS_MAX];
+
+static int missingPortError(int handle) {
+    return handle > 0 && handle <= PORTS_MAX && g_closedMainHandles[handle - 1] ? -2144993279 : -2144993277;
+}
+
 static int allocatePort(int type, std::uint32_t len, std::uint32_t freq, Format format) {
     std::lock_guard<std::mutex> lock(g_mutex);
     for (int i = 0; i < PORTS_MAX; i++) {
         if (!g_ports[i].used) {
             Port& port = g_ports[i];
             port.used = true;
+            g_closedMainHandles[i] = false;
             port.generation = ++g_portGenerations;
             port.type = type;
             port.samplesNum = len;
@@ -598,9 +605,11 @@ int APS5_VABI sceAudioOutClose(int handle) {
     if (port == nullptr) {
         return -2144993277;
     }
+    const bool wasMain = port->type == PORT_TYPE_MAIN;
     closeDevice(*port);
     if (port->type == PORT_TYPE_VIBRATION) PadClearLegacyAudioHaptics_nid_postfix(handle);
     *port = Port{};
+    g_closedMainHandles[handle - 1] = wasMain;
     return 0;
 }
 
@@ -679,7 +688,7 @@ int APS5_VABI sceAudioOutSetVolume(int handle, std::uint32_t flag, int* vol) {
     std::lock_guard<std::mutex> lock(g_mutex);
     Port* port = getPort(handle);
     if (port == nullptr) {
-        return -2144993277;
+        return missingPortError(handle);
     }
     const bool isStd = formatIsStd(port->format);
     for (int i = 0; i < port->channels; i++, flag >>= 1u) {
@@ -705,7 +714,7 @@ int APS5_VABI sceAudioOutGetLastOutputTime(int handle, std::uint64_t* outputTime
     std::lock_guard<std::mutex> lock(g_mutex);
     Port* port = getPort(handle);
     if (port == nullptr) {
-        return -2144993277;
+        return missingPortError(handle);
     }
     const std::uint64_t time = port->lastDataOutputTime;
     const int savedErrno = errno;
@@ -724,7 +733,7 @@ int APS5_VABI sceAudioOutGetPortState(int handle, AudioOutPortState* state) {
     std::lock_guard<std::mutex> lock(g_mutex);
     Port* port = getPort(handle);
     if (port == nullptr) {
-        return -2144993277;
+        return missingPortError(handle);
     }
     AudioOutPortState localState{};
     localState.rerouteCounter = 0;

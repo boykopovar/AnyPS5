@@ -14,6 +14,7 @@
 
 namespace {
 
+constexpr int ErrorClosedMainPort = static_cast<int>(0x80260001);
 constexpr int ErrorInvalidPort = static_cast<int>(0x80260003);
 constexpr int ErrorInvalidPointer = static_cast<int>(0x80260004);
 constexpr int ErrorInvalidPortType = static_cast<int>(0x8026000A);
@@ -124,7 +125,7 @@ int main() {
         Require(lastOutputTime >= firstOutputTime);
 
         Require(sceAudioOutClose(handle) == 0);
-        Require(sceAudioOutGetLastOutputTime(handle, &lastOutputTime) == ErrorInvalidPort);
+        Require(sceAudioOutGetLastOutputTime(handle, &lastOutputTime) == (validPortType == PortTypeMain ? ErrorClosedMainPort : ErrorInvalidPort));
         Require(sceAudioOutGetLastOutputTime(handle, nullptr) == ErrorInvalidPointer);
     }
 

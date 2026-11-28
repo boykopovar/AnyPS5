@@ -9,6 +9,7 @@
 namespace {
 
 constexpr int audioOutErrorInvalidHandle = static_cast<int>(0x80260003);
+constexpr int audioOutErrorClosedMainPort = static_cast<int>(0x80260001);
 constexpr int audioOutErrorInvalidPointer = static_cast<int>(0x80260004);
 constexpr int audioOutErrorPortNotPadSpk = static_cast<int>(0x8026000A);
 constexpr int audioOutErrorInvalidMixLevel = static_cast<int>(0x80260014);
@@ -81,9 +82,9 @@ void TestVolumeChannelBoundsAndRemapping() {
     Require(portState.channel == 2);
 
     Require(sceAudioOutClose(portStd) == 0);
-    Require(sceAudioOutSetVolume(portStd, 0xFF, testVolumes) == audioOutErrorInvalidHandle);
+    Require(sceAudioOutSetVolume(portStd, 0xFF, testVolumes) == audioOutErrorClosedMainPort);
     Require(sceAudioOutSetVolume(portStd, 0xFF, nullptr) == audioOutErrorInvalidPointer);
-    Require(sceAudioOutGetPortState(portStd, &portState) == audioOutErrorInvalidHandle);
+    Require(sceAudioOutGetPortState(portStd, &portState) == audioOutErrorClosedMainPort);
 
     const int portStereo = sceAudioOutOpen(userId, 0, 0, 256, 48000, 1);
     Require(portStereo > 0);
