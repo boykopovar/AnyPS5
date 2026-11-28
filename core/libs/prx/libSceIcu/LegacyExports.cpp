@@ -4406,10 +4406,6 @@ int APS5_VABI ucnv_fromUCountPending_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI udata_setAppData_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK6icu_6813UnicodeString7extractENS_9Char16PtrEiR10UErrorCode_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }

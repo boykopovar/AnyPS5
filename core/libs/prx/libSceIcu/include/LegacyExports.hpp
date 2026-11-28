@@ -1048,7 +1048,6 @@ int APS5_VABI sceIcuLegacyUnknown_RlDX8OKyzIs_nid_no_patch();
 int APS5_VABI sceIcuLegacyUnknown_RqjeXZhdFqQ_nid_no_patch();
 int APS5_VABI _ZN6icu_686Locale16getStaticClassIDEv_nid_postfix();
 int APS5_VABI ucnv_fromUCountPending_nid_postfix();
-int APS5_VABI udata_setAppData_nid_postfix();
 int APS5_VABI _ZNK6icu_6813UnicodeString7extractENS_9Char16PtrEiR10UErrorCode_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_S0kDm_minus_BCXLQ_nid_no_patch();
 int APS5_VABI _ZNK6icu_6817UCharsTrieBuilder17countElementUnitsEiii_nid_postfix();
