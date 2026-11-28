@@ -20,6 +20,10 @@ CairoPattern* APS5_VABI cairo_pattern_create_for_surface(CairoSurface* surface) 
     return reinterpret_cast<CairoPattern*>(aps5_cairo_pattern_create_for_surface(reinterpret_cast<cairo_surface_t*>(surface)));
 }
 
+CairoPattern* APS5_VABI cairo_pattern_reference(CairoPattern* pattern) {
+    return reinterpret_cast<CairoPattern*>(aps5_cairo_pattern_reference(Backend(pattern)));
+}
+
 void APS5_VABI cairo_set_source(CairoContext* context, CairoPattern* source) {
     aps5_cairo_set_source(Backend(context), Backend(source));
 }

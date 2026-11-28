@@ -57,18 +57,32 @@ void Patterns() {
     assert(aps5_cairo_pattern_get_surface(Backend(pattern), &held) == CAIRO_STATUS_SUCCESS);
     assert(held == Backend(surface));
     assert(aps5_cairo_surface_get_reference_count(Backend(surface)) == 2);
+    CairoPattern* referenced = cairo_pattern_reference(pattern);
+    assert(referenced == pattern);
+    assert(aps5_cairo_pattern_get_reference_count(Backend(referenced)) == 2);
     aps5_cairo_pattern_destroy(Backend(pattern));
+    assert(aps5_cairo_pattern_get_reference_count(Backend(referenced)) == 1);
+    assert(aps5_cairo_surface_get_reference_count(Backend(surface)) == 2);
+    aps5_cairo_pattern_destroy(Backend(referenced));
     assert(aps5_cairo_surface_get_reference_count(Backend(surface)) == 1);
     cairo_surface_destroy(surface);
 
+    assert(cairo_pattern_reference(nullptr) == nullptr);
     CairoPattern* null = cairo_pattern_create_for_surface(nullptr);
     assert(null && aps5_cairo_pattern_status(Backend(null)) == CAIRO_STATUS_NULL_POINTER);
+    assert(cairo_pattern_reference(null) == null);
+    assert(aps5_cairo_pattern_get_reference_count(Backend(null)) == 0);
 
     CairoSurface* invalid = cairo_image_surface_create(-5, Size, Size);
     assert(cairo_surface_status(invalid) == CAIRO_STATUS_INVALID_FORMAT);
     CairoPattern* failed = cairo_pattern_create_for_surface(invalid);
     assert(failed && aps5_cairo_pattern_status(Backend(failed)) == CAIRO_STATUS_INVALID_FORMAT);
+    CairoPattern* referencedError = cairo_pattern_reference(failed);
+    assert(referencedError == failed);
+    assert(aps5_cairo_pattern_status(Backend(referencedError)) == CAIRO_STATUS_INVALID_FORMAT);
+    assert(aps5_cairo_pattern_get_reference_count(Backend(referencedError)) == 2);
     aps5_cairo_pattern_destroy(Backend(failed));
+    aps5_cairo_pattern_destroy(Backend(referencedError));
     cairo_surface_destroy(invalid);
 }
 
