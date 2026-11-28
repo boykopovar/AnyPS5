@@ -279,6 +279,8 @@ static void CheckTitleChangesInWindow(std::uint64_t start, std::uint64_t page) {
     Require(sceKernelMemoryPoolCommit(reinterpret_cast<char*>(inside) + 1, page, 0, 3, 0) == KernelInvalid, "a misaligned sceKernelMemoryPoolCommit did not fail with EINVAL");
     Require(sceKernelMemoryPoolCommit(inside, page, 0, 0x8, 0) == KernelInvalid, "a sceKernelMemoryPoolCommit with an undefined protection did not fail with EINVAL");
     Require(sceKernelMemoryPoolReserve(inside, page, 3 * page, Fixed, &out) == KernelInvalid, "a fixed sceKernelMemoryPoolReserve with a non-power-of-two alignment did not fail with EINVAL");
+    Require(sceKernelMemoryPoolReserve(inside, page, 32 * page, Fixed, &out) == KernelInvalid, "a fixed sceKernelMemoryPoolReserve inside the AMM window at an address its alignment does not divide did not fail with EINVAL");
+    Require(sceKernelMemoryPoolReserve(inside, std::numeric_limits<std::size_t>::max() - (page - 1), 0, Fixed, &out) == KernelInvalid, "a fixed sceKernelMemoryPoolReserve inside the AMM window whose end wraps did not fail with EINVAL");
 }
 
 static void CheckArgumentErrorsBeforeWindow(std::uint64_t start, std::uint64_t end, std::uint64_t page) {
