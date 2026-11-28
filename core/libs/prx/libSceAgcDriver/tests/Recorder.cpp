@@ -18249,6 +18249,37 @@ int pipelineCacheFileTests(const Device& device) {
         Require(saveReturned, "a periodic pipeline cache save waited for a pipeline creation to finish");
         Require(otherCreationProceeded, "a pipeline creation waited behind a periodic pipeline cache save");
     }
+    {
+        std::filesystem::remove_all(directory);
+        PipelineCache retry(context, properties);
+        build(retry.Handle(), 0);
+        retry.SaveNow();
+        const auto file = cacheFile();
+        const auto savedBytes = contents(file).size();
+        std::promise<void> built;
+        std::promise<void> finish;
+        std::thread creation([&] {
+            auto use = retry.Synchronization().LockForPipelineUse();
+            build(retry.Handle(), 1);
+            built.set_value();
+            finish.get_future().wait();
+        });
+        built.get_future().wait();
+        retry.SaveUnlessBusy();
+        const auto skippedBytes = contents(file).size();
+        finish.set_value();
+        creation.join();
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(PipelineCache::SaveIntervalSeconds * 300);
+        auto retriedBytes = skippedBytes;
+        while (retriedBytes <= skippedBytes && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            retriedBytes = contents(file).size();
+        }
+        Require(skippedBytes == savedBytes, "a periodic pipeline cache save wrote while a pipeline creation held the cache");
+        Require(retriedBytes > skippedBytes, "a periodic pipeline cache save skipped for a pipeline creation was not repeated after the creation finished");
+        PipelineCache reloaded(context, properties);
+        Require(holds(reloaded.Handle(), 1), "the repeated pipeline cache save did not keep the pipeline built while the save was skipped");
+    }
     std::cout << "Pipeline cache file merge tests passed\n";
     return 0;
 }
