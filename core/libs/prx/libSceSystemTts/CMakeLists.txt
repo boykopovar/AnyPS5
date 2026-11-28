@@ -1,0 +1,15 @@
+add_library(libSceSystemTts SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceSystemTts PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceSystemTts)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_system_tts_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemTts.cpp)
+    target_include_directories(guest_system_tts_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_system_tts_tests PRIVATE libSceSystemTts libkernel libc)
+    configure_windows_unwind(guest_system_tts_tests)
+    add_test(NAME guest_system_tts COMMAND guest_system_tts_tests)
+    if(WIN32)
+        set_tests_properties(guest_system_tts PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSystemTts>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+endif()
