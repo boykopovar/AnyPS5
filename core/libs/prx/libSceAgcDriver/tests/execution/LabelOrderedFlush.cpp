@@ -217,7 +217,9 @@ void RefreshAfterStore(const Surface& surface) {
 
 int main(int argc, char** argv) {
     try {
-#if defined(__APPLE__) || defined(__linux__)
+#ifdef _WIN32
+        Require(_putenv_s("APS5_NO_LABEL_READ_TRAP", "1") == 0, "label ordered flush: the label read traps could not be switched off");
+#else
         Require(setenv("APS5_NO_LABEL_READ_TRAP", "1", 1) == 0, "label ordered flush: the label read traps could not be switched off");
 #endif
         {
