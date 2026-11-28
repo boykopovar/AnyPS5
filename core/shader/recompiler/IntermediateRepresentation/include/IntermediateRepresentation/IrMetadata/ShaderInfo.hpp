@@ -34,6 +34,7 @@ struct ShaderInfo {
     bool usesDma = false;
     bool bdaWrites = false;
     bool usesFaultBuffer = false;
+    std::vector<bool> deferInvalidBufferTypeFaults;
     bool dispatchThreadLimit = false;
     bool rasterPrimitive = false;
     bool layerExported = false;
