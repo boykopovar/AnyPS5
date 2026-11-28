@@ -138,6 +138,24 @@ int IsoWeeksInYear(std::int64_t isoYear) {
     return (jan1IsoWday == 3 || (jan1IsoWday == 2 && IsLeapYear(isoYear))) ? 53 : 52;
 }
 
+std::int64_t IsoWeekYear(std::int64_t civilYear, int yday, int wday, int& isoWeekOut) {
+    const int isoWday = (wday + 6) % 7;
+    int thursdayYday = yday + (3 - isoWday);
+    std::int64_t isoYear = civilYear;
+    if (thursdayYday < 0) {
+        --isoYear;
+        thursdayYday += IsLeapYear(isoYear) ? 366 : 365;
+    } else {
+        const int daysInYear = IsLeapYear(isoYear) ? 366 : 365;
+        if (thursdayYday >= daysInYear) {
+            thursdayYday -= daysInYear;
+            ++isoYear;
+        }
+    }
+    isoWeekOut = thursdayYday / 7 + 1;
+    return isoYear;
+}
+
 std::int64_t DaysFromJan1(int year) {
     const std::int64_t y = static_cast<std::int64_t>(year) - 1;
     const std::int64_t era = (y >= 0 ? y : y - 399) / 400;
@@ -563,6 +581,13 @@ const char* ParseInternal(const char* buf, const char* format, GuestTm& tm, Pars
             const int isoWday = state.hasWday ? (tm.tm_wday + 6) % 7 : 0;
             const int daysOffset = 3 - jan4IsoWday + (state.isoWeek - 1) * 7 + isoWday;
             if (!ApplyDaysOffset(isoYear, daysOffset, (isoWday + 1) % 7, tm)) {
+                return nullptr;
+            }
+            int resolvedIsoWeek = 0;
+            const std::int64_t resolvedCivilYear = static_cast<std::int64_t>(tm.tm_year) + 1900;
+            if (resolvedCivilYear < 0 ||
+                IsoWeekYear(resolvedCivilYear, tm.tm_yday, tm.tm_wday, resolvedIsoWeek) != isoYear ||
+                resolvedIsoWeek != state.isoWeek) {
                 return nullptr;
             }
         }

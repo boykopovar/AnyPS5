@@ -455,6 +455,23 @@ static void TestIsoWeekDate() {
     Require(tmYearZeroIso.tm_yday == 2);
     Require(tmYearZeroIso.tm_wday == 1);
 
+    rem = strptime_nid_postfix("0000-W01", "%G-W%V", &tmYearZeroIso);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmYearZeroIso.tm_year == -1900);
+    Require(tmYearZeroIso.tm_mon == 0);
+    Require(tmYearZeroIso.tm_mday == 3);
+    Require(tmYearZeroIso.tm_yday == 2);
+    Require(tmYearZeroIso.tm_wday == 1);
+
+    GuestTm tmPriorCalendarYearIso{};
+    rem = strptime_nid_postfix("2019-W01", "%G-W%V", &tmPriorCalendarYearIso);
+    Require(rem != nullptr && *rem == '\0');
+    Require(tmPriorCalendarYearIso.tm_year == 118);
+    Require(tmPriorCalendarYearIso.tm_mon == 11);
+    Require(tmPriorCalendarYearIso.tm_mday == 31);
+    Require(tmPriorCalendarYearIso.tm_yday == 364);
+    Require(tmPriorCalendarYearIso.tm_wday == 1);
+
     GuestTm tmIsoWeek53Valid{};
     rem = strptime_nid_postfix("2026-W53-4", "%G-W%V-%u", &tmIsoWeek53Valid);
     Require(rem != nullptr && *rem == '\0');
