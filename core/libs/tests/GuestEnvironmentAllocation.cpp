@@ -22,6 +22,14 @@ void operator delete[](void* pointer) noexcept { ::operator delete(pointer); }
 void operator delete(void* pointer, std::size_t) noexcept { ::operator delete(pointer); }
 void operator delete[](void* pointer, std::size_t) noexcept { ::operator delete(pointer); }
 
+#ifndef _WIN32
+extern "C" bool GuestCopyIn_nid_no_patch(void* destination, const void* source, std::size_t bytes) {
+    if (source == nullptr) return false;
+    std::memcpy(destination, source, bytes);
+    return true;
+}
+#endif
+
 namespace {
 constexpr auto existingName = "ANYPS5_ALLOCATION_EXISTING_LONG_NAME_82BA";
 constexpr auto neighborName = "ANYPS5_ALLOCATION_NEIGHBOR_LONG_NAME_82BA";
