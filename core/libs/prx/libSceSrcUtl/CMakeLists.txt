@@ -1,11 +1,12 @@
 add_library(libSceSrcUtl SHARED EXCLUDE_FROM_ALL Export.cpp)
 target_include_directories(libSceSrcUtl PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceSrcUtl PRIVATE libkernel_sys)
 configure_windows_unwind(libSceSrcUtl)
 
 if(BUILD_TESTING)
     add_test_executable(guest_src_utility_tests ${LIBS_INCLUDE_DIR}/tests/GuestSrcUtility.cpp)
     target_include_directories(guest_src_utility_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_src_utility_tests PRIVATE libSceSrcUtl libc)
+    target_link_libraries(guest_src_utility_tests PRIVATE libSceSrcUtl libkernel_sys libc)
     configure_windows_unwind(guest_src_utility_tests)
     add_test(NAME guest_src_utility COMMAND guest_src_utility_tests)
     if(WIN32)
