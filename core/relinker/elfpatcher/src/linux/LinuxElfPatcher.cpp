@@ -282,6 +282,8 @@ Domain::SysVDynamicSection ImportsByNid(Domain::SysVDynamicSection dynSection) {
         if (offset >= dynSection.DynStrData.size())
             throw Domain::RelinkerException("DT_NEEDED string offset is out of bounds", offset);
         const auto name = ReadDynamicString(dynSection.DynStrData, static_cast<std::uint32_t>(offset));
+        if (!name.starts_with("$ORIGIN") && name.find('/') != std::string::npos)
+            throw Domain::RelinkerException("Unsupported dependency path: " + name);
         const auto library = Domain::NeededLibraryName(name);
         if (library == name)
             continue;

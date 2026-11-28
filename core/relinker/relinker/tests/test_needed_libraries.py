@@ -87,6 +87,26 @@ def slash_dependency(relinker, work):
         assert result.returncode == 0 and output.is_file(), (flags, result.stdout, result.stderr)
 
 
+def unprovided_slash_dependency(relinker, work):
+    targets = (([], "Unsupported dependency path"), (["--lazy-binding"], "Unsupported dependency path"),
+               (["--linux-fixed-base", "0x10000000"], "Unsupported dependency path"),
+               (["--windows"], "Invalid DT_NEEDED library"), (["--macos"], "Unsupported dependency path"))
+    for index, name in enumerate(("dir/Party.prx", "../Party.prx", "/tmp/Party.prx")):
+        for modules in (False, True):
+            case = work / f"unprovided-slash-{index}-{modules}"
+            case.mkdir()
+            if modules:
+                (case / "sce_module").mkdir()
+            source = case / "input.elf"
+            source.write_bytes(executable_needing(name))
+            for target, (flags, error) in enumerate(targets):
+                output = case / f"output-{target}.out"
+                result = subprocess.run([str(relinker), *([] if modules else ["--skip-sce-module"]), *flags,
+                                         str(source), str(output)], capture_output=True, text=True, timeout=20)
+                assert result.returncode == 2 and f"FAIL: {error}: {name}" in result.stderr and not output.exists(), (
+                    name, modules, flags, result.returncode, result.stderr)
+
+
 def main():
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix="anyps5-needed-libraries-") as directory:
@@ -94,6 +114,7 @@ def main():
         dependency_names(relinker, work)
         string_table_without_leading_nul(relinker, work)
         slash_dependency(relinker, work)
+        unprovided_slash_dependency(relinker, work)
         for windows in (False, True):
             for bundled in (False, True):
                 case = work / f"{windows}-{bundled}"
