@@ -4,10 +4,12 @@
 extern "C" {
 const void* APS5_VABI WKDictionaryCreate(const void** keys, const void** values, std::size_t numberOfValues) {
     if ((!keys || !values) && numberOfValues) throw std::invalid_argument(std::string(__func__) + ": null keys or values array");
+    const auto keyRefs = NKWebKit::CopyGuestRefs(keys, numberOfValues, __func__);
+    const auto valueRefs = NKWebKit::CopyGuestRefs(values, numberOfValues, __func__);
     std::map<std::u16string, NKWebKit::Retained<NKWebKit::Object>> entries;
     for (std::size_t i = 0; i < numberOfValues; ++i) {
-        const auto* key = NKWebKit::Cast<NKWebKit::String>(keys[i], __func__);
-        entries.insert_or_assign(key->characters, NKWebKit::Retained<NKWebKit::Object>::Share(const_cast<NKWebKit::Object*>(NKWebKit::ToObject(values[i], __func__))));
+        const auto* key = NKWebKit::Cast<NKWebKit::String>(keyRefs[i], __func__);
+        entries.try_emplace(key->characters, NKWebKit::Retained<NKWebKit::Object>::Share(const_cast<NKWebKit::Object*>(NKWebKit::ToObject(valueRefs[i], __func__))));
     }
     return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::Dictionary>(std::move(entries)));
 }
@@ -44,7 +46,7 @@ const void* APS5_VABI WKDictionaryCopyKeys(const void* dictionaryRef) {
 bool APS5_VABI WKDictionarySetItem(void* dictionaryRef, const void* keyRef, const void* itemRef) {
     auto* dictionary = NKWebKit::Cast<NKWebKit::Dictionary>(dictionaryRef, __func__);
     const auto* key = NKWebKit::Cast<NKWebKit::String>(keyRef, __func__);
-    auto [it, inserted] = dictionary->entries.insert_or_assign(key->characters, NKWebKit::Retained<NKWebKit::Object>::Share(const_cast<NKWebKit::Object*>(NKWebKit::ToObject(itemRef, __func__))));
+    auto [it, inserted] = dictionary->entries.insert_or_assign(key->characters, NKWebKit::Retained<NKWebKit::Object>::Share(const_cast<NKWebKit::Object*>(static_cast<const NKWebKit::Object*>(itemRef))));
     return inserted;
 }
 

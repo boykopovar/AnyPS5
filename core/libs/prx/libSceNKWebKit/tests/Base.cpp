@@ -554,6 +554,16 @@ static void TestDictionary() {
     Require(WKArrayGetSize(allKeys) == 2);
     WKRelease(allKeys);
 
+    auto* k1Again = WKStringCreateWithUTF8CString("key1");
+    const void* repeatedKeys[] = { k1, k2, k1Again, k2 };
+    const void* repeatedVals[] = { v1, v2, v2, v1 };
+    auto* repeated = WKDictionaryCreate(repeatedKeys, repeatedVals, 4);
+    Require(WKDictionaryGetSize(repeated) == 2);
+    Require(WKDictionaryGetItemForKey(repeated, k1) == v1);
+    Require(WKDictionaryGetItemForKey(repeated, k2) == v2);
+    WKRelease(repeated);
+    WKRelease(k1Again);
+
     auto* mutDict = WKMutableDictionaryCreate();
     Require(WKDictionarySetItem(mutDict, k1, v1) == true);
     Require(WKDictionarySetItem(mutDict, k1, v2) == false);
@@ -567,6 +577,117 @@ static void TestDictionary() {
     WKRelease(k2);
     WKRelease(v1);
     WKRelease(v2);
+}
+
+static int liveNullItemProbes = 0;
+
+class NullItemProbe final : public NKWebKit::ObjectOf<NKWebKit::ObjectType::Null> {
+public:
+    NullItemProbe() { ++liveNullItemProbes; }
+    ~NullItemProbe() override { --liveNullItemProbes; }
+};
+
+static const void* NewNullItemProbe() {
+    return NKWebKit::ToRef(NKWebKit::Make<NullItemProbe>());
+}
+
+static void TestNullContainerItems() {
+    Require(liveNullItemProbes == 0);
+    const void* first = NewNullItemProbe();
+    const void* last = NewNullItemProbe();
+    Require(liveNullItemProbes == 2);
+
+    const void* items[] = { first, nullptr, last };
+    auto* created = WKArrayCreate(items, 3);
+    Require(WKArrayGetSize(created) == 3);
+    Require(WKArrayGetItemAtIndex(created, 0) == first);
+    Require(WKArrayGetItemAtIndex(created, 1) == nullptr);
+    Require(WKArrayGetItemAtIndex(created, 2) == last);
+    const void* onlyNull[] = { nullptr };
+    auto* createdFromNull = WKArrayCreate(onlyNull, 1);
+    Require(WKArrayGetSize(createdFromNull) == 1);
+    Require(WKArrayGetItemAtIndex(createdFromNull, 0) == nullptr);
+    WKRelease(createdFromNull);
+    WKRelease(created);
+    Require(liveNullItemProbes == 2);
+
+    const void* adoptedItem = NewNullItemProbe();
+    Require(liveNullItemProbes == 3);
+    const void* adoptedItems[] = { nullptr, adoptedItem, nullptr };
+    auto* adopted = WKArrayCreateAdoptingValues(adoptedItems, 3);
+    Require(WKArrayGetSize(adopted) == 3);
+    Require(WKArrayGetItemAtIndex(adopted, 0) == nullptr);
+    Require(WKArrayGetItemAtIndex(adopted, 1) == adoptedItem);
+    Require(WKArrayGetItemAtIndex(adopted, 2) == nullptr);
+    Require(liveNullItemProbes == 3);
+    WKRelease(adopted);
+    Require(liveNullItemProbes == 2);
+
+    auto* appended = WKMutableArrayCreate();
+    WKArrayAppendItem(appended, first);
+    WKArrayAppendItem(appended, nullptr);
+    WKArrayAppendItem(appended, last);
+    WKArrayAppendItem(appended, nullptr);
+    Require(WKArrayGetSize(appended) == 4);
+    Require(WKArrayGetItemAtIndex(appended, 0) == first);
+    Require(WKArrayGetItemAtIndex(appended, 1) == nullptr);
+    Require(WKArrayGetItemAtIndex(appended, 2) == last);
+    Require(WKArrayGetItemAtIndex(appended, 3) == nullptr);
+    WKArrayRemoveItemAtIndex(appended, 1);
+    Require(WKArrayGetSize(appended) == 3);
+    Require(WKArrayGetItemAtIndex(appended, 0) == first);
+    Require(WKArrayGetItemAtIndex(appended, 1) == last);
+    Require(WKArrayGetItemAtIndex(appended, 2) == nullptr);
+    WKArrayRemoveItemAtIndex(appended, 0);
+    Require(WKArrayGetSize(appended) == 2);
+    Require(liveNullItemProbes == 2);
+    bool rejected = false;
+    try {
+        WKArrayAppendItem(nullptr, first);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    Require(rejected);
+    WKRelease(appended);
+    Require(liveNullItemProbes == 2);
+
+    auto* key = WKStringCreateWithUTF8CString("key");
+    auto* otherKey = WKStringCreateWithUTF8CString("other");
+    auto* dictionary = WKMutableDictionaryCreate();
+    Require(WKDictionarySetItem(dictionary, key, nullptr) == true);
+    Require(WKDictionaryGetSize(dictionary) == 1);
+    Require(WKDictionaryGetItemForKey(dictionary, key) == nullptr);
+    auto* keys = WKDictionaryCopyKeys(dictionary);
+    Require(WKArrayGetSize(keys) == 1);
+    Require(WKStringIsEqual(WKArrayGetItemAtIndex(keys, 0), key));
+    WKRelease(keys);
+    Require(WKDictionarySetItem(dictionary, key, first) == false);
+    Require(WKDictionaryGetItemForKey(dictionary, key) == first);
+    Require(WKDictionarySetItem(dictionary, key, nullptr) == false);
+    Require(WKDictionaryGetItemForKey(dictionary, key) == nullptr);
+    Require(WKDictionaryGetSize(dictionary) == 1);
+    Require(WKDictionarySetItem(dictionary, otherKey, last) == true);
+    Require(WKDictionaryGetSize(dictionary) == 2);
+    Require(WKDictionaryGetItemForKey(dictionary, otherKey) == last);
+    Require(WKDictionaryGetItemForKey(dictionary, key) == nullptr);
+    rejected = false;
+    try {
+        WKDictionarySetItem(dictionary, nullptr, first);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    Require(rejected);
+    Require(WKDictionaryGetSize(dictionary) == 2);
+    Require(liveNullItemProbes == 2);
+    WKRelease(dictionary);
+    Require(liveNullItemProbes == 2);
+
+    WKRelease(otherKey);
+    WKRelease(key);
+    WKRelease(last);
+    Require(liveNullItemProbes == 1);
+    WKRelease(first);
+    Require(liveNullItemProbes == 0);
 }
 
 static void TestData() {
@@ -4111,6 +4232,7 @@ int main() {
     TestURL();
     TestArray();
     TestDictionary();
+    TestNullContainerItems();
     TestData();
     TestNumbers();
     TestGeometry();
