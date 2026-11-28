@@ -59,6 +59,7 @@ enum class ObjectType : std::uint32_t {
     ContentRuleListStore,
     ContentWorld,
     ContextMenuListener,
+    CookieManager,
     CustomHeaderFields,
     DataTask,
     DebuggableInfo,
