@@ -3,9 +3,11 @@
 #include "ControlFlow/RequestSerializer.hpp"
 #include "SpirvBackend/SpirvBda.hpp"
 #include <spirv/unified1/GLSL.std.450.h>
+#include <algorithm>
 #include <cstring>
 #include <functional>
 #include <initializer_list>
+#include <optional>
 #include <string>
 #include <vector>
 #include <utility>
@@ -226,6 +228,35 @@ std::pair<std::uint32_t, std::uint32_t> LoopsKeptRolled(const std::vector<std::u
     return {loops, kept};
 }
 
+std::optional<std::size_t> CallNesting(const std::vector<std::uint32_t>& spirv, const char* caller, const char* callee) {
+    std::uint32_t callerId = 0;
+    std::uint32_t calleeId = 0;
+    for (std::size_t at = 5; at < spirv.size() && (spirv[at] >> 16u) != 0u; at += spirv[at] >> 16u) {
+        if ((spirv[at] & 0xffffu) != spv::OpName) continue;
+        const auto* name = reinterpret_cast<const char*>(&spirv[at + 2u]);
+        if (std::strcmp(name, caller) == 0) callerId = spirv[at + 1u];
+        if (std::strcmp(name, callee) == 0) calleeId = spirv[at + 1u];
+    }
+    if (callerId == 0u || calleeId == 0u) return std::nullopt;
+    std::optional<std::size_t> deepest;
+    std::vector<std::uint32_t> merges;
+    bool inside = false;
+    for (std::size_t at = 5; at < spirv.size() && (spirv[at] >> 16u) != 0u; at += spirv[at] >> 16u) {
+        const auto opcode = spirv[at] & 0xffffu;
+        if (opcode == spv::OpFunction) {
+            inside = spirv[at + 2u] == callerId;
+            merges.clear();
+        }
+        if (!inside) continue;
+        if (opcode == spv::OpSelectionMerge || opcode == spv::OpLoopMerge) merges.push_back(spirv[at + 1u]);
+        if (opcode == spv::OpLabel) {
+            while (!merges.empty() && merges.back() == spirv[at + 1u]) merges.pop_back();
+        }
+        if (opcode == spv::OpFunctionCall && spirv[at + 3u] == calleeId) deepest = std::max(deepest.value_or(0u), merges.size());
+    }
+    return deepest;
+}
+
 }
 
 void RunBdaContractTests() {
@@ -318,6 +349,14 @@ void RunBdaContractTests() {
         AgcDriver::Graphics::Require(loops == 1u && lookups == (bits == 32u ? 2u : 1u), "a runtime V# write of " + std::to_string(bits) + " bits has " + std::to_string(lookups) + " write lookups and " + std::to_string(loops) + " byte-loop calls, not its byte path through write_bda_bytes");
         const auto [byteLoops, rolled] = LoopsKeptRolled(shader, "write_bda_bytes");
         AgcDriver::Graphics::Require(byteLoops == 1u && rolled == 1u, "the byte loop of write_bda_bytes may be unrolled, which copies its write lookup once per byte");
+    }
+    for (const bool coherent : {false, true}) {
+        const auto shader = MakeBdaDwordReadTestShader(0x1000, 4, coherent, false);
+        const std::string span = coherent ? "read_bda_span_coherent" : "read_bda_span";
+        const std::string loader = coherent ? "load_bda_span_coherent" : "load_bda_span";
+        const auto nesting = CallNesting(shader, span.c_str(), loader.c_str());
+        AgcDriver::Graphics::Require(nesting.has_value(), "a four-dword BDA read has no call from " + span + " to " + loader);
+        AgcDriver::Graphics::Require(*nesting == 0u, span + " calls " + loader + " inside a selection or loop; NVIDIA's Blackwell driver then gives the lanes that take the dword path the results of other lanes");
     }
     const std::array<std::uint32_t, 4> dwordValues{0x11223344u, 0x55667788u, 0x99aabbccu, 0xddeeff00u};
     for (const std::uint32_t dwords : {2u, 3u, 4u}) {

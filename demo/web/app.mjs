@@ -159,19 +159,30 @@ function localizedError(render) {
 }
 
 function renderError() {
-  if (!errorState || $("error").hidden) return;
+  const error = $("error");
+  if (!errorState || error.hidden || errorState.renderedLocale === locale) return;
   const message = [messageText(errorState.message), ...errorState.appended].join("\n");
   const report = failureReport({ ...errorState.context, message, locale });
-  if (report === message) $("error").replaceChildren(document.createTextNode(message));
-  else {
-    const details = document.createElement("details");
-    const summary = document.createElement("summary");
-    summary.textContent = translate(locale, "failureDetails");
-    const text = document.createElement("pre");
-    text.textContent = report;
-    details.append(summary, text);
-    $("error").replaceChildren(document.createTextNode(message), details);
+  if (!errorState.view) {
+    const headline = document.createTextNode(message);
+    const view = { headline };
+    if (report === message) error.replaceChildren(headline);
+    else {
+      const details = document.createElement("details");
+      view.summary = document.createElement("summary");
+      view.text = document.createElement("pre");
+      details.append(view.summary, view.text);
+      error.replaceChildren(headline, details);
+    }
+    errorState.view = view;
   }
+  const { headline, summary, text } = errorState.view;
+  headline.textContent = message;
+  if (summary) {
+    summary.textContent = translate(locale, "failureDetails");
+    text.textContent = report;
+  }
+  errorState.renderedLocale = locale;
 }
 
 async function fail(value, { keepInspection = false } = {}) {

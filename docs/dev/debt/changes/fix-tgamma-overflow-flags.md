@@ -2,7 +2,7 @@
 
 ## change [tgamma, lgammaf, lgamma_r, lgammaf_r, gamma, gammaf, gamma_r and gammaf_r]
 
-- [lgammaf, lgamma_r, lgammaf_r, gamma, gammaf, gamma_r and gammaf_r](../../../core/libs/prx/libc/src/Math.cpp) (libc) are unverified on console. `lgammaf`, `gamma`, `gammaf` set Γ(x) sign in `signgam` (NID `5gOOC0kzW0c`, 0 initially per FreeBSD [`s_signgam.c`](https://github.com/freebsd/freebsd-src/blob/stable/11/lib/msun/src/s_signgam.c)); `*_r` set it in out-pointer. Wrappers follow FreeBSD 11 [`e_gamma.c`](https://github.com/freebsd/freebsd-src/blob/stable/11/lib/msun/src/e_gamma.c), [`e_gamma_r.c`](https://github.com/freebsd/freebsd-src/blob/stable/11/lib/msun/src/e_gamma_r.c), [`e_gammaf.c`](https://github.com/freebsd/freebsd-src/blob/stable/11/lib/msun/src/e_gammaf.c) and [`e_gammaf_r.c`](https://github.com/freebsd/freebsd-src/blob/stable/11/lib/msun/src/e_gammaf_r.c).
+- [lgamma_r, gamma and gamma_r](../../../core/libs/prx/libc/src/Math.cpp) (libc) are unverified on console. `gamma` sets Γ(x) sign in `signgam` (NID `5gOOC0kzW0c`, 0 initially per FreeBSD [`s_signgam.c`](https://github.com/freebsd/freebsd-src/blob/stable/11/lib/msun/src/s_signgam.c)); `lgamma_r` and `gamma_r` write the sign to the output pointer. Wrappers follow FreeBSD 11 [`e_gamma.c`](https://github.com/freebsd/freebsd-src/blob/stable/11/lib/msun/src/e_gamma.c), [`e_gamma_r.c`](https://github.com/freebsd/freebsd-src/blob/stable/11/lib/msun/src/e_gamma_r.c), [`e_gammaf.c`](https://github.com/freebsd/freebsd-src/blob/stable/11/lib/msun/src/e_gammaf.c) and [`e_gammaf_r.c`](https://github.com/freebsd/freebsd-src/blob/stable/11/lib/msun/src/e_gammaf_r.c).
 
 ## add Functional
 

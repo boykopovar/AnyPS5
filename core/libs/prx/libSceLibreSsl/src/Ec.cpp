@@ -413,6 +413,82 @@ bool AtInfinity(const mbedtls_ecp_point& point) {
     return mbedtls_ecp_is_zero(const_cast<mbedtls_ecp_point*>(&point)) == 1;
 }
 
+int ModSqrt(mbedtls_mpi* y, const mbedtls_mpi* a, const mbedtls_mpi* p) {
+    if (mbedtls_mpi_cmp_int(a, 0) == 0) {
+        Check(mbedtls_mpi_lset(y, 0), __func__);
+        return 1;
+    }
+    Mpi q;
+    Mpi halfQ;
+    Mpi z;
+    Mpi m;
+    Mpi c;
+    Mpi t;
+    Mpi r;
+    int e = 0;
+    Check(mbedtls_mpi_sub_int(&q.value, p, 1), __func__);
+    Check(mbedtls_mpi_copy(&halfQ.value, &q.value), __func__);
+    Check(mbedtls_mpi_shift_r(&halfQ.value, 1), __func__);
+    Check(mbedtls_mpi_copy(&m.value, &q.value), __func__);
+    while (mbedtls_mpi_get_bit(&m.value, 0) == 0) {
+        Check(mbedtls_mpi_shift_r(&m.value, 1), __func__);
+        ++e;
+    }
+    if (e == 0) {
+        return 0;
+    }
+    Check(mbedtls_mpi_lset(&z.value, 2), __func__);
+    while (true) {
+        Mpi legendre;
+        Check(mbedtls_mpi_exp_mod(&legendre.value, &z.value, &halfQ.value, p, nullptr), __func__);
+        if (mbedtls_mpi_cmp_mpi(&legendre.value, &q.value) == 0) {
+            break;
+        }
+        Check(mbedtls_mpi_add_int(&z.value, &z.value, 1), __func__);
+    }
+    Check(mbedtls_mpi_exp_mod(&c.value, &z.value, &m.value, p, nullptr), __func__);
+    Mpi exp;
+    Check(mbedtls_mpi_add_int(&exp.value, &m.value, 1), __func__);
+    Check(mbedtls_mpi_shift_r(&exp.value, 1), __func__);
+    Check(mbedtls_mpi_exp_mod(&r.value, a, &exp.value, p, nullptr), __func__);
+    Check(mbedtls_mpi_exp_mod(&t.value, a, &m.value, p, nullptr), __func__);
+    while (mbedtls_mpi_cmp_int(&t.value, 1) != 0) {
+        Mpi t2i;
+        Check(mbedtls_mpi_copy(&t2i.value, &t.value), __func__);
+        int i = 0;
+        for (; i < e; ++i) {
+            if (mbedtls_mpi_cmp_int(&t2i.value, 1) == 0) {
+                break;
+            }
+            Check(mbedtls_mpi_mul_mpi(&t2i.value, &t2i.value, &t2i.value), __func__);
+            Check(mbedtls_mpi_mod_mpi(&t2i.value, &t2i.value, p), __func__);
+        }
+        if (i == e) {
+            return 0;
+        }
+        Mpi b;
+        Check(mbedtls_mpi_copy(&b.value, &c.value), __func__);
+        for (int j = 0; j < e - i - 1; ++j) {
+            Check(mbedtls_mpi_mul_mpi(&b.value, &b.value, &b.value), __func__);
+            Check(mbedtls_mpi_mod_mpi(&b.value, &b.value, p), __func__);
+        }
+        Check(mbedtls_mpi_mul_mpi(&r.value, &r.value, &b.value), __func__);
+        Check(mbedtls_mpi_mod_mpi(&r.value, &r.value, p), __func__);
+        Check(mbedtls_mpi_mul_mpi(&c.value, &b.value, &b.value), __func__);
+        Check(mbedtls_mpi_mod_mpi(&c.value, &c.value, p), __func__);
+        Check(mbedtls_mpi_mul_mpi(&t.value, &t.value, &c.value), __func__);
+        Check(mbedtls_mpi_mod_mpi(&t.value, &t.value, p), __func__);
+        e = i;
+    }
+    Check(mbedtls_mpi_mul_mpi(&t.value, &r.value, &r.value), __func__);
+    Check(mbedtls_mpi_mod_mpi(&t.value, &t.value, p), __func__);
+    if (mbedtls_mpi_cmp_mpi(&t.value, a) != 0) {
+        return 0;
+    }
+    Check(mbedtls_mpi_copy(y, &r.value), __func__);
+    return 1;
+}
+
 std::size_t FieldSize(const EcGroup& group) {
     return mbedtls_mpi_size(&group.group.P);
 }
@@ -599,9 +675,47 @@ int APS5_VABI EC_POINT_oct2point_nid_postfix(const EcGroup* group, EcPoint* poin
     Check(mbedtls_mpi_read_binary(&coordinate.value, buffer + 1, fieldSize), __func__);
     if (mbedtls_mpi_cmp_mpi(&coordinate.value, &curve.P) >= 0) return 0;
     if (form == PointConversionCompressed) {
-        if (mbedtls_mpi_get_bit(&curve.P, 1) == 0) NotImplemented_nid_no_patch("EC_POINT_oct2point: a compressed point on a curve whose prime is not 3 mod 4");
         Point decoded;
-        Check(mbedtls_ecp_point_read_binary(&curve, &decoded.value, buffer, length), __func__);
+        if (mbedtls_mpi_get_bit(&curve.P, 1) != 0) {
+            Check(mbedtls_ecp_point_read_binary(&curve, &decoded.value, buffer, length), __func__);
+        } else {
+            Mpi rhs;
+            Mpi y;
+            Check(mbedtls_mpi_lset(&rhs.value, 0), __func__);
+            Check(mbedtls_mpi_mul_mpi(&rhs.value, &coordinate.value, &coordinate.value), __func__);
+            Check(mbedtls_mpi_mod_mpi(&rhs.value, &rhs.value, &curve.P), __func__);
+            Check(mbedtls_mpi_mul_mpi(&rhs.value, &rhs.value, &coordinate.value), __func__);
+            Check(mbedtls_mpi_mod_mpi(&rhs.value, &rhs.value, &curve.P), __func__);
+            if (mbedtls_ecp_group_a_is_minus_3(&curve) || mbedtls_mpi_cmp_int(&curve.A, 0) != 0) {
+                Mpi ax;
+                if (mbedtls_ecp_group_a_is_minus_3(&curve)) {
+                    Check(mbedtls_mpi_lset(&ax.value, -3), __func__);
+                    Check(mbedtls_mpi_mod_mpi(&ax.value, &ax.value, &curve.P), __func__);
+                } else {
+                    Check(mbedtls_mpi_copy(&ax.value, &curve.A), __func__);
+                }
+                Check(mbedtls_mpi_mul_mpi(&ax.value, &ax.value, &coordinate.value), __func__);
+                Check(mbedtls_mpi_mod_mpi(&ax.value, &ax.value, &curve.P), __func__);
+                Check(mbedtls_mpi_add_mpi(&rhs.value, &rhs.value, &ax.value), __func__);
+                Check(mbedtls_mpi_mod_mpi(&rhs.value, &rhs.value, &curve.P), __func__);
+            }
+            Check(mbedtls_mpi_add_mpi(&rhs.value, &rhs.value, &curve.B), __func__);
+            Check(mbedtls_mpi_mod_mpi(&rhs.value, &rhs.value, &curve.P), __func__);
+            if (ModSqrt(&y.value, &rhs.value, &curve.P) != 1) {
+                return 0;
+            }
+            if (mbedtls_mpi_get_bit(&y.value, 0) != yBit) {
+                if (mbedtls_mpi_cmp_int(&y.value, 0) == 0) {
+                    return 0;
+                }
+                Check(mbedtls_mpi_sub_mpi(&y.value, &curve.P, &y.value), __func__);
+            }
+            std::vector<unsigned char> decodedBytes(1 + 2 * fieldSize);
+            decodedBytes[0] = PointConversionUncompressed;
+            Check(mbedtls_mpi_write_binary(&coordinate.value, decodedBytes.data() + 1, fieldSize), __func__);
+            Check(mbedtls_mpi_write_binary(&y.value, decodedBytes.data() + 1 + fieldSize, fieldSize), __func__);
+            Check(mbedtls_ecp_point_read_binary(&curve, &decoded.value, decodedBytes.data(), decodedBytes.size()), __func__);
+        }
         if (mbedtls_ecp_check_pubkey(&curve, &decoded.value) != 0) return 0;
         Check(mbedtls_ecp_copy(&point->point, &decoded.value), __func__);
         return 1;

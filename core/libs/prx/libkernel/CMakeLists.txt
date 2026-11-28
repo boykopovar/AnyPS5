@@ -71,6 +71,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${LIBS_INCLUDE_DIR}/nid/src/NidCompute.cpp
         ${LIBS_INCLUDE_DIR}/nid/src/Sha1.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Aio/src/Aio.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Backtrace.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Coredump.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Exception.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Sanitizer.cpp
@@ -102,6 +103,9 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/AppMetadata/src/ParamJsonParser.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/AppMetadata/src/ParamSfoParser.cpp
 )
+if(BUILD_TESTING)
+    target_compile_definitions(libkernel PRIVATE APS5_MQUEUE_TESTING)
+endif()
 if(APPLE)
     target_link_libraries(libkernel PRIVATE "-framework CoreFoundation")
     target_sources(libkernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/System/src/MacActivity.cpp)

@@ -1524,6 +1524,7 @@ if(BUILD_TESTING)
 
     add_test_executable(guest_kernel_sys_mqueue_tests tests/GuestKernelSysMqueue.cpp)
     target_include_directories(guest_kernel_sys_mqueue_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_definitions(guest_kernel_sys_mqueue_tests PRIVATE APS5_MQUEUE_TESTING)
     target_link_libraries(guest_kernel_sys_mqueue_tests PRIVATE libkernel_sys libkernel libc)
     configure_windows_unwind(guest_kernel_sys_mqueue_tests)
     add_test(NAME guest_kernel_sys_mqueue COMMAND guest_kernel_sys_mqueue_tests)
