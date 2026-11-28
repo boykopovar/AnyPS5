@@ -840,6 +840,7 @@ set(ICU_RECOVERED_SOURCES
     Idna.cpp
     ListFormatter.cpp
     LocaleDisplayNames.cpp
+    LocaleDisplayNamesBackend.cpp
     NumberFormat.cpp
     NumberFormatter.cpp
     NumberingSystem.cpp

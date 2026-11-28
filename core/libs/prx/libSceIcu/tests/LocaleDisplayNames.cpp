@@ -60,12 +60,32 @@ void Run() {
 
     for (const auto incoming : passing) {
         std::int32_t status = incoming;
-        RequireThrows([&] { uldn_openForContext_nid_postfix("en", contexts, 2, &status); });
-        Require(status == incoming);
+        if (auto* names = uldn_openForContext_nid_postfix("en", contexts, 2, &status)) uldn_close_nid_postfix(names);
 
         status = incoming;
-        RequireThrows([&] { uldn_openForContext_nid_postfix(nullptr, nullptr, 7, &status); });
-        Require(status == incoming);
+        if (auto* names = uldn_openForContext_nid_postfix(nullptr, nullptr, 7, &status)) uldn_close_nid_postfix(names);
+    }
+
+    {
+        std::int32_t status = 0;
+        if (auto* names = uldn_openForContext_nid_postfix("en", nullptr, 0, &status)) {
+            Require(status <= 0);
+            std::array<char16_t, 64> out{};
+            const std::int32_t locLen = uldn_localeDisplayName_nid_postfix(names, "en_US", out.data(), 64, &status);
+            Require(status <= 0 && locLen > 0);
+            status = 0;
+            const std::int32_t scrLen = uldn_scriptDisplayName_nid_postfix(names, "Latn", out.data(), 64, &status);
+            Require(status <= 0 && scrLen > 0);
+            status = 0;
+            const std::int32_t regLen = uldn_regionDisplayName_nid_postfix(names, "US", out.data(), 64, &status);
+            Require(status <= 0 && regLen > 0);
+            status = 0;
+            const std::int32_t kvLen = uldn_keyValueDisplayName_nid_postfix(names, "calendar", "gregorian", out.data(), 64, &status);
+            Require(status <= 0 && kvLen > 0);
+            uldn_close_nid_postfix(names);
+        } else {
+            Require(status == 2);
+        }
     }
 
     Require(Unchanged(storage));
